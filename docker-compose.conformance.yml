@@ -27,6 +27,9 @@ services:
       - "127.0.0.1:${BUZZ_HEALTH_HOST_PORT:-8088}:8088"
       - "127.0.0.1:${BUZZ_METRICS_HOST_PORT:-9102}:9102"
     environment:
+      # Exercise the same hardened Chat-only profile used by the supported
+      # deployment; generic Buzz keeps Git enabled by default.
+      BUZZ_GIT_ENABLED: "false"
       # The suite reaches the relay at the configured loopback relay port; the
       # community is seeded from this host at startup, so Host-derived binding matches.
       RELAY_URL: ${BUZZ_RELAY_URL:-ws://127.0.0.1:7447}

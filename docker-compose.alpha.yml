@@ -176,6 +176,9 @@ services:
       BUZZ_AUTO_MIGRATE: "true"
       BUZZ_REQUIRE_RELAY_MEMBERSHIP: "true"
       BUZZ_REQUIRE_AUTH_TOKEN: "false"
+      # Elembra uses the hardened Chat-only Buzz runtime. Git routes/probes are
+      # explicitly disabled; the generic Buzz image remains Git-capable.
+      BUZZ_GIT_ENABLED: "false"
       RELAY_OWNER_PUBKEY: ${BUZZ_RELAY_OWNER_PUBKEY:-}
       # Trusted-service allowlist for the v1alpha1 authorization API: the
       # Elembra gateway's NIP-98 service key. The owner pubkey IS that key
@@ -199,13 +202,10 @@ services:
       buzz-rustfs-init:
         condition: service_completed_successfully
     healthcheck:
-      # Buzz's pinned 8088 probe listener intentionally returns 404 for
-      # unknown paths; any HTTP status proves the listener is up.
-      test:
-        - CMD-SHELL
-        - >-
-          code=$$(curl -sS --max-time 2 -o /dev/null -w '%{http_code}'
-          http://127.0.0.1:8088/health); test "$${code}" != 000
+      # The hardened buzz-elembra image is distroless (no shell/curl). Use
+      # Buzz's native healthcheck mode so Compose does not widen the runtime
+      # attack surface merely to probe readiness.
+      test: ["CMD", "/usr/local/bin/buzz-relay", "--healthcheck"]
       interval: 10s
       timeout: 5s
       start_period: 20s
