@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> **Superseded historical document.** This describes the pre-cutover RustShare Module architecture. The current Elembra product uses Applications, `/apps/...` routes, and `/api/v1/applications/...` registry/configuration APIs (see #209/#210 and `docs/specs/application-manifest-v1alpha1.md`). Retain this file for design history only; do not implement new product behavior from its Module routes/contracts.
+
 # ADR-0018: WebUI Module Navigation and Dashboard Integration
 
 Status: Accepted  
