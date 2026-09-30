@@ -35,6 +35,7 @@
 	let saving = $state(false);
 	let testingImap = $state(false);
 	let testingSmtp = $state(false);
+	let imapTestSucceeded = $state(false);
 	let replaceImapPassword = $state(false);
 	let replaceSmtpPassword = $state(false);
 	let provider = $state<Provider>('custom');
@@ -158,6 +159,7 @@
 	}
 
 	async function selectMailAccount(id: string) {
+		imapTestSucceeded = false;
 		selectedMailAccountId = id;
 		showAddAccountForm = false;
 		replaceImapPassword = false;
@@ -322,6 +324,7 @@
 		try {
 			await mailApi.testAccount(selectedMailAccountId);
 			toastStore.show('Incoming mail (IMAP) connection successful', 'success');
+			imapTestSucceeded = true;
 			await loadMailAccounts();
 			// The mail module caches ['mail-accounts']; a stale cache keeps the
 			// zero-account state alive after setup (issue #316).
@@ -913,6 +916,16 @@
 						{#if testingImap}<span class="loading loading-xs loading-spinner"></span>{/if}
 						Test incoming mail
 					</button>
+					{#if imapTestSucceeded}
+						<div class="flex w-full flex-wrap items-center gap-2 text-sm" role="status">
+							<span class="text-success">Connection works.</span>
+							<a class="btn btn-primary btn-sm" href="/apps/mail">Open mail</a>
+							<span class="text-base-content/60">
+								Your mail loads in the Remote mailbox. To keep copies inside RustShare, use Archive
+								below or Save messages from the app.
+							</span>
+						</div>
+					{/if}
 					<button
 						type="button"
 						class="btn btn-outline btn-sm"

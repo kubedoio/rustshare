@@ -132,6 +132,20 @@ describe('MailSettingsPanel', () => {
 		expect((screen.getByLabelText('Port') as HTMLInputElement).value).toBe('993');
 	});
 
+	it('offers an Open mail action after a successful incoming mail test', async () => {
+		mocks.testAccount.mockResolvedValue(undefined);
+		render(MailSettingsPanel);
+
+		await screen.findByText('Connected');
+		expect(screen.queryByText('Open mail')).toBeNull();
+
+		await fireEvent.click(screen.getByText('Test incoming mail'));
+
+		const openMail = await screen.findByText('Open mail');
+		expect((openMail.closest('a') as HTMLAnchorElement).getAttribute('href')).toBe('/apps/mail');
+		expect(screen.getByText(/Remote mailbox/i)).toBeTruthy();
+	});
+
 	it('invalidates the mail-accounts query cache after adding an account', async () => {
 		const invalidateSpy = vi
 			.spyOn(queryClient, 'invalidateQueries')

@@ -1067,9 +1067,13 @@
 								<p class="truncate text-xs text-base-content/50">
 									{message.from_name || message.from_address || 'Unknown sender'}
 								</p></button
-							>{:else}<p class="p-8 text-center text-sm text-base-content/50">
-								No saved mail.
-							</p>{/each}
+							>{:else}<div class="p-8 text-center text-sm text-base-content/50">
+								<p>No saved mail.</p>
+								<p class="mt-1">
+									Open the Remote mailbox and use Save on a message, or archive a folder from the
+									mail settings, to keep copies here.
+								</p>
+							</div>{/each}
 					{/if}
 				</section>
 
