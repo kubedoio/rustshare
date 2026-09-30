@@ -19,6 +19,11 @@ are actually fixed, not when we hope they will be.
   beta. The desktop CLI exists in the repository but is not part of the
   beta.
 - **Obsidian vault sync is not included** in this beta.
+- **Calendar is new in this beta** (customer requirement): events with
+  attendees and month/week/list views are in scope; its depth beyond that
+  (recurrence, ICS import/export, cross-application attachments) depends on
+  the signed-off specification — we will tell you exactly what is included
+  at kickoff.
 - **Chat reply/thread composer** is not finished yet — replies exist in the
   protocol but the composer UI is deferred.
 - **Chat device/key administration** is limited: browser-held identity with
@@ -39,9 +44,12 @@ are actually fixed, not when we hope they will be.
 
 ## Security and data
 
-- The beta has passed exact-image vulnerability scanning (0 Critical / 0
-  High) and an internal security review, but has **not** had external
-  penetration testing.
+- Before you receive access, the beta instance must have recorded, in its
+  launch gate (`docs/releases/beta-gate.yaml`): exact-image vulnerability
+  scanning with 0 Critical / 0 High, CodeQL static analysis, and an internal
+  security review including an adversarial cross-tenant campaign. External
+  penetration testing is scheduled for the GA track and is not part of this
+  beta.
 - Do not store real secrets or production data (see the tester guide).
 - Security issues must be reported privately per `SECURITY.md`.
 

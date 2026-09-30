@@ -8,6 +8,8 @@
 #
 # Beta scope (see docs/plans/2026-09-30-beta-readiness-plan.md):
 # web-only, hosted-by-maintainers instances, single-host Docker Compose.
+# The Calendar Application (issue #315) is a hard customer requirement and
+# part of the beta scope.
 release_candidate: PENDING_FIRST_BETA_CANDIDATE
 release_tag: PENDING_FIRST_BETA_CANDIDATE
 decision: NO-GO
@@ -40,6 +42,31 @@ vulnerability_scan:
     classification: NOT_RUN
 
 gates:
+  # --- new gates: customer-required feature and security posture ---
+  calendar_application:
+    status: NOT_RUN
+    evidence: >-
+      Issue 315 hard customer requirement. The Calendar Application is
+      implemented per the Application manifest contract
+      (io.elembra.calendar, docs/specs/application-manifest-v1alpha1.md)
+      with backend CRUD, authorization through the existing permission
+      contracts, unit and tenant-isolation contract tests, frontend views
+      at /apps/calendar, integration-event projection for search, calendar
+      steps in scripts/run-beta-smoke.sh, and cohort-confirmed usage.
+  security_posture_hardening:
+    status: PENDING
+    evidence: >-
+      S-1 CodeQL SAST workflow merged (rust + frontend typescript); S-2
+      security review covers the Calendar attack surface; S-3 Calendar
+      tenant isolation via application-level scoping plus contract tests
+      (RLS evaluated for the new tables); S-4 adversarial campaign extended
+      with Calendar IDOR/attendee enumeration; S-5 ICS import hardening if
+      ICS is in approved scope; S-6 calendar rate-limit buckets; S-7
+      external pentest scheduled for the GA track (recorded limitation);
+      S-8 secret scanning + Dependabot recheck on the candidate; S-9
+      documented risk acceptance for per-instance rate limiting and
+      application-level tenant isolation outside RLS-covered tables.
+
   # --- carried over from the Customer Alpha gate, re-proven on the beta candidate ---
   repository_governance:
     status: NOT_RUN
@@ -125,11 +152,14 @@ known_limitations:
   - Obsidian/vault sync remains excluded until issue 236 is resolved or explicitly accepted out of scope
   - chat reply/thread composer UI deferred (issue 243)
   - full account-managed chat device administration deferred (issue 215)
-  - external penetration testing is not implied by the repository security review
+  - the Calendar Application is new in this beta (issue 315); its feature set is limited to the approved specification, and ICS import/recurrence depth depends on the signed-off scope
+  - external penetration testing is scheduled for the GA track and is not part of this beta; the internal security review and adversarial campaign are
   - self-hosting by testers is not a supported beta path
 
 release_blockers:
+  - Calendar Application (issue 315) is a hard customer requirement and is not implemented yet; the beta candidate cannot be cut without it
   - all carried-over Customer Alpha gates must be recorded PASS (or justified N/A) against the exact beta candidate
+  - security posture hardening (S-1..S-9) is mandatory and must cover the new Calendar attack surface
   - hosted beta environment, cohort onboarding, feedback pipeline, data policy, update cadence, and stability gates have not started
   - published Buzz SBOM artifact is still missing from the pinned Buzz workflow
 

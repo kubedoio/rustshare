@@ -8,8 +8,9 @@ find.
 
 Elembra is a self-hosted workspace for durable team knowledge: **Files**
 (upload/download, versioning, trash/restore, sharing), **Notes** (Markdown
-editor), **Chat** (Buzz-backed channels), and **Memory/Search + Ask**
-(permission-aware search and cited Q&A when an AI provider is configured).
+editor), **Chat** (Buzz-backed channels), **Calendar** (events, attendees —
+new in this beta), and **Memory/Search + Ask** (permission-aware search and
+cited Q&A when an AI provider is configured).
 
 You are using a **hosted beta instance operated by us**. It is not your
 production system and must not become one.
@@ -30,17 +31,20 @@ production system and must not become one.
 
 1. **Daily driver flows**: upload, organize, rename, move, delete, restore
    files; create and edit notes; search for your own content.
-2. **Sharing**: internal shares with colleagues (View vs Edit), public
+2. **Calendar** (new in this beta): create/edit/delete events, attendee
+   handling, month/week/list views — and especially whether you can only
+   see events you should have access to.
+3. **Sharing**: internal shares with colleagues (View vs Edit), public
    links, upload-only links, and — importantly — **revocation**: after a
    share is revoked, is access really gone?
-3. **Permissions**: make sure people can only see what they should. If you
-   ever see something you should not have access to, treat it as Sev-1 (see
-   below).
-4. **Chat**: channels, identity unlock, attachments, and whether chat
+4. **Permissions**: make sure people can only see what they should. If you
+   ever see something you should not have access to (files, notes, or
+   calendar events), treat it as Sev-1 (see below).
+5. **Chat**: channels, identity unlock, attachments, and whether chat
    messages later show up in search.
-5. **Ask** (if enabled): ask questions about your files/notes and check
+6. **Ask** (if enabled): ask questions about your files/notes and check
    whether the citations actually point at content you can open.
-6. **Rough edges**: slow operations, confusing UI, confusing errors,
+7. **Rough edges**: slow operations, confusing UI, confusing errors,
    browser quirks, keyboard navigation, dark mode.
 
 ## How to report
@@ -60,7 +64,7 @@ Remove passwords, tokens, and private URLs before posting.
 
 | Level | Meaning | Example | Our target |
 |---|---|---|---|
-| Sev-1 | Data loss, cross-tenant/cross-user leak, instance unusable | You see someone else's files | Ack ≤ 4h (contact us directly) |
+| Sev-1 | Data loss, cross-tenant/cross-user leak, instance unusable | You see someone else's files or calendar events | Ack ≤ 4h (contact us directly) |
 | Sev-2 | Core flow broken with no workaround | Uploads fail for a file type | First response ≤ 2 business days |
 | Sev-3 | Broken with workaround, or bad UX | Confusing error message | Triaged weekly |
 

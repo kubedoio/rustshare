@@ -58,10 +58,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Beta readiness program: `docs/plans/2026-09-30-beta-readiness-plan.md`
-  defines the phased path (feature freeze, evidence campaign, hosted
-  environment, tester cohort, soak) from the current Customer Alpha NO-GO to
-  a controlled Public Beta, and `docs/releases/beta-gate.yaml` is the new
-  machine-readable launch decision record for it.
+  defines the phased path (feature freeze with the Calendar application as
+  the sole sanctioned feature, evidence campaign, hosted environment,
+  tester cohort, soak) from the current Customer Alpha NO-GO to a
+  controlled Public Beta, and `docs/releases/beta-gate.yaml` is the new
+  machine-readable launch decision record for it. Revision 2 adds the
+  Calendar application (issue #315) as a hard customer requirement, makes
+  security posture hardening (S-1..S-9) mandatory, and defers WebUI
+  enhancements to the post-beta backlog.
+- CodeQL static analysis workflow (`.github/workflows/codeql.yml`) for the
+  Rust workspace and frontend TypeScript with security-extended queries
+  (beta readiness security item S-1).
 - Monitoring/alerting stack for hosted deployments:
   `docker-compose.monitoring.yml` with digest-pinned Prometheus, AlertManager
   and optional Grafana, Prometheus scrape config and alert rules over the

@@ -1,0 +1,64 @@
+name: CodeQL
+
+# Static application security testing (beta readiness plan item S-1,
+# docs/plans/2026-09-30-beta-readiness-plan.md §4.5). Complements the
+# existing cargo-deny advisory gate in ci.yml (dependency vulnerabilities)
+# with source-level analysis for the Rust workspace and the frontend.
+
+permissions:
+  contents: read
+  security-events: write
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Weekly deep scan of main in addition to PR/push-triggered analysis.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The Rust extraction build must not reach for a live database.
+  SQLX_OFFLINE: "true"
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: rust
+            # The unified workspace builds from the repository root.
+            build-mode: autobuild
+          - language: javascript-typescript
+            # The frontend is the only TypeScript tree; JS/TS analysis is
+            # buildless (CodeQL excludes node_modules and vendored deps).
+            build-mode: none
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4.37.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # Security-extended queries: stricter than the default suite;
+          # findings surface as code scanning alerts, they do not fail the
+          # workflow (triage happens in the security review gate).
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4.37.3
+        with:
+          category: "/language:${{ matrix.language }}"

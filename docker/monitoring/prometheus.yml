@@ -35,17 +35,27 @@ scrape_configs:
         labels:
           service: elembra-nginx
 
-  # Readiness is scraped as a metric-less liveness signal: the probe fails
-  # (and the ElembraReadiness alert fires) when /health/ready stops returning
-  # 2xx, which the backend guarantees only when database, object storage,
-  # event delivery, and auth sessions are healthy.
+  # Readiness is probed (not scraped): /health/ready returns JSON, which
+  # Prometheus cannot scrape as metrics. The blackbox exporter performs an
+  # HTTP 2xx probe against it and exports probe_success, which the
+  # ElembraReadiness alert consumes. The backend returns 503 from
+  # /health/ready when the database, object storage, event delivery, or auth
+  # sessions are unhealthy.
   - job_name: elembra-readiness
-    metrics_path: /health/ready
-    scheme: http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
     static_configs:
-      - targets: ["backend:8080"]
+      - targets: ["http://backend:8080/health/ready"]
         labels:
           service: elembra-backend
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
 
   # Chat-runtime health is observed through the Elembra backend's own
   # exported metrics (chat_observation_lag_seconds,

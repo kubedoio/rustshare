@@ -174,6 +174,29 @@ csrf_json_request() {
 	run_json_request "$method" "$url" "$body" "${cookie_jar}" "${output_file}" "X-Rustshare-Csrf: $(csrf_token_from_jar "${cookie_jar}")"
 }
 
+# Retrieve the one-time bootstrap admin password from the backend container,
+# mirroring final-launch-smoke.sh. Only works when docker and the running
+# compose project are reachable from this machine.
+read_bootstrap_admin_password() {
+	local password_file="${RUSTSHARE_BOOTSTRAP_PASSWORD_FILE:-/tmp/rustshare-bootstrap-password.txt}"
+	local password=""
+
+	if ! command -v docker >/dev/null 2>&1; then
+		return 1
+	fi
+
+	local container_id
+	container_id="$(docker compose ps -q backend 2>/dev/null || true)"
+	[[ -n "${container_id}" ]] || return 1
+	password="$("${REPO_ROOT}/scripts/read-bootstrap-password.sh" "${container_id}" "${password_file}" 2>/dev/null || true)"
+
+	if [[ -z "${password}" ]]; then
+		return 1
+	fi
+
+	printf '%s' "${password}"
+}
+
 write_report() {
 	local status="$1"
 	local details="$2"
@@ -207,8 +230,13 @@ VIEWER_PASSWORD="${VIEWER_PASSWORD:-${RUSTSHARE_DEMO_VIEWER_PASSWORD:-}}"
 REPORT_DIR="${REPORT_DIR:-$(pwd)/beta-smoke-reports}"
 
 if [[ -z "${ADMIN_PASSWORD}" ]]; then
-	echo "ERROR: ADMIN_PASSWORD or RUSTSHARE_ADMIN_PASSWORD must be set (scripts/pre-flight.sh or explicit env)." >&2
-	exit 1
+	if ADMIN_PASSWORD="$(read_bootstrap_admin_password)"; then
+		echo "Using admin password from backend bootstrap file."
+	else
+		echo "ERROR: ADMIN_PASSWORD or RUSTSHARE_ADMIN_PASSWORD must be set, or the backend bootstrap password file must be readable." >&2
+		echo "Run scripts/pre-flight.sh and restart the stack, or set ADMIN_PASSWORD explicitly." >&2
+		exit 1
+	fi
 fi
 if [[ -z "${VIEWER_PASSWORD}" ]]; then
 	echo "ERROR: VIEWER_PASSWORD or RUSTSHARE_DEMO_VIEWER_PASSWORD must be set." >&2
@@ -239,6 +267,7 @@ GET_NOTE_RESPONSE="${TMP_DIR}/get-note.json"
 SAVE_NOTE_RESPONSE="${TMP_DIR}/save-note.json"
 LIST_NOTES_RESPONSE="${TMP_DIR}/list-notes.json"
 SEARCH_RESPONSE="${TMP_DIR}/search.json"
+VIEWER_SEARCH_RESPONSE="${TMP_DIR}/viewer-search.json"
 CHAT_STATUS_RESPONSE="${TMP_DIR}/chat-status.json"
 AUDIT_RESPONSE="${TMP_DIR}/audit.json"
 INTERNAL_SHARE_RESPONSE="${TMP_DIR}/internal-share.json"
@@ -334,7 +363,8 @@ run_json_request "GET" "${API_BASE_URL}/notes/${SMOKE_NOTE_ID}" "" "${ADMIN_COOK
 SAVE_NOTE_PAYLOAD="$(python3 - "${SEARCH_NEEDLE}" <<'PY'
 import json
 import sys
-print(json.dumps({"title": "Beta Smoke Note (updated)", "content": "updated needle " + sys.argv[1]}))
+# SaveNoteRequest has no title field: only content/color/attachments.
+print(json.dumps({"content": "updated needle " + sys.argv[1]}))
 PY
 )"
 csrf_json_request "PUT" "${API_BASE_URL}/notes/${SMOKE_NOTE_ID}" "${SAVE_NOTE_PAYLOAD}" "${ADMIN_COOKIES}" "${SAVE_NOTE_RESPONSE}"
@@ -383,8 +413,35 @@ done
 	exit 1
 }
 
+echo "6b. Verifying search is permission-aware (viewer must NOT find the note)..."
+# The viewer holds no share on the smoke note; permission-aware search must
+# not surface it. This is the negative half of the search evidence.
+VIEWER_SEARCH_HTTP="$(run_json_request "POST" "${API_BASE_URL}/search" "${SEARCH_PAYLOAD}" "${VIEWER_COOKIES}" "${VIEWER_SEARCH_RESPONSE}" "" "0")"
+if [[ "${VIEWER_SEARCH_HTTP}" != 2* ]]; then
+	echo "Viewer search request failed with ${VIEWER_SEARCH_HTTP}" >&2
+	exit 1
+fi
+if ! python3 - "${VIEWER_SEARCH_RESPONSE}" <<'PY'; then
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+results = payload.get("results") or payload.get("items") or []
+if not isinstance(results, list):
+    raise SystemExit(1)
+needle = "betasearch-"
+leaked = [item for item in results if needle in json.dumps(item)]
+if leaked:
+    raise SystemExit(1)
+PY
+	echo "PERMISSION FAILURE: viewer search surfaced the admin-only smoke note; treat as Sev-1" >&2
+	exit 1
+fi
+
 echo "7. Checking chat application status..."
-CHAT_STATUS_HTTP="$(run_json_request "GET" "${API_BASE_URL}/applications/chat/status" "" "${ADMIN_COOKIES}" "${CHAT_STATUS_RESPONSE}" "0")"
+CHAT_STATUS_HTTP="$(run_json_request "GET" "${API_BASE_URL}/applications/chat/status" "" "${ADMIN_COOKIES}" "${CHAT_STATUS_RESPONSE}" "" "0")"
 if [[ "${CHAT_STATUS_HTTP}" != 2* ]]; then
 	echo "Chat status endpoint returned ${CHAT_STATUS_HTTP}" >&2
 	cat "${CHAT_STATUS_RESPONSE}" >&2 || true
@@ -398,13 +455,15 @@ import sys
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     payload = json.load(handle)
 
-# The exact shape varies with the binding state; require a JSON body that at
-# least mentions a workspace/community mapping rather than an error page.
-text = json.dumps(payload).lower()
-if not any(key in text for key in ("workspace", "community", "mapping")):
+# ChatStatusResponse: chat_enabled plus an active workspace/community
+# mapping (binding may still be absent for a caller without a personal
+# identity — that state renders the BindingPanel, which is fine).
+if not payload.get("chat_enabled"):
+    raise SystemExit(1)
+if payload.get("mapping") is None:
     raise SystemExit(1)
 PY
-		echo "REQUIRE_CHAT=1 but chat is not fully configured; see ${CHAT_STATUS_RESPONSE}" >&2
+		echo "REQUIRE_CHAT=1 but chat is not enabled or has no active workspace/community mapping; see ${CHAT_STATUS_RESPONSE}" >&2
 		exit 1
 	fi
 fi
@@ -436,11 +495,28 @@ fi
 csrf_json_request "DELETE" "${API_BASE_URL}/shares/${INTERNAL_SHARE_ID}/recipient" "" "${ADMIN_COOKIES}" "${REVOKE_INTERNAL_SHARE_RESPONSE}"
 
 echo "9. Verifying the admin audit log records smoke activity..."
-AUDIT_HTTP="$(run_json_request "GET" "${API_BASE_URL}/admin/audit?limit=20" "" "${ADMIN_COOKIES}" "${AUDIT_RESPONSE}")"
+# AuditLogQuery paginates with page/per_page (not limit).
+AUDIT_HTTP="$(run_json_request "GET" "${API_BASE_URL}/admin/audit?per_page=20" "" "${ADMIN_COOKIES}" "${AUDIT_RESPONSE}")"
 [[ "${AUDIT_HTTP}" == 2* ]] || {
 	echo "Admin audit endpoint returned ${AUDIT_HTTP}" >&2
 	exit 1
 }
+if ! python3 - "${AUDIT_RESPONSE}" <<'PY'; then
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+# PaginatedAuditLog: entries/total/page/per_page. The smoke created shares
+# and revoked them; the log must not be empty.
+entries = payload.get("entries")
+if not isinstance(entries, list) or not entries:
+    raise SystemExit(1)
+PY
+	echo "Admin audit log returned no entries; smoke activity was not recorded" >&2
+	exit 1
+fi
 
 echo "10. Cleaning up smoke artifacts..."
 csrf_json_request "DELETE" "${API_BASE_URL}/notes/${SMOKE_NOTE_ID}" "" "${ADMIN_COOKIES}" "${DELETE_NOTE_RESPONSE}"

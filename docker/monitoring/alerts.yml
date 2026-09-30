@@ -24,16 +24,17 @@ groups:
             beta host for 2 minutes. Check container state and backend logs.
 
       - alert: ElembraReadiness
-        expr: up{job="elembra-readiness"} == 0
+        expr: probe_success{job="elembra-readiness"} == 0
         for: 3m
         labels:
           severity: critical
         annotations:
           summary: Elembra backend readiness probe failing
           description: >-
-            /health/ready stopped returning 2xx for 3 minutes. The backend
-            reports 503 when database, object storage, event delivery, or
-            auth sessions fail; inspect the readiness JSON and component logs.
+            The blackbox HTTP probe against /health/ready has failed for 3
+            minutes. The backend reports 503 when database, object storage,
+            event delivery, or auth sessions fail; inspect the readiness
+            JSON and component logs.
 
       - alert: ElembraNginxDown
         expr: up{job="elembra-nginx"} == 0
@@ -62,7 +63,9 @@ groups:
             consumer health.
 
       - alert: ElembraOutboxDeadLetter
-        expr: increase(outbox_dlq_count[15m]) > 0
+        # outbox_dlq_count is a gauge set every dispatcher tick (not a
+        # monotonic counter), so delta() — not increase() — detects growth.
+        expr: delta(outbox_dlq_count[15m]) > 0
         labels:
           severity: warning
         annotations:
@@ -96,6 +99,9 @@ groups:
             5xx responses. Check for long-running queries or load growth.
 
   - name: elembra-object-gc
+    # NOTE: object_gc_* metrics are only exported while the GC loop runs;
+    # the default deployment ships RUSTSHARE_OBJECT_GC_ENABLED=false, so
+    # these alerts stay silent until GC is enabled on the beta host.
     rules:
       - alert: ElembraObjectGcDeleteFailures
         expr: increase(object_gc_delete_failures_total[1h]) > 0
