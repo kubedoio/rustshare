@@ -57,6 +57,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Beta readiness program: `docs/plans/2026-09-30-beta-readiness-plan.md`
+  defines the phased path (feature freeze, evidence campaign, hosted
+  environment, tester cohort, soak) from the current Customer Alpha NO-GO to
+  a controlled Public Beta, and `docs/releases/beta-gate.yaml` is the new
+  machine-readable launch decision record for it.
+- Monitoring/alerting stack for hosted deployments:
+  `docker-compose.monitoring.yml` with digest-pinned Prometheus, AlertManager
+  and optional Grafana, Prometheus scrape config and alert rules over the
+  backend's real exported metrics, and an AlertManager routing template with
+  the operator checklist for making notification delivery real.
+- `scripts/run-beta-smoke.sh`: full beta product-path smoke (login, folders,
+  upload/download, notes CRUD, permission-aware search with projection-lag
+  retry, chat status, internal-share revocation, admin audit, logout) with a
+  saved report, intended to run after every beta-host deploy.
+- Beta tester pack: operator onboarding/offboarding runbook
+  (`docs/runbooks/beta-tester-onboarding.md`) plus tester-facing
+  `docs/beta/tester-guide.md`, `feedback-template.md`, and
+  `known-limitations.md`.
+- `scripts/release-tag.sh` selftest now covers the `v0.8.0-beta.1` prerelease
+  grammar explicitly.
+
 - Customer Alpha operations now include a secret-safe `./scripts/elembra.sh
   support-bundle` command, an immutable release-profile lifecycle for the
   backend and managed observer, complete bundled-Chat backup/restore, and a

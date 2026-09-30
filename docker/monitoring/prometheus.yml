@@ -1,0 +1,55 @@
+# Prometheus scrape configuration for a hosted Elembra deployment.
+# Mounted by docker-compose.monitoring.yml.
+#
+# METRICS_API_TOKEN is substituted at container start from the environment
+# (docker compose reads it from .env or the invoking shell). Keep the token in
+# .env, never in this file.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  - job_name: elembra-backend
+    metrics_path: /metrics
+    scheme: http
+    bearer_token: ${METRICS_API_TOKEN}
+    static_configs:
+      - targets: ["backend:8080"]
+        labels:
+          service: elembra-backend
+
+  - job_name: elembra-nginx
+    metrics_path: /nginx-status
+    scheme: http
+    static_configs:
+      - targets: ["nginx:80"]
+        labels:
+          service: elembra-nginx
+
+  # Readiness is scraped as a metric-less liveness signal: the probe fails
+  # (and the ElembraReadiness alert fires) when /health/ready stops returning
+  # 2xx, which the backend guarantees only when database, object storage,
+  # event delivery, and auth sessions are healthy.
+  - job_name: elembra-readiness
+    metrics_path: /health/ready
+    scheme: http
+    static_configs:
+      - targets: ["backend:8080"]
+        labels:
+          service: elembra-backend
+
+  # Chat-runtime health is observed through the Elembra backend's own
+  # exported metrics (chat_observation_lag_seconds,
+  # chat_authorization_denials_total, chat_webhook_outcomes_total) rather
+  # than by scraping the Buzz relay directly, whose endpoints are not
+  # Prometheus-formatted. The observer and relay are additionally covered by
+  # the readiness probe above while the chat profile is running.
