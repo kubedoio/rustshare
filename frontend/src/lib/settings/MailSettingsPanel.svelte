@@ -320,6 +320,7 @@
 
 	async function handleTestImap() {
 		if (!selectedMailAccountId) return;
+		imapTestSucceeded = false;
 		testingImap = true;
 		try {
 			await mailApi.testAccount(selectedMailAccountId);
@@ -379,6 +380,7 @@
 			if (selectedMailAccountId === id) {
 				selectedMailAccountId = null;
 				selectedSmtp = null;
+				imapTestSucceeded = false;
 			}
 			await loadMailAccounts();
 		} catch (error) {
@@ -922,7 +924,7 @@
 							<a class="btn btn-primary btn-sm" href="/apps/mail">Open mail</a>
 							<span class="text-base-content/60">
 								Your mail loads in the Remote mailbox. To keep copies inside RustShare, use Archive
-								below or Save messages from the app.
+								in the settings above or Save messages from the app.
 							</span>
 						</div>
 					{/if}
