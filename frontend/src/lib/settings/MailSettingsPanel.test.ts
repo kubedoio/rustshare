@@ -147,9 +147,7 @@ describe('MailSettingsPanel', () => {
 	});
 
 	it('invalidates the mail-accounts query cache after adding an account', async () => {
-		const invalidateSpy = vi
-			.spyOn(queryClient, 'invalidateQueries')
-			.mockResolvedValue(undefined);
+		const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined);
 		try {
 			render(MailSettingsPanel);
 
