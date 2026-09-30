@@ -131,4 +131,35 @@ describe('MailSettingsPanel', () => {
 		expect((screen.getByLabelText('IMAP host') as HTMLInputElement).value).toBe('imap.gmail.com');
 		expect((screen.getByLabelText('Port') as HTMLInputElement).value).toBe('993');
 	});
+
+	it('invalidates the mail-accounts query cache after adding an account', async () => {
+		const invalidateSpy = vi
+			.spyOn(queryClient, 'invalidateQueries')
+			.mockResolvedValue(undefined);
+		try {
+			render(MailSettingsPanel);
+
+			await fireEvent.click(await screen.findByText('Add account'));
+			await fireEvent.change(screen.getByLabelText('Account name'), {
+				target: { value: 'Personal' }
+			});
+			await fireEvent.change(screen.getByLabelText('Email address / username'), {
+				target: { value: 'bob@example.com' }
+			});
+			await fireEvent.change(screen.getByLabelText('Password / app password'), {
+				target: { value: 'secret' }
+			});
+			await fireEvent.change(screen.getByLabelText('IMAP host'), {
+				target: { value: 'imap.example.com' }
+			});
+			await fireEvent.click(screen.getByText('Save account'));
+
+			await waitFor(() => {
+				expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['mail-accounts'] });
+			});
+			expect(mocks.createAccount).toHaveBeenCalled();
+		} finally {
+			invalidateSpy.mockRestore();
+		}
+	});
 });

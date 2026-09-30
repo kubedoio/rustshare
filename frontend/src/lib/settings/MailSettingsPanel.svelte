@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { createQuery } from '$lib/query-compat';
 	import { mailApi, type MailAccount, type MailFolder, type MailSmtpSettings } from '$lib/api/mail';
+	import { queryClient } from '$lib/query-client';
 	import CollapsibleSection from '$lib/settings/CollapsibleSection.svelte';
 	import MailArchivePanel from '$lib/components/apps/mail/MailArchivePanel.svelte';
 	import { mailAccountStatus, mailAccountStatusLabel } from '$lib/components/apps/mail/mail-types';
@@ -236,6 +237,9 @@
 			showAddAccountForm = false;
 			await loadMailAccounts();
 			await selectMailAccount(account.id);
+			// The mail module caches ['mail-accounts']; a stale cache keeps the
+			// zero-account state alive after setup (issue #316).
+			await queryClient.invalidateQueries({ queryKey: ['mail-accounts'] });
 			pendingSmtpPreset = null;
 		} catch (error) {
 			toastStore.show(error instanceof Error ? error.message : 'Failed to add account', 'error');
@@ -319,6 +323,9 @@
 			await mailApi.testAccount(selectedMailAccountId);
 			toastStore.show('Incoming mail (IMAP) connection successful', 'success');
 			await loadMailAccounts();
+			// The mail module caches ['mail-accounts']; a stale cache keeps the
+			// zero-account state alive after setup (issue #316).
+			await queryClient.invalidateQueries({ queryKey: ['mail-accounts'] });
 		} catch (error) {
 			toastStore.show(error instanceof Error ? error.message : 'IMAP connection failed', 'error');
 		} finally {
