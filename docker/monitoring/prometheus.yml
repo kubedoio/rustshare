@@ -1,9 +1,12 @@
 # Prometheus scrape configuration for a hosted Elembra deployment.
 # Mounted by docker-compose.monitoring.yml.
 #
-# METRICS_API_TOKEN is substituted at container start from the environment
-# (docker compose reads it from .env or the invoking shell). Keep the token in
-# .env, never in this file.
+# The backend /metrics bearer token is read from
+# /run/prometheus-metrics-token (authorization.credentials_file below).
+# Prometheus does NOT substitute environment variables in this file, so the
+# token cannot be inlined as ${METRICS_API_TOKEN}; the compose entrypoint
+# writes it to that file from the environment at container start with mode
+# 0600. Keep the token in .env, never in this file.
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -21,7 +24,9 @@ scrape_configs:
   - job_name: elembra-backend
     metrics_path: /metrics
     scheme: http
-    bearer_token: ${METRICS_API_TOKEN}
+    authorization:
+      type: Bearer
+      credentials_file: /run/prometheus-metrics-token
     static_configs:
       - targets: ["backend:8080"]
         labels:

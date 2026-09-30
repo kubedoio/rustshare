@@ -56,6 +56,7 @@ env_file_get() {
 
 RUSTSHARE_ADMIN_PASSWORD="${RUSTSHARE_ADMIN_PASSWORD:-$(env_file_get RUSTSHARE_ADMIN_PASSWORD || true)}"
 RUSTSHARE_DEMO_VIEWER_PASSWORD="${RUSTSHARE_DEMO_VIEWER_PASSWORD:-$(env_file_get RUSTSHARE_DEMO_VIEWER_PASSWORD || true)}"
+RUSTSHARE_BOOTSTRAP_PASSWORD_FILE="${RUSTSHARE_BOOTSTRAP_PASSWORD_FILE:-$(env_file_get RUSTSHARE_BOOTSTRAP_PASSWORD_FILE || true)}"
 
 require_command() {
 	local command_name="$1"
@@ -252,8 +253,18 @@ VIEWER_COOKIES="${TMP_DIR}/viewer.cookies"
 cleanup() {
 	rm -rf "${TMP_DIR}"
 }
-trap 'write_report "failed" "Beta smoke failed. Inspect the command output and server logs."; cleanup' ERR
-trap cleanup EXIT
+# Failure reporting keys off the exit code, not the ERR trap: bash does not
+# fire ERR for explicit `exit 1` branches, which this script uses for every
+# assertion failure. On success the passed report is written by the main
+# flow before exit 0.
+on_exit() {
+	local code=$?
+	if [[ "${code}" -ne 0 ]]; then
+		write_report "failed" "Beta smoke failed with exit code ${code}. Inspect the command output and server logs."
+	fi
+	cleanup
+}
+trap on_exit EXIT
 
 LOGIN_ADMIN="${TMP_DIR}/login-admin.json"
 LOGIN_VIEWER="${TMP_DIR}/login-viewer.json"
@@ -535,7 +546,6 @@ POST_LOGOUT_STATUS="$(
 }
 
 write_report "passed" "Beta smoke completed successfully."
-trap - ERR
 
 echo "Beta smoke passed."
 echo "Report written to ${REPORT_PATH}"

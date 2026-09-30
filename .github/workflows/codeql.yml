@@ -32,7 +32,9 @@ jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Autobuild compiles the whole Rust workspace; keep headroom so the
+    # first run on main does not time out and hide findings.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
