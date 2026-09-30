@@ -709,10 +709,9 @@ describe('MailApplicationView', () => {
 		// …but it must not be persisted (issue #316).
 		await waitFor(() => {
 			const raw = sessionStorage.getItem('rustshare:mail-module:list-state');
-			if (raw) {
-				const saved = JSON.parse(raw!);
-				expect(saved.mailboxView).not.toBe('saved');
-			}
+			expect(raw).not.toBeNull();
+			const saved = JSON.parse(raw!);
+			expect(saved.mailboxView).not.toBe('saved');
 		});
 	});
 
@@ -732,6 +731,23 @@ describe('MailApplicationView', () => {
 		expect(
 			screen.getByRole('button', { name: 'Saved to RustShare' }).getAttribute('aria-current')
 		).toBeNull();
+	});
+
+	it('keeps the user-chosen saved view when an account appears', async () => {
+		mocks.listAccounts.mockResolvedValue([]);
+		render(MailApplicationView, { module: testModule });
+		expect(await screen.findByRole('button', { name: 'Saved to RustShare' })).toBeTruthy();
+
+		// An explicit user choice of the Saved mailbox is not a forced switch.
+		await fireEvent.click(screen.getByRole('button', { name: 'Saved to RustShare' }));
+
+		mocks.listAccounts.mockResolvedValue([account]);
+		await queryClient.invalidateQueries({ queryKey: ['mail-accounts'] });
+
+		expect(
+			screen.getByRole('button', { name: 'Saved to RustShare' }).getAttribute('aria-current')
+		).toBe('page');
+		expect(screen.getByRole('button', { name: /Inbox/ }).getAttribute('aria-current')).toBeNull();
 	});
 
 	it('truncates long remote attachment names with a tooltip', async () => {
