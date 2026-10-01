@@ -1,0 +1,169 @@
+# Evidence record for the Elembra Public Beta gate.
+#
+# Modeled on docs/releases/customer-alpha-gate.yaml. This file is
+# intentionally explicit: PENDING/FAIL/NOT_RUN is not treated as PASS.
+# Update it only with evidence from the exact release candidate and target
+# environment. Secrets, tokens, private keys, and customer data must never be
+# committed here.
+#
+# Beta scope (see docs/plans/2026-09-30-beta-readiness-plan.md):
+# web-only, hosted-by-maintainers instances, single-host Docker Compose.
+# The Calendar Application (issue #315) is a hard customer requirement and
+# part of the beta scope.
+release_candidate: PENDING_FIRST_BETA_CANDIDATE
+release_tag: PENDING_FIRST_BETA_CANDIDATE
+decision: NO-GO
+recorded_at_utc: PENDING
+
+source:
+  elembra_sha: PENDING
+  buzz_upstream: block/buzz
+  buzz_upstream_tag: PENDING
+  buzz_upstream_sha: PENDING
+  contract: v1alpha1
+  elembra_image: PENDING
+  chat_observer_image: PENDING
+  buzz_image: PENDING
+
+# Beta inherits the Customer Alpha runtime vulnerability policy: exact
+# published digest; REAL Critical or High findings reject the candidate.
+vulnerability_scan:
+  scanner: PENDING
+  recorded_at_utc: PENDING
+  policy: exact published digest; REAL Critical or High findings reject the candidate
+  backend:
+    image: PENDING
+    classification: NOT_RUN
+  observer:
+    image: PENDING
+    classification: NOT_RUN
+  buzz:
+    image: PENDING
+    classification: NOT_RUN
+
+gates:
+  # --- new gates: customer-required feature and security posture ---
+  calendar_application:
+    status: NOT_RUN
+    evidence: >-
+      Issue 315 hard customer requirement. The Calendar Application is
+      implemented per the Application manifest contract
+      (io.elembra.calendar, docs/specs/application-manifest-v1alpha1.md)
+      with backend CRUD, authorization through the existing permission
+      contracts, unit and tenant-isolation contract tests, frontend views
+      at /apps/calendar, integration-event projection for search, calendar
+      steps in scripts/run-beta-smoke.sh, and cohort-confirmed usage.
+  security_posture_hardening:
+    status: PENDING
+    evidence: >-
+      S-1 CodeQL SAST workflow merged (rust + frontend typescript); S-2
+      security review covers the Calendar attack surface; S-3 Calendar
+      tenant isolation via application-level scoping plus contract tests
+      (RLS evaluated for the new tables); S-4 adversarial campaign extended
+      with Calendar IDOR/attendee enumeration; S-5 ICS import hardening if
+      ICS is in approved scope; S-6 calendar rate-limit buckets; S-7
+      external pentest scheduled for the GA track (recorded limitation);
+      S-8 secret scanning + Dependabot recheck on the candidate; S-9
+      documented risk acceptance for per-instance rate limiting and
+      application-level tenant isolation outside RLS-covered tables.
+
+  # --- carried over from the Customer Alpha gate, re-proven on the beta candidate ---
+  repository_governance:
+    status: NOT_RUN
+    evidence: re-verify branch protection after the beta feature freeze is announced
+  immutable_release_artifacts:
+    status: NOT_RUN
+    evidence: "carry-over blocker from alpha.5: the pinned Buzz workflow must publish an SBOM artifact/attestation for the exact digest"
+  buzz_conformance:
+    status: NOT_RUN
+    evidence: re-run the 13 live proofs and structural guard on the beta candidate
+  structural_guard:
+    status: NOT_RUN
+    evidence: re-run scripts/guard-buzz-no-acl.sh on the beta candidate
+  clean_install:
+    status: NOT_RUN
+    evidence: fresh supported Linux host, released artifacts only, via scripts/elembra.sh init --with-chat --release
+  tls_wss:
+    status: NOT_RUN
+    evidence: beta host domain + real certificate + reverse proxy; WSS reconnect observed in a browser session
+  oidc:
+    status: NOT_RUN
+    evidence: real IdP success path plus expiry, disabled-user, and failure paths; or explicit recorded acceptance of password-login mode
+  files_notes_chat_memory_search_ask:
+    status: NOT_RUN
+    evidence: scripts/run-beta-smoke.sh PASS recorded against the beta host, covering login, files, notes, search, chat status, sharing revocation, admin audit, logout
+  admin_offboarding:
+    status: NOT_RUN
+    evidence: synthetic tester offboarded via supported UI/API; Elembra and Buzz access revoked
+  backup:
+    status: NOT_RUN
+    evidence: scripts/backup-stack.sh --with-chat + verify-backup-bundle.sh + encrypted off-host copy
+  restore:
+    status: NOT_RUN
+    evidence: scripts/run-restore-drill.sh destructive isolated drill + post-restore-smoke.sh PASS
+  upgrade:
+    status: NOT_RUN
+    evidence: previous supported release state upgraded to the beta candidate following docs/upgrading.md
+  rollback:
+    status: NOT_RUN
+    evidence: one rehearsed rollback classification (binary rollback vs backup restore) recorded
+  monitoring:
+    status: NOT_RUN
+    evidence: docker-compose.monitoring.yml deployed on the beta host; Prometheus scrapes backend /metrics (including chat_* metrics) and nginx-status; scrape up-state verified
+  alerting:
+    status: NOT_RUN
+    evidence: a real AlertManager route fired a test notification and was acknowledged by a human; a service stop produced a firing alert
+  support_bundle:
+    status: NOT_RUN
+    evidence: scripts/elembra.sh support-bundle collected in a degraded state and manually secret-checked
+  cross_tenant_isolation:
+    status: NOT_RUN
+    evidence: adversarial campaign with two synthetic tenants (files/notes/shares/public links/search/ask citations/token abuse) with attempts and outcomes recorded
+  security_review:
+    status: NOT_RUN
+    evidence: bounded review of the exact beta candidate with BLOCKER=0 and HIGH=0
+
+  # --- new gates specific to a hosted Public Beta ---
+  beta_hosted_environment:
+    status: NOT_RUN
+    evidence: dedicated beta host (prod compose profile, loopback app port, external TLS) serving the exact beta candidate digest
+  beta_tester_cohort:
+    status: NOT_RUN
+    evidence: at least 8 testers across at least 3 distinct teams/organizations onboarded via docs/runbooks/beta-tester-onboarding.md with signed beta agreements
+  beta_feedback_pipeline:
+    status: NOT_RUN
+    evidence: intake (GitHub issues with docs/beta/feedback-template.md) + weekly triage + tester digest operating; first-response SLA published in docs/beta/tester-guide.md
+  beta_known_issues:
+    status: NOT_RUN
+    evidence: docs/beta/known-limitations.md reviewed and handed to every tester at onboarding
+  beta_data_policy:
+    status: NOT_RUN
+    evidence: tester data retention, export, and delete-on-offboarding executed at least once and communicated in the tester guide/agreement
+  beta_update_cadence:
+    status: NOT_RUN
+    evidence: at least 2 rehearsed upgrades delivered to the live cohort with post-deploy beta smoke PASS
+  beta_stability:
+    status: NOT_RUN
+    evidence: final 14 days of the soak with zero Sev-1 incidents, no unresolved tester lockouts, and all other gates still PASS on the running digest
+
+known_limitations:
+  - single-host Docker Compose only; no HA, multi-region, or zero-downtime upgrades
+  - web-only beta; mobile and desktop clients are out of scope
+  - Obsidian/vault sync remains excluded until issue 236 is resolved or explicitly accepted out of scope
+  - chat reply/thread composer UI deferred (issue 243)
+  - full account-managed chat device administration deferred (issue 215)
+  - the Calendar Application is new in this beta (issue 315); its feature set is limited to the approved specification, and ICS import/recurrence depth depends on the signed-off scope
+  - external penetration testing is scheduled for the GA track and is not part of this beta; the internal security review and adversarial campaign are
+  - self-hosting by testers is not a supported beta path
+
+release_blockers:
+  - Calendar Application (issue 315) is a hard customer requirement and is not implemented yet; the beta candidate cannot be cut without it
+  - all carried-over Customer Alpha gates must be recorded PASS (or justified N/A) against the exact beta candidate
+  - security posture hardening (S-1..S-9) is mandatory and must cover the new Calendar attack surface
+  - hosted beta environment, cohort onboarding, feedback pipeline, data policy, update cadence, and stability gates have not started
+  - published Buzz SBOM artifact is still missing from the pinned Buzz workflow
+
+decision_rule: >-
+  The beta launches only when every gate above is PASS or an explicitly
+  justified N/A, with BLOCKER=0 and HIGH=0 security findings. Until then the
+  decision remains NO-GO. PENDING, FAIL, and NOT_RUN are never PASS.

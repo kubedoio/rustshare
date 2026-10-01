@@ -17,6 +17,12 @@ The project currently focuses on:
 
 The following items are actively being worked on:
 
+- **Public Beta readiness** — see
+  [docs/plans/2026-09-30-beta-readiness-plan.md](docs/plans/2026-09-30-beta-readiness-plan.md)
+  and the beta launch decision record
+  [docs/releases/beta-gate.yaml](docs/releases/beta-gate.yaml): hosted beta
+  environment, monitoring/alerting, tester cohort onboarding, and the
+  remaining target-environment evidence campaign
 - Frontend polish and responsive design
 - OIDC production validation
 - Real-world restore drill validation

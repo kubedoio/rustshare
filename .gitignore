@@ -42,6 +42,7 @@ temp/
 backups/
 restore-drill-reports/
 launch-smoke-reports/
+beta-smoke-reports/
 
 # Workspace helpers
 .agents/

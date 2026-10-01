@@ -50,6 +50,42 @@ jobs:
           grep -q 'proxy_set_header X-Forwarded-Proto \$forwarded_proto;' docker/nginx.conf
           docker run --rm --add-host backend:127.0.0.1 --add-host rustfs:127.0.0.1 -v "$PWD/docker/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:alpine nginx -t
 
+  monitoring-compose-contract:
+    name: Monitoring Compose Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate monitoring stack configuration
+        env:
+          # Placeholder values for interpolation only; nothing is deployed.
+          METRICS_API_TOKEN: compose-validation-only
+          GRAFANA_ADMIN_PASSWORD: compose-validation-only
+        run: |
+          # Interpolation and schema check of the monitoring compose file.
+          # --profile dashboards: grafana is behind that profile, and plain
+          # 'compose config' omits profile-gated services.
+          docker compose -f docker-compose.monitoring.yml --profile dashboards config --format json > /tmp/monitoring-compose.json
+          jq -e '.services.prometheus.image | test("^prom/prometheus@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
+          jq -e '.services["blackbox-exporter"].image | test("^prom/blackbox-exporter@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
+          jq -e '.services.alertmanager.image | test("^prom/alertmanager@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
+          jq -e '.services.grafana.image | test("^grafana/grafana@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
+          # Prometheus config + alert rules. Mounted at /etc/prometheus so
+          # the absolute rule_files path in prometheus.yml resolves; a dummy
+          # token file is mounted at the credentials_file path so the
+          # authorization reference validates.
+          printf 'ci-validation-only' > /tmp/prometheus-metrics-token
+          # The image entrypoint is the server binary; override it to run the
+          # CLI tools.
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/docker/monitoring:/etc/prometheus:ro" \
+            -v "/tmp/prometheus-metrics-token:/tmp/prometheus-metrics-token:ro" \
+            prom/prometheus@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e \
+            check config /etc/prometheus/prometheus.yml
+          # AlertManager routing config.
+          docker run --rm --entrypoint amtool -v "$PWD/docker/monitoring:/cfg:ro" \
+            prom/alertmanager@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a \
+            check-config /cfg/alertmanager.yml
+
   fmt:
     name: Format
     runs-on: ubuntu-latest

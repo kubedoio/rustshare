@@ -1,0 +1,136 @@
+# Monitoring stack for a hosted Elembra deployment.
+#
+# Deploys Prometheus + AlertManager (and optionally Grafana with
+# `--profile dashboards`) next to an already-running Elembra stack, on the
+# same Docker network, so it can scrape:
+#   - backend /metrics   (Bearer METRICS_API_TOKEN; requires
+#                         METRICS_API_TOKEN to be passed to the backend
+#                         service in docker-compose.yml, which it is)
+#   - nginx /nginx-status
+#   - backend /health/ready via the blackbox HTTP prober (JSON endpoint;
+#     Prometheus cannot scrape it directly)
+#   - chat services when the alpha/buzz profile is running
+#
+# Usage (from the deployment directory of the running stack):
+#   METRICS_API_TOKEN=<token> docker compose -f docker-compose.monitoring.yml up -d
+#
+# The compose project must match the Elembra stack so `external: true`
+# resolves. When the Elembra stack is started from the repository root with
+# plain `docker compose up -d`, its default network is `rustshare_default`;
+# override with ELEMBRA_COMPOSE_NETWORK if a different project name is used.
+#
+# Images are digest-pinned per the repository supply-chain convention:
+#   prom/prometheus:v3.13.4     (amd64/arm64 multi-arch index)
+#   prom/alertmanager:v0.34.1
+#   prom/blackbox-exporter:v0.28.0
+#   grafana/grafana:13.0.10     (optional, --profile dashboards)
+#
+# This stack is part of the `monitoring` and `alerting` beta gates
+# (docs/releases/beta-gate.yaml): monitoring is not a PASS until this
+# Prometheus instance actually scrapes the deployment, and alerting is not a
+# PASS until a real AlertManager route fires and is acknowledged.
+
+services:
+  blackbox-exporter:
+    image: prom/blackbox-exporter@sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc
+    # v0.28.0
+    restart: unless-stopped
+    # HTTP 2xx probe module only; the default config already provides it.
+    # The probe target is the backend readiness endpoint (see
+    # docker/monitoring/prometheus.yml, job elembra-readiness) — Prometheus
+    # cannot scrape the JSON readiness endpoint directly.
+    ports:
+      - "127.0.0.1:${BLACKBOX_EXPORTER_HOST_PORT:-9115}:9115"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9115/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e
+    # v3.13.4
+    restart: unless-stopped
+    # The backend /metrics bearer token. Prometheus does not expand
+    # environment variables inside its config file, so the entrypoint below
+    # writes the token to /tmp/prometheus-metrics-token (mode 0600, via
+    # umask) and prometheus.yml consumes it through
+    # authorization.credentials_file. Compose reads the variable from .env
+    # or the invoking shell. /tmp (not /run) because the prom/prometheus
+    # image runs as nobody, which has no writable /run.
+    environment:
+      METRICS_API_TOKEN: ${METRICS_API_TOKEN:?set METRICS_API_TOKEN to the backend /metrics bearer token}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        umask 077;
+        printf '%s' "$$METRICS_API_TOKEN" > /tmp/prometheus-metrics-token;
+        exec /bin/prometheus
+        --config.file=/etc/prometheus/prometheus.yml
+        --storage.tsdb.path=/prometheus
+        --storage.tsdb.retention.time=30d
+        --web.enable-lifecycle
+    volumes:
+      - ./docker/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      # Loopback only: expose publicly only through an authenticated reverse
+      # proxy, if at all.
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  alertmanager:
+    image: prom/alertmanager@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+    # v0.34.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      # alertmanager.yml contains the notification route. The committed
+      # default routes to a placeholder receiver; operators must configure a
+      # real destination (email/webhook) before the alerting gate can PASS.
+      - ./docker/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_HOST_PORT:-9093}:9093"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana@sha256:c8f326efdb7be9be52047edaab34cf8dadb5152c1244af102eb0a517a7797068
+    # 13.0.10
+    profiles: ["dashboards"]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD (generate with openssl rand -base64 24)}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+    volumes:
+      - ./docker/monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:
+
+networks:
+  default:
+    name: ${ELEMBRA_COMPOSE_NETWORK:-rustshare_default}
+    external: true

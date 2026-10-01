@@ -1,0 +1,69 @@
+name: CodeQL
+
+# Static application security testing (beta readiness plan item S-1,
+# docs/plans/2026-09-30-beta-readiness-plan.md §4.5). Complements the
+# existing cargo-deny advisory gate in ci.yml (dependency vulnerabilities)
+# with source-level analysis for the Rust workspace and the frontend.
+
+permissions:
+  contents: read
+  security-events: write
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Weekly deep scan of main in addition to PR/push-triggered analysis.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Unused in buildless mode; kept so a future switch to a manual Rust build
+  # mode does not reach for a live database.
+  SQLX_OFFLINE: "true"
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    # The Rust extractor analyzes sources without a build (build-mode none);
+    # JS/TS analysis is likewise buildless. Keep headroom for the first
+    # full-workspace run on main.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: rust
+            # CodeQL's Rust extractor does not support autobuild; source-based
+            # analysis runs in buildless mode (no cargo invocation needed).
+            build-mode: none
+          - language: javascript-typescript
+            # The frontend is the only TypeScript tree; JS/TS analysis is
+            # buildless (CodeQL excludes node_modules and vendored deps).
+            build-mode: none
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4.37.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # Security-extended queries: stricter than the default suite;
+          # findings surface as code scanning alerts, they do not fail the
+          # workflow (triage happens in the security review gate).
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4.37.3
+        with:
+          category: "/language:${{ matrix.language }}"
