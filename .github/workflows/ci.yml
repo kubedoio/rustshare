@@ -74,15 +74,17 @@ jobs:
           # token file is mounted at the credentials_file path so the
           # authorization reference validates.
           printf 'ci-validation-only' > /tmp/prometheus-metrics-token
-          docker run --rm \
+          # The image entrypoint is the server binary; override it to run the
+          # CLI tools.
+          docker run --rm --entrypoint promtool \
             -v "$PWD/docker/monitoring:/etc/prometheus:ro" \
             -v "/tmp/prometheus-metrics-token:/tmp/prometheus-metrics-token:ro" \
             prom/prometheus@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e \
-            promtool check config /etc/prometheus/prometheus.yml
+            check config /etc/prometheus/prometheus.yml
           # AlertManager routing config.
-          docker run --rm -v "$PWD/docker/monitoring:/cfg:ro" \
+          docker run --rm --entrypoint amtool -v "$PWD/docker/monitoring:/cfg:ro" \
             prom/alertmanager@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a \
-            amtool check-config /cfg/alertmanager.yml
+            check-config /cfg/alertmanager.yml
 
   fmt:
     name: Format
