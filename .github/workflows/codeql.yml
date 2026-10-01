@@ -25,23 +25,26 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # The Rust extraction build must not reach for a live database.
+  # Unused in buildless mode; kept so a future switch to a manual Rust build
+  # mode does not reach for a live database.
   SQLX_OFFLINE: "true"
 
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
-    # Autobuild compiles the whole Rust workspace; keep headroom so the
-    # first run on main does not time out and hide findings.
+    # The Rust extractor analyzes sources without a build (build-mode none);
+    # JS/TS analysis is likewise buildless. Keep headroom for the first
+    # full-workspace run on main.
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         include:
           - language: rust
-            # The unified workspace builds from the repository root.
-            build-mode: autobuild
+            # CodeQL's Rust extractor does not support autobuild; source-based
+            # analysis runs in buildless mode (no cargo invocation needed).
+            build-mode: none
           - language: javascript-typescript
             # The frontend is the only TypeScript tree; JS/TS analysis is
             # buildless (CodeQL excludes node_modules and vendored deps).
@@ -49,10 +52,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-
-      # CodeQL Rust autobuild invokes cargo; ubuntu-latest does not guarantee
-      # a matching toolchain, so pin the same one the workspace builds with.
-      - uses: dtolnay/rust-toolchain@1.97.1
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4.37.3

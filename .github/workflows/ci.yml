@@ -64,7 +64,7 @@ jobs:
           # Interpolation and schema check of the monitoring compose file.
           docker compose -f docker-compose.monitoring.yml config --format json > /tmp/monitoring-compose.json
           jq -e '.services.prometheus.image | test("^prom/prometheus@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
-          jq -e '.services.blackbox-exporter.image | test("^prom/blackbox-exporter@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
+          jq -e '.services["blackbox-exporter"].image | test("^prom/blackbox-exporter@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
           jq -e '.services.alertmanager.image | test("^prom/alertmanager@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
           jq -e '.services.grafana.image | test("^grafana/grafana@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
           # Prometheus config + alert rules. Mounted at /etc/prometheus so
