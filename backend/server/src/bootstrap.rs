@@ -70,6 +70,7 @@ struct Services {
     vault_sync_service: Arc<VaultSyncService<MetadataStore, ObjectStore>>,
     chat_integration_service: Arc<crate::state::AppChatIntegrationService>,
     mail_service: Arc<crate::services::mail_service::MailService>,
+    calendar_service: Arc<crate::services::calendar_service::CalendarService>,
     secret_key: Arc<SecretEncryptionKey>,
     application_registry: Arc<ApplicationRegistry>,
     outbox_store: Arc<OutboxStore>,
@@ -365,6 +366,11 @@ async fn init_services(
         Arc::clone(&secret_key),
     ));
 
+    let calendar_service = Arc::new(crate::services::calendar_service::CalendarService::new(
+        Arc::clone(&metadata_store),
+        Arc::clone(&secret_key),
+    ));
+
     // Shared content indexer used both by the AI service and by the note
     // service's indexing callback sink. Kept outside the tokio::join! so both
     // services can be wired to the same in-memory index.
@@ -575,6 +581,7 @@ async fn init_services(
         vault_sync_service,
         chat_integration_service,
         mail_service,
+        calendar_service,
         secret_key,
         application_registry,
         outbox_store,
@@ -975,6 +982,7 @@ pub async fn init_app() -> Result<AppState> {
         vault_sync_service: services.vault_sync_service,
         chat_integration_service: services.chat_integration_service,
         mail_service: services.mail_service,
+        calendar_service: services.calendar_service,
         outbox_store: services.outbox_store,
         chat_observation_store,
         memory_catalog_store,

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE calendar_events\n            SET deleted_at = now(), updated_at = now()\n            WHERE source_id = $1 AND deleted_at IS NULL\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7e543aaf67a0ce3eefe149611b171bd49e5b83d26862ad50703baf8218fbfdb8"
+}

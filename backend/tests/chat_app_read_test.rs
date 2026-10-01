@@ -684,6 +684,13 @@ async fn setup_app_state(pool: PgPool) -> (AppState, ChatIdentityStore, Arc<Chat
         Arc::new(secret_key.clone()),
     ));
 
+    let calendar_service = Arc::new(
+        rustshare_server::services::calendar_service::CalendarService::new(
+            metadata_store.clone(),
+            Arc::new(secret_key.clone()),
+        ),
+    );
+
     let outbox_store = Arc::new(OutboxStore::new(
         pool.clone(),
         Arc::new(rustshare_core::domain::ApplicationRegistry::first_party().unwrap()),
@@ -785,6 +792,7 @@ async fn setup_app_state(pool: PgPool) -> (AppState, ChatIdentityStore, Arc<Chat
         vault_sync_service,
         chat_integration_service,
         mail_service,
+        calendar_service,
         outbox_store,
         chat_observation_store: chat_observation_store.clone(),
         memory_catalog_store,

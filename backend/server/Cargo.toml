@@ -33,8 +33,11 @@ utoipa-swagger-ui = { workspace = true }
 sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_urlencoded.workspace = true
 uuid = { workspace = true, features = ["macro-diagnostics", "v5"] }
 chrono.workspace = true
+chrono-tz.workspace = true
+rrule.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -299,6 +302,10 @@ path = "../tests/chat_app_read_test.rs"
 [[test]]
 name = "chat_bootstrap_test"
 path = "../tests/chat_bootstrap_test.rs"
+
+[[test]]
+name = "calendar_api_test"
+path = "../tests/calendar_api_test.rs"
 
 [[test]]
 name = "vault_webui_content_test"

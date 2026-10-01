@@ -214,6 +214,13 @@ pub async fn setup_test_server() -> (AppState, String) {
         Arc::new(secret_key.clone()),
     ));
 
+    let calendar_service = Arc::new(
+        rustshare_server::services::calendar_service::CalendarService::new(
+            metadata_store.clone(),
+            Arc::new(secret_key.clone()),
+        ),
+    );
+
     let prometheus_handle = rustshare_server::metrics::init_metrics();
 
     let outbox_store = Arc::new(rustshare_storage::OutboxStore::new(
@@ -285,6 +292,7 @@ pub async fn setup_test_server() -> (AppState, String) {
         vault_sync_service,
         chat_integration_service,
         mail_service,
+        calendar_service,
         outbox_store,
         chat_observation_store,
         memory_catalog_store,

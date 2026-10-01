@@ -447,6 +447,32 @@ pub fn mail_routes() -> Router<AppState> {
         )
 }
 
+pub fn calendar_routes() -> Router<AppState> {
+    use axum::routing::{get, patch};
+    Router::new()
+        .route(
+            "/api/v1/calendar/events",
+            get(crate::handlers::calendar::list_calendar_events)
+                .post(crate::handlers::calendar::create_calendar_event),
+        )
+        .route(
+            "/api/v1/calendar/events/{id}",
+            get(crate::handlers::calendar::get_calendar_event)
+                .patch(crate::handlers::calendar::update_calendar_event)
+                .delete(crate::handlers::calendar::delete_calendar_event),
+        )
+        .route(
+            "/api/v1/calendar/sources",
+            get(crate::handlers::calendar::list_calendar_sources)
+                .post(crate::handlers::calendar::create_calendar_source),
+        )
+        .route(
+            "/api/v1/calendar/sources/{id}",
+            patch(crate::handlers::calendar::update_calendar_source)
+                .delete(crate::handlers::calendar::delete_calendar_source),
+        )
+}
+
 pub fn kanban_routes() -> Router<AppState> {
     use axum::routing::{delete, get, patch, post, put};
     Router::new()

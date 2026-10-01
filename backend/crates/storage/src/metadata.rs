@@ -6,11 +6,11 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
-    File, FileVersion, Folder, MailAccount, MailAccountId, MailAttachment, MailImportJob,
-    MailImportJobId, MailLink, MailLinkId, MailMessage, MailMessageId, MailMessagePart,
-    MailSmtpSettings, MailSortOrder, OidcLoginState, ReplicationJob, ReplicationJobStatus,
-    ReplicationState, ReplicationTarget, Share, SharePermissions, User, UserId, UserSession, Vault,
-    VaultDevice, VaultFile, VaultWritePolicy,
+    CalendarEvent, CalendarSource, File, FileVersion, Folder, MailAccount, MailAccountId,
+    MailAttachment, MailImportJob, MailImportJobId, MailLink, MailLinkId, MailMessage,
+    MailMessageId, MailMessagePart, MailSmtpSettings, MailSortOrder, OidcLoginState,
+    ReplicationJob, ReplicationJobStatus, ReplicationState, ReplicationTarget, Share,
+    SharePermissions, User, UserId, UserSession, Vault, VaultDevice, VaultFile, VaultWritePolicy,
 };
 use rustshare_core::services::VaultSyncError;
 use rustshare_core::validation::escape_ilike;
@@ -6339,6 +6339,386 @@ impl MetadataStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Lazily materialize the implicit `internal` calendar source for a user.
+    ///
+    /// Idempotent via the partial unique index on `(tenant_id, owner_id)`.
+    pub async fn ensure_internal_calendar_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+    ) -> Result<CalendarSource> {
+        let row = sqlx::query_as!(
+            CalendarSource,
+            r#"
+            INSERT INTO calendar_sources (tenant_id, owner_id, kind, display_name)
+            VALUES ($1, $2, 'internal', 'Calendar')
+            ON CONFLICT (tenant_id, owner_id)
+                WHERE kind = 'internal' AND deleted_at IS NULL
+            DO NOTHING
+            RETURNING
+                id, tenant_id, owner_id, kind, display_name, external_account,
+                external_calendar_id, refresh_token_enc, access_token_enc,
+                access_token_expires_at, scopes, is_enabled, last_synced_at,
+                last_error, status, deleted_at, created_at, updated_at
+            "#,
+            tenant_id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        match row {
+            Some(source) => Ok(source),
+            None => self.get_internal_calendar_source(tenant_id, owner_id).await,
+        }
+    }
+    async fn get_internal_calendar_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+    ) -> Result<CalendarSource> {
+        let row = sqlx::query_as!(
+            CalendarSource,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, kind, display_name, external_account,
+                external_calendar_id, refresh_token_enc, access_token_enc,
+                access_token_expires_at, scopes, is_enabled, last_synced_at,
+                last_error, status, deleted_at, created_at, updated_at
+            FROM calendar_sources
+            WHERE tenant_id = $1 AND owner_id = $2 AND kind = 'internal'
+              AND deleted_at IS NULL
+            "#,
+            tenant_id,
+            owner_id
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// List all active calendar sources for a user, internal source first.
+    pub async fn list_calendar_sources(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+    ) -> Result<Vec<CalendarSource>> {
+        let rows = sqlx::query_as!(
+            CalendarSource,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, kind, display_name, external_account,
+                external_calendar_id, refresh_token_enc, access_token_enc,
+                access_token_expires_at, scopes, is_enabled, last_synced_at,
+                last_error, status, deleted_at, created_at, updated_at
+            FROM calendar_sources
+            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            ORDER BY (kind = 'internal') DESC, created_at ASC
+            "#,
+            tenant_id,
+            owner_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Find a calendar source by ID, scoped to the owning user.
+    pub async fn get_calendar_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        id: Uuid,
+    ) -> Result<Option<CalendarSource>> {
+        let row = sqlx::query_as!(
+            CalendarSource,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, kind, display_name, external_account,
+                external_calendar_id, refresh_token_enc, access_token_enc,
+                access_token_expires_at, scopes, is_enabled, last_synced_at,
+                last_error, status, deleted_at, created_at, updated_at
+            FROM calendar_sources
+            WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL
+            "#,
+            id,
+            tenant_id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Create an `ical_import` source. Duplicate active rows are the caller's
+    /// concern (the service returns 409 before calling this).
+    pub async fn create_ical_import_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        display_name: &str,
+    ) -> Result<CalendarSource> {
+        let row = sqlx::query_as!(
+            CalendarSource,
+            r#"
+            INSERT INTO calendar_sources (tenant_id, owner_id, kind, display_name)
+            VALUES ($1, $2, 'ical_import', $3)
+            RETURNING
+                id, tenant_id, owner_id, kind, display_name, external_account,
+                external_calendar_id, refresh_token_enc, access_token_enc,
+                access_token_expires_at, scopes, is_enabled, last_synced_at,
+                last_error, status, deleted_at, created_at, updated_at
+            "#,
+            tenant_id,
+            owner_id,
+            display_name
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Update a calendar source's display name and enabled state.
+    pub async fn update_calendar_source(&self, source: &CalendarSource) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE calendar_sources
+            SET display_name = $2, is_enabled = $3, updated_at = now()
+            WHERE id = $1 AND tenant_id = $4 AND owner_id = $5 AND deleted_at IS NULL
+            "#,
+            source.id,
+            source.display_name,
+            source.is_enabled,
+            source.tenant_id,
+            source.owner_id,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Soft-delete a calendar source, clear its stored tokens, and soft-delete
+    /// every event mirrored from it. Returns `true` when a row was deleted.
+    pub async fn soft_delete_calendar_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        id: Uuid,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_sources
+            SET deleted_at = now(),
+                refresh_token_enc = NULL,
+                access_token_enc = NULL,
+                access_token_expires_at = NULL,
+                scopes = NULL,
+                updated_at = now()
+            WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL
+            "#,
+            id,
+            tenant_id,
+            owner_id
+        )
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Ok(false);
+        }
+        sqlx::query!(
+            r#"
+            UPDATE calendar_events
+            SET deleted_at = now(), updated_at = now()
+            WHERE source_id = $1 AND deleted_at IS NULL
+            "#,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(true)
+    }
+
+    /// Insert a calendar event.
+    pub async fn create_calendar_event(&self, event: &CalendarEvent) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO calendar_events (
+                id, tenant_id, owner_id, source_id, external_uid, external_etag,
+                recurrence_id, title, description, location, starts_at, ends_at,
+                all_day, original_date, timezone, rrule, status, read_only, raw,
+                deleted_at, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                    $15, $16, $17, $18, $19, $20, $21, $22)
+            "#,
+            event.id,
+            event.tenant_id,
+            event.owner_id,
+            event.source_id,
+            event.external_uid,
+            event.external_etag,
+            event.recurrence_id,
+            event.title,
+            event.description,
+            event.location,
+            event.starts_at,
+            event.ends_at,
+            event.all_day,
+            event.original_date,
+            event.timezone,
+            event.rrule,
+            event.status,
+            event.read_only,
+            event.raw,
+            event.deleted_at,
+            event.created_at,
+            event.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Find a calendar event by ID, scoped to the owning user.
+    pub async fn get_calendar_event(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        id: Uuid,
+    ) -> Result<Option<CalendarEvent>> {
+        let row = sqlx::query_as!(
+            CalendarEvent,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, source_id, external_uid, external_etag,
+                recurrence_id, title, description, location, starts_at, ends_at,
+                all_day, original_date, timezone, rrule, status, read_only, raw,
+                deleted_at, created_at, updated_at
+            FROM calendar_events
+            WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL
+            "#,
+            id,
+            tenant_id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Whether an active calendar event row exists with this ID regardless of
+    /// owner. Used to distinguish foreign IDs (404) from already-deleted ones
+    /// (idempotent delete success) without leaking existence across owners.
+    pub async fn calendar_event_exists_any_owner(&self, id: Uuid) -> Result<bool> {
+        let exists = sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM calendar_events WHERE id = $1 AND deleted_at IS NULL)"#,
+            id
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists.unwrap_or(false))
+    }
+
+    /// Update the mutable columns of a calendar event.
+    pub async fn update_calendar_event(&self, event: &CalendarEvent) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE calendar_events
+            SET title = $2, description = $3, location = $4, starts_at = $5,
+                ends_at = $6, all_day = $7, original_date = $8, timezone = $9,
+                rrule = $10, status = $11, updated_at = now()
+            WHERE id = $1 AND tenant_id = $12 AND owner_id = $13 AND deleted_at IS NULL
+            "#,
+            event.id,
+            event.title,
+            event.description,
+            event.location,
+            event.starts_at,
+            event.ends_at,
+            event.all_day,
+            event.original_date,
+            event.timezone,
+            event.rrule,
+            event.status,
+            event.tenant_id,
+            event.owner_id,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Soft-delete a calendar event. Returns `true` when a row was deleted.
+    pub async fn soft_delete_calendar_event(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        id: Uuid,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_events
+            SET deleted_at = now(), updated_at = now()
+            WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL
+            "#,
+            id,
+            tenant_id,
+            owner_id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// List events for the range query: non-recurring events overlapping
+    /// `[from, to)` plus every recurring master (for service-side expansion).
+    /// Cancelled events are excluded unless requested, and events of disabled
+    /// sources are excluded unless their source is explicitly requested.
+    pub async fn list_calendar_events_in_range(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        source_ids: &[Uuid],
+        include_cancelled: bool,
+    ) -> Result<Vec<CalendarEvent>> {
+        let rows = sqlx::query_as!(
+            CalendarEvent,
+            r#"
+            SELECT
+                e.id, e.tenant_id, e.owner_id, e.source_id, e.external_uid,
+                e.external_etag, e.recurrence_id, e.title, e.description,
+                e.location, e.starts_at, e.ends_at, e.all_day, e.original_date,
+                e.timezone, e.rrule, e.status, e.read_only, e.raw, e.deleted_at,
+                e.created_at, e.updated_at
+            FROM calendar_events e
+            WHERE e.tenant_id = $1 AND e.owner_id = $2 AND e.deleted_at IS NULL
+              AND ($5::bool OR e.status <> 'cancelled')
+              AND (cardinality($6::uuid[]) = 0 OR e.source_id = ANY($6))
+              AND (
+                e.source_id = ANY($6)
+                OR e.source_id IN (
+                  SELECT s.id FROM calendar_sources s
+                  WHERE s.owner_id = $2 AND s.is_enabled AND s.deleted_at IS NULL
+                )
+              )
+              AND (
+                e.rrule IS NOT NULL
+                OR (e.starts_at < $4 AND e.ends_at > $3)
+              )
+            "#,
+            tenant_id,
+            owner_id,
+            from,
+            to,
+            include_cancelled,
+            source_ids
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
     }
 }
 

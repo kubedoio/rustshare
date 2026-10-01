@@ -1,6 +1,7 @@
 mod application;
 mod application_config;
 mod application_user_preference;
+mod calendar;
 mod device_token;
 mod file;
 mod file_version;
@@ -21,6 +22,11 @@ mod vault;
 
 pub mod mail_account;
 pub use mail_account::*;
+
+pub use calendar::{
+    CalendarEvent, CalendarEventStatus, CalendarImportJob, CalendarImportJobStatus, CalendarSource,
+    CalendarSourceKind, CalendarSourceStatus, CalendarSyncState,
+};
 
 pub use device_token::{DevicePairRequest, DeviceToken};
 
