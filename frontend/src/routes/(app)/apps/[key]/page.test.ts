@@ -27,6 +27,47 @@ vi.mock('$lib/applications/registry', async () => {
 	};
 });
 
+// MailApplicationView fires mail API queries on mount; stub them so the
+// renderer-routing test below exercises the real component.
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+vi.mock('$lib/api/files', () => ({ listAllFiles: vi.fn().mockResolvedValue([]) }));
+vi.mock('$lib/api/mail', () => ({
+	mailApi: {
+		listAccounts: vi.fn().mockResolvedValue([]),
+		listFolders: vi.fn().mockResolvedValue([]),
+		listAccountMessages: vi
+			.fn()
+			.mockResolvedValue({ uidvalidity: null, next_cursor: null, messages: [] }),
+		getRemoteMessageBody: vi.fn(),
+		markMessageRead: vi.fn(),
+		markMessageUnread: vi.fn(),
+		moveMessage: vi.fn(),
+		archiveMessage: vi.fn(),
+		deleteMessage: vi.fn(),
+		starMessage: vi.fn(),
+		unstarMessage: vi.fn(),
+		createImportJob: vi.fn(),
+		listImportJobs: vi.fn().mockResolvedValue([]),
+		listArchiveJobs: vi.fn().mockResolvedValue([]),
+		listMessagesPage: vi.fn().mockResolvedValue({
+			messages: [],
+			next_cursor_at: null,
+			next_cursor_id: null
+		}),
+		listDrafts: vi.fn().mockResolvedValue([]),
+		getDraft: vi.fn(),
+		getSmtpSettings: vi.fn().mockResolvedValue(null),
+		sendOutboundMail: vi.fn(),
+		saveDraft: vi.fn(),
+		updateDraft: vi.fn(),
+		sendDraft: vi.fn(),
+		discardDraft: vi.fn(),
+		uploadMessage: vi.fn(),
+		remoteAttachmentUrl: vi.fn(() => '/attachment'),
+		remoteSourceUrl: vi.fn(() => '/message.eml')
+	}
+}));
+
 describe('Application Page Dynamic Route', () => {
 	const mockUser = {
 		id: 'user_1',
@@ -149,5 +190,22 @@ describe('Application Page Dynamic Route', () => {
 		render(Page);
 		// GenericApplicationView renders inside ApplicationPageShell with module title
 		expect(screen.getByText('Test Application')).toBeTruthy();
+	});
+
+	it('routes the first-party "mail" renderer to the mail mailbox view', async () => {
+		(page.subscribe as any).mockImplementation((run: any) => {
+			run({ params: { key: 'mail' } });
+			return () => {};
+		});
+		(registry.getApplicationByRouteSlug as any).mockReturnValue({
+			...mockModule,
+			key: 'mail',
+			ui: { ...mockModule.ui, page: { ...mockModule.ui.page, renderer: 'mail' } }
+		});
+
+		render(Page);
+		// MailApplicationView's zero-account banner — GenericApplicationView
+		// would render the generic empty state instead.
+		expect(await screen.findByText(/No mail account configured/)).toBeTruthy();
 	});
 });

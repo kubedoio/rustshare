@@ -8,6 +8,12 @@ sequential numbers. New ADRs must pick the next unused number. Statuses used:
 > an ADR by its full file name (`0036-elembra-chat-zero-config-bootstrap.md`),
 > never by number alone.
 
+## Index
+
+| ADR | Title | Status |
+| --- | --- | --- |
+| `0037-calendar-application-and-external-sync.md` | Calendar Application and External Calendar Sync | Proposed |
+
 ## Known duplicate numbers (documented cleanup — renumbering deferred)
 
 Renumbering an ADR would break existing cross-references and historical
