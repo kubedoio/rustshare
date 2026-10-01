@@ -72,6 +72,11 @@
 	let searchInput = $state('');
 	let search = $state('');
 
+	// Tracks whether the current 'saved' view came from the forced zero-account
+	// switch rather than a user choice, so we can revert it and never persist it
+	// (issue #316).
+	let forcedSavedMailboxView = false;
+
 	// One global sort preference for every mailbox and the Saved view,
 	// persisted so it survives refresh and navigation away/back (issue #182).
 	const MAIL_SORT_STORAGE_KEY = 'mail-sort-order';
@@ -153,7 +158,14 @@
 			search
 		};
 		try {
-			sessionStorage.setItem(MAIL_LIST_STATE_KEY, JSON.stringify(state));
+			// Preserve the user-chosen mailbox view: the forced zero-account
+			// switch above must never be persisted (issue #316).
+			const raw = sessionStorage.getItem(MAIL_LIST_STATE_KEY);
+			const prev = raw ? (JSON.parse(raw) as Partial<PersistedMailListState>) : {};
+			sessionStorage.setItem(
+				MAIL_LIST_STATE_KEY,
+				JSON.stringify({ ...state, mailboxView: prev.mailboxView ?? 'remote' })
+			);
 		} catch {
 			// Persistence is best-effort (private mode / quota).
 		}
@@ -267,9 +279,20 @@
 
 	$effect(() => {
 		// With zero IMAP accounts the remote mailbox is unusable; land on the
-		// Saved to RustShare mailbox so imported mail stays reachable.
+		// Saved to RustShare mailbox so imported mail stays reachable. This is a
+		// forced, non-persisted state: when an account appears we return to the
+		// remote mailbox (issue #316).
 		if ($accountsQuery.data && $accountsQuery.data.length === 0 && mailboxView === 'remote') {
 			mailboxView = 'saved';
+			forcedSavedMailboxView = true;
+		} else if (
+			$accountsQuery.data &&
+			$accountsQuery.data.length > 0 &&
+			forcedSavedMailboxView &&
+			mailboxView === 'saved'
+		) {
+			mailboxView = 'remote';
+			forcedSavedMailboxView = false;
 		}
 	});
 
@@ -521,10 +544,25 @@
 
 	function selectMailbox(view: MailboxView, folder: string | null = selectedFolder) {
 		mailboxView = view;
+		forcedSavedMailboxView = false;
+		persistMailboxView(view);
 		selectedFolder = folder;
 		selectedMessage = null;
 		selectedUids = [];
 		mobilePane = 'list';
+	}
+
+	// Persists only user-chosen mailbox views; the forced zero-account switch
+	// never reaches storage (issue #316).
+	function persistMailboxView(view: MailboxView) {
+		if (!browser) return;
+		try {
+			const raw = sessionStorage.getItem(MAIL_LIST_STATE_KEY);
+			const prev = raw ? JSON.parse(raw) : {};
+			sessionStorage.setItem(MAIL_LIST_STATE_KEY, JSON.stringify({ ...prev, mailboxView: view }));
+		} catch {
+			// Persistence is best-effort.
+		}
 	}
 
 	async function selectRemoteMessage(message: MailAccountMessage) {
@@ -728,6 +766,8 @@
 							onchange={() => {
 								selectedFolder = null;
 								mailboxView = 'remote';
+								forcedSavedMailboxView = false;
+								persistMailboxView('remote');
 							}}
 						>
 							{#each $accountsQuery.data ?? [] as account}
@@ -1027,9 +1067,13 @@
 								<p class="truncate text-xs text-base-content/50">
 									{message.from_name || message.from_address || 'Unknown sender'}
 								</p></button
-							>{:else}<p class="p-8 text-center text-sm text-base-content/50">
-								No saved mail.
-							</p>{/each}
+							>{:else}<div class="p-8 text-center text-sm text-base-content/50">
+								<p>No saved mail.</p>
+								<p class="mt-1">
+									Open the Remote mailbox and use Save on a message, or archive a folder from the
+									mail settings, to keep copies here.
+								</p>
+							</div>{/each}
 					{/if}
 				</section>
 

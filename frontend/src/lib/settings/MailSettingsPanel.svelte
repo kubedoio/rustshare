@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { createQuery } from '$lib/query-compat';
 	import { mailApi, type MailAccount, type MailFolder, type MailSmtpSettings } from '$lib/api/mail';
+	import { queryClient } from '$lib/query-client';
 	import CollapsibleSection from '$lib/settings/CollapsibleSection.svelte';
 	import MailArchivePanel from '$lib/components/apps/mail/MailArchivePanel.svelte';
 	import { mailAccountStatus, mailAccountStatusLabel } from '$lib/components/apps/mail/mail-types';
@@ -34,6 +35,7 @@
 	let saving = $state(false);
 	let testingImap = $state(false);
 	let testingSmtp = $state(false);
+	let imapTestSucceeded = $state(false);
 	let replaceImapPassword = $state(false);
 	let replaceSmtpPassword = $state(false);
 	let provider = $state<Provider>('custom');
@@ -157,6 +159,7 @@
 	}
 
 	async function selectMailAccount(id: string) {
+		imapTestSucceeded = false;
 		selectedMailAccountId = id;
 		showAddAccountForm = false;
 		replaceImapPassword = false;
@@ -236,6 +239,9 @@
 			showAddAccountForm = false;
 			await loadMailAccounts();
 			await selectMailAccount(account.id);
+			// The mail module caches ['mail-accounts']; a stale cache keeps the
+			// zero-account state alive after setup (issue #316).
+			await queryClient.invalidateQueries({ queryKey: ['mail-accounts'] });
 			pendingSmtpPreset = null;
 		} catch (error) {
 			toastStore.show(error instanceof Error ? error.message : 'Failed to add account', 'error');
@@ -314,11 +320,16 @@
 
 	async function handleTestImap() {
 		if (!selectedMailAccountId) return;
+		imapTestSucceeded = false;
 		testingImap = true;
 		try {
 			await mailApi.testAccount(selectedMailAccountId);
 			toastStore.show('Incoming mail (IMAP) connection successful', 'success');
+			imapTestSucceeded = true;
 			await loadMailAccounts();
+			// The mail module caches ['mail-accounts']; a stale cache keeps the
+			// zero-account state alive after setup (issue #316).
+			await queryClient.invalidateQueries({ queryKey: ['mail-accounts'] });
 		} catch (error) {
 			toastStore.show(error instanceof Error ? error.message : 'IMAP connection failed', 'error');
 		} finally {
@@ -369,6 +380,7 @@
 			if (selectedMailAccountId === id) {
 				selectedMailAccountId = null;
 				selectedSmtp = null;
+				imapTestSucceeded = false;
 			}
 			await loadMailAccounts();
 		} catch (error) {
@@ -906,6 +918,16 @@
 						{#if testingImap}<span class="loading loading-xs loading-spinner"></span>{/if}
 						Test incoming mail
 					</button>
+					{#if imapTestSucceeded}
+						<div class="flex w-full flex-wrap items-center gap-2 text-sm" role="status">
+							<span class="text-success">Connection works.</span>
+							<a class="btn btn-primary btn-sm" href="/apps/mail">Open mail</a>
+							<span class="text-base-content/60">
+								Your mail loads in the Remote mailbox. To keep copies inside RustShare, use Archive
+								in the settings above or Save messages from the app.
+							</span>
+						</div>
+					{/if}
 					<button
 						type="button"
 						class="btn btn-outline btn-sm"

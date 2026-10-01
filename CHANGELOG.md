@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed: the mail application page (/apps/mail) renders the actual mailbox UI
+  again — the first-party io.elembra.mail manifest registers its page renderer
+  as "mail", which fell through to the generic application shell ("No mail
+  yet"); the frontend now maps "mail" to the mail mailbox view
+- Fixed: the mail module no longer reopens on the empty "Saved to RustShare"
+  mailbox after IMAP account setup — the forced zero-account view switch is no
+  longer persisted and reverts once an account exists; the account list cache
+  refreshes after setup, and a successful connection test now offers an
+  "Open mail" next step (#316)
 - Elembra Chat "Load earlier messages" no longer silently drops fetched older
   pages (the oldest messages were unreachable), and a failed page fetch can be
   retried from the same control instead of freezing until the next poll.

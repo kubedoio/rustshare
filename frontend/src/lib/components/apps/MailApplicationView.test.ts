@@ -694,6 +694,62 @@ describe('MailApplicationView', () => {
 		expect((screen.getByLabelText('Search mail') as HTMLInputElement).value).toBe('quarterly');
 	});
 
+	it('does not persist the forced saved view when no account is configured', async () => {
+		mocks.listAccounts.mockResolvedValue([]);
+		mocks.listMessagesPage.mockResolvedValue({
+			messages: [],
+			next_cursor_at: null,
+			next_cursor_id: null
+		});
+		render(MailApplicationView, { module: testModule });
+
+		// The forced switch still happens for this session…
+		expect(await screen.findByRole('button', { name: 'Saved to RustShare' })).toBeTruthy();
+
+		// …but it must not be persisted (issue #316).
+		await waitFor(() => {
+			const raw = sessionStorage.getItem('rustshare:mail-module:list-state');
+			expect(raw).not.toBeNull();
+			const saved = JSON.parse(raw!);
+			expect(saved.mailboxView).not.toBe('saved');
+		});
+	});
+
+	it('returns to the remote mailbox in-session when an account appears after the forced switch', async () => {
+		mocks.listAccounts.mockResolvedValue([]);
+		render(MailApplicationView, { module: testModule });
+		expect(await screen.findByRole('button', { name: 'Saved to RustShare' })).toBeTruthy();
+		expect(screen.getByText(/No mail account configured/)).toBeTruthy();
+
+		mocks.listAccounts.mockResolvedValue([account]);
+		await queryClient.invalidateQueries({ queryKey: ['mail-accounts'] });
+
+		// The forced switch is reverted once an account exists: the view returns
+		// to the remote mailbox (Inbox marked current, Saved no longer current).
+		expect(await screen.findByLabelText('Mail account')).toBeTruthy();
+		expect(screen.getByRole('button', { name: /Inbox/ }).getAttribute('aria-current')).toBe('page');
+		expect(
+			screen.getByRole('button', { name: 'Saved to RustShare' }).getAttribute('aria-current')
+		).toBeNull();
+	});
+
+	it('keeps the user-chosen saved view when an account appears', async () => {
+		mocks.listAccounts.mockResolvedValue([]);
+		render(MailApplicationView, { module: testModule });
+		expect(await screen.findByRole('button', { name: 'Saved to RustShare' })).toBeTruthy();
+
+		// An explicit user choice of the Saved mailbox is not a forced switch.
+		await fireEvent.click(screen.getByRole('button', { name: 'Saved to RustShare' }));
+
+		mocks.listAccounts.mockResolvedValue([account]);
+		await queryClient.invalidateQueries({ queryKey: ['mail-accounts'] });
+
+		expect(
+			screen.getByRole('button', { name: 'Saved to RustShare' }).getAttribute('aria-current')
+		).toBe('page');
+		expect(screen.getByRole('button', { name: /Inbox/ }).getAttribute('aria-current')).toBeNull();
+	});
+
 	it('truncates long remote attachment names with a tooltip', async () => {
 		const longName = 'quarterly-financial-report-attachment-with-a-very-long-name-2026-final.xlsx';
 		mocks.getRemoteMessageBody.mockResolvedValue({
