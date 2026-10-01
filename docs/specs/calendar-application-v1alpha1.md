@@ -153,7 +153,7 @@ external kinds.
 | `source_id` | UUID | `REFERENCES calendar_sources(id)` |
 | `external_uid` | TEXT | iCalendar UID / provider event id; NULL only for unsynced internal drafts |
 | `external_etag` | TEXT | provider ETag/change key for cheap change detection; nullable |
-| `recurrence_id` | TEXT | RECURRENCE-ID for overridden instances; NULL for the master |
+| `recurrence_id` | TEXT | RECURRENCE-ID for overridden instances; NULL for the master. Override rows are returned as stored (own `id`); master expansion omits occurrences covered by an override row in the window |
 | `title` | TEXT | |
 | `description` | TEXT | nullable |
 | `location` | TEXT | nullable |
@@ -173,6 +173,20 @@ where `deleted_at IS NULL` — this is the import/sync idempotency key.
 
 Range-query index on `(owner_id, starts_at)` where `deleted_at IS NULL`.
 
+`instance_start` is a derived read-model field, not a stored column: it is the
+expanded occurrence's `DTSTART` (RFC 3339), present only on expanded
+recurrence instances and null on stored (non-expanded) rows.
+
+Range queries are two-part (see also the API contract): (a) non-recurring
+events with `starts_at < to AND ends_at > from` (overlap), plus (b) ALL
+recurring masters (`rrule IS NOT NULL`) for the owner regardless of
+`starts_at`, expanded in the window with expanded instances filtered by the
+same overlap predicate. Overridden occurrences covered by a stored
+`recurrence_id` row replace the master's expansion for that slot.
+
+Supporting partial index for part (b):
+`calendar_events_recurring_owner_idx ON (owner_id) WHERE rrule IS NOT NULL AND deleted_at IS NULL`.
+
 ### `calendar_sync_states`
 
 Per-source sync cursor, modeled on the mail archive watermarks
@@ -182,11 +196,21 @@ not update the credential row.
 | Column | Type | Notes |
 |---|---|---|
 | `source_id` | UUID PK/FK | one row per source |
-| `cursor_kind` | VARCHAR(20) | CHECK `('google_sync_token','ms_delta_token','ical_etag')` |
+| `next_sync_at` | TIMESTAMPTZ | drives due-ness; set on connect and updated after every run (with backoff on rate-limit) |
+| `locked_at` | TIMESTAMPTZ | lease heartbeat; NULL when unclaimed. Stale leases are reset by the worker |
+| `locked_by` | TEXT | lease holder id (worker instance id); NULL when unclaimed |
+| `cursor_kind` | VARCHAR(20) | CHECK `('google_sync_token','ms_delta_token')` |
 | `cursor_value` | TEXT | opaque provider token; NULL = full sync required |
 | `cursor_expires_at` | TIMESTAMPTZ | nullable |
 | `last_synced_at` / `last_error` | | mirrored onto `calendar_sources` for status reads |
 | `updated_at` | | |
+
+Worker scheduling/lease: due sources are claimed with
+`SELECT ... FOR UPDATE SKIP LOCKED WHERE next_sync_at <= now() AND (locked_at IS NULL OR locked_at < now() - stale)`
+(the stale threshold comes from env, same pattern as the mail stale-job reset).
+The lease holder refreshes `locked_at` as a heartbeat while running and clears
+`locked_at`/`locked_by` on completion or failure. Only the lease holder may
+refresh OAuth tokens for a source (see Connection).
 
 On Google `410 GONE` (invalidated syncToken) the worker nulls `cursor_value`
 and performs a bounded full resync of the source's sync window.
@@ -236,7 +260,8 @@ Rows are deleted on consume (single use); expired rows are ignored/swept.
   calendar cap of 10 MB.
 - The file is parsed with a maintained RFC 5545 parser crate (implementation
   decision recorded in the plan; `icalendar` preferred, `ical` and a
-  hand-rolled parser rejected).
+  hand-rolled parser rejected). Recurrence expansion uses the maintained
+  `rrule` crate (new dependency alongside `icalendar`).
 - Each VEVENT maps to one `calendar_events` row keyed by
   `(source_id, UID, RECURRENCE-ID)`. Re-importing the same file is an
   idempotent upsert: unchanged events are untouched, changed events update,
@@ -247,6 +272,15 @@ Rows are deleted on consume (single use); expired rows are ignored/swept.
   spans with `all_day = true` and `original_date` preserved.
 - RRULE strings are stored verbatim; v1 does not validate every RRULE form
   and never expands more than the requested range window at read time.
+- Expansion semantics (normative): iteration is wall-clock in the event's
+  IANA `TZID` (not UTC-instant); DST gaps push forward and overlaps keep the
+  first occurrence; `UNTIL`/`COUNT` expansion is capped at 1000 instances per
+  master; floating times (no `TZID`) are interpreted in the viewer's
+  configured timezone.
+- VEVENT `STATUS` maps verbatim to `status` (`CONFIRMED`/`TENTATIVE`/
+  `CANCELLED`); a missing `STATUS` defaults to `confirmed`.
+- Change detection: the importer compares a normalized column set (or
+  `external_etag` when present) and updates the row only on actual change.
 - VALARM is parsed but discarded in v1 (reminders are out of scope); VTODO,
   VJOURNAL, VFREEBUSY components are ignored and counted as skipped.
 - Malformed components fail only their own event (`failed_events += 1` with a
@@ -271,6 +305,12 @@ authoritative; Elembra stores a read-only cache.
 - Granted scopes are read-only: Google
   `https://www.googleapis.com/auth/calendar.readonly`; Microsoft
   `Calendars.Read` (offline_access for refresh tokens).
+- v1 syncs only the provider's primary calendar (`primary` / default
+  calendar); multi-calendar discovery (`calendarList`) is deferred.
+- Token refresh is serialized per source: only the sync lease holder
+  (see `calendar_sync_states` scheduling) may refresh OAuth tokens. If the
+  provider returns a rotated refresh token it is written unconditionally
+  (newer token wins).
 - Refresh tokens (and cached access tokens) are encrypted with
   `SecretEncryptionKey` before storage. Responses, logs, and events never
   contain token material.
@@ -288,6 +328,8 @@ authoritative; Elembra stores a read-only cache.
   token triggers the same full-resync fallback.
 - Provider deletions propagate: removed remote events soft-delete the mirror
   rows. Cancelled instances map to `status = 'cancelled'` tombstones.
+- Change detection: the worker compares a normalized column set (or
+  `external_etag` when present) and updates the row only on actual change.
 - Rate limits (429 / `Retry-After`) pause the source (`status =
   'rate_limited'`) with backoff; revoked grants set `auth_required` and stop
   syncing until the user reconnects.
