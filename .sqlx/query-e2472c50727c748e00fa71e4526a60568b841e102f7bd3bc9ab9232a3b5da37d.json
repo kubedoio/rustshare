@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT\n                id, tenant_id, owner_id, source_id, status, filename, size_bytes,\n                total_events, processed_events, failed_events, last_error,\n                started_at, completed_at, deleted_at, created_at, updated_at\n            FROM calendar_import_jobs\n            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL\n            ORDER BY created_at DESC\n            ",
+  "query": "\n            SELECT\n                id, tenant_id, owner_id, source_id, status, filename, size_bytes,\n                total_events, processed_events, failed_events, last_error,\n                started_at, completed_at, deleted_at, created_at, updated_at\n            FROM calendar_import_jobs\n            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL\n            ORDER BY created_at DESC\n            LIMIT $3\n            ",
   "describe": {
     "columns": [
       {
@@ -87,7 +87,8 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "Uuid"
+        "Uuid",
+        "Int8"
       ]
     },
     "nullable": [
@@ -109,5 +110,5 @@
       false
     ]
   },
-  "hash": "403e6e0910843420da68cf74d9aff8210111e6f72b4df4db74cb999b3b65bce9"
+  "hash": "e2472c50727c748e00fa71e4526a60568b841e102f7bd3bc9ab9232a3b5da37d"
 }

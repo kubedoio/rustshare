@@ -66,6 +66,10 @@ impl BlobReferenceSummary {
     }
 }
 
+/// Maximum rows returned by `list_calendar_import_jobs_by_owner` (the import
+/// endpoint returns the newest jobs only).
+const CALENDAR_IMPORT_JOBS_LIST_LIMIT: i64 = 100;
+
 impl MetadataStore {
     /// Get access to the underlying database pool
     pub fn pool(&self) -> &PgPool {
@@ -6763,7 +6767,7 @@ impl MetadataStore {
         Ok(content)
     }
 
-    /// List active import jobs for a user, newest first.
+    /// List the most recent active import jobs for a user (bounded).
     pub async fn list_calendar_import_jobs_by_owner(
         &self,
         tenant_id: Uuid,
@@ -6779,9 +6783,11 @@ impl MetadataStore {
             FROM calendar_import_jobs
             WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
             ORDER BY created_at DESC
+            LIMIT $3
             "#,
             tenant_id,
-            owner_id
+            owner_id,
+            CALENDAR_IMPORT_JOBS_LIST_LIMIT
         )
         .fetch_all(&self.pool)
         .await?;

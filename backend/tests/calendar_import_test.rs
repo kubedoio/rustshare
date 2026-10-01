@@ -727,3 +727,72 @@ async fn structurally_invalid_ics_fails_the_job() {
 
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn single_event_upsert_failure_does_not_fail_the_job() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_import_onebad", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    spawn_import_worker(&state).await;
+
+    // The first event violates the ends_at > starts_at table CHECK; the
+    // second is well-formed. Per-component semantics: the job still
+    // completes and the good event is imported.
+    let ics = "\
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:bad-window-1
+DTSTART:20261005T150000Z
+DTEND:20261005T140000Z
+SUMMARY:Backwards window
+END:VEVENT
+BEGIN:VEVENT
+UID:good-after-bad-1
+DTSTART:20261006T140000Z
+DTEND:20261006T150000Z
+SUMMARY:Good event
+END:VEVENT
+END:VCALENDAR
+";
+
+    let (status, body) = upload_ics(&app, &token, "onebad.ics", ics).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let job = wait_for_job(
+        &app,
+        &token,
+        Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap(),
+    )
+    .await;
+
+    // The bad row counts as its own failure; the job itself completes.
+    assert_eq!(job["status"], "completed");
+    assert_eq!(job["total_events"], 2);
+    assert_eq!(job["failed_events"], 1);
+    assert_eq!(job["processed_events"], 1);
+    assert!(job["last_error"].is_string());
+
+    // Only the good event was persisted.
+    assert_eq!(count_imported_events(&state, tenant_id).await, 1);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events?from=2026-10-01T00:00:00Z&to=2026-10-31T00:00:00Z")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    let events = body["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["title"], "Good event");
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}

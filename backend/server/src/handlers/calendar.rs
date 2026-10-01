@@ -435,6 +435,11 @@ pub async fn import_calendar_file(
     })? {
         match field.name().unwrap_or("") {
             "file" => {
+                if file_temp.is_some() {
+                    return Err(AppError::bad_request(
+                        "Duplicate file field: expected a single file",
+                    ));
+                }
                 let filename = field.file_name().map(str::to_string);
                 let content_type = field.content_type().map(str::to_string);
                 let (temp, size) = super::stream_multipart_field_to_temp_file(
@@ -445,6 +450,11 @@ pub async fn import_calendar_file(
                 file_temp = Some((temp, size, filename, content_type));
             }
             "source_id" => {
+                if source_id.is_some() {
+                    return Err(AppError::bad_request(
+                        "Duplicate source_id field: expected a single value",
+                    ));
+                }
                 let raw = field
                     .text()
                     .await

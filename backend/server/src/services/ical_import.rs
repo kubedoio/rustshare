@@ -283,6 +283,11 @@ fn to_event(job: &CalendarImportJob, parsed: &ParsedEvent) -> CalendarEvent {
 /// Parse the uploaded bytes and upsert every VEVENT into `calendar_events`.
 /// Progress (and the `updated_at` heartbeat) is flushed every
 /// [`PROGRESS_FLUSH_INTERVAL`] events.
+///
+/// Per-component semantics apply at every level: a mapping failure or a
+/// single failing upsert counts against that event only (with a bounded
+/// `last_error` sample) and the loop continues; only failures of the
+/// progress-flush path itself abort the job.
 pub async fn parse_and_upsert(
     metadata_store: &MetadataStore,
     job: &CalendarImportJob,
@@ -297,48 +302,70 @@ pub async fn parse_and_upsert(
         ..ImportOutcome::default()
     };
     let mut last_error: Option<String> = None;
+    let mut dirty = false;
 
     for (index, event) in parsed.events.into_iter().enumerate() {
         match event {
             Ok(parsed) => {
-                metadata_store
+                let result = metadata_store
                     .upsert_calendar_imported_event(&to_event(job, &parsed))
                     .await
-                    .map_err(|e| IcalImportError::Storage(e.to_string()))?;
-                outcome.processed_events += 1;
+                    .map(|_| ())
+                    .map_err(|e| e.to_string());
+                record_upsert_result(&mut outcome, result, &mut last_error);
             }
             Err(message) => {
                 outcome.failed_events += 1;
                 last_error = Some(bounded_error(&message));
             }
         }
+        dirty = true;
 
         if (index + 1) % PROGRESS_FLUSH_INTERVAL == 0 {
-            metadata_store
-                .update_calendar_import_job_progress(
-                    job.id,
-                    outcome.total_events,
-                    outcome.processed_events,
-                    outcome.failed_events,
-                    last_error.as_deref(),
-                )
-                .await
-                .map_err(|e| IcalImportError::Storage(e.to_string()))?;
+            flush_progress(metadata_store, job, &outcome, last_error.as_deref()).await?;
+            dirty = false;
         }
     }
 
+    if dirty {
+        flush_progress(metadata_store, job, &outcome, last_error.as_deref()).await?;
+    }
+
+    Ok(outcome)
+}
+
+/// Fold one event's upsert result into the run counters. A failing upsert
+/// must not abort the import: it counts as that event's failure only.
+fn record_upsert_result(
+    outcome: &mut ImportOutcome,
+    result: Result<(), String>,
+    last_error: &mut Option<String>,
+) {
+    match result {
+        Ok(()) => outcome.processed_events += 1,
+        Err(message) => {
+            outcome.failed_events += 1;
+            *last_error = Some(bounded_error(&message));
+        }
+    }
+}
+
+async fn flush_progress(
+    metadata_store: &MetadataStore,
+    job: &CalendarImportJob,
+    outcome: &ImportOutcome,
+    last_error: Option<&str>,
+) -> Result<(), IcalImportError> {
     metadata_store
         .update_calendar_import_job_progress(
             job.id,
             outcome.total_events,
             outcome.processed_events,
             outcome.failed_events,
-            last_error.as_deref(),
+            last_error,
         )
         .await
-        .map_err(|e| IcalImportError::Storage(e.to_string()))?;
-
-    Ok(outcome)
+        .map_err(|e| IcalImportError::Storage(e.to_string()))
 }
 
 /// Worker entry point for one claimed job: read the spooled bytes, parse and
@@ -554,6 +581,30 @@ END:VCALENDAR
     fn structurally_unreadable_file_fails() {
         let result = parse_file(b"this is not a calendar at all");
         assert!(matches!(result, Err(IcalImportError::Unparseable(_))));
+    }
+
+    #[test]
+    fn single_upsert_failure_does_not_abort_the_run() {
+        let mut outcome = ImportOutcome::default();
+        let mut last_error = None;
+
+        // A mapping/upsert failure counts against its event only…
+        record_upsert_result(
+            &mut outcome,
+            Err("duplicate key".to_string()),
+            &mut last_error,
+        );
+        assert_eq!(outcome.processed_events, 0);
+        assert_eq!(outcome.failed_events, 1);
+        assert_eq!(last_error.as_deref(), Some("duplicate key"));
+
+        // …and subsequent events still process.
+        record_upsert_result(&mut outcome, Ok(()), &mut last_error);
+        record_upsert_result(&mut outcome, Ok(()), &mut last_error);
+        assert_eq!(outcome.processed_events, 2);
+        assert_eq!(outcome.failed_events, 1);
+        // The error sample keeps the most recent failure.
+        assert_eq!(last_error.as_deref(), Some("duplicate key"));
     }
 
     #[test]
