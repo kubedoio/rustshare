@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, Timelike, Utc};
 use rustshare_core::domain::{
     CalendarEvent, CalendarEventStatus, CalendarSource, CalendarSourceKind, UserId,
 };
@@ -14,6 +14,7 @@ fn db_error(err: anyhow::Error) -> CalendarError {
 }
 
 const MAX_EVENT_TITLE_LEN: usize = 512;
+const MAX_SOURCE_DISPLAY_NAME_LEN: usize = 255;
 const MAX_RANGE_WINDOW_DAYS: i64 = 366;
 const MAX_EXPANDED_INSTANCES_PER_MASTER: u16 = 1000;
 
@@ -98,14 +99,32 @@ fn validate_event_times(
         ));
     }
     if all_day {
-        let midnight = starts_at.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()
-            && ends_at.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap();
+        let midnight = starts_at.time().num_seconds_from_midnight() == 0
+            && ends_at.time().num_seconds_from_midnight() == 0;
         let whole_days = (ends_at - starts_at).num_seconds() % (24 * 3600) == 0;
         if !midnight || !whole_days {
             return Err(CalendarError::InvalidInput(
                 "All-day events must align to whole days".to_string(),
             ));
         }
+    }
+    Ok(())
+}
+
+/// Validate a stored-verbatim RRULE string the same way expansion parses it,
+/// so a bad RRULE is rejected with a 400 at write time instead of silently
+/// producing no instances at read time.
+fn validate_rrule(rrule: &str) -> Result<(), CalendarError> {
+    // Expansion always prefixes the stored value with a DTSTART line; parse
+    // with a fixed DTSTART here so validation and expansion agree.
+    const VALIDATION_DTSTART: &str = "DTSTART:20261001T000000Z";
+    if format!("{VALIDATION_DTSTART}\nRRULE:{rrule}")
+        .parse::<rrule::RRuleSet>()
+        .is_err()
+    {
+        return Err(CalendarError::InvalidInput(format!(
+            "Invalid RRULE: {rrule}"
+        )));
     }
     Ok(())
 }
@@ -219,6 +238,19 @@ impl CalendarService {
         }
     }
 
+    /// Look up one of the caller's sources by ID.
+    pub async fn get_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        source_id: Uuid,
+    ) -> Result<Option<CalendarSource>, CalendarError> {
+        self.metadata_store
+            .get_calendar_source(tenant_id, owner_id, source_id)
+            .await
+            .map_err(db_error)
+    }
+
     pub async fn update_source(
         &self,
         tenant_id: Uuid,
@@ -234,10 +266,10 @@ impl CalendarService {
             .map_err(db_error)?
             .ok_or(CalendarError::SourceNotFound(source_id))?;
         if let Some(display_name) = display_name {
-            if display_name.is_empty() {
-                return Err(CalendarError::InvalidInput(
-                    "display_name must not be empty".to_string(),
-                ));
+            if display_name.is_empty() || display_name.len() > MAX_SOURCE_DISPLAY_NAME_LEN {
+                return Err(CalendarError::InvalidInput(format!(
+                    "display_name must be 1-{MAX_SOURCE_DISPLAY_NAME_LEN} characters"
+                )));
             }
             source.display_name = display_name;
         }
@@ -288,6 +320,9 @@ impl CalendarService {
         }
         validate_timezone(&input.timezone)?;
         validate_event_times(input.starts_at, input.ends_at, input.all_day)?;
+        if let Some(rrule) = input.rrule.as_deref() {
+            validate_rrule(rrule)?;
+        }
 
         let source = self.ensure_internal_source(tenant_id, owner_id).await?;
         let now = Utc::now();
@@ -373,8 +408,9 @@ impl CalendarService {
             validate_timezone(&timezone)?;
             event.timezone = timezone;
         }
-        if patch.rrule.is_some() {
-            event.rrule = patch.rrule;
+        if let Some(value) = patch.rrule {
+            validate_rrule(&value)?;
+            event.rrule = Some(value);
         }
         validate_event_times(event.starts_at, event.ends_at, event.all_day)?;
         event.original_date = event.all_day.then(|| event.starts_at.date_naive());

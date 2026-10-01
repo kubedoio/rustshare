@@ -715,6 +715,124 @@ async fn range_window_over_366_days_returns_400() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
+async fn invalid_rrule_returns_400() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_rrule", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let mut body = create_event_body();
+    body["rrule"] = json!("FREQ=NOT_A_FREQUENCY");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, _) = response_json(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // A valid RRULE is accepted.
+    let mut body = create_event_body();
+    body["rrule"] = json!("FREQ=WEEKLY;BYDAY=MO");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // And it expands within a range window.
+    let event_id = body["id"].as_str().unwrap();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events?from=2026-10-01T00:00:00Z&to=2026-10-31T00:00:00Z")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    let events = body["events"].as_array().unwrap();
+    assert!(events.iter().all(|event| event["id"] == event_id));
+    assert!(events
+        .iter()
+        .any(|event| event["instance_start"].is_string()));
+    assert!(events.len() > 1, "weekly master should expand in-window");
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn repeated_source_id_query_params_parse() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_src_filter", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+
+    let internal = state
+        .calendar_service
+        .ensure_internal_source(tenant_id, user.id)
+        .await
+        .expect("internal source");
+    let imported = state
+        .calendar_service
+        .create_source(
+            tenant_id,
+            user.id,
+            rustshare_core::domain::CalendarSourceKind::IcalImport,
+            "Imported".to_string(),
+        )
+        .await
+        .expect("ical source");
+
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/calendar/events?from=2026-10-01T00:00:00Z&to=2026-10-31T00:00:00Z&source_id={}&source_id={}",
+                    internal.id, imported.id
+                ))
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, _) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
 async fn patch_on_read_only_mirror_event_returns_409() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env().await;

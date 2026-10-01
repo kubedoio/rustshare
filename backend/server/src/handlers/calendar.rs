@@ -1,8 +1,9 @@
 use axum::{
-    extract::{Path, RawQuery, State},
+    extract::{Path, State},
     http::StatusCode,
     Json,
 };
+use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::CalendarSourceKind;
 use serde::{Deserialize, Serialize};
@@ -16,10 +17,6 @@ use crate::services::calendar_service::{
 use crate::state::AppState;
 
 const CALENDAR_APPLICATION_ID: &str = "io.elembra.calendar";
-
-/// Max range window accepted by `GET /events` (inclusive), per the API
-/// contract.
-const MAX_RANGE_WINDOW_DAYS: i64 = 366;
 
 async fn require_calendar_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
     let module = state
@@ -72,7 +69,9 @@ pub struct UpdateCalendarEventRequest {
 pub struct CalendarEventResponse {
     pub id: Uuid,
     pub source_id: Uuid,
-    pub source_kind: String,
+    /// Null only when the owning source row is somehow missing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<String>,
     pub title: String,
     pub description: Option<String>,
     pub location: Option<String>,
@@ -134,7 +133,7 @@ fn occurrence_to_response(occurrence: CalendarEventOccurrence) -> CalendarEventR
     CalendarEventResponse {
         id: event.id,
         source_id: event.source_id,
-        source_kind: occurrence.source_kind.as_str().to_string(),
+        source_kind: Some(occurrence.source_kind.as_str().to_string()),
         title: event.title,
         description: event.description,
         location: event.location,
@@ -168,72 +167,43 @@ fn source_to_response(source: rustshare_core::domain::CalendarSource) -> Calenda
     }
 }
 
+/// Query parameters for `GET /api/v1/calendar/events`.
+#[derive(Debug, Deserialize)]
+pub struct ListCalendarEventsQuery {
+    /// Inclusive range start (RFC 3339).
+    pub from: DateTime<Utc>,
+    /// Exclusive range end (RFC 3339); the window must be at most 366 days.
+    pub to: DateTime<Utc>,
+    /// Repeatable; restricts the list to the given sources (disabled sources
+    /// are included when explicitly requested).
+    #[serde(default)]
+    pub source_id: Vec<Uuid>,
+    #[serde(default)]
+    pub include_cancelled: bool,
+}
+
 /// `GET /api/v1/calendar/events` — list events overlapping `[from, to)`.
 ///
 /// `from`/`to` are required RFC 3339 timestamps and the window must be at
-/// most 366 days. `source_id` is repeatable and restricts to those sources;
+/// most 366 days (enforced by the service, which rejects larger windows with
+/// a 400). `source_id` is repeatable and restricts to those sources;
 /// `include_cancelled` defaults to false.
 pub async fn list_calendar_events(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
-    RawQuery(raw_query): RawQuery,
+    Query(query): Query<ListCalendarEventsQuery>,
 ) -> Result<Json<CalendarEventListResponse>, AppError> {
     require_calendar_enabled(&state, auth.tenant_id).await?;
-
-    let params: Vec<(String, String)> =
-        serde_urlencoded::from_str(raw_query.as_deref().unwrap_or(""))
-            .map_err(|_| AppError::bad_request("Invalid query parameters"))?;
-    let mut from: Option<DateTime<Utc>> = None;
-    let mut to: Option<DateTime<Utc>> = None;
-    let mut source_ids: Vec<Uuid> = Vec::new();
-    let mut include_cancelled = false;
-    for (key, value) in params {
-        match key.as_str() {
-            "from" => {
-                from = Some(
-                    DateTime::parse_from_rfc3339(&value)
-                        .map_err(|_| AppError::bad_request("from must be an RFC 3339 timestamp"))?
-                        .with_timezone(&Utc),
-                );
-            }
-            "to" => {
-                to = Some(
-                    DateTime::parse_from_rfc3339(&value)
-                        .map_err(|_| AppError::bad_request("to must be an RFC 3339 timestamp"))?
-                        .with_timezone(&Utc),
-                );
-            }
-            "source_id" => {
-                source_ids.push(
-                    Uuid::parse_str(&value)
-                        .map_err(|_| AppError::bad_request("source_id must be a UUID"))?,
-                );
-            }
-            "include_cancelled" => {
-                include_cancelled = matches!(value.as_str(), "true" | "1");
-            }
-            _ => {}
-        }
-    }
-    let (from, to) = match (from, to) {
-        (Some(from), Some(to)) => (from, to),
-        _ => return Err(AppError::bad_request("from and to are required")),
-    };
-    if to - from > chrono::Duration::days(MAX_RANGE_WINDOW_DAYS) {
-        return Err(AppError::bad_request(format!(
-            "Range window must be at most {MAX_RANGE_WINDOW_DAYS} days"
-        )));
-    }
 
     let occurrences = state
         .calendar_service
         .list_events(
             auth.tenant_id,
             auth.user_id,
-            from,
-            to,
-            &source_ids,
-            include_cancelled,
+            query.from,
+            query.to,
+            &query.source_id,
+            query.include_cancelled,
         )
         .await?;
 
@@ -292,24 +262,23 @@ pub async fn get_calendar_event(
         .calendar_service
         .get_event(auth.tenant_id, auth.user_id, event_id)
         .await?;
-    let source_kind = if event.read_only {
-        state
-            .calendar_service
-            .list_sources(auth.tenant_id, auth.user_id)
-            .await?
-            .into_iter()
-            .find(|source| source.id == event.source_id)
-            .and_then(|source| source.kind.parse::<CalendarSourceKind>().ok())
-            .unwrap_or(CalendarSourceKind::IcalImport)
-    } else {
-        CalendarSourceKind::Internal
-    };
+    // The source row is the authority for `source_kind`; omit the field
+    // rather than guess when it is missing.
+    let source_kind = state
+        .calendar_service
+        .get_source(auth.tenant_id, auth.user_id, event.source_id)
+        .await?
+        .and_then(|source| source.kind.parse::<CalendarSourceKind>().ok())
+        .map(|kind| kind.as_str().to_string());
 
-    Ok(Json(occurrence_to_response(CalendarEventOccurrence {
-        source_kind,
+    let mut response = occurrence_to_response(CalendarEventOccurrence {
+        source_kind: CalendarSourceKind::Internal,
         instance_start: None,
         event,
-    })))
+    });
+    response.source_kind = source_kind;
+
+    Ok(Json(response))
 }
 
 /// `PATCH /api/v1/calendar/events/{id}` — partial update of an internal
