@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { getApplicationByRouteSlug } from '$lib/applications/registry';
 	import MailSettingsPanel from '$lib/settings/MailSettingsPanel.svelte';
+	import CalendarSettingsPanel from '$lib/settings/CalendarSettingsPanel.svelte';
 
 	let slug = $derived($page.params.slug ?? '');
 	let application = $derived(getApplicationByRouteSlug(slug));
@@ -27,6 +28,8 @@
 
 		{#if application.id === 'io.elembra.mail'}
 			<MailSettingsPanel />
+		{:else if application.id === 'io.elembra.calendar'}
+			<CalendarSettingsPanel />
 		{:else}
 			<div class="rounded-xl border border-base-300 bg-base-200 p-6">
 				<p class="text-base-content/70">
