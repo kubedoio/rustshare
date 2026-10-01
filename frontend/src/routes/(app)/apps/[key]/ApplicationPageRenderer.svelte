@@ -23,6 +23,9 @@
 		shares: SharesApplicationView,
 		brainstorming: BrainstormingApplicationView,
 		'mail-list': MailApplicationView,
+		// The first-party io.elembra.mail manifest registers the renderer as
+		// "mail" (persisted tenant configs seed from it), so alias it here.
+		mail: MailApplicationView,
 		chat: ChatApplicationView
 	};
 
