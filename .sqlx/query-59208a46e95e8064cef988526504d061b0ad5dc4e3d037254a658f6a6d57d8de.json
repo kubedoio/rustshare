@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE calendar_import_jobs\n            SET\n                total_events = $2,\n                processed_events = $3,\n                failed_events = $4,\n                last_error = $5,\n                updated_at = NOW()\n            WHERE id = $1 AND deleted_at IS NULL\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "59208a46e95e8064cef988526504d061b0ad5dc4e3d037254a658f6a6d57d8de"
+}

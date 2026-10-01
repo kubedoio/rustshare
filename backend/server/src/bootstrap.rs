@@ -782,6 +782,16 @@ pub async fn init_app() -> Result<AppState> {
         info!("Mail import worker disabled");
     }
 
+    if config.calendar_import_worker_enabled {
+        crate::calendar_import_worker::spawn_calendar_import_worker(
+            Arc::clone(&metadata_store),
+            shutdown_tx.subscribe(),
+            crate::calendar_import_worker::CalendarImportWorkerConfig::from_config(&config),
+        );
+    } else {
+        info!("Calendar import worker disabled");
+    }
+
     if !metadata_store.has_users().await? {
         let admin_username = std::env::var("RUSTSHARE_ADMIN_USERNAME")?;
         let admin_email = std::env::var("RUSTSHARE_ADMIN_EMAIL")?;

@@ -7,6 +7,7 @@ pub mod bootstrap;
 pub mod buzz_bridge;
 pub mod buzz_gateway;
 pub mod buzz_observation;
+pub mod calendar_import_worker;
 pub mod config;
 pub mod handlers;
 pub mod mail_import_worker;

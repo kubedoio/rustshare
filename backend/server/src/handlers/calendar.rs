@@ -1,11 +1,11 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Multipart, Path, State},
     http::StatusCode,
     Json,
 };
 use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
-use rustshare_core::domain::CalendarSourceKind;
+use rustshare_core::domain::{CalendarImportJob, CalendarSource, CalendarSourceKind};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -17,6 +17,8 @@ use crate::services::calendar_service::{
 use crate::state::AppState;
 
 const CALENDAR_APPLICATION_ID: &str = "io.elembra.calendar";
+/// Calendar .ics uploads are capped at 10 MB (spec §Import semantics).
+const MAX_CALENDAR_IMPORT_SIZE_BYTES: usize = 10 * 1024 * 1024;
 
 async fn require_calendar_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
     let module = state
@@ -152,7 +154,7 @@ fn occurrence_to_response(occurrence: CalendarEventOccurrence) -> CalendarEventR
     }
 }
 
-fn source_to_response(source: rustshare_core::domain::CalendarSource) -> CalendarSourceResponse {
+fn source_to_response(source: CalendarSource) -> CalendarSourceResponse {
     CalendarSourceResponse {
         id: source.id,
         kind: source.kind,
@@ -406,6 +408,233 @@ pub async fn delete_calendar_source(
         .await?;
 
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `POST /api/v1/calendar/import` — upload a `.ics` file (multipart `file`
+/// field, optional `source_id` text field) and enqueue a background import
+/// job. The upload is spooled to a temp file and the bytes persisted on the
+/// job row for the worker.
+pub async fn import_calendar_file(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    mut multipart: Multipart,
+) -> Result<(StatusCode, Json<CalendarImportAcceptedResponse>), AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+
+    let mut file_temp: Option<(
+        tempfile::NamedTempFile,
+        usize,
+        Option<String>,
+        Option<String>,
+    )> = None;
+    let mut source_id: Option<Uuid> = None;
+
+    while let Some(mut field) = multipart.next_field().await.map_err(|e| {
+        tracing::error!("Failed to read multipart field: {}", e);
+        AppError::internal(format!("Failed to read multipart field: {e}"))
+    })? {
+        match field.name().unwrap_or("") {
+            "file" => {
+                let filename = field.file_name().map(str::to_string);
+                let content_type = field.content_type().map(str::to_string);
+                let (temp, size) = super::stream_multipart_field_to_temp_file(
+                    &mut field,
+                    MAX_CALENDAR_IMPORT_SIZE_BYTES,
+                )
+                .await?;
+                file_temp = Some((temp, size, filename, content_type));
+            }
+            "source_id" => {
+                let raw = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::bad_request(format!("Invalid source_id field: {e}")))?;
+                source_id =
+                    Some(Uuid::parse_str(raw.trim()).map_err(|_| {
+                        AppError::bad_request("Invalid source_id: expected a UUID")
+                    })?);
+            }
+            _ => {}
+        }
+    }
+
+    let (file_temp, size_bytes, filename, content_type) =
+        file_temp.ok_or_else(|| AppError::bad_request("Missing file data"))?;
+    let filename = filename.unwrap_or_else(|| "import.ics".to_string());
+
+    let content_type_ok = content_type
+        .as_deref()
+        .map(|value| value.starts_with("text/calendar"))
+        .unwrap_or(false);
+    if !content_type_ok && !filename.to_lowercase().ends_with(".ics") {
+        return Err(AppError::bad_request(
+            "File must be a .ics (text/calendar) file",
+        ));
+    }
+
+    let bytes = tokio::fs::read(file_temp.path())
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to read uploaded file: {e}")))?;
+
+    // Resolve the target source: the given ical_import source, or an existing
+    // one named after the file, or a newly created one.
+    let source = match source_id {
+        Some(id) => {
+            let source = state
+                .calendar_service
+                .get_source(auth.tenant_id, auth.user_id, id)
+                .await?
+                .ok_or(CalendarError::SourceNotFound(id))?;
+            if source.kind != CalendarSourceKind::IcalImport.as_str() {
+                return Err(AppError::bad_request(
+                    "source_id must reference an ical_import source",
+                ));
+            }
+            source
+        }
+        None => {
+            let display_name = filename.chars().take(255).collect::<String>();
+            let existing = state
+                .calendar_service
+                .list_sources(auth.tenant_id, auth.user_id)
+                .await?;
+            match existing.into_iter().find(|source| {
+                source.kind == CalendarSourceKind::IcalImport.as_str()
+                    && source.display_name == display_name
+            }) {
+                Some(source) => source,
+                None => {
+                    state
+                        .calendar_service
+                        .create_source(
+                            auth.tenant_id,
+                            auth.user_id,
+                            CalendarSourceKind::IcalImport,
+                            display_name,
+                        )
+                        .await?
+                }
+            }
+        }
+    };
+
+    let now = Utc::now();
+    let job = CalendarImportJob {
+        id: Uuid::new_v4(),
+        tenant_id: auth.tenant_id,
+        owner_id: auth.user_id,
+        source_id: source.id,
+        status: "pending".to_string(),
+        filename,
+        size_bytes: size_bytes as i64,
+        total_events: 0,
+        processed_events: 0,
+        failed_events: 0,
+        last_error: None,
+        started_at: None,
+        completed_at: None,
+        deleted_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+    state
+        .metadata_store
+        .create_calendar_import_job(&job, &bytes)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to enqueue import job: {e}")))?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(CalendarImportAcceptedResponse {
+            job_id: job.id,
+            source_id: job.source_id,
+            status: job.status.clone(),
+        }),
+    ))
+}
+
+/// `202` body for `POST /api/v1/calendar/import`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarImportAcceptedResponse {
+    pub job_id: Uuid,
+    pub source_id: Uuid,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarImportJobResponse {
+    pub id: Uuid,
+    pub source_id: Uuid,
+    pub filename: String,
+    pub status: String,
+    pub total_events: i32,
+    pub processed_events: i32,
+    pub failed_events: i32,
+    pub last_error: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<CalendarImportJob> for CalendarImportJobResponse {
+    fn from(job: CalendarImportJob) -> Self {
+        Self {
+            id: job.id,
+            source_id: job.source_id,
+            filename: job.filename,
+            status: job.status,
+            total_events: job.total_events,
+            processed_events: job.processed_events,
+            failed_events: job.failed_events,
+            last_error: job.last_error,
+            started_at: job.started_at,
+            completed_at: job.completed_at,
+            created_at: job.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarImportJobListResponse {
+    pub jobs: Vec<CalendarImportJobResponse>,
+}
+
+/// `GET /api/v1/calendar/import-jobs` — the caller's import jobs, newest
+/// first.
+pub async fn list_calendar_import_jobs(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Json<CalendarImportJobListResponse>, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    let jobs = state
+        .metadata_store
+        .list_calendar_import_jobs_by_owner(auth.tenant_id, auth.user_id)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to list import jobs: {e}")))?;
+
+    Ok(Json(CalendarImportJobListResponse {
+        jobs: jobs
+            .into_iter()
+            .map(CalendarImportJobResponse::from)
+            .collect(),
+    }))
+}
+
+/// `GET /api/v1/calendar/import-jobs/{id}` — single import job. `200` / `404`.
+pub async fn get_calendar_import_job(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(job_id): Path<Uuid>,
+) -> Result<Json<CalendarImportJobResponse>, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    let job = state
+        .metadata_store
+        .get_calendar_import_job(auth.tenant_id, auth.user_id, job_id)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to load import job: {e}")))?
+        .ok_or_else(|| AppError::NotFound("Import job not found".to_string()))?;
+
+    Ok(Json(CalendarImportJobResponse::from(job)))
 }
 
 impl From<CalendarError> for AppError {

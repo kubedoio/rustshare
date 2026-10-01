@@ -72,8 +72,9 @@ reqwest = { version = "0.12", features = ["json", "multipart", "stream", "rustls
 # Utilities
 uuid = { version = "1.23", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = "0.10"
+chrono-tz = "0.9"
 rrule = "0.13"
+icalendar = "0.17"
 anyhow = "1.0"
 thiserror = "2.0"
 tracing = "0.1"

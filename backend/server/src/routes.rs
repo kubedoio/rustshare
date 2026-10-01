@@ -448,7 +448,7 @@ pub fn mail_routes() -> Router<AppState> {
 }
 
 pub fn calendar_routes() -> Router<AppState> {
-    use axum::routing::{get, patch};
+    use axum::routing::{get, patch, post};
     Router::new()
         .route(
             "/api/v1/calendar/events",
@@ -470,6 +470,18 @@ pub fn calendar_routes() -> Router<AppState> {
             "/api/v1/calendar/sources/{id}",
             patch(crate::handlers::calendar::update_calendar_source)
                 .delete(crate::handlers::calendar::delete_calendar_source),
+        )
+        .route(
+            "/api/v1/calendar/import",
+            post(crate::handlers::calendar::import_calendar_file),
+        )
+        .route(
+            "/api/v1/calendar/import-jobs",
+            get(crate::handlers::calendar::list_calendar_import_jobs),
+        )
+        .route(
+            "/api/v1/calendar/import-jobs/{id}",
+            get(crate::handlers::calendar::get_calendar_import_job),
         )
 }
 

@@ -6,9 +6,9 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
-    CalendarEvent, CalendarSource, File, FileVersion, Folder, MailAccount, MailAccountId,
-    MailAttachment, MailImportJob, MailImportJobId, MailLink, MailLinkId, MailMessage,
-    MailMessageId, MailMessagePart, MailSmtpSettings, MailSortOrder, OidcLoginState,
+    CalendarEvent, CalendarImportJob, CalendarSource, File, FileVersion, Folder, MailAccount,
+    MailAccountId, MailAttachment, MailImportJob, MailImportJobId, MailLink, MailLinkId,
+    MailMessage, MailMessageId, MailMessagePart, MailSmtpSettings, MailSortOrder, OidcLoginState,
     ReplicationJob, ReplicationJobStatus, ReplicationState, ReplicationTarget, Share,
     SharePermissions, User, UserId, UserSession, Vault, VaultDevice, VaultFile, VaultWritePolicy,
 };
@@ -6719,6 +6719,302 @@ impl MetadataStore {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
+    }
+
+    /// Insert a calendar import job with the uploaded file bytes so the
+    /// worker can re-read them on every attempt.
+    pub async fn create_calendar_import_job(
+        &self,
+        job: &CalendarImportJob,
+        content: &[u8],
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO calendar_import_jobs (
+                id, tenant_id, owner_id, source_id, status, filename,
+                size_bytes, content, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
+            job.id,
+            job.tenant_id,
+            job.owner_id,
+            job.source_id,
+            job.status,
+            job.filename,
+            job.size_bytes,
+            content,
+            job.created_at,
+            job.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Fetch the uploaded .ics bytes for an import job.
+    pub async fn get_calendar_import_job_content(&self, id: Uuid) -> Result<Option<Vec<u8>>> {
+        let content = sqlx::query_scalar!(
+            r#"SELECT content FROM calendar_import_jobs WHERE id = $1 AND deleted_at IS NULL"#,
+            id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(content)
+    }
+
+    /// List active import jobs for a user, newest first.
+    pub async fn list_calendar_import_jobs_by_owner(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+    ) -> Result<Vec<CalendarImportJob>> {
+        let rows = sqlx::query_as!(
+            CalendarImportJob,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, source_id, status, filename, size_bytes,
+                total_events, processed_events, failed_events, last_error,
+                started_at, completed_at, deleted_at, created_at, updated_at
+            FROM calendar_import_jobs
+            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            ORDER BY created_at DESC
+            "#,
+            tenant_id,
+            owner_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Find an import job by ID, scoped to the owning user.
+    pub async fn get_calendar_import_job(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        id: Uuid,
+    ) -> Result<Option<CalendarImportJob>> {
+        let row = sqlx::query_as!(
+            CalendarImportJob,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, source_id, status, filename, size_bytes,
+                total_events, processed_events, failed_events, last_error,
+                started_at, completed_at, deleted_at, created_at, updated_at
+            FROM calendar_import_jobs
+            WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL
+            "#,
+            id,
+            tenant_id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Atomically claim the oldest pending calendar import job for
+    /// processing. Only claims jobs whose source is enabled, whose tenant has
+    /// the calendar module enabled, and whose job has not been soft-deleted.
+    pub async fn claim_next_pending_calendar_import_job(
+        &self,
+    ) -> Result<Option<CalendarImportJob>> {
+        let job = sqlx::query_as!(
+            CalendarImportJob,
+            r#"
+            WITH target AS (
+                SELECT j.id
+                FROM calendar_import_jobs j
+                JOIN calendar_sources s ON s.id = j.source_id
+                JOIN application_enablements e
+                  ON e.tenant_id = j.tenant_id
+                 AND e.workspace_id = j.tenant_id
+                 AND e.application_id = 'io.elembra.calendar'
+                WHERE j.status = 'pending'
+                  AND j.deleted_at IS NULL
+                  AND s.deleted_at IS NULL
+                  AND s.is_enabled = true
+                  AND e.enabled = true
+                ORDER BY j.created_at ASC
+                FOR UPDATE OF j SKIP LOCKED
+                LIMIT 1
+            ),
+            updated AS (
+                UPDATE calendar_import_jobs
+                SET status = 'running', started_at = NOW(), updated_at = NOW()
+                FROM target
+                WHERE calendar_import_jobs.id = target.id
+                RETURNING calendar_import_jobs.*
+            )
+            SELECT
+                id, tenant_id, owner_id, source_id, status, filename, size_bytes,
+                total_events, processed_events, failed_events, last_error,
+                started_at, completed_at, deleted_at, created_at, updated_at
+            FROM updated
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(job)
+    }
+
+    /// Reset running jobs whose heartbeat (`updated_at`) has gone stale,
+    /// excluding jobs this worker is actively processing.
+    pub async fn reset_stale_running_calendar_import_jobs(
+        &self,
+        stale_threshold: Duration,
+        exclude_ids: &[Uuid],
+    ) -> Result<u64> {
+        let seconds = stale_threshold.as_secs_f64();
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_import_jobs
+            SET status = 'pending', started_at = NULL, last_error = 'stale running job reset by worker', updated_at = NOW()
+            WHERE status = 'running'
+              AND deleted_at IS NULL
+              AND updated_at < NOW() - interval '1 second' * $1
+              AND id != ALL($2)
+            "#,
+            seconds,
+            exclude_ids,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Update the progress counters (and heartbeat) for an import job.
+    pub async fn update_calendar_import_job_progress(
+        &self,
+        id: Uuid,
+        total: i32,
+        processed: i32,
+        failed: i32,
+        last_error: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE calendar_import_jobs
+            SET
+                total_events = $2,
+                processed_events = $3,
+                failed_events = $4,
+                last_error = $5,
+                updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+            id,
+            total,
+            processed,
+            failed,
+            last_error
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Mark a running calendar import job as completed. Returns `true` only
+    /// when the job was still running (a concurrent cancel wins).
+    pub async fn mark_calendar_import_job_completed(&self, id: Uuid) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_import_jobs
+            SET status = 'completed', completed_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL AND status = 'running'
+            "#,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Mark a calendar import job as failed with a bounded error sample.
+    pub async fn mark_calendar_import_job_failed(&self, id: Uuid, error: &str) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_import_jobs
+            SET status = 'failed', last_error = $2, completed_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL AND status IN ('pending', 'running')
+            "#,
+            id,
+            error
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Insert an imported event or update the existing row with the same
+    /// `(source_id, external_uid, recurrence_id)` key. The update is skipped
+    /// when the normalized columns are unchanged, so re-imports never bump
+    /// `updated_at`. Returns `true` when a row was inserted or changed.
+    pub async fn upsert_calendar_imported_event(&self, event: &CalendarEvent) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO calendar_events (
+                id, tenant_id, owner_id, source_id, external_uid, external_etag,
+                recurrence_id, title, description, location, starts_at, ends_at,
+                all_day, original_date, timezone, rrule, status, read_only, raw,
+                deleted_at, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                    $15, $16, $17, $18, $19, $20, $21, $22)
+            ON CONFLICT (source_id, external_uid, COALESCE(recurrence_id, ''))
+                WHERE deleted_at IS NULL
+            DO UPDATE SET
+                title = EXCLUDED.title,
+                description = EXCLUDED.description,
+                location = EXCLUDED.location,
+                starts_at = EXCLUDED.starts_at,
+                ends_at = EXCLUDED.ends_at,
+                all_day = EXCLUDED.all_day,
+                original_date = EXCLUDED.original_date,
+                timezone = EXCLUDED.timezone,
+                rrule = EXCLUDED.rrule,
+                status = EXCLUDED.status,
+                updated_at = NOW()
+            WHERE
+                calendar_events.title IS DISTINCT FROM EXCLUDED.title
+                OR calendar_events.description IS DISTINCT FROM EXCLUDED.description
+                OR calendar_events.location IS DISTINCT FROM EXCLUDED.location
+                OR calendar_events.starts_at IS DISTINCT FROM EXCLUDED.starts_at
+                OR calendar_events.ends_at IS DISTINCT FROM EXCLUDED.ends_at
+                OR calendar_events.all_day IS DISTINCT FROM EXCLUDED.all_day
+                OR calendar_events.original_date IS DISTINCT FROM EXCLUDED.original_date
+                OR calendar_events.timezone IS DISTINCT FROM EXCLUDED.timezone
+                OR calendar_events.rrule IS DISTINCT FROM EXCLUDED.rrule
+                OR calendar_events.status IS DISTINCT FROM EXCLUDED.status
+            "#,
+            event.id,
+            event.tenant_id,
+            event.owner_id,
+            event.source_id,
+            event.external_uid,
+            event.external_etag,
+            event.recurrence_id,
+            event.title,
+            event.description,
+            event.location,
+            event.starts_at,
+            event.ends_at,
+            event.all_day,
+            event.original_date,
+            event.timezone,
+            event.rrule,
+            event.status,
+            event.read_only,
+            event.raw,
+            event.deleted_at,
+            event.created_at,
+            event.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
     }
 }
 

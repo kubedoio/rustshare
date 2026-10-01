@@ -76,6 +76,26 @@ pub struct AppConfig {
         rename = "RUSTSHARE_MAIL_IMPORT_WORKER_STALE_SECS"
     )]
     pub mail_import_worker_stale_secs: i64,
+    #[serde(
+        default = "default_calendar_import_worker_enabled",
+        rename = "RUSTSHARE_CALENDAR_IMPORT_WORKER_ENABLED"
+    )]
+    pub calendar_import_worker_enabled: bool,
+    #[serde(
+        default = "default_calendar_import_worker_poll_secs",
+        rename = "RUSTSHARE_CALENDAR_IMPORT_WORKER_POLL_SECS"
+    )]
+    pub calendar_import_worker_poll_secs: u64,
+    #[serde(
+        default = "default_calendar_import_worker_max_concurrent",
+        rename = "RUSTSHARE_CALENDAR_IMPORT_WORKER_MAX_CONCURRENT"
+    )]
+    pub calendar_import_worker_max_concurrent: usize,
+    #[serde(
+        default = "default_calendar_import_worker_stale_secs",
+        rename = "RUSTSHARE_CALENDAR_IMPORT_WORKER_STALE_SECS"
+    )]
+    pub calendar_import_worker_stale_secs: i64,
 }
 
 fn default_jwt_issuer() -> String {
@@ -164,6 +184,22 @@ fn default_mail_import_worker_max_concurrent() -> usize {
 }
 
 fn default_mail_import_worker_stale_secs() -> i64 {
+    300
+}
+
+fn default_calendar_import_worker_enabled() -> bool {
+    true
+}
+
+fn default_calendar_import_worker_poll_secs() -> u64 {
+    10
+}
+
+fn default_calendar_import_worker_max_concurrent() -> usize {
+    2
+}
+
+fn default_calendar_import_worker_stale_secs() -> i64 {
     300
 }
 

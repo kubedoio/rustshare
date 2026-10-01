@@ -132,6 +132,10 @@ fn validate_rrule(rrule: &str) -> Result<(), CalendarError> {
 /// Expand a recurring master within the window. Returns occurrence starts
 /// (UTC) overlapping `[from, to)`; occurrences overridden by a stored
 /// `recurrence_id` row are omitted (the override row is returned as stored).
+///
+/// Iteration is wall-clock in the event's IANA `TZID` (normative per the
+/// spec): a DST-spanning RRULE expands on local wall-clock times, and each
+/// occurrence is converted to a UTC instant only afterwards.
 fn expand_master(
     event: &CalendarEvent,
     from: DateTime<Utc>,
@@ -141,8 +145,24 @@ fn expand_master(
     let Some(rrule) = event.rrule.as_deref() else {
         return Vec::new();
     };
-    let dtstart = event.starts_at.format("%Y%m%dT%H%M%SZ");
-    let Ok(set) = format!("DTSTART:{dtstart}\nRRULE:{rrule}").parse::<rrule::RRuleSet>() else {
+    let tz: rrule::Tz = event
+        .timezone
+        .parse::<chrono_tz::Tz>()
+        .map(rrule::Tz::from)
+        .unwrap_or(rrule::Tz::UTC);
+    // The stored starts_at is a UTC instant; converting it into the event's
+    // timezone yields the wall-clock time DTSTART must carry for wall-clock
+    // iteration.
+    let dtstart_line = if tz == rrule::Tz::UTC {
+        format!("DTSTART:{}Z", event.starts_at.format("%Y%m%dT%H%M%S"))
+    } else {
+        format!(
+            "DTSTART;TZID={}:{}",
+            tz.name(),
+            event.starts_at.with_timezone(&tz).format("%Y%m%dT%H%M%S")
+        )
+    };
+    let Ok(set) = format!("{dtstart_line}\nRRULE:{rrule}").parse::<rrule::RRuleSet>() else {
         tracing::warn!(event_id = %event.id, "stored RRULE failed to parse; returning no instances");
         return Vec::new();
     };
@@ -150,8 +170,8 @@ fn expand_master(
     // One-second margins make the bound semantics (inclusive/exclusive) of
     // the rrule crate irrelevant; exact overlap filtering happens below.
     let occurrences = set
-        .after((from - duration - Duration::seconds(1)).with_timezone(&rrule::Tz::UTC))
-        .before((to + Duration::seconds(1)).with_timezone(&rrule::Tz::UTC))
+        .after((from - duration - Duration::seconds(1)).with_timezone(&tz))
+        .before((to + Duration::seconds(1)).with_timezone(&tz))
         .all(MAX_EXPANDED_INSTANCES_PER_MASTER);
     occurrences
         .dates
@@ -545,5 +565,111 @@ impl CalendarService {
                 .unwrap_or(occurrence.event.starts_at)
         });
         Ok(occurrences)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn recurring_master(
+        timezone: &str,
+        starts_at: &str,
+        ends_at: &str,
+        rrule: &str,
+    ) -> CalendarEvent {
+        CalendarEvent {
+            id: Uuid::new_v4(),
+            tenant_id: Uuid::nil(),
+            owner_id: Uuid::nil(),
+            source_id: Uuid::new_v4(),
+            external_uid: None,
+            external_etag: None,
+            recurrence_id: None,
+            title: "Recurring".to_string(),
+            description: None,
+            location: None,
+            starts_at: starts_at.parse().unwrap(),
+            ends_at: ends_at.parse().unwrap(),
+            all_day: false,
+            original_date: None,
+            timezone: timezone.to_string(),
+            rrule: Some(rrule.to_string()),
+            status: CalendarEventStatus::Confirmed.as_str().to_string(),
+            read_only: false,
+            raw: None,
+            deleted_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn utc(value: &str) -> DateTime<Utc> {
+        value.parse().unwrap()
+    }
+
+    #[test]
+    fn expands_dst_spanning_weekly_rrule_on_berlin_wall_clock() {
+        // 2026-10-23 14:00 in Europe/Berlin is 12:00Z (CEST, UTC+2).
+        let event = recurring_master(
+            "Europe/Berlin",
+            "2026-10-23T12:00:00Z",
+            "2026-10-23T13:00:00Z",
+            "FREQ=WEEKLY;COUNT=2",
+        );
+        let starts = expand_master(
+            &event,
+            utc("2026-10-01T00:00:00Z"),
+            utc("2026-11-30T00:00:00Z"),
+            &[],
+        );
+        // Wall-clock iteration keeps 14:00 Berlin local: the second
+        // occurrence lands on 13:00Z (CET, UTC+1), not 12:00Z as a UTC
+        // instant iteration would produce.
+        assert_eq!(
+            starts,
+            vec![utc("2026-10-23T12:00:00Z"), utc("2026-10-30T13:00:00Z")]
+        );
+    }
+
+    #[test]
+    fn utc_rrule_expansion_is_unchanged() {
+        let event = recurring_master(
+            "UTC",
+            "2026-10-05T14:00:00Z",
+            "2026-10-05T15:00:00Z",
+            "FREQ=WEEKLY;COUNT=3",
+        );
+        let starts = expand_master(
+            &event,
+            utc("2026-10-01T00:00:00Z"),
+            utc("2026-11-30T00:00:00Z"),
+            &[],
+        );
+        assert_eq!(
+            starts,
+            vec![
+                utc("2026-10-05T14:00:00Z"),
+                utc("2026-10-12T14:00:00Z"),
+                utc("2026-10-19T14:00:00Z"),
+            ]
+        );
+    }
+
+    #[test]
+    fn overridden_occurrence_is_omitted_from_expansion() {
+        let event = recurring_master(
+            "UTC",
+            "2026-10-05T14:00:00Z",
+            "2026-10-05T15:00:00Z",
+            "FREQ=WEEKLY;COUNT=2",
+        );
+        let starts = expand_master(
+            &event,
+            utc("2026-10-01T00:00:00Z"),
+            utc("2026-11-30T00:00:00Z"),
+            &["2026-10-12T14:00:00Z".to_string()],
+        );
+        assert_eq!(starts, vec![utc("2026-10-05T14:00:00Z")]);
     }
 }

@@ -9,6 +9,7 @@ pub mod application_service;
 pub mod ask_workspace;
 pub mod calendar_service;
 pub mod chat_bootstrap;
+pub mod ical_import;
 pub mod kanban_service;
 pub mod mail_service;
 pub mod meeting_service;

@@ -37,6 +37,7 @@ uuid = { workspace = true, features = ["macro-diagnostics", "v5"] }
 chrono.workspace = true
 chrono-tz.workspace = true
 rrule.workspace = true
+icalendar.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -305,6 +306,10 @@ path = "../tests/chat_bootstrap_test.rs"
 [[test]]
 name = "calendar_api_test"
 path = "../tests/calendar_api_test.rs"
+
+[[test]]
+name = "calendar_import_test"
+path = "../tests/calendar_import_test.rs"
 
 [[test]]
 name = "vault_webui_content_test"
