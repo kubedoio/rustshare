@@ -50,6 +50,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # CodeQL Rust autobuild invokes cargo; ubuntu-latest does not guarantee
+      # a matching toolchain, so pin the same one the workspace builds with.
+      - uses: dtolnay/rust-toolchain@1.97.1
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4.37.3
         with:

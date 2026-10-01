@@ -13,7 +13,7 @@
 release_candidate: PENDING_FIRST_BETA_CANDIDATE
 release_tag: PENDING_FIRST_BETA_CANDIDATE
 decision: NO-GO
-recorded_at_utc: 2026-09-30T00:00:00Z
+recorded_at_utc: PENDING
 
 source:
   elembra_sha: PENDING
@@ -109,7 +109,7 @@ gates:
     evidence: one rehearsed rollback classification (binary rollback vs backup restore) recorded
   monitoring:
     status: NOT_RUN
-    evidence: docker-compose.monitoring.yml deployed on the beta host; Prometheus scrapes backend /metrics, nginx-status, and chat targets; scrape up-state verified
+    evidence: docker-compose.monitoring.yml deployed on the beta host; Prometheus scrapes backend /metrics (including chat_* metrics) and nginx-status; scrape up-state verified
   alerting:
     status: NOT_RUN
     evidence: a real AlertManager route fired a test notification and was acknowledged by a human; a service stop produced a firing alert

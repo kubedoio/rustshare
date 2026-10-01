@@ -65,7 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   machine-readable launch decision record for it. Revision 2 adds the
   Calendar application (issue #315) as a hard customer requirement, makes
   security posture hardening (S-1..S-9) mandatory, and defers WebUI
-  enhancements to the post-beta backlog.
+  enhancements to the post-beta backlog. The Calendar implementation itself
+  is defined by PR #321 (ADR-0037, spec `docs/specs/calendar-application-v1alpha1.md`,
+  API contract, and executor plan `docs/plans/2026-10-01-issue-315-calendar-application.md`),
+  and the beta scope follows that definition.
 - CodeQL static analysis workflow (`.github/workflows/codeql.yml`) for the
   Rust workspace and frontend TypeScript with security-extended queries
   (beta readiness security item S-1).

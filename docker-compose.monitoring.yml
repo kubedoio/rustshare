@@ -53,17 +53,18 @@ services:
     restart: unless-stopped
     # The backend /metrics bearer token. Prometheus does not expand
     # environment variables inside its config file, so the entrypoint below
-    # writes the token to /run/prometheus-metrics-token (mode 0600, via
+    # writes the token to /tmp/prometheus-metrics-token (mode 0600, via
     # umask) and prometheus.yml consumes it through
     # authorization.credentials_file. Compose reads the variable from .env
-    # or the invoking shell.
+    # or the invoking shell. /tmp (not /run) because the prom/prometheus
+    # image runs as nobody, which has no writable /run.
     environment:
       METRICS_API_TOKEN: ${METRICS_API_TOKEN:?set METRICS_API_TOKEN to the backend /metrics bearer token}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
         umask 077;
-        printf '%s' "$$METRICS_API_TOKEN" > /run/prometheus-metrics-token;
+        printf '%s' "$$METRICS_API_TOKEN" > /tmp/prometheus-metrics-token;
         exec /bin/prometheus
         --config.file=/etc/prometheus/prometheus.yml
         --storage.tsdb.path=/prometheus
@@ -118,6 +119,11 @@ services:
       - grafana_data:/var/lib/grafana
     ports:
       - "127.0.0.1:${GRAFANA_HOST_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   prometheus_data:

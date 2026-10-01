@@ -128,7 +128,16 @@ run_json_request() {
 		curl_args+=(-H "Content-Type: application/json" --data "$body")
 	fi
 
-	status="$(curl "${curl_args[@]}" "$url")"
+	# `|| true` so a transient connection failure under `set -e` reaches the
+	# friendly error path (or the search retry loop) instead of aborting.
+	status="$(curl "${curl_args[@]}" "$url" || true)"
+	if [[ -z "$status" ]]; then
+		if [[ "$expect_2xx" == "1" ]]; then
+			echo "Request failed (no response): ${method} ${url}" >&2
+			exit 1
+		fi
+		return 0
+	fi
 	if [[ "$expect_2xx" == "1" && "$status" != 2* ]]; then
 		echo "Request failed: ${method} ${url} -> ${status}" >&2
 		if [[ -s "$output_file" ]]; then
@@ -245,7 +254,7 @@ if [[ -z "${VIEWER_PASSWORD}" ]]; then
 fi
 
 STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-REPORT_PATH="${REPORT_DIR%/}/$(date -u +%Y%m%dT%H%M%SZ)-beta-smoke.env"
+REPORT_PATH="${REPORT_DIR%/}/$(date -u +%Y%m%dT%H%M%SZ)-$$-beta-smoke.env"
 
 TMP_DIR="$(mktemp -d)"
 ADMIN_COOKIES="${TMP_DIR}/admin.cookies"

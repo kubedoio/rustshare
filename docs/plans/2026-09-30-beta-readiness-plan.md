@@ -70,11 +70,11 @@ Ranked by blocking impact.
 
 | # | Gap | Current state | Why it blocks beta |
 |---|-----|---------------|--------------------|
-| 1 | **Calendar Application (#315)** — hard customer requirement | Does not exist. Only a `calendar-days` icon exists in the icon registry; no manifest, schema, routes, or UI | The customer requires it in the beta; the beta candidate cannot be cut without it |
+| 1 | **Calendar Application (#315)** — hard customer requirement | Does not exist. Only a `calendar-days` icon exists in the icon registry; no manifest, schema, routes, or UI. The implementation definition now exists in PR #321 (ADR-0037, spec `docs/specs/calendar-application-v1alpha1.md`, API contract, and executor plan `docs/plans/2026-10-01-issue-315-calendar-application.md` — landing with PR #321); implementation must follow that definition | The customer requires it in the beta; the beta candidate cannot be cut without it |
 | 2 | **Target-environment evidence** — 15 of the 18 Customer Alpha gates are still PENDING/NOT_RUN (clean install, TLS/WSS, OIDC, product smoke, offboarding, backup, restore, upgrade, rollback, monitoring, alerting, support bundle, cross-tenant campaign, security review, immutable artifacts; only repository governance, Buzz conformance, and the structural guard have PASS) | PENDING / NOT_RUN in `customer-alpha-gate.yaml` | Beta testers cannot be given accounts on a stack that has never been proven to install, recover, or alert |
 | 3 | **Hosted environment** | No long-lived, internet-facing, TLS-terminated instance exists | The operator-hosted model requires a dedicated beta host, domain, and reverse proxy before day 1 |
 | 4 | **Monitoring + alerting stack** | `/metrics` exists, thresholds documented, but no Prometheus/AlertManager deployment and no notification route | Beta without paging = blind operations; the gate explicitly requires a real route that fires |
-| 5 | **Security posture hardening** (see §4.5) | Strong foundations (fail-closed auth, contract tests, cargo-deny, vuln-gated releases) but: no SAST, RLS covers only 3 tables, no external pentest, in-memory (per-instance) rate limiting | A hosted multi-tenant beta with a brand-new attack surface (Calendar) needs every compensating control in place |
+| 5 | **Security posture hardening** (see §4.5) | Strong foundations (fail-closed auth, contract tests, cargo-deny, vuln-gated releases) but: no SAST, RLS covers only 6 tables, no external pentest, in-memory (per-instance) rate limiting | A hosted multi-tenant beta with a brand-new attack surface (Calendar) needs every compensating control in place |
 | 6 | **Published Buzz SBOM artifact** | Generated as evidence only; the pinned Buzz workflow does not publish an SBOM | Supply-chain gate `immutable_release_artifacts` cannot fully PASS |
 | 7 | **Tester operations** (onboarding/offboarding runbook, beta agreement, data policy, feedback intake, SLA) | Does not exist (Alpha had no external testers) | Hosted humans require process, not just software |
 | 8 | **Regression safety net for release cadence** | 5 Playwright e2e tests only; Calendar adds a whole new surface | Weekly-ish beta updates need an automated post-deploy smoke (`scripts/run-beta-smoke.sh`) plus e2e growth including Calendar |
@@ -102,7 +102,7 @@ specified.
 |------|-------|-------------|------------|
 | 0.1 Ratify this plan and the beta scope (incl. Calendar as hard requirement) | A | merged plan + `docs/releases/beta-gate.yaml` seeded | maintainers + customer sign-off on Calendar scope |
 | 0.2 Feature freeze for the beta line — **sole exception: Calendar (#315)** | A | branch protection note | recorded in `repository_governance` evidence |
-| 0.3 **Calendar specification + Application manifest** | C | `docs/specs/calendar-application-v1.md` + manifest `io.elembra.calendar` per `application-manifest-v1alpha1.md` | ADR for schema/events; customer sign-off on scope (events, recurrence, views, sharing) |
+| 0.3 **Calendar specification + Application manifest** | C | `docs/specs/calendar-application-v1alpha1.md` + manifest `io.elembra.calendar` per `application-manifest-v1alpha1.md` (spec/ADR/contract land with PR #321) | ADR for schema/events; customer sign-off on scope (v1: event CRUD, iCal/.ics import, read-only Google/Microsoft sync — no bidirectional sync) |
 | 0.4 Provision the beta host | A | clean supported Linux host, Docker, domain, same-host TLS proxy | `docs/DEPLOYMENT.md` production profile |
 | 0.5 Deploy the monitoring stack | A | `docker-compose.monitoring.yml` live | Prometheus scrapes `/metrics`; stopped service fires an alert |
 | 0.6 Wire alert routing | A | AlertManager → real channel | test alert delivered and acknowledged |
@@ -281,10 +281,17 @@ Mandatory hardening for the beta:
 
 Implemented strictly as a first-class Application per
 `docs/specs/application-manifest-v1alpha1.md`, mirroring the
-meetings/standups/kanban pattern:
+meetings/standups/kanban pattern. The v1 scope is defined by PR #321
+(ADR-0037, spec `docs/specs/calendar-application-v1alpha1.md`, API
+contract, and executor plan `docs/plans/2026-10-01-issue-315-calendar-application.md`,
+all landing with PR #321) and this plan follows that definition:
 
 - manifest id `io.elembra.calendar`, navigation contribution at
   `/apps/calendar` (icon `calendar-days` already registered);
+- **v1 scope:** internal event CRUD (with attendees/recurrence per the PR #321
+  spec), iCal/.ics import, and per-user read-only Google/Microsoft calendar
+  sync. **No bidirectional external sync in v1**; workspace-shared calendars
+  are likewise out of scope for v1;
 - explicit data + authorization ownership; `ResourceRef` for any
   cross-Application references (e.g. attach a note/file to an event);
 - integration events for Memory/Search projection, permission-aware like

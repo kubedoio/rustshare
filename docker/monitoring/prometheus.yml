@@ -2,7 +2,7 @@
 # Mounted by docker-compose.monitoring.yml.
 #
 # The backend /metrics bearer token is read from
-# /run/prometheus-metrics-token (authorization.credentials_file below).
+# /tmp/prometheus-metrics-token (authorization.credentials_file below).
 # Prometheus does NOT substitute environment variables in this file, so the
 # token cannot be inlined as ${METRICS_API_TOKEN}; the compose entrypoint
 # writes it to that file from the environment at container start with mode
@@ -26,7 +26,7 @@ scrape_configs:
     scheme: http
     authorization:
       type: Bearer
-      credentials_file: /run/prometheus-metrics-token
+      credentials_file: /tmp/prometheus-metrics-token
     static_configs:
       - targets: ["backend:8080"]
         labels:

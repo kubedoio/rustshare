@@ -19,11 +19,14 @@ are actually fixed, not when we hope they will be.
   beta. The desktop CLI exists in the repository but is not part of the
   beta.
 - **Obsidian vault sync is not included** in this beta.
-- **Calendar is new in this beta** (customer requirement): events with
-  attendees and month/week/list views are in scope; its depth beyond that
-  (recurrence, ICS import/export, cross-application attachments) depends on
-  the signed-off specification — we will tell you exactly what is included
-  at kickoff.
+- **Calendar is new in this beta** (customer requirement, issue #315): v1
+  scope is internal events (with attendees and month/week/list views),
+  iCal/.ics import, and per-user **read-only** Google/Microsoft calendar
+  sync; workspace-shared calendars and bidirectional external sync are out
+  of scope for v1. Events are visible only to their owner unless explicitly
+  shared. The implementation is defined in PR #321
+  (https://github.com/kubedoio/rustshare/pull/321 — ADR-0037, spec, API
+  contract, and executor plan).
 - **Chat reply/thread composer** is not finished yet — replies exist in the
   protocol but the composer UI is deferred.
 - **Chat device/key administration** is limited: browser-held identity with

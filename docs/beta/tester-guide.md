@@ -64,7 +64,7 @@ Remove passwords, tokens, and private URLs before posting.
 
 | Level | Meaning | Example | Our target |
 |---|---|---|---|
-| Sev-1 | Data loss, cross-tenant/cross-user leak, instance unusable | You see someone else's files or calendar events | Ack ≤ 4h (contact us directly) |
+| Sev-1 | Data loss, cross-tenant/cross-user leak, instance unusable | You see someone else's files or calendar events | Ack ≤ 4h (contact us directly — use the Sev-1 support contact from your welcome email) |
 | Sev-2 | Core flow broken with no workaround | Uploads fail for a file type | First response ≤ 2 business days |
 | Sev-3 | Broken with workaround, or bad UX | Confusing error message | Triaged weekly |
 

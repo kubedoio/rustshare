@@ -66,6 +66,7 @@ jobs:
           jq -e '.services.prometheus.image | test("^prom/prometheus@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
           jq -e '.services.blackbox-exporter.image | test("^prom/blackbox-exporter@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
           jq -e '.services.alertmanager.image | test("^prom/alertmanager@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
+          jq -e '.services.grafana.image | test("^grafana/grafana@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
           # Prometheus config + alert rules. Mounted at /etc/prometheus so
           # the absolute rule_files path in prometheus.yml resolves; a dummy
           # token file is mounted at the credentials_file path so the
@@ -73,7 +74,7 @@ jobs:
           printf 'ci-validation-only' > /tmp/prometheus-metrics-token
           docker run --rm \
             -v "$PWD/docker/monitoring:/etc/prometheus:ro" \
-            -v "/tmp/prometheus-metrics-token:/run/prometheus-metrics-token:ro" \
+            -v "/tmp/prometheus-metrics-token:/tmp/prometheus-metrics-token:ro" \
             prom/prometheus@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e \
             promtool check config /etc/prometheus/prometheus.yml
           # AlertManager routing config.
