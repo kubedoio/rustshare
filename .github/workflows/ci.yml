@@ -62,7 +62,9 @@ jobs:
           GRAFANA_ADMIN_PASSWORD: compose-validation-only
         run: |
           # Interpolation and schema check of the monitoring compose file.
-          docker compose -f docker-compose.monitoring.yml config --format json > /tmp/monitoring-compose.json
+          # --profile dashboards: grafana is behind that profile, and plain
+          # 'compose config' omits profile-gated services.
+          docker compose -f docker-compose.monitoring.yml --profile dashboards config --format json > /tmp/monitoring-compose.json
           jq -e '.services.prometheus.image | test("^prom/prometheus@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
           jq -e '.services["blackbox-exporter"].image | test("^prom/blackbox-exporter@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
           jq -e '.services.alertmanager.image | test("^prom/alertmanager@sha256:[0-9a-f]{64}$")' /tmp/monitoring-compose.json
