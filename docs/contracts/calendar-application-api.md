@@ -34,9 +34,16 @@ write-only storage internals.
 ### `GET /api/v1/calendar/events`
 
 List events overlapping a time range. `from` and `to` are **required** and the
-window must be ≤ 366 days (`400` otherwise). Recurring masters are expanded
-server-side within the window; each expanded instance carries the master's
-`id` plus `recurrence_id`/`instance_start`.
+window must be ≤ 366 days (`400` otherwise). The query is two-part: (a)
+non-recurring events with `starts_at < to AND ends_at > from` (overlap), plus
+(b) ALL recurring masters (`rrule IS NOT NULL`) owned by the caller,
+regardless of `starts_at`, expanded server-side within the window; expanded
+instances are filtered by the same overlap predicate. Each expanded instance
+carries the master's `id` plus `recurrence_id`/`instance_start` (the expanded
+occurrence's `DTSTART`, RFC 3339; null on stored non-expanded rows). Stored
+override rows (`recurrence_id` NOT NULL) are returned as stored (own `id`),
+and master expansion omits occurrences covered by an override row in the
+window.
 
 Query parameters:
 
@@ -160,8 +167,8 @@ already exists.
 ### `PATCH /api/v1/calendar/sources/{id}`
 
 `{ "display_name"?: string, "is_enabled"?: boolean }`. Disabling a source
-stops its sync and hides its events from default list responses (they remain
-queryable with `source_id`). `200` / `404`.
+stops its sync; events of disabled sources are excluded from `GET /events`
+unless that source's `source_id` is explicitly passed. `200` / `404`.
 
 ### `DELETE /api/v1/calendar/sources/{id}`
 
@@ -196,8 +203,9 @@ Validates `state`, exchanges the code, stores encrypted tokens, creates the
 `calendar_sources` row, enqueues an initial full sync, and redirects the
 browser to `/settings/apps/calendar?connected={kind}` (success) or
 `/settings/apps/calendar?error=oauth_{reason}` (failure). Always a `302`
-(`StatusCode::FOUND` plus a `Location` header — axum's `Redirect` helpers only
-emit `303`/`307`); the callback never renders or returns token data.
+(`StatusCode::FOUND` plus a `Location` header — axum's `Redirect` helpers
+emit `303`/`307`/`308`, so a `302` requires the manual status-code-plus-
+header construction); the callback never renders or returns token data.
 
 Failure codes in the redirect: `oauth_state`, `oauth_exchange`,
 `oauth_denied`, `oauth_unconfigured`.

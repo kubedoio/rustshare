@@ -90,7 +90,11 @@ modeled on the Mail application, with three v1 capabilities:**
    `kind = internal | ical_import | google | outlook`). A sync worker modeled
    on `mail_import_worker` polls with provider cursors (Google `syncToken`,
    Microsoft `deltaToken`, stored in `calendar_sync_states`) and materializes
-   remote events into `calendar_events` as read-only copies.
+   remote events into `calendar_events` as read-only copies. Scheduling and
+   per-source token refresh are lease-guarded: `calendar_sync_states` carries
+   `next_sync_at` plus `locked_at`/`locked_by`, claimed
+   `FOR UPDATE SKIP LOCKED`, with stale-lease reset mirroring the mail
+   stale-job reset (only the lease holder may refresh OAuth tokens).
 
 Additional rulings:
 
@@ -170,6 +174,9 @@ Additional rulings:
 - OAuth app registrations (Google Cloud Console, Microsoft Entra) are
   per-deployment operator work; self-hosters must configure client credentials
   before the sync features function.
+- v1 syncs only each provider's primary calendar (`primary` / default
+  calendar); multi-calendar discovery (`calendarList`) is deferred to a
+  follow-up.
 - The owner-only visibility model means the "share like other apps" part of
   issue #315 is only partially answered in v1 (read-only export at best).
 - `calendar_events` duplicates data that lives in Google/Microsoft; storage
@@ -261,6 +268,12 @@ tests plus human review before merge:
       sources without exposing tokens.
 - [ ] Security note in the PR; human review obtained per AGENTS.md safety
       boundaries.
+
+## Follow-ups
+
+- Bidirectional sync and workspace-shared calendars are to be revisited once a
+  permission model for per-user mirrored external data exists (tracked as a
+  future issue after #315).
 
 ## References
 

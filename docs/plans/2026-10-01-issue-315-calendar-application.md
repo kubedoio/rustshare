@@ -6,7 +6,7 @@
 
 **Architecture:** Everything is modeled on the Mail application. Manifest registration in `first_party_manifests()` (`backend/crates/core/src/domain/application.rs:488`); per-tenant enablement gating via a `require_calendar_enabled()` guard cloned from `require_mail_enabled()` (`backend/server/src/handlers/mail.rs:25-43`); five new tables (`calendar_events`, `calendar_sources`, `calendar_sync_states`, `calendar_import_jobs`, `calendar_oauth_states`); per-user OAuth tokens encrypted with the existing AES-256-GCM `SecretEncryptionKey` (`mail_accounts.password_enc` pattern); background import/sync workers cloned from `mail_import_worker.rs` (DB queue, claim/stale-reset/watermark); integration events through the generic `OutboxStore::insert_in_tx` path (`backend/crates/storage/src/outbox_store.rs:359`). No bidirectional sync, per the connector contract warning.
 
-**Tech Stack:** Rust 1.97.1 / Axum / SQLx (offline metadata) / PostgreSQL 16; `icalendar` crate for RFC 5545 parsing (new dependency); `reqwest` (already a workspace dependency) for OAuth + provider APIs; Svelte 5 runes + TanStack Query (`$lib/query-compat`) frontend with a hand-rolled month/week/agenda grid (no calendar component library).
+**Tech Stack:** Rust 1.97.1 / Axum / SQLx (offline metadata) / PostgreSQL 16; `icalendar` crate for RFC 5545 parsing (new dependency); `rrule` crate (~0.13) for recurrence expansion at read time (new dependency); `reqwest` (already a workspace dependency) for OAuth + provider APIs; Svelte 5 runes + TanStack Query (`$lib/query-compat`) frontend with a hand-rolled month/week/agenda grid (no calendar component library).
 
 **Companion documents (read first):**
 
@@ -66,7 +66,7 @@ No calendar tables, routes, frontend components, or crates exist today (`rg -i c
 | Events table name | `calendar_events` | `events` | Taken by the append-only domain event store |
 | Recurrence | Store RRULE verbatim; expand server-side within the requested range, capped window (≤ 366 days) | Pre-materialize instances | Unbounded storage growth; expansion-at-read is exact and cheap for UI windows |
 | Frontend calendar UI | Hand-rolled month/week/agenda grid in `CalendarApplicationView.svelte` | FullCalendar or similar component library | No heavy dependency; Svelte 5 runes + existing TanStack Query idiom suffice for v1 views; keeps bundle small |
-| Visibility / sharing | Owner-only rows (`tenant_id` + `owner_id` on every query, 404 for foreign); read-only per-user ICS feed as stretch | Map calendar onto Files share links | No permission model exists for per-user mirrored external data; safety boundary requires design + review first (ADR-0031 tenant isolation file, sharing rules) |
+| Visibility / sharing | Owner-only rows (`tenant_id` + `owner_id` on every query, 404 for foreign); read-only per-user ICS feed as stretch | Map calendar onto Files share links | No permission model exists for per-user mirrored external data; safety boundary requires design + review first (`0031-tenant-isolation-share-links-and-rls.md` tenant isolation file, sharing rules) |
 | Deletion propagation | Mirror follows provider: remote deletion soft-deletes the Elembra row | Retain local copy after provider deletion | Mirror-mode semantics from the connector contract; the provider is authoritative |
 | Import identity | Upsert key `(source_id, external_uid, COALESCE(recurrence_id,''))` | Row-per-import with dedupe heuristic | Re-importable by construction; retries never duplicate |
 
@@ -215,7 +215,7 @@ Run the manifest tests — expected: PASS. The validator (`valid_event_type`, `a
 
 - [ ] **Step 3: Migrations**
 
-Create `backend/migrations/20261001090000_create_calendar_tables.sql` with `calendar_sources`, `calendar_events`, `calendar_sync_states`, and `backend/migrations/20261001090100_create_calendar_import_jobs_table.sql` with `calendar_import_jobs`, exactly as drafted in `docs/specs/calendar-application-v1alpha1.md` §Data model (all columns, CHECK constraints, partial unique index on `(source_id, external_uid, COALESCE(recurrence_id,'')) WHERE deleted_at IS NULL`, range index on `(owner_id, starts_at)`). Follow the conventions of `20260708160002_create_mail_accounts_table.sql` / `20260708160003_create_mail_import_jobs_table.sql`.
+Create `backend/migrations/20261001090000_create_calendar_tables.sql` with `calendar_sources`, `calendar_events`, `calendar_sync_states`, and `backend/migrations/20261001090100_create_calendar_import_jobs_table.sql` with `calendar_import_jobs`, exactly as drafted in `docs/specs/calendar-application-v1alpha1.md` §Data model (all columns, CHECK constraints, partial unique index on `(source_id, external_uid, COALESCE(recurrence_id,'')) WHERE deleted_at IS NULL`, range index on `(owner_id, starts_at)`, partial recurring-masters index on `(owner_id) WHERE rrule IS NOT NULL AND deleted_at IS NULL` named `calendar_events_recurring_owner_idx`, and `calendar_sync_states` columns including `next_sync_at`, `locked_at`, `locked_by`). Follow the conventions of `20260708160002_create_mail_accounts_table.sql` / `20260708160003_create_mail_import_jobs_table.sql`.
 
 Verify against a local Postgres:
 
@@ -260,7 +260,21 @@ Expected: prepare check exits 0; all checks/tests/clippy green.
 
 - [ ] **Step 7: API tests**
 
-Create `backend/tests/calendar_api_test.rs` modeled on `backend/tests/chat_bootstrap_test.rs`: (a) 403 when the Application is disabled, (b) create/list/update/delete event round-trip, (c) user B gets 404 for user A's event id, (d) range query rejects a 400-day window with 400, (e) PATCH on a google-source event returns 409. Register the target in `backend/server/Cargo.toml` before `[dev-dependencies]` (the crate sets `autotests = false`, so `backend/tests/*.rs` is never auto-discovered; Tasks 2, 4 and 5 add the analogous entries for `calendar_import_test`, `calendar_google_sync_test`, and `calendar_outlook_sync_test`):
+**Test harness conventions** (apply to every DB-backed `backend/tests/calendar_*_test.rs` suite in this plan): every DB-backed test carries `#[ignore]`; tests run with env loaded from the repo root and single-threaded, exactly as `backend/tests/chat_bootstrap_test.rs:44-52` documents:
+
+```text
+//! DB-backed and `#[ignore]`d; run against the dev database (migrations
+//! applied) with `--test-threads=1`:
+//!
+//!   set -a; . ./backend/.env; set +a; SQLX_OFFLINE=true \
+//!     cargo test -p rustshare-server --test calendar_api_test -- \
+//!       --ignored --test-threads=1
+//!
+//! Every test takes the shared `SERIAL` guard and cleans up exactly the rows
+//! it created under fresh tenants.
+```
+
+Create `backend/tests/calendar_api_test.rs` modeled on `backend/tests/chat_bootstrap_test.rs`: (a) 403 when the Application is disabled, (b) create/list/update/delete event round-trip, (c) user B gets 404 for user A's event id, (d) range query rejects a 400-day window with 400, (e) PATCH on a google-source event returns 409. Register the target in `backend/server/Cargo.toml` before `[dev-dependencies]` (the crate sets `autotests = false`, so `backend/tests/*.rs` is never auto-discovered; Tasks 2, 4 and 5 add the analogous entries for `calendar_import_test`, `calendar_google_sync_test`, and `calendar_outlook_sync_test`; each follows the harness conventions above):
 
 ```toml
 [[test]]
@@ -269,10 +283,11 @@ path = "../tests/calendar_api_test.rs"
 ```
 
 ```bash
-cd backend && cargo test --test calendar_api_test
+set -a; . ./backend/.env; set +a; SQLX_OFFLINE=true \
+  cargo test -p rustshare-server --test calendar_api_test -- --ignored --test-threads=1
 ```
 
-Expected: all tests pass.
+Expected: all tests pass (see the harness conventions above).
 
 - [ ] **Step 8: Commit**
 
@@ -299,7 +314,7 @@ under /api/v1/calendar gated on tenant enablement."
 
 - [ ] **Step 1: Add the parser dependency**
 
-Add `icalendar = "0.17"` (current published version is 0.17.14 per `cargo search icalendar`; the default `parser` feature is enabled) to the workspace dependencies and `backend/server/Cargo.toml`. Decision record (keep in the commit message): chosen over `ical` (stale maintenance, weaker TZID handling), `calcard` (Stalwart; pulls a JSCalendar stack beyond v1 needs), and hand-rolled parsing (RFC 5545 line folding/TZID/RRULE edge cases).
+Add `icalendar = "0.17"` (current published version is 0.17.14 per `cargo search icalendar`; the default `parser` feature is enabled) and `rrule = "0.13"` (recurrence expansion at read time; per `cargo search rrule` the 0.13 line is maintained — 0.14 is the newest published — pin `0.13` alongside `icalendar`) to the workspace dependencies and `backend/server/Cargo.toml`. Decision record (keep in the commit message): chosen over `ical` (stale maintenance, weaker TZID handling), `calcard` (Stalwart; pulls a JSCalendar stack beyond v1 needs), and hand-rolled parsing (RFC 5545 line folding/TZID/RRULE edge cases).
 
 ```bash
 SQLX_OFFLINE=true cargo check -p rustshare-server
@@ -337,10 +352,11 @@ Expected: green.
 `backend/tests/calendar_import_test.rs`: upload a small .ics via the multipart endpoint → poll the job to `completed` → `GET /calendar/events?from=…&to=…` returns the events → re-upload the identical file → `total_events` equal, zero additional rows (`SELECT count(*)` assertion), job `completed`.
 
 ```bash
-cd backend && cargo test --test calendar_import_test
+set -a; . ./backend/.env; set +a; SQLX_OFFLINE=true \
+  cargo test -p rustshare-server --test calendar_import_test -- --ignored --test-threads=1
 ```
 
-Expected: pass.
+Expected: pass (harness conventions per Task 1 Step 7).
 
 - [ ] **Step 6: Commit**
 
@@ -433,7 +449,7 @@ panel with source list and .ics import upload (issue #315)."
 
 - [ ] **Step 1: Config**
 
-`RUSTSHARE_CALENDAR_GOOGLE_CLIENT_ID`, `RUSTSHARE_CALENDAR_GOOGLE_CLIENT_SECRET`, plus `RUSTSHARE_CALENDAR_SYNC_WORKER_{ENABLED,POLL_SECS,MAX_CONCURRENT}` and `RUSTSHARE_CALENDAR_SYNC_{PAST_DAYS(90),FUTURE_DAYS(365)}`, same serde/env attribute style as lines 60-78. Absent client id/secret = provider unconfigured (503 on connect), not a startup error.
+`RUSTSHARE_CALENDAR_GOOGLE_CLIENT_ID`, `RUSTSHARE_CALENDAR_GOOGLE_CLIENT_SECRET`, plus `RUSTSHARE_CALENDAR_SYNC_WORKER_{ENABLED,POLL_SECS,MAX_CONCURRENT,STALE_SECS}` (STALE_SECS drives the sync-lease stale reset) and `RUSTSHARE_CALENDAR_SYNC_{PAST_DAYS(90),FUTURE_DAYS(365)}`, same serde/env attribute style as lines 60-78. Absent client id/secret = provider unconfigured (503 on connect), not a startup error.
 
 - [ ] **Step 2: OAuth flow**
 
@@ -443,20 +459,22 @@ Tests: state mismatch/expired/reuse rejected; token exchange against a `wiremock
 
 - [ ] **Step 3: Google sync**
 
-`services/google_calendar.rs`: `sync_source(pool, secret_key, http, source) -> SyncOutcome` — refresh access token when `access_token_expires_at` passed; incremental `events.list` with `syncToken` from `calendar_sync_states`; page until `nextSyncToken`; upsert by `(source_id, event.id, recurrence-id)`; `status: cancelled` → soft-delete; on HTTP 410 null the cursor and full-resync the configured window; 429/`Retry-After` → `rate_limited` + backoff; invalid grant → `auth_required`. Update `last_synced_at`/`last_error` on `calendar_sources`.
+`services/google_calendar.rs`: `sync_source(pool, secret_key, http, source) -> SyncOutcome` — only the sync lease holder may refresh the access token (see below) and a rotated refresh token is written unconditionally (newer token wins); incremental `events.list` (primary calendar only in v1 — no `calendarList` discovery) with `syncToken` from `calendar_sync_states`; page until `nextSyncToken`; upsert by `(source_id, event.id, recurrence-id)`; `status: cancelled` → `status = 'cancelled'` tombstone (row kept, queryable via `include_cancelled`); entries removed from the delta result set without a cancelled marker are soft-deleted; on HTTP 410 null the cursor and full-resync the configured window; 429/`Retry-After` → `rate_limited` + backoff (also backing off `next_sync_at`); invalid grant → `auth_required`. Update `last_synced_at`/`last_error` on `calendar_sources`.
 
-`calendar_sync_worker.rs`: clone of the Task 2 worker claiming *due sources* (`is_enabled AND kind IN ('google','outlook') AND next_sync_due`) instead of jobs. `POST /api/v1/calendar/sources/{id}/resync` nulls the cursor and forces due-now; `POST .../disconnect` revokes best-effort and wipes token columns.
+`calendar_sync_worker.rs`: clone of the Task 2 worker claiming *due sources* — `SELECT ... FOR UPDATE SKIP LOCKED WHERE next_sync_at <= now() AND (locked_at IS NULL OR locked_at < now() - stale)` (`is_enabled AND kind IN ('google','outlook')`), acquiring the lease (`locked_by` = worker id, `locked_at` heartbeat refreshed during the run, released on completion/failure; stale threshold from `RUSTSHARE_CALENDAR_SYNC_WORKER_STALE_SECS`, same pattern as the mail stale-job reset). Every run sets the next `next_sync_at` on completion, with backoff on rate-limit. `POST /api/v1/calendar/sources/{id}/resync` nulls the cursor, forces due-now, and is rejected if the source is lease-locked; `POST .../disconnect` revokes best-effort and wipes token columns.
 
 - [ ] **Step 4: Tests**
 
-`backend/tests/calendar_google_sync_test.rs`: full-sync pages materialize events; delta applies updates+deletions; 410 triggers exactly one full resync; revoked grant flips `auth_required` and further runs are no-ops; token plaintext appears in no response/log/assertable surface.
+`backend/tests/calendar_google_sync_test.rs`: full-sync pages materialize events; delta applies updates+deletions; `status: cancelled` entries become `status = 'cancelled'` tombstones (visible with `include_cancelled`), entries absent from the delta result set are soft-deleted; 410 triggers exactly one full resync; revoked grant flips `auth_required` and further runs are no-ops; concurrent same-source runs are safe (only the lease holder refreshes tokens; a rotated refresh token is written unconditionally — newer token wins); token plaintext appears in no response/log/assertable surface.
 
 ```bash
 SQLX_OFFLINE=true cargo test -p rustshare-server --lib
-cd backend && cargo sqlx prepare --workspace --check && cargo test --test calendar_google_sync_test
+cd backend && cargo sqlx prepare --workspace --check
+set -a; . ./backend/.env; set +a; SQLX_OFFLINE=true \
+  cargo test -p rustshare-server --test calendar_google_sync_test -- --ignored --test-threads=1
 ```
 
-Expected: green.
+Expected: green (harness conventions per Task 1 Step 7).
 
 - [ ] **Step 5: Commit**
 
@@ -485,7 +503,7 @@ worker (issue #315)."
 
 - [ ] **Step 2: Delta sync**
 
-`outlook_calendar.rs`: `calendarView/delta` with `@odata.deltaLink` persisted as the `ms_delta_token` cursor; invalid/expired delta token → full resync of the window; map `seriesMaster`/`occurrence` to master + `recurrence_id` rows; `isCancelled`/removed entries → soft-delete. Register `outlook` in the sync worker dispatch.
+`outlook_calendar.rs`: `calendarView/delta` (primary calendar only in v1) with `@odata.deltaLink` persisted as the `ms_delta_token` cursor; invalid/expired delta token → full resync of the window; map `seriesMaster`/`occurrence` to master + `recurrence_id` rows; `isCancelled` entries → `status = 'cancelled'` tombstones (row kept, queryable via `include_cancelled`); entries absent from the delta payload are soft-deleted. Register `outlook` in the sync worker dispatch.
 
 - [ ] **Step 3: Tests + verify**
 
@@ -493,10 +511,11 @@ Same matrix as Task 4 Step 4 against a mocked Graph API. Then:
 
 ```bash
 SQLX_OFFLINE=true cargo clippy -p rustshare-server -p rustshare-storage -p rustshare-core --all-targets --all-features -- -D warnings
-cd backend && cargo test --test calendar_outlook_sync_test
+set -a; . ./backend/.env; set +a; SQLX_OFFLINE=true \
+  cargo test -p rustshare-server --test calendar_outlook_sync_test -- --ignored --test-threads=1
 ```
 
-Expected: green.
+Expected: green (harness conventions per Task 1 Step 7).
 
 - [ ] **Step 4: Commit**
 
@@ -550,9 +569,9 @@ git add backend frontend CHANGELOG.md
 git commit -s -m "feat(calendar): integration events, settings panel, dashboard summary
 
 Calendar publishes io.elembra.calendar.event.*.v1 through the
-transactional outbox as its third publisher (after Files and Chat); settings
-panel gains
-OAuth connect/disconnect/resync and import-job status (issue #315)."
+transactional outbox as its third publisher (after Files and Chat);
+the settings panel gains OAuth connect/disconnect/resync and
+import-job status (issue #315)."
 ```
 
 ## Security note (required — AGENTS.md safety boundaries)
