@@ -153,7 +153,7 @@ external kinds.
 | `source_id` | UUID | `REFERENCES calendar_sources(id)` |
 | `external_uid` | TEXT | iCalendar UID / provider event id; NULL only for unsynced internal drafts |
 | `external_etag` | TEXT | provider ETag/change key for cheap change detection; nullable |
-| `recurrence_id` | TEXT | RECURRENCE-ID for overridden instances; NULL for the master. Override rows are returned as stored (own `id`); master expansion omits occurrences covered by an override row in the window |
+| `recurrence_id` | TEXT | RECURRENCE-ID for overridden instances; NULL for the master. Override rows are returned as stored (own `id`); master expansion omits occurrences suppressed by an override row regardless of window (the suppression set is not restricted to the requested range) |
 | `title` | TEXT | |
 | `description` | TEXT | nullable |
 | `location` | TEXT | nullable |
@@ -317,8 +317,10 @@ authoritative; Elembra stores a read-only cache.
   calendar); multi-calendar discovery (`calendarList`) is deferred.
 - Token refresh is serialized per source: only the sync lease holder
   (see `calendar_sync_states` scheduling) may refresh OAuth tokens. If the
-  provider returns a rotated refresh token it is written unconditionally
-  (newer token wins).
+  provider returns a rotated refresh token it is written by the current lease
+  holder; the write is lease-guarded (`calendar_sync_states.locked_by` must
+  still match), so a stale former holder's write is rejected rather than
+  clobbering the new holder's rotation.
 - Refresh tokens (and cached access tokens) are encrypted with
   `SecretEncryptionKey` before storage. Responses, logs, and events never
   contain token material.
@@ -336,10 +338,13 @@ authoritative; Elembra stores a read-only cache.
   token triggers the same full-resync fallback.
 - Provider deletions propagate two ways: cancelled instances arrive as
   `status = 'cancelled'` tombstone entries in delta payloads, and on FULL
-  runs the absent-entry sweep soft-deletes in-window mirror rows missing
-  from the complete window payload. Incremental deltas carry only changed
-  entries, so the sweep never runs there — an unchanged event absent from
-  a delta is untouched.
+  runs the absent-entry sweep soft-deletes mirror rows missing from the
+  complete window payload. The sweep covers single events whose start falls
+  in the window *and* recurring masters regardless of window (a master is
+  exempt from the start-time restriction so a series predating the window is
+  still swept), cascading to that master's recurrence overrides. Incremental
+  deltas carry only changed entries, so the sweep never runs there — an
+  unchanged event absent from a delta is untouched.
 - Change detection: the worker compares a normalized column set (or
   `external_etag` when present) and updates the row only on actual change.
 - Rate limits (429 / `Retry-After`) pause the source (`status =

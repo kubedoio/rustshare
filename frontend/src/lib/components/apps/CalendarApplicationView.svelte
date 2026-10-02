@@ -708,17 +708,24 @@
 						>
 							Delete entire series
 						</button>
-						<button
-							type="button"
-							class="btn btn-primary btn-sm"
-							onclick={() => openEditor(selectedEvent!, true)}
-						>
-							<Pencil size={13} /> Edit series
-						</button>
-						<p class="w-full text-right text-xs text-base-content/60">
-							This is one occurrence of a recurring series. Editing or deleting here affects the
-							entire series.
-						</p>
+						{#if selectedEvent.all_day}
+							<p class="w-full text-right text-xs text-base-content/60">
+								All-day events cannot be edited here yet. Delete and recreate it to change its
+								dates.
+							</p>
+						{:else}
+							<button
+								type="button"
+								class="btn btn-primary btn-sm"
+								onclick={() => openEditor(selectedEvent!, true)}
+							>
+								<Pencil size={13} /> Edit series
+							</button>
+							<p class="w-full text-right text-xs text-base-content/60">
+								This is one occurrence of a recurring series. Editing or deleting here affects the
+								entire series.
+							</p>
+						{/if}
 					{:else}
 						<button
 							type="button"

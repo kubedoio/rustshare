@@ -42,8 +42,9 @@ instances are filtered by the same overlap predicate. Each expanded instance
 carries the master's `id` plus `recurrence_id`/`instance_start` (the expanded
 occurrence's `DTSTART`, RFC 3339; null on stored non-expanded rows). Stored
 override rows (`recurrence_id` NOT NULL) are returned as stored (own `id`),
-and master expansion omits occurrences covered by an override row in the
-window.
+and master expansion omits occurrences suppressed by an override row (the
+suppression set spans all of the caller's override rows, not only those in
+the requested window).
 
 Query parameters:
 

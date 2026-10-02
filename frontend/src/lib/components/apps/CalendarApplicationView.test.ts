@@ -483,6 +483,31 @@ describe('CalendarApplicationView', () => {
 		expect(screen.queryByRole('button', { name: /Edit event/ })).toBeNull();
 	});
 
+	it('shows the all-day explanation and no series edit for an all-day recurring occurrence', async () => {
+		const masterDay = dayFromToday(2);
+		const occurrenceDay = dayFromToday(9);
+		mocks.listEvents.mockResolvedValue([
+			eventAt(masterDay, {
+				id: 'evt-allday-series',
+				title: 'Company holiday',
+				all_day: true,
+				original_date: masterDay,
+				starts_at: `${masterDay}T00:00:00Z`,
+				ends_at: `${dayFromToday(3)}T00:00:00Z`,
+				rrule: 'FREQ=WEEKLY;COUNT=3',
+				instance_start: `${occurrenceDay}T00:00:00Z`
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Company holiday/));
+
+		// The occurrence's all-day span cannot round-trip through the editor, so
+		// it must not offer "Edit series" — only the all-day explanation.
+		expect(await screen.findByText(/All-day events cannot be edited/)).toBeTruthy();
+		expect(screen.queryByRole('button', { name: /Edit series/ })).toBeNull();
+	});
+
 	it('clears description and location by sending empty strings on update', async () => {
 		mocks.listEvents.mockResolvedValue([
 			eventAt(dayFromToday(1), {
