@@ -83,7 +83,7 @@ RustShare supports any S3-compatible store (RustFS, AWS S3, etc.).
 | `SERVER_HOST` | Interface to bind. Use `0.0.0.0` for all interfaces; `127.0.0.1` for localhost only. | `0.0.0.0` | No |
 | `SERVER_PORT` | HTTP server port. | `8080` | No |
 | `FRONTEND_DIST_DIR` | Path to the compiled frontend SPA for static serving. | `/app/frontend-build` | No |
-| `RUSTSHARE_PUBLIC_URL` | Public base URL of the server (used in share links, device auth). | `http://localhost:8080` | No |
+| `RUSTSHARE_PUBLIC_URL` | Public base URL of the server (share links, device auth, OAuth redirect URIs). Must be absolute; release builds reject the development default and require `https` for non-loopback hosts. | `http://localhost:5173` | Yes for external calendar/webhook features |
 | `BROADCAST_CAPACITY` | Internal WebSocket event broadcast channel capacity. | — | No |
 
 ---
