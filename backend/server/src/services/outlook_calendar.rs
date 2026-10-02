@@ -985,6 +985,22 @@ mod tests {
     }
 
     #[test]
+    fn redirect_uri_classifier_handles_entra_codes() {
+        use crate::services::google_calendar::is_redirect_uri_rejection;
+        for body in [
+            r#"{"error":"invalid_client","error_description":"AADSTS7000215: Invalid client secret provided"}"#,
+            r#"{"error":"unauthorized_client"}"#,
+            r#"{"error":"invalid_request","error_description":"AADSTS50011: The redirect URI ... does not match"}"#,
+        ] {
+            assert!(is_redirect_uri_rejection(body), "must classify {body}");
+        }
+        // A generic Entra error that only names redirect_uri in prose must not
+        // be misclassified as a redirect-URI rejection.
+        let body = r#"{"error":"invalid_request","error_description":"A redirect_uri parameter is required"}"#;
+        assert!(!is_redirect_uri_rejection(body), "must not classify {body}");
+    }
+
+    #[test]
     fn unlossy_pattern_maps_to_no_rrule() {
         let recurrence: GraphRecurrence = serde_json::from_value(serde_json::json!({
             "pattern": {"type": "relativeMonthly", "interval": 1, "daysOfWeek": ["tuesday"], "index": "first"},

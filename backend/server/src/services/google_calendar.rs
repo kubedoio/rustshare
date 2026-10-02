@@ -88,9 +88,13 @@ pub enum GoogleError {
 /// registration rejection. Google returns `redirect_uri_mismatch` or
 /// `invalid_client`; Microsoft Entra returns `AADSTS50011` or
 /// `invalid_client`/`unauthorized_client`.
+///
+/// Only the specific error codes are matched — a bare mention of
+/// `redirect_uri` in an unrelated error description (e.g. a missing-parameter
+/// 400) must not be classified as a redirect-URI rejection.
 pub(crate) fn is_redirect_uri_rejection(body: &str) -> bool {
     let lower = body.to_ascii_lowercase();
-    lower.contains("redirect_uri")
+    lower.contains("redirect_uri_mismatch")
         || lower.contains("invalid_client")
         || lower.contains("unauthorized_client")
         || lower.contains("aadsts50011")
@@ -894,6 +898,10 @@ mod tests {
         for body in [
             r#"{"error":"invalid_grant"}"#,
             r#"{"error":"server_error"}"#,
+            // A description that merely mentions redirect_uri is not a
+            // redirect-URI rejection; only the specific error codes count.
+            r#"{"error":"invalid_request","error_description":"mandatory parameter redirect_uri is missing"}"#,
+            r#"{"error":"invalid_request","error_description":"redirect_uri must be an absolute URI"}"#,
         ] {
             assert!(!is_redirect_uri_rejection(body), "must not classify {body}");
         }
