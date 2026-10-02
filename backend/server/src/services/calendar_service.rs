@@ -287,15 +287,21 @@ impl CalendarService {
             }
             other => CalendarError::OAuthFailed(other.to_string()),
         })?;
+        // Without a refresh token the sync worker could never renew the
+        // short-lived access token; an encrypted empty string here would
+        // brick the source silently. Fail closed and make the user re-run
+        // the consent flow.
+        let Some(refresh_token) = tokens.rotated_refresh_token() else {
+            return Err(CalendarError::OAuthFailed(
+                "provider did not return a refresh token; run the connect flow again".to_string(),
+            ));
+        };
         let external_account = client
             .user_email(tokens.access_token())
             .await
             .map_err(|e| CalendarError::OAuthFailed(e.to_string()))?;
-        let refresh_enc = rustshare_crypto::encrypt_secret(
-            tokens.rotated_refresh_token().unwrap_or_default(),
-            &self.secret_key,
-        )
-        .map_err(|e| CalendarError::Storage(e.to_string()))?;
+        let refresh_enc = rustshare_crypto::encrypt_secret(refresh_token, &self.secret_key)
+            .map_err(|e| CalendarError::Storage(e.to_string()))?;
         let access_enc = rustshare_crypto::encrypt_secret(tokens.access_token(), &self.secret_key)
             .map_err(|e| CalendarError::Storage(e.to_string()))?;
         let display_name = format!("Google ({external_account})");
@@ -381,12 +387,33 @@ impl CalendarService {
                 "only external sources can be resynced".to_string(),
             ));
         }
+        let stale = std::time::Duration::from_secs(stale.num_seconds().max(0) as u64);
         let forced = self
             .metadata_store
-            .force_calendar_source_resync(
-                source_id,
-                std::time::Duration::from_secs(stale.num_seconds().max(0) as u64),
-            )
+            .force_calendar_source_resync(source_id, stale)
+            .await
+            .map_err(db_error)?;
+        if forced {
+            return Ok(());
+        }
+        // Not forced: either a live lease holds the source, or no
+        // sync-state row exists yet. Only the lease case is a conflict; a
+        // missing row is repaired (and the source forced due) instead.
+        if self
+            .metadata_store
+            .calendar_source_is_locked(source_id, stale)
+            .await
+            .map_err(db_error)?
+        {
+            return Err(CalendarError::SyncInProgress);
+        }
+        self.metadata_store
+            .ensure_calendar_sync_state(source_id)
+            .await
+            .map_err(db_error)?;
+        let forced = self
+            .metadata_store
+            .force_calendar_source_resync(source_id, stale)
             .await
             .map_err(db_error)?;
         if !forced {

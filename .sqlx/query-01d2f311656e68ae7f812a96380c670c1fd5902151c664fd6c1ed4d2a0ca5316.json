@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE calendar_sources\n            SET last_synced_at = CASE WHEN $3 THEN NOW() ELSE last_synced_at END,\n                last_error = $2, updated_at = now()\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "01d2f311656e68ae7f812a96380c670c1fd5902151c664fd6c1ed4d2a0ca5316"
+}

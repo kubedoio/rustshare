@@ -7238,6 +7238,9 @@ impl MetadataStore {
 
     /// Release the sync lease and record the outcome of a run: the next due
     /// time, the (possibly nulled) cursor, and last-sync bookkeeping.
+    /// `mark_synced` gates the `calendar_sources.last_synced_at` watermark so
+    /// failed runs do not advance it.
+    #[allow(clippy::too_many_arguments)]
     pub async fn finish_calendar_source_sync(
         &self,
         source_id: Uuid,
@@ -7246,6 +7249,7 @@ impl MetadataStore {
         cursor_kind: Option<&str>,
         cursor_value: Option<&str>,
         last_error: Option<&str>,
+        mark_synced: bool,
     ) -> Result<()> {
         sqlx::query!(
             r#"
@@ -7267,11 +7271,39 @@ impl MetadataStore {
         sqlx::query!(
             r#"
             UPDATE calendar_sources
-            SET last_synced_at = NOW(), last_error = $2, updated_at = now()
+            SET last_synced_at = CASE WHEN $3 THEN NOW() ELSE last_synced_at END,
+                last_error = $2, updated_at = now()
             WHERE id = $1
             "#,
             source_id,
             last_error,
+            mark_synced,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Delete expired single-use OAuth states (abandoned consents); returns
+    /// the number of rows reaped. Called periodically by the sync worker.
+    pub async fn delete_expired_calendar_oauth_states(&self) -> Result<u64> {
+        let result =
+            sqlx::query!(r#"DELETE FROM calendar_oauth_states WHERE expires_at <= NOW()"#,)
+                .execute(&self.pool)
+                .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Ensure a sync-state row exists for a source (resync of a source whose
+    /// row is missing, e.g. pre-worker data).
+    pub async fn ensure_calendar_sync_state(&self, source_id: Uuid) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO calendar_sync_states (source_id, next_sync_at)
+            VALUES ($1, NOW())
+            ON CONFLICT (source_id) DO NOTHING
+            "#,
+            source_id,
         )
         .execute(&self.pool)
         .await?;

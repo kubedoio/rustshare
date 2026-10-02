@@ -58,6 +58,20 @@ pub fn spawn_calendar_sync_worker(
         let mut in_flight_ids: HashSet<Uuid> = HashSet::new();
 
         loop {
+            // Best-effort reaping of expired single-use OAuth states; the
+            // connect flow deletes rows on consume, so only abandoned
+            // (never-completed) consents accumulate here.
+            match metadata_store.delete_expired_calendar_oauth_states().await {
+                Ok(count) => {
+                    if count > 0 {
+                        tracing::info!("Reaped {count} expired calendar OAuth states");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to reap expired calendar OAuth states: {e}");
+                }
+            }
+
             while in_flight_ids.len() < config.max_concurrent_jobs {
                 let source = match metadata_store
                     .claim_due_calendar_source(&worker_id, config.stale_threshold)
@@ -136,8 +150,12 @@ pub fn spawn_calendar_sync_worker(
     });
 }
 
+/// Run one sync pass for a claimed source and release its lease, mapping the
+/// outcome onto scheduling, cursor, and health bookkeeping. Public so the
+/// integration suite can exercise the full worker path (claim → sync →
+/// lease release) without spawning the polling loop.
 #[allow(clippy::too_many_arguments)]
-async fn run_sync(
+pub async fn run_sync(
     store: Arc<MetadataStore>,
     secret_key: Arc<rustshare_crypto::SecretEncryptionKey>,
     google: Option<Arc<GoogleCalendarClient>>,
@@ -189,6 +207,10 @@ async fn run_sync(
         last_error: Option<String>,
     }
 
+    // Only successful runs advance `calendar_sources.last_synced_at`;
+    // failures keep the previous watermark so dashboards do not report a
+    // "sync" that changed nothing.
+    let synced = matches!(outcome, SyncOutcome::Completed { .. });
     let now = Utc::now();
     let plan = match outcome {
         SyncOutcome::Completed {
@@ -197,13 +219,18 @@ async fn run_sync(
             next_sync_token,
         } => {
             tracing::info!(source_id = %source_id, upserted, soft_deleted, "calendar source synced");
+            // A source parked in `auth_required` reaches this arm as a
+            // deliberate no-op (sync_source early-returns); it must stay
+            // parked — writing `healthy` here would oscillate the status
+            // every poll cycle.
+            let parked = source.status == "auth_required";
             SyncPlan {
                 next_sync_at: now
                     + chrono::Duration::from_std(DEFAULT_SYNC_INTERVAL)
                         .unwrap_or(chrono::Duration::seconds(900)),
                 cursor: next_sync_token,
                 cursor_kind: Some("google_sync_token"),
-                status: Some("healthy"),
+                status: if parked { None } else { Some("healthy") },
                 last_error: None,
             }
         }
@@ -214,7 +241,7 @@ async fn run_sync(
             SyncPlan {
                 next_sync_at: now + backoff,
                 cursor: prior_cursor.clone(),
-                cursor_kind: Some("google_sync_token"),
+                cursor_kind: prior_cursor.is_some().then_some("google_sync_token"),
                 status: Some("rate_limited"),
                 last_error: Some("rate limited by provider".to_string()),
             }
@@ -233,12 +260,16 @@ async fn run_sync(
         }
         SyncOutcome::Failed(message) => {
             tracing::warn!(source_id = %source_id, "calendar sync failed: {message}");
+            // Keep the pre-run cursor: a transient failure must not force
+            // the next run into a full window sync (full syncs do not
+            // propagate provider deletions, so a forced full resync can
+            // silently resurrect deleted events).
             SyncPlan {
                 next_sync_at: now
                     + chrono::Duration::from_std(DEFAULT_SYNC_INTERVAL)
                         .unwrap_or(chrono::Duration::seconds(900)),
-                cursor: None,
-                cursor_kind: None,
+                cursor: prior_cursor.clone(),
+                cursor_kind: prior_cursor.is_some().then_some("google_sync_token"),
                 status: Some("failed"),
                 last_error: Some(message.chars().take(500).collect()),
             }
@@ -256,6 +287,7 @@ async fn run_sync(
             plan.cursor_kind,
             plan.cursor.as_deref(),
             plan.last_error.as_deref(),
+            synced,
         )
         .await
     {

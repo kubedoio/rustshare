@@ -83,6 +83,14 @@ impl MockResponse {
         }
     }
 
+    fn internal_error() -> Self {
+        Self {
+            status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            body: json!({"error": {"code": 500, "message": "transient backend error"}}),
+            retry_after: None,
+        }
+    }
+
     fn rate_limited(retry_after: u64) -> Self {
         Self {
             status: axum::http::StatusCode::TOO_MANY_REQUESTS,
@@ -106,6 +114,9 @@ struct MockState {
     revoke_grants: Mutex<bool>,
     /// When true, refresh responses carry a rotated refresh token.
     rotate_refresh: Mutex<bool>,
+    /// When true, the authorization-code exchange omits the refresh token
+    /// (Google does this when the user has not re-consented).
+    omit_refresh_token: Mutex<bool>,
     userinfo_email: Mutex<String>,
 }
 
@@ -141,6 +152,7 @@ fn spawn_mock_google() -> (String, Arc<MockState>) {
                             TEST_REFRESH_TOKEN
                         };
                         let grant_type = form.get("grant_type").cloned().unwrap_or_default();
+                        let omit_refresh = *state.omit_refresh_token.lock().await;
                         let body = if grant_type == "refresh_token" {
                             let mut body = json!({
                                 "access_token": "fresh-access-token-value",
@@ -151,6 +163,13 @@ fn spawn_mock_google() -> (String, Arc<MockState>) {
                                 body["refresh_token"] = json!("rotated-refresh-token-value");
                             }
                             body
+                        } else if omit_refresh {
+                            json!({
+                                "access_token": TEST_ACCESS_TOKEN,
+                                "expires_in": 3600,
+                                "token_type": "Bearer",
+                                "scope": SCOPE_READONLY
+                            })
                         } else {
                             json!({
                                 "access_token": TEST_ACCESS_TOKEN,
@@ -232,6 +251,27 @@ fn serde_urlencoded_params(query: &HashMap<String, String>) -> String {
 }
 
 /// A client wired to the mock server's endpoints.
+trait CloneForTest {
+    fn clone_for_test(&self) -> Self;
+}
+
+impl CloneForTest for GoogleCalendarClient {
+    fn clone_for_test(&self) -> Self {
+        let mut client = GoogleCalendarClient::new(
+            self.client_id.clone(),
+            self.client_secret.clone(),
+            "http://elembra.test",
+        );
+        client.token_url = self.token_url.clone();
+        client.api_base = self.api_base.clone();
+        client.userinfo_url = self.userinfo_url.clone();
+        client.auth_base = self.auth_base.clone();
+        client.revoke_url = self.revoke_url.clone();
+        client.redirect_url = self.redirect_url.clone();
+        client
+    }
+}
+
 fn mock_client(base: &str) -> GoogleCalendarClient {
     let mut client = GoogleCalendarClient::new(
         "mock-client-id".to_string(),
@@ -594,6 +634,305 @@ async fn oauth_state_expiry_and_mismatch_are_rejected() {
     harness.cleanup().await;
 }
 
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn connect_without_refresh_token_fails_closed() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "no-refresh@test.local".to_string();
+    *mock.omit_refresh_token.lock().await = true;
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_norefresh").await;
+    let mut service = CalendarService::new(harness.store.clone(), harness.secret_key.clone());
+    service.configure_google(Some(mock_client(&base)));
+
+    let authorize_url = service
+        .begin_connect(
+            harness.tenant_id,
+            user.id,
+            rustshare_core::domain::CalendarSourceKind::Google,
+        )
+        .await
+        .expect("begin_connect");
+    let state_param = authorize_url
+        .split("state=")
+        .nth(1)
+        .and_then(|rest| rest.split('&').next())
+        .expect("authorize URL carries a state param")
+        .to_string();
+
+    let result = service
+        .complete_google_connect(&state_param, "mock-auth-code")
+        .await;
+    assert!(
+        matches!(result, Err(CalendarError::OAuthFailed(_))),
+        "missing refresh token must fail closed, got {result:?}"
+    );
+    let sources = harness
+        .store
+        .list_calendar_sources(harness.tenant_id, user.id)
+        .await
+        .expect("list sources");
+    assert!(
+        sources.is_empty(),
+        "no source row may be created without a refresh token"
+    );
+
+    harness.cleanup().await;
+}
+
+/// Lease acquisition helper standing in for `claim_due_calendar_source` when
+/// a test drives the worker path (`run_sync`) directly.
+async fn acquire_lease(harness: &Harness, source_id: Uuid, worker: &str) {
+    sqlx::query(
+        "UPDATE calendar_sync_states SET locked_at = NOW(), locked_by = $2
+         WHERE source_id = $1",
+    )
+    .bind(source_id)
+    .bind(worker)
+    .execute(&harness.pool)
+    .await
+    .expect("acquire lease");
+}
+
+/// Worker-path (run_sync) coverage for a revoked grant: the first run flips
+/// the source to `auth_required`; a later full worker run keeps it parked
+/// and performs zero provider HTTP calls.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn worker_run_keeps_auth_required_parked_without_http() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "parked@test.local".to_string();
+    *mock.revoke_grants.lock().await = true;
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_parked").await;
+    let source = harness
+        .create_google_source_with_access_expiry(user.id, &mock, -60)
+        .await;
+    let client = mock_client(&base);
+    let worker = "calendar-sync-parked";
+
+    // Run 1: refresh attempt → invalid_grant → auth_required.
+    acquire_lease(&harness, source.id, worker).await;
+    rustshare_server::calendar_sync_worker::run_sync(
+        harness.store.clone(),
+        harness.secret_key.clone(),
+        Some(Arc::new(client.clone_for_test())),
+        harness.reload_source(source.id).await,
+        sync_config(),
+        worker.to_string(),
+    )
+    .await;
+    let parked = harness.reload_source(source.id).await;
+    assert_eq!(parked.status, "auth_required");
+    let token_hits_after_first = mock.token_hits().await;
+
+    // Run 2: full worker run over the parked source — no provider traffic,
+    // status untouched (previously the Completed no-op arm wrote
+    // `healthy`, oscillating the status every poll cycle).
+    acquire_lease(&harness, source.id, worker).await;
+    rustshare_server::calendar_sync_worker::run_sync(
+        harness.store.clone(),
+        harness.secret_key.clone(),
+        Some(Arc::new(client)),
+        harness.reload_source(source.id).await,
+        sync_config(),
+        worker.to_string(),
+    )
+    .await;
+    let still_parked = harness.reload_source(source.id).await;
+    assert_eq!(
+        still_parked.status, "auth_required",
+        "a parked source must stay parked across worker runs"
+    );
+    assert_eq!(
+        mock.token_hits().await,
+        token_hits_after_first,
+        "parked run must not call the token endpoint"
+    );
+    assert!(
+        mock.events_requests.lock().await.is_empty(),
+        "parked run must not call the events API"
+    );
+
+    harness.cleanup().await;
+}
+
+/// A transient failure mid-incremental must preserve the stored cursor so
+/// the next run stays incremental (a forced full resync would not propagate
+/// provider deletions and could resurrect deleted events).
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn worker_failed_run_preserves_incremental_cursor() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "failed@test.local".to_string();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_failed").await;
+    let source = harness.create_google_source(user.id, &mock).await;
+    let client = mock_client(&base);
+    let worker = "calendar-sync-failed";
+
+    // Run 1: full sync establishes a cursor.
+    {
+        let mut queue = mock.events_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "items": [event_item("evt-f1", "First", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
+            "nextSyncToken": "cursor-kept"
+        })));
+    }
+    acquire_lease(&harness, source.id, worker).await;
+    rustshare_server::calendar_sync_worker::run_sync(
+        harness.store.clone(),
+        harness.secret_key.clone(),
+        Some(Arc::new(client.clone_for_test())),
+        harness.reload_source(source.id).await,
+        sync_config(),
+        worker.to_string(),
+    )
+    .await;
+    let sync_state = harness
+        .store
+        .get_calendar_sync_state(source.id)
+        .await
+        .expect("sync state")
+        .expect("sync state row");
+    assert_eq!(sync_state.cursor_value.as_deref(), Some("cursor-kept"));
+    let last_synced_after_success = harness.reload_source(source.id).await.last_synced_at;
+
+    // Run 2: the provider 500s mid-incremental → Failed plan must keep the
+    // cursor and leave last_synced_at at its previous watermark.
+    {
+        let mut queue = mock.events_queue.lock().await;
+        queue.push_back(MockResponse::internal_error());
+    }
+    acquire_lease(&harness, source.id, worker).await;
+    rustshare_server::calendar_sync_worker::run_sync(
+        harness.store.clone(),
+        harness.secret_key.clone(),
+        Some(Arc::new(client)),
+        harness.reload_source(source.id).await,
+        sync_config(),
+        worker.to_string(),
+    )
+    .await;
+    let sync_state = harness
+        .store
+        .get_calendar_sync_state(source.id)
+        .await
+        .expect("sync state")
+        .expect("sync state row");
+    assert_eq!(
+        sync_state.cursor_value.as_deref(),
+        Some("cursor-kept"),
+        "a failed run must preserve the incremental cursor"
+    );
+    assert_eq!(sync_state.cursor_kind.as_deref(), Some("google_sync_token"));
+    let source_after_failure = harness.reload_source(source.id).await;
+    assert_eq!(source_after_failure.status, "failed");
+    assert_eq!(
+        source_after_failure.last_synced_at, last_synced_after_success,
+        "a failed run must not advance last_synced_at"
+    );
+
+    harness.cleanup().await;
+}
+
+/// Resync on a source whose sync-state row is missing must repair the row
+/// and accept (202 at the handler), not 409.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn resync_repairs_missing_sync_state_row() {
+    let _guard = SERIAL.lock().await;
+    let (_base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "resync@test.local".to_string();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_resync").await;
+    let source = harness.create_google_source(user.id, &mock).await;
+    let service = CalendarService::new(harness.store.clone(), harness.secret_key.clone());
+
+    sqlx::query("DELETE FROM calendar_sync_states WHERE source_id = $1")
+        .bind(source.id)
+        .execute(&harness.pool)
+        .await
+        .expect("delete sync state row");
+
+    service
+        .resync_source(
+            harness.tenant_id,
+            user.id,
+            source.id,
+            chrono::Duration::seconds(300),
+        )
+        .await
+        .expect("resync with missing sync-state row must be accepted");
+
+    let sync_state = harness
+        .store
+        .get_calendar_sync_state(source.id)
+        .await
+        .expect("sync state")
+        .expect("sync-state row recreated");
+    assert!(sync_state.cursor_value.is_none());
+    assert!(
+        sync_state.next_sync_at <= chrono::Utc::now() + chrono::Duration::seconds(5),
+        "resync must force the source due now"
+    );
+
+    harness.cleanup().await;
+}
+
+/// Expired OAuth states are single-use-by-design leftovers; the reaper
+/// deletes them while live states survive.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn expired_oauth_states_are_reaped() {
+    let _guard = SERIAL.lock().await;
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_reap").await;
+    let live_expires = chrono::Utc::now() + chrono::Duration::minutes(10);
+    harness
+        .store
+        .insert_calendar_oauth_state(
+            "reap-live",
+            harness.tenant_id,
+            user.id,
+            "google",
+            live_expires,
+        )
+        .await
+        .expect("insert live state");
+    sqlx::query(
+        "INSERT INTO calendar_oauth_states (state, tenant_id, owner_id, kind, expires_at)
+         VALUES ('reap-expired', $1, $2, 'google', NOW() - interval '1 minute')",
+    )
+    .bind(harness.tenant_id)
+    .bind(user.id)
+    .execute(&harness.pool)
+    .await
+    .expect("insert expired state");
+
+    let reaped = harness
+        .store
+        .delete_expired_calendar_oauth_states()
+        .await
+        .expect("reap expired states");
+    assert!(
+        reaped >= 1,
+        "at least the seeded expired row must be reaped"
+    );
+
+    let live = harness
+        .store
+        .consume_calendar_oauth_state("reap-live")
+        .await
+        .expect("consume live state");
+    assert!(live.is_some(), "live state must survive reaping");
+
+    harness.cleanup().await;
+}
+
 // ---------------------------------------------------------------------------
 // Sync semantics
 // ---------------------------------------------------------------------------
@@ -642,6 +981,7 @@ async fn run_claimed_sync(
                     Some("google_sync_token"),
                     next_sync_token.as_deref(),
                     None,
+                    true,
                 )
                 .await
                 .expect("finish sync");
@@ -1088,13 +1428,39 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
     }
 
     // Worker A claims the source; worker B gets nothing (SKIP LOCKED).
-    let claimed = harness
-        .store
-        .claim_due_calendar_source(WORKER_A, std::time::Duration::from_secs(300))
-        .await
-        .expect("claim due source")
-        .expect("source is due");
-    assert_eq!(claimed.id, source.id);
+    // The claim queue is global, so sweep aside any due sources left behind
+    // by crashed runs (release their lease and push them into the future).
+    let mut claimed = None;
+    for _ in 0..32 {
+        let candidate = harness
+            .store
+            .claim_due_calendar_source(WORKER_A, std::time::Duration::from_secs(300))
+            .await
+            .expect("claim due source");
+        match candidate {
+            Some(candidate) if candidate.id == source.id => {
+                claimed = Some(candidate);
+                break;
+            }
+            Some(foreign) => {
+                harness
+                    .store
+                    .finish_calendar_source_sync(
+                        foreign.id,
+                        WORKER_A,
+                        chrono::Utc::now() + chrono::Duration::days(1),
+                        None,
+                        None,
+                        Some("swept aside by concurrent-claim test"),
+                        false,
+                    )
+                    .await
+                    .expect("release foreign claim");
+            }
+            None => break,
+        }
+    }
+    let claimed = claimed.expect("source is due and claimable");
     let second_claim = harness
         .store
         .claim_due_calendar_source("calendar-sync-test-b", std::time::Duration::from_secs(300))
@@ -1125,6 +1491,7 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
             Some("google_sync_token"),
             Some("cursor-concurrent"),
             None,
+            true,
         )
         .await
         .expect("finish sync");

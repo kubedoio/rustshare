@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM calendar_oauth_states WHERE expires_at <= NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "4ee2042e3d3fca15c45b98f504607a6c2c47a5392b1bcbb112ed8810aed8c23c"
+}
