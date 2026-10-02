@@ -641,4 +641,150 @@ describe('CalendarApplicationView', () => {
 			process.env.TZ = originalTz;
 		}
 	});
+
+	function lastEventQuery(): { from: string; to: string } {
+		return mocks.listEvents.mock.calls.at(-1)?.[0] as { from: string; to: string };
+	}
+
+	function localInputDate(date: Date): string {
+		const month = String(date.getMonth() + 1).padStart(2, '0');
+		const day = String(date.getDate()).padStart(2, '0');
+		return `${date.getFullYear()}-${month}-${day}`;
+	}
+
+	/** Monday 00:00 (local) of the week containing `date`. */
+	function mondayOf(date: Date): Date {
+		const day = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+		return new Date(day.getFullYear(), day.getMonth(), day.getDate() - ((day.getDay() + 6) % 7));
+	}
+
+	/** The Sunday that closes the current (Monday-first) work week. */
+	function sundayOfCurrentWeek(): Date {
+		const monday = mondayOf(new Date());
+		return new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+	}
+
+	it('day view requests exactly one local day and renders one column', async () => {
+		render(CalendarApplicationView, { module: testModule });
+		await screen.findByLabelText('Filter by source');
+		await fireEvent.click(screen.getByRole('button', { name: 'Day' }));
+
+		const now = new Date();
+		const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+		const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+		await waitFor(() =>
+			expect(lastEventQuery()).toEqual({
+				from: midnight.toISOString(),
+				to: nextMidnight.toISOString()
+			})
+		);
+
+		const heading = midnight.toLocaleDateString(undefined, {
+			weekday: 'short',
+			month: 'short',
+			day: 'numeric',
+			year: 'numeric'
+		});
+		expect(screen.getByText(heading)).toBeTruthy();
+	});
+
+	it('work week view requests Monday 00:00 through Saturday 00:00 and hides weekends', async () => {
+		render(CalendarApplicationView, { module: testModule });
+		await screen.findByLabelText('Filter by source');
+		await fireEvent.click(screen.getByRole('button', { name: 'Work week' }));
+
+		const monday = mondayOf(new Date());
+		const saturday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 5);
+		await waitFor(() =>
+			expect(lastEventQuery()).toEqual({
+				from: monday.toISOString(),
+				to: saturday.toISOString()
+			})
+		);
+		expect(new Date(lastEventQuery().from).getDay()).toBe(1);
+		expect(
+			new Date(lastEventQuery().to).getTime() - new Date(lastEventQuery().from).getTime()
+		).toBe(5 * 24 * 3600 * 1000);
+
+		for (const label of ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']) {
+			expect(screen.getByText(label)).toBeTruthy();
+		}
+		expect(screen.queryByText('Sat')).toBeNull();
+		expect(screen.queryByText('Sun')).toBeNull();
+	});
+
+	it('work week excludes a Sunday event', async () => {
+		const sunday = sundayOfCurrentWeek();
+		mocks.listEvents.mockResolvedValue([
+			eventAt(localInputDate(sunday), { id: 'evt-sunday', title: 'Sunday brunch' })
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		// Month view (Sunday-first) still renders it.
+		expect(await screen.findByText(/Sunday brunch/)).toBeTruthy();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Work week' }));
+		await waitFor(() => expect(screen.queryByText(/Sunday brunch/)).toBeNull());
+	});
+
+	it('navigation steps by one day in day view and one week in work week', async () => {
+		render(CalendarApplicationView, { module: testModule });
+		await screen.findByLabelText('Filter by source');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Day' }));
+		await waitFor(() => expect(mocks.listEvents).toHaveBeenCalled());
+		const dayBefore = new Date(lastEventQuery().from);
+		const dayExpected = new Date(dayBefore);
+		dayExpected.setDate(dayExpected.getDate() + 1);
+
+		mocks.listEvents.mockClear();
+		await fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
+		await waitFor(() =>
+			expect(new Date(lastEventQuery().from).getTime()).toBe(dayExpected.getTime())
+		);
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Work week' }));
+		await waitFor(() => expect(new Date(lastEventQuery().from).getDay()).toBe(1));
+		const weekBefore = new Date(lastEventQuery().from);
+		const weekExpected = new Date(weekBefore);
+		weekExpected.setDate(weekExpected.getDate() + 7);
+
+		mocks.listEvents.mockClear();
+		await fireEvent.click(screen.getByRole('button', { name: 'Next period' }));
+		await waitFor(() => {
+			const from = new Date(lastEventQuery().from);
+			expect(from.getTime()).toBe(weekExpected.getTime());
+			expect(from.getDay()).toBe(1);
+		});
+	});
+
+	it('shows a create affordance in work-week cells and in day hour rows', async () => {
+		render(CalendarApplicationView, { module: testModule });
+		await screen.findByLabelText('Filter by source');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Work week' }));
+		const monday = mondayOf(new Date());
+		await fireEvent.click(
+			await screen.findByRole('button', {
+				name: `Create event on ${monday.toLocaleDateString()}`
+			})
+		);
+		expect((screen.getByLabelText('Date') as HTMLInputElement).value).toBe(localInputDate(monday));
+		await fireEvent.click(screen.getByRole('button', { name: 'Close editor' }));
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Day' }));
+		const today = new Date();
+		const todayLabel = new Date(
+			today.getFullYear(),
+			today.getMonth(),
+			today.getDate()
+		).toLocaleDateString();
+		await fireEvent.click(
+			await screen.findByRole('button', { name: `Create event on ${todayLabel} at 14:00` })
+		);
+		expect((screen.getByLabelText('Date') as HTMLInputElement).value).toBe(
+			localInputDate(new Date(today.getFullYear(), today.getMonth(), today.getDate()))
+		);
+		expect((screen.getByLabelText('Start') as HTMLInputElement).value).toBe('14:00');
+	});
 });

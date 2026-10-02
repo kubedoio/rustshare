@@ -13,15 +13,23 @@
 	import { toastStore } from '$lib/stores/toast';
 	import { CalendarDays, ChevronLeft, ChevronRight, Pencil, Plus, X } from 'lucide-svelte';
 	import type { ApplicationDefinition } from '$lib/applications/registry';
+	import {
+		addDays,
+		shiftWindow,
+		startOfDay,
+		startOfWeekMonday,
+		VIEW_OPTIONS,
+		windowRange,
+		type CalendarView
+	} from '$lib/calendar/view-range';
 
 	let { module }: { module: ApplicationDefinition } = $props();
-
-	type CalendarView = 'month' | 'week' | 'agenda';
 
 	const DAY_MS = 24 * 60 * 60 * 1000;
 
 	let view = $state<CalendarView>('month');
 	let cursor = $state<Date>(startOfDay(new Date()));
+	let now = $state(new Date());
 	let activeSourceId = $state<string | null>(null);
 	let selectedEvent = $state<CalendarEvent | null>(null);
 	let editorOpen = $state(false);
@@ -32,14 +40,6 @@
 	let formEndTime = $state('10:00');
 	let formLocation = $state('');
 	let formDescription = $state('');
-
-	function startOfDay(date: Date): Date {
-		return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-	}
-
-	function addDays(date: Date, days: number): Date {
-		return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
-	}
 
 	// Create requires a concrete IANA zone. The browser normally reports one,
 	// but a non-string/empty value falls back to UTC rather than sending null
@@ -55,22 +55,10 @@
 		return `${date.getFullYear()}-${month}-${day}`;
 	}
 
-	const windowRange = $derived.by((): { from: Date; to: Date } => {
-		if (view === 'month') {
-			const firstOfMonth = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
-			const offset = firstOfMonth.getDay();
-			const from = addDays(firstOfMonth, -offset);
-			return { from, to: addDays(from, 42) };
-		}
-		if (view === 'week') {
-			const from = addDays(cursor, -cursor.getDay());
-			return { from, to: addDays(from, 7) };
-		}
-		return { from: cursor, to: addDays(cursor, 30) };
-	});
+	const range = $derived(windowRange(view, cursor));
 
-	const fromIso = $derived(windowRange.from.toISOString());
-	const toIso = $derived(windowRange.to.toISOString());
+	const fromIso = $derived(range.from.toISOString());
+	const toIso = $derived(range.to.toISOString());
 	const eventQueryKey = $derived(
 		activeSourceId
 			? (['calendar-events', fromIso, toIso, activeSourceId] as const)
@@ -81,6 +69,13 @@
 
 	$effect(() => {
 		eventsQuery.setOptions(buildEventQueryOptions());
+	});
+
+	// Day view draws a now-line; keep its clock fresh while it is mounted.
+	$effect(() => {
+		if (view !== 'day') return;
+		const timer = setInterval(() => (now = new Date()), 60_000);
+		return () => clearInterval(timer);
 	});
 
 	function buildEventQueryOptions() {
@@ -191,7 +186,7 @@
 			const events = $eventsQuery.data ?? [];
 			const cells = [];
 			for (let i = 0; i < 42; i++) {
-				const date = addDays(windowRange.from, i);
+				const date = addDays(range.from, i);
 				cells.push({
 					date,
 					inMonth: date.getMonth() === cursor.getMonth(),
@@ -204,8 +199,9 @@
 
 	const weekCells = $derived.by((): Array<{ date: Date; events: CalendarEvent[] }> => {
 		const events = $eventsQuery.data ?? [];
-		return Array.from({ length: 7 }, (_, i) => {
-			const date = addDays(windowRange.from, i);
+		const monday = startOfWeekMonday(range.from);
+		return Array.from({ length: 5 }, (_, i) => {
+			const date = addDays(monday, i);
 			return { date, events: eventsOn(events, date) };
 		});
 	});
@@ -214,7 +210,7 @@
 		const events = $eventsQuery.data ?? [];
 		const groups: Array<{ date: Date; events: CalendarEvent[] }> = [];
 		for (let i = 0; i < 30; i++) {
-			const date = addDays(windowRange.from, i);
+			const date = addDays(range.from, i);
 			const dayEvents = eventsOn(events, date);
 			if (dayEvents.length > 0) groups.push({ date, events: dayEvents });
 		}
@@ -223,10 +219,21 @@
 
 	const windowEvents = $derived($eventsQuery.data ?? []);
 
+	const dayEvents = $derived(eventsOn(windowEvents, cursor));
+	const dayAllDayEvents = $derived(dayEvents.filter((event) => event.all_day));
+	const dayTimedEvents = $derived(dayEvents.filter((event) => !event.all_day));
+
 	const heading = $derived(
 		view === 'month'
 			? cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
-			: `${windowRange.from.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${addDays(windowRange.to, -1).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
+			: view === 'day'
+				? range.from.toLocaleDateString(undefined, {
+						weekday: 'short',
+						month: 'short',
+						day: 'numeric',
+						year: 'numeric'
+					})
+				: `${range.from.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${addDays(range.to, -1).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
 	);
 
 	// Calendar-date arithmetic on YYYY-MM-DD keys. UTC avoids the DST shifts
@@ -276,12 +283,27 @@
 			.sort((a, b) => occurrenceStart(a).getTime() - occurrenceStart(b).getTime());
 	}
 
-	function shiftWindow(direction: 1 | -1) {
-		if (view === 'month') {
-			cursor = new Date(cursor.getFullYear(), cursor.getMonth() + direction, 1);
-		} else {
-			cursor = addDays(cursor, direction * (view === 'week' ? 7 : 30));
-		}
+	function stepWindow(direction: 1 | -1) {
+		cursor = shiftWindow(view, cursor, direction);
+	}
+
+	/** Occurrences share their master's id, so instance_start disambiguates. */
+	function eventKey(event: CalendarEvent): string {
+		return `${event.id}:${event.instance_start ?? ''}`;
+	}
+
+	function clamp(value: number, min: number, max: number): number {
+		return Math.min(Math.max(value, min), max);
+	}
+
+	/** Minutes elapsed since local midnight of `day`, clamped to one day. */
+	function minutesFromMidnight(date: Date, day: Date): number {
+		const minutes = (date.getTime() - startOfDay(day).getTime()) / 60_000;
+		return clamp(Math.round(minutes), 0, 1440);
+	}
+
+	function isToday(date: Date): boolean {
+		return startOfDay(date).getTime() === startOfDay(new Date()).getTime();
 	}
 
 	function toggleSource(sourceId: string) {
@@ -333,12 +355,14 @@
 		return account ? `from ${kindLabel} — ${account}` : `from ${kindLabel}`;
 	}
 
-	function openCreate(date?: Date) {
+	function openCreate(date?: Date, hour?: number) {
+		const startHour = hour ?? 9;
+		const endHour = hour != null ? Math.min(hour + 1, 23) : 10;
 		editingEvent = null;
 		formTitle = '';
 		formDate = toLocalInputDate(date ?? cursor);
-		formStartTime = '09:00';
-		formEndTime = '10:00';
+		formStartTime = `${String(startHour).padStart(2, '0')}:00`;
+		formEndTime = endHour === startHour ? '23:59' : `${String(endHour).padStart(2, '0')}:00`;
 		formLocation = '';
 		formDescription = '';
 		editorOpen = true;
@@ -403,6 +427,7 @@
 	}
 
 	const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+	const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -428,7 +453,7 @@
 						type="button"
 						class="btn btn-ghost btn-sm"
 						aria-label="Previous period"
-						onclick={() => shiftWindow(-1)}
+						onclick={() => stepWindow(-1)}
 					>
 						<ChevronLeft size={16} />
 					</button>
@@ -438,7 +463,7 @@
 						type="button"
 						class="btn btn-ghost btn-sm"
 						aria-label="Next period"
-						onclick={() => shiftWindow(1)}
+						onclick={() => stepWindow(1)}
 					>
 						<ChevronRight size={16} />
 					</button>
@@ -452,14 +477,14 @@
 				</div>
 
 				<div class="flex flex-wrap items-center gap-2">
-					{#each ['month', 'week', 'agenda'] as CalendarView[] as option}
+					{#each VIEW_OPTIONS as option (option.id)}
 						<button
 							type="button"
-							class="btn btn-sm {view === option ? 'btn-primary' : 'btn-outline'}"
-							aria-pressed={view === option}
-							onclick={() => (view = option)}
+							class="btn btn-sm {view === option.id ? 'btn-primary' : 'btn-outline'}"
+							aria-pressed={view === option.id}
+							onclick={() => (view = option.id)}
 						>
-							{option[0].toUpperCase() + option.slice(1)}
+							{option.label}
 						</button>
 					{/each}
 				</div>
@@ -533,7 +558,7 @@
 									</button>
 								</div>
 								<div class="mt-0.5 flex flex-col gap-0.5">
-									{#each cell.events as event}
+									{#each cell.events as event (eventKey(event))}
 										<button
 											type="button"
 											class="truncate rounded px-1 py-0.5 text-left text-2xs text-white {eventColor(
@@ -554,7 +579,7 @@
 				<div
 					class="overflow-hidden rounded-xl border border-[var(--rs-border)] bg-[var(--rs-surface-raised)]"
 				>
-					<div class="grid grid-cols-7 border-b border-[var(--rs-border)]">
+					<div class="grid grid-cols-5 border-b border-[var(--rs-border)]">
 						{#each weekCells as cell}
 							<div class="px-2 py-1.5 text-center">
 								<div class="text-2xs font-semibold text-base-content/50">
@@ -564,11 +589,21 @@
 							</div>
 						{/each}
 					</div>
-					<div class="grid grid-cols-7">
+					<div class="grid grid-cols-5">
 						{#each weekCells as cell}
-							<div class="min-h-32 border-r border-[var(--rs-border)] p-1 last:border-r-0">
+							<div class="group min-h-32 border-r border-[var(--rs-border)] p-1 last:border-r-0">
+								<div class="flex justify-end">
+									<button
+										type="button"
+										class="btn btn-ghost px-1 opacity-0 transition-opacity btn-xs group-hover:opacity-100"
+										aria-label="Create event on {cell.date.toLocaleDateString()}"
+										onclick={() => openCreate(cell.date)}
+									>
+										<Plus size={12} />
+									</button>
+								</div>
 								<div class="flex flex-col gap-0.5">
-									{#each cell.events as event}
+									{#each cell.events as event (eventKey(event))}
 										<button
 											type="button"
 											class="truncate rounded px-1 py-0.5 text-left text-2xs text-white {eventColor(
@@ -583,6 +618,83 @@
 								</div>
 							</div>
 						{/each}
+					</div>
+				</div>
+			{:else if view === 'day'}
+				<div
+					class="overflow-hidden rounded-xl border border-[var(--rs-border)] bg-[var(--rs-surface-raised)]"
+				>
+					<!-- All-day lane -->
+					<div class="border-b border-[var(--rs-border)] p-2">
+						<div class="text-2xs font-semibold tracking-wide text-base-content/50 uppercase">
+							All day
+						</div>
+						<div class="mt-1 flex flex-col gap-0.5">
+							{#each dayAllDayEvents as event (eventKey(event))}
+								<button
+									type="button"
+									class="truncate rounded px-1.5 py-0.5 text-left text-2xs text-white {eventColor(
+										event
+									)}"
+									onclick={() => openDetail(event)}
+								>
+									{event.title}
+								</button>
+							{/each}
+						</div>
+					</div>
+					<!-- Hour grid with absolutely positioned timed events -->
+					<div class="relative grid grid-cols-[3.5rem_1fr]">
+						<div class="border-r border-[var(--rs-border)]">
+							{#each HOURS as hour}
+								<div
+									class="h-12 border-b border-[var(--rs-border)] pr-1.5 text-right text-2xs text-base-content/50 last:border-b-0"
+								>
+									{String(hour).padStart(2, '0')}:00
+								</div>
+							{/each}
+						</div>
+						<div class="relative">
+							{#each HOURS as hour}
+								<div class="group h-12 border-b border-[var(--rs-border)] last:border-b-0">
+									<button
+										type="button"
+										class="btn btn-ghost px-1 opacity-0 transition-opacity btn-xs group-hover:opacity-100"
+										aria-label="Create event on {cursor.toLocaleDateString()} at {hour}:00"
+										onclick={() => openCreate(cursor, hour)}
+									>
+										<Plus size={12} />
+									</button>
+								</div>
+							{/each}
+							{#if isToday(cursor)}
+								<div
+									class="pointer-events-none absolute right-0 left-0 z-10 border-t-2 border-error"
+									style={`top:${(minutesFromMidnight(now, cursor) / 1440) * 100}%`}
+								></div>
+							{/if}
+							{#each dayTimedEvents as event (eventKey(event))}
+								{@const start = occurrenceStart(event)}
+								{@const end = occurrenceEnd(event)}
+								{@const topPct = (minutesFromMidnight(start, cursor) / 1440) * 100}
+								{@const heightPct = Math.max(
+									2,
+									((minutesFromMidnight(end, cursor) - minutesFromMidnight(start, cursor)) / 1440) *
+										100
+								)}
+								<button
+									type="button"
+									class="absolute right-1 left-1 overflow-hidden rounded px-1.5 py-0.5 text-left text-2xs text-white {eventColor(
+										event
+									)}"
+									style={`top:${clamp(topPct, 0, 98)}%; height:${clamp(heightPct, 2, 100 - clamp(topPct, 0, 98))}%`}
+									onclick={() => openDetail(event)}
+								>
+									<span class="font-semibold">{formatTime(start.toISOString())}</span>
+									{event.title}
+								</button>
+							{/each}
+						</div>
 					</div>
 				</div>
 			{:else}
@@ -600,7 +712,7 @@
 							</a>
 						</div>
 					{:else}
-						{#each agendaGroups as group}
+						{#each agendaGroups as group (group.date.toISOString())}
 							<div
 								class="rounded-xl border border-[var(--rs-border)] bg-[var(--rs-surface-raised)] p-3"
 							>
@@ -612,7 +724,7 @@
 									})}
 								</h3>
 								<div class="mt-2 flex flex-col gap-1">
-									{#each group.events as event}
+									{#each group.events as event (eventKey(event))}
 										<button
 											type="button"
 											class="flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-base-200"
