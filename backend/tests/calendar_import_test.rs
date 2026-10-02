@@ -16,8 +16,7 @@
 //! Every test takes the shared `SERIAL` guard and cleans up exactly the rows
 //! it created under fresh tenants.
 
-use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -27,431 +26,9 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-/// Serializes the tests within this binary (same convention as the
-/// chat-bootstrap suite).
-static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+mod support;
 
-async fn setup_test_env() -> AppState {
-    dotenvy::dotenv().ok();
-
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-
-    let pool = PgPool::connect(&database_url)
-        .await
-        .expect("Failed to connect to database");
-
-    let metadata_store = Arc::new(rustshare_storage::MetadataStore::new(pool.clone()));
-    let event_store = Arc::new(rustshare_storage::EventStore::new(pool.clone()));
-    let broadcaster = Arc::new(rustshare_core::events::EventBroadcaster::new(100));
-
-    let s3_endpoint = std::env::var("S3_ENDPOINT")
-        .or_else(|_| std::env::var("RUSTFS_ENDPOINT"))
-        .unwrap_or_else(|_| "http://localhost:9000".to_string());
-    let s3_region = std::env::var("S3_REGION")
-        .or_else(|_| std::env::var("RUSTFS_REGION"))
-        .unwrap_or_else(|_| "us-east-1".to_string());
-    let s3_bucket = std::env::var("S3_BUCKET")
-        .or_else(|_| std::env::var("RUSTFS_BUCKET"))
-        .unwrap_or_else(|_| "rustshare".to_string());
-
-    let object_store = Arc::new(
-        rustshare_storage::ObjectStore::new_with_options(
-            s3_endpoint,
-            s3_region,
-            s3_bucket,
-            rustshare_storage::ObjectStoreOptions {
-                auto_create_bucket: true,
-            },
-        )
-        .await
-        .expect("Failed to create object store")
-        .with_blob_lock_pool(pool.clone()),
-    );
-
-    let jwt_manager = Arc::new(rustshare_auth::JwtManager::new(
-        "test_secret_key_at_least_32_chars_long_for_security".to_string(),
-        "rustshare",
-        "rustshare-api",
-        24,
-    ));
-
-    let permission_resolver =
-        Arc::new(rustshare_core::services::PermissionResolver::new(Arc::new(
-            rustshare_infrastructure::repositories::PermissionResolverRepository::new(pool.clone()),
-        )));
-
-    let file_service = Arc::new(rustshare_core::services::FileService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-        broadcaster.clone(),
-        permission_resolver.clone(),
-    ));
-
-    let folder_service = Arc::new(rustshare_core::services::FolderService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        broadcaster.clone(),
-        permission_resolver.clone(),
-    ));
-
-    let share_notification_repo = Arc::new(
-        rustshare_storage::repos::ShareNotificationRepoImpl::new(pool.clone()),
-    );
-
-    let share_service = Arc::new(rustshare_core::services::ShareService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        broadcaster.clone(),
-        jwt_manager.clone(),
-        share_notification_repo.clone(),
-    ));
-
-    let thumbnail_service = Arc::new(rustshare_core::services::ThumbnailService::new(
-        pool.clone(),
-        object_store.clone(),
-    ));
-    let notification_service = Arc::new(rustshare_core::services::NotificationService::new(
-        rustshare_infrastructure::repositories::NotificationRepository::new(pool.clone()),
-    ));
-
-    let user_repository = Arc::new(rustshare_infrastructure::repositories::UserRepository::new(
-        pool.clone(),
-    ));
-    let file_repository = Arc::new(rustshare_infrastructure::repositories::FileRepository::new(
-        pool.clone(),
-    ));
-    let folder_repository =
-        Arc::new(rustshare_infrastructure::repositories::FolderRepository::new(pool.clone()));
-    let share_repository =
-        Arc::new(rustshare_infrastructure::repositories::ShareRepository::new(pool.clone()));
-
-    #[allow(deprecated)]
-    let user_share_service = Arc::new(rustshare_core::services::UserShareService::new(
-        rustshare_core::services::UserShareServiceDeps {
-            share_repo: share_repository.clone(),
-            user_repo: user_repository.clone(),
-            file_repo: file_repository.clone(),
-            folder_repo: folder_repository.clone(),
-            permission_resolver: permission_resolver.clone(),
-            notification_service: notification_service.clone(),
-            event_store: event_store.clone(),
-            broadcaster: broadcaster.clone(),
-        },
-    ));
-
-    let note_service = Arc::new(rustshare_server::services::note_service::NoteService::new(
-        file_service.clone(),
-        folder_service.clone(),
-        metadata_store.clone(),
-        object_store.clone(),
-        permission_resolver.clone(),
-        pool.clone(),
-    ));
-
-    let decision_service = Arc::new(
-        rustshare_server::services::decision_service::DecisionService::new(
-            file_service.clone(),
-            folder_service.clone(),
-            metadata_store.clone(),
-            object_store.clone(),
-        ),
-    );
-
-    let meeting_service = Arc::new(
-        rustshare_server::services::meeting_service::MeetingService::new(
-            file_service.clone(),
-            folder_service.clone(),
-            metadata_store.clone(),
-            object_store.clone(),
-        ),
-    );
-
-    let standup_service = Arc::new(
-        rustshare_server::services::standup_service::StandupService::new(
-            file_service.clone(),
-            folder_service.clone(),
-            metadata_store.clone(),
-            object_store.clone(),
-        ),
-    );
-
-    let application_service = Arc::new(
-        rustshare_server::services::application_service::ApplicationService::new(
-            folder_service.clone(),
-            metadata_store.clone(),
-        ),
-    );
-
-    let template_service = Arc::new(
-        rustshare_server::services::template_service::TemplateService::new(
-            file_service.clone(),
-            folder_service.clone(),
-            metadata_store.clone(),
-        ),
-    );
-
-    let kanban_service = Arc::new(
-        rustshare_server::services::kanban_service::KanbanService::new(
-            file_service.clone(),
-            folder_service.clone(),
-            metadata_store.clone(),
-            object_store.clone(),
-            user_repository.clone(),
-        ),
-    );
-
-    let brainstorming_service = Arc::new(
-        rustshare_server::services::brainstorming_service::BrainstormingService::new(
-            file_service.clone(),
-            folder_service.clone(),
-            metadata_store.clone(),
-            object_store.clone(),
-        ),
-    );
-
-    let vault_sync_service = Arc::new(rustshare_core::services::VaultSyncService::new(
-        metadata_store.clone(),
-        object_store.clone(),
-    ));
-
-    let chat_integration_service = Arc::new(rustshare_core::services::ChatIntegrationService::new(
-        metadata_store.clone(),
-        event_store.clone(),
-        broadcaster.clone(),
-        "test-secret",
-        Arc::new(rustshare_core::services::HttpWebhookDispatcher::new()),
-    ));
-
-    let secret_key = rustshare_crypto::SecretEncryptionKey::from_bytes([0u8; 32]);
-
-    let mail_service = Arc::new(rustshare_server::services::mail_service::MailService::new(
-        metadata_store.clone(),
-        object_store.clone(),
-        file_service.clone(),
-        folder_service.clone(),
-        permission_resolver.clone(),
-        event_store.clone(),
-        broadcaster.clone(),
-        Arc::new(secret_key.clone()),
-    ));
-
-    let calendar_service = Arc::new(
-        rustshare_server::services::calendar_service::CalendarService::new(
-            metadata_store.clone(),
-            Arc::new(secret_key.clone()),
-        ),
-    );
-
-    let outbox_store = Arc::new(rustshare_storage::OutboxStore::new(
-        pool.clone(),
-        Arc::new(rustshare_core::domain::ApplicationRegistry::first_party().unwrap()),
-    ));
-    let chat_observation_store =
-        Arc::new(rustshare_storage::ChatObservationStore::new(pool.clone()));
-    let memory_catalog_store = Arc::new(rustshare_storage::MemoryCatalogStore::new(pool.clone()));
-    let buzz_observation_service = Arc::new(
-        rustshare_server::buzz_observation::BuzzObservationService::new(
-            pool.clone(),
-            rustshare_storage::ChatIdentityStore::new(pool.clone()),
-            (*chat_observation_store).clone(),
-            outbox_store.clone(),
-            rustshare_crypto::WebhookSigner::new("test-secret"),
-            300,
-            Arc::new(rustshare_core::events::EventBroadcaster::new(64)),
-        ),
-    );
-
-    let unified_search_service = Arc::new(
-        rustshare_server::services::unified_search::UnifiedSearchService::new(
-            Arc::new(rustshare_resource_auth::SourceAuthorizer::empty()),
-            metadata_store.clone(),
-            None,
-            memory_catalog_store.clone(),
-        ),
-    );
-
-    let chat_owner = Arc::new(rustshare_server::authz::ChatResourceOwner::new(
-        rustshare_storage::ChatIdentityStore::new(pool.clone()),
-        (*chat_observation_store).clone(),
-    ));
-
-    AppState {
-        db_pool: pool,
-        metadata_store,
-        event_store,
-        object_store,
-        jwt_manager,
-        broadcaster,
-        file_service,
-        folder_service,
-        share_service,
-        thumbnail_service,
-        permission_resolver,
-        source_authorizer: Arc::new(rustshare_resource_auth::SourceAuthorizer::empty()),
-        notification_service,
-        user_share_service,
-        ai_service: None,
-        upload_service: None,
-        rate_limit_config: Arc::new(rustshare_server::middleware::RateLimitConfig::new()),
-        secret_key,
-        oidc_runtime_cache: rustshare_server::oidc_runtime::OidcRuntimeCache::new(),
-        poll_rate_limiter: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-        default_tenant_id: Uuid::nil(),
-        note_service,
-        decision_service,
-        meeting_service,
-        standup_service,
-        application_service,
-        template_service,
-        kanban_service,
-        brainstorming_service,
-        vault_sync_service,
-        chat_integration_service,
-        mail_service,
-        calendar_service,
-        outbox_store,
-        chat_observation_store,
-        memory_catalog_store,
-        unified_search_service: unified_search_service.clone(),
-        ask_workspace_service: Arc::new(
-            rustshare_server::services::ask_workspace::AskWorkspaceService::new(
-                unified_search_service.clone(),
-                None,
-            ),
-        ),
-        buzz_observation_service,
-        chat_owner,
-        buzz_gateway: None,
-        chat_bootstrap: None,
-        chat_provisioning: rustshare_server::config::ChatProvisioningMode::Manual,
-        user_repository,
-        public_base_url: "http://localhost:8080".to_string(),
-        collab_rooms: Arc::new(rustshare_server::handlers::collab::CollabRooms::new()),
-        outbox_status: Arc::new(rustshare_server::outbox_dispatcher::OutboxStatus::default()),
-        outbox_worker_enabled: false,
-        outbox_readiness_staleness_secs: 60,
-        shutdown_tx: tokio::sync::broadcast::channel(1).0,
-        prometheus_handle: rustshare_server::metrics::init_metrics(),
-    }
-}
-
-async fn create_test_tenant(pool: &PgPool) -> Uuid {
-    let tenant_id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO tenants (id, name, created_at, updated_at) VALUES ($1, $2, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
-    )
-    .bind(tenant_id)
-    .bind(format!("Calendar Test Tenant {tenant_id}"))
-    .execute(pool)
-    .await
-    .expect("Failed to create test tenant");
-    tenant_id
-}
-
-async fn create_test_user(
-    state: &AppState,
-    username: &str,
-    tenant_id: Uuid,
-) -> rustshare_core::domain::User {
-    let unique_username = format!("{}-{}", username, Uuid::new_v4());
-    let user = rustshare_core::domain::User::new(
-        unique_username.clone(),
-        format!("{} Display", unique_username),
-        "test_password_hash".to_string(),
-        format!("{}@test.local", unique_username),
-        false,
-        10_737_418_240,
-        tenant_id,
-    );
-    state
-        .metadata_store
-        .create_user(&user)
-        .await
-        .expect("Failed to create test user");
-    user
-}
-
-fn create_auth_token(state: &AppState, user_id: Uuid, tenant_id: Uuid) -> String {
-    state
-        .jwt_manager
-        .generate(user_id, "test@example.com", tenant_id)
-        .unwrap()
-}
-
-/// Seed the first-party applications for the tenant without enabling
-/// Calendar; `enable_calendar` toggles it on.
-async fn configure_calendar(state: &AppState, tenant_id: Uuid, user_id: Uuid, enable: bool) {
-    state
-        .application_service
-        .ensure_default_applications(tenant_id)
-        .await
-        .expect("ensure_default_applications should succeed");
-    if enable {
-        state
-            .application_service
-            .enable_application("io.elembra.calendar", user_id, tenant_id)
-            .await
-            .expect("enable calendar module should succeed");
-    }
-}
-
-fn build_app(state: AppState) -> axum::Router<()> {
-    rustshare_server::routes::calendar_routes()
-        .with_state(state)
-        .layer(axum::middleware::from_fn(
-            rustshare_server::middleware::security_headers_middleware,
-        ))
-}
-
-async fn cleanup_tenant(pool: &PgPool, tenant_id: Uuid) {
-    // Calendar rows cascade from users; delete explicit tables first so a
-    // broken cascade cannot mask other errors.
-    sqlx::query(
-        "DELETE FROM calendar_sync_states WHERE source_id IN
-            (SELECT id FROM calendar_sources WHERE tenant_id = $1)",
-    )
-    .bind(tenant_id)
-    .execute(pool)
-    .await
-    .expect("failed to clean up calendar_sync_states");
-    for table in [
-        "calendar_import_jobs",
-        "calendar_events",
-        "calendar_sources",
-    ] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE tenant_id = $1"))
-            .bind(tenant_id)
-            .execute(pool)
-            .await
-            .unwrap_or_else(|e| panic!("failed to clean up {table}: {e}"));
-    }
-    sqlx::query("DELETE FROM application_enablements WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .execute(pool)
-        .await
-        .expect("failed to clean up application enablements");
-    sqlx::query("DELETE FROM users WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .execute(pool)
-        .await
-        .expect("failed to clean up users");
-    sqlx::query("DELETE FROM tenants WHERE id = $1")
-        .bind(tenant_id)
-        .execute(pool)
-        .await
-        .expect("failed to clean up tenant");
-}
-
-async fn response_json(response: axum::response::Response) -> (StatusCode, Value) {
-    let status = response.status();
-    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .expect("failed to read response body");
-    let value = serde_json::from_slice(&body).expect("response body should be JSON");
-    (status, value)
-}
+use support::calendar_harness::*;
 
 const ICS_FIXTURE: &str = "\
 BEGIN:VCALENDAR
@@ -496,50 +73,20 @@ END:VTODO
 END:VCALENDAR
 ";
 
-fn multipart_file_body(boundary: &str, filename: &str, content: &str) -> Vec<u8> {
-    multipart_file_body_with_type(boundary, filename, "text/calendar", content)
-}
-
-fn multipart_file_body_with_type(
-    boundary: &str,
-    filename: &str,
-    content_type: &str,
-    content: &str,
-) -> Vec<u8> {
-    format!(
-        "--{boundary}\r\n\
-         Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n\
-         Content-Type: {content_type}\r\n\
-         \r\n\
-         {content}\r\n\
-         --{boundary}--\r\n"
-    )
-    .into_bytes()
-}
-
 /// POST an arbitrary multipart body to the import endpoint.
 async fn upload_multipart(
     app: &axum::Router<()>,
     token: &str,
     body: Vec<u8>,
 ) -> (StatusCode, Value) {
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/calendar/import")
-                .method("POST")
-                .header("Authorization", format!("Bearer {token}"))
-                .header(
-                    "Content-Type",
-                    "multipart/form-data; boundary=calendar-import-boundary",
-                )
-                .body(Body::from(body))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    response_json(response).await
+    support::calendar_harness::upload_multipart(
+        app,
+        "/api/v1/calendar/import",
+        token,
+        IMPORT_BOUNDARY,
+        body,
+    )
+    .await
 }
 
 async fn upload_ics(
@@ -548,24 +95,12 @@ async fn upload_ics(
     filename: &str,
     content: &str,
 ) -> (StatusCode, Value) {
-    let boundary = "calendar-import-boundary";
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/calendar/import")
-                .method("POST")
-                .header("Authorization", format!("Bearer {token}"))
-                .header(
-                    "Content-Type",
-                    format!("multipart/form-data; boundary={boundary}"),
-                )
-                .body(Body::from(multipart_file_body(boundary, filename, content)))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    response_json(response).await
+    upload_multipart(
+        app,
+        token,
+        multipart_file_body(IMPORT_BOUNDARY, filename, content),
+    )
+    .await
 }
 
 async fn spawn_import_worker(state: &AppState) {
@@ -776,19 +311,6 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
 
     cleanup_outbox(&state.db_pool, tenant_id).await;
     cleanup_tenant(&state.db_pool, tenant_id).await;
-}
-
-async fn cleanup_outbox(pool: &PgPool, tenant_id: Uuid) {
-    sqlx::query("DELETE FROM integration_deliveries WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .execute(pool)
-        .await
-        .expect("clean up integration_deliveries");
-    sqlx::query("DELETE FROM integration_outbox WHERE tenant_id = $1")
-        .bind(tenant_id)
-        .execute(pool)
-        .await
-        .expect("clean up integration_outbox");
 }
 
 #[tokio::test]

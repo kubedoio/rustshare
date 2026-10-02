@@ -23,31 +23,21 @@
 //!
 //! Every test takes the shared `SERIAL` guard and cleans up exactly the rows
 //! it created under fresh tenants.
+use std::sync::Arc;
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, LazyLock};
-
-use axum::extract::State as AxumState;
-use axum::routing::{get, post};
-use axum::{Form, Json, Router};
-use rustshare_core::domain::{CalendarEvent, CalendarSource, User};
-use rustshare_crypto::SecretEncryptionKey;
+use rustshare_core::domain::{CalendarEvent, CalendarSource};
 use rustshare_server::services::calendar_service::{CalendarError, CalendarService};
 use rustshare_server::services::google_calendar::{CalendarSyncConfig, SyncOutcome};
 use rustshare_server::services::outlook_calendar::OutlookCalendarClient;
-use rustshare_storage::MetadataStore;
 use serde_json::{json, Value};
-use sqlx::PgPool;
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
-/// Serializes the tests within this binary (same convention as the
-/// calendar-api suite).
-static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+mod support;
+
+use support::calendar_harness::{SyncHarness as Harness, SERIAL};
+use support::mock_provider::*;
 
 const WORKER_A: &str = "calendar-sync-test-a";
-const TEST_REFRESH_TOKEN: &str = "test-refresh-token-value";
-const TEST_ACCESS_TOKEN: &str = "test-access-token-value";
 const SCOPE_READONLY: &str = "offline_access Calendars.Read";
 
 fn sync_config() -> CalendarSyncConfig {
@@ -55,223 +45,6 @@ fn sync_config() -> CalendarSyncConfig {
         past_days: 90,
         future_days: 365,
     }
-}
-
-// ---------------------------------------------------------------------------
-// Mock Microsoft identity + Graph server
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-struct MockResponse {
-    status: axum::http::StatusCode,
-    body: Value,
-    retry_after: Option<u64>,
-}
-
-impl MockResponse {
-    fn ok(body: Value) -> Self {
-        Self {
-            status: axum::http::StatusCode::OK,
-            body,
-            retry_after: None,
-        }
-    }
-
-    fn invalid_delta_token() -> Self {
-        Self {
-            status: axum::http::StatusCode::BAD_REQUEST,
-            body: json!({"error": {"code": "InvalidDeltaToken", "message": "delta token is invalid"}}),
-            retry_after: None,
-        }
-    }
-
-    /// Graph `ErrorAccessDenied` (HTTP 403), e.g. consent withdrawn.
-    fn access_denied() -> Self {
-        Self {
-            status: axum::http::StatusCode::FORBIDDEN,
-            body: json!({"error": {"code": "ErrorAccessDenied", "message": "Access is denied."}}),
-            retry_after: None,
-        }
-    }
-
-    fn internal_error() -> Self {
-        Self {
-            status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            body: json!({"error": {"code": "UnknownError", "message": "transient backend error"}}),
-            retry_after: None,
-        }
-    }
-
-    fn rate_limited(retry_after: u64) -> Self {
-        Self {
-            status: axum::http::StatusCode::TOO_MANY_REQUESTS,
-            body: json!({"error": {"code": "TooManyRequests", "message": "rate limited"}}),
-            retry_after: Some(retry_after),
-        }
-    }
-}
-
-#[derive(Default)]
-struct MockState {
-    /// Queued responses for the calendarView/delta endpoint (popped FIFO).
-    delta_queue: Mutex<VecDeque<MockResponse>>,
-    /// Query strings of delta requests, in arrival order.
-    delta_requests: Mutex<Vec<String>>,
-    /// `Prefer` header of each delta request, in arrival order.
-    delta_prefer_headers: Mutex<Vec<String>>,
-    /// Refresh-token values seen at the token endpoint (rotation tracking).
-    refresh_tokens_seen: Mutex<Vec<String>>,
-    token_requests: Mutex<u32>,
-    /// When true, the token endpoint answers token requests with
-    /// `invalid_grant` (revoked grant).
-    revoke_grants: Mutex<bool>,
-    /// When true, refresh responses carry a rotated refresh token.
-    rotate_refresh: Mutex<bool>,
-    /// When true, the authorization-code exchange omits the refresh token.
-    omit_refresh_token: Mutex<bool>,
-    me_email: Mutex<String>,
-}
-
-impl MockState {
-    async fn token_hits(&self) -> u32 {
-        *self.token_requests.lock().await
-    }
-}
-
-fn spawn_mock_microsoft() -> (String, Arc<MockState>) {
-    let state = Arc::new(MockState::default());
-    let app = Router::new()
-        .route(
-            "/token",
-            post(
-                |AxumState(state): AxumState<Arc<MockState>>,
-                 form: Form<HashMap<String, String>>| {
-                    async move {
-                        *state.token_requests.lock().await += 1;
-                        if let Some(refresh) = form.get("refresh_token") {
-                            state.refresh_tokens_seen.lock().await.push(refresh.clone());
-                        }
-                        if *state.revoke_grants.lock().await {
-                            return (
-                                axum::http::StatusCode::BAD_REQUEST,
-                                Json(json!({"error": "invalid_grant", "error_description": "revoked"})),
-                            );
-                        }
-                        let rotate = *state.rotate_refresh.lock().await;
-                        let refresh_token = if rotate {
-                            "rotated-refresh-token-value"
-                        } else {
-                            TEST_REFRESH_TOKEN
-                        };
-                        let grant_type = form.get("grant_type").cloned().unwrap_or_default();
-                        let omit_refresh = *state.omit_refresh_token.lock().await;
-                        let body = if grant_type == "refresh_token" {
-                            let mut body = json!({
-                                "access_token": "fresh-access-token-value",
-                                "expires_in": 3600,
-                                "token_type": "Bearer"
-                            });
-                            if rotate {
-                                body["refresh_token"] = json!("rotated-refresh-token-value");
-                            }
-                            body
-                        } else if omit_refresh {
-                            json!({
-                                "access_token": TEST_ACCESS_TOKEN,
-                                "expires_in": 3600,
-                                "token_type": "Bearer",
-                                "scope": SCOPE_READONLY
-                            })
-                        } else {
-                            json!({
-                                "access_token": TEST_ACCESS_TOKEN,
-                                "refresh_token": refresh_token,
-                                "expires_in": 3600,
-                                "token_type": "Bearer",
-                                "scope": SCOPE_READONLY
-                            })
-                        };
-                        (axum::http::StatusCode::OK, Json(body))
-                    }
-                },
-            ),
-        )
-        .route(
-            "/me",
-            get(|AxumState(state): AxumState<Arc<MockState>>| async move {
-                let email = state.me_email.lock().await.clone();
-                Json(json!({"mail": email, "userPrincipalName": "upn@example.test"}))
-            }),
-        )
-        .route(
-            "/me/calendarView/delta",
-            get(
-                |AxumState(state): AxumState<Arc<MockState>>,
-                 headers: axum::http::HeaderMap,
-                 req: axum::extract::Query<HashMap<String, String>>| async move {
-                    let query = req.0;
-                    state
-                        .delta_requests
-                        .lock()
-                        .await
-                        .push(serde_urlencoded_params(&query));
-                    state.delta_prefer_headers.lock().await.push(
-                        headers
-                            .get("prefer")
-                            .and_then(|value| value.to_str().ok())
-                            .unwrap_or_default()
-                            .to_string(),
-                    );
-                    let queued = state.delta_queue.lock().await.pop_front();
-                    let response = queued.unwrap_or_else(|| {
-                        // Default: empty result; a deltaToken request advances
-                        // the cursor, a window request establishes one.
-                        let mut body = json!({"value": []});
-                        if let Some(cursor) = query.get("$deltatoken") {
-                            body["@odata.deltaLink"] = json!(format!(
-                                "http://graph.example/v1.0/me/calendarView/delta?$deltatoken={cursor}-advanced"
-                            ));
-                        } else {
-                            body["@odata.deltaLink"] = json!(
-                                "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=initial-delta-token"
-                            );
-                        }
-                        MockResponse::ok(body)
-                    });
-                    let mut builder = axum::response::Response::builder().status(response.status);
-                    if let Some(retry_after) = response.retry_after {
-                        builder = builder.header("retry-after", retry_after.to_string());
-                    }
-                    builder
-                        .header("content-type", "application/json")
-                        .body(axum::body::Body::from(response.body.to_string()))
-                        .unwrap()
-                },
-            ),
-        )
-        .with_state(state.clone());
-
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock server");
-    listener.set_nonblocking(true).unwrap();
-    let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-    let address = listener.local_addr().unwrap();
-    let server_state = state.clone();
-    tokio::spawn(async move {
-        let _ = server_state; // keep alive with the server task
-        let _ = axum::serve(listener, app).await;
-    });
-    (format!("http://{address}"), state)
-}
-
-/// Deterministic query serialization for request assertions.
-fn serde_urlencoded_params(query: &HashMap<String, String>) -> String {
-    let mut pairs: Vec<(&String, &String)> = query.iter().collect();
-    pairs.sort();
-    pairs
-        .into_iter()
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect::<Vec<_>>()
-        .join("&")
 }
 
 fn mock_client(base: &str) -> OutlookCalendarClient {
@@ -287,76 +60,7 @@ fn mock_client(base: &str) -> OutlookCalendarClient {
     client
 }
 
-// ---------------------------------------------------------------------------
-// Harness
-// ---------------------------------------------------------------------------
-
-struct Harness {
-    pool: PgPool,
-    store: Arc<MetadataStore>,
-    secret_key: Arc<SecretEncryptionKey>,
-    outbox: Arc<rustshare_storage::OutboxStore>,
-    tenant_id: Uuid,
-}
-
 impl Harness {
-    async fn new() -> Self {
-        dotenvy::dotenv().ok();
-        let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
-        });
-        let pool = PgPool::connect(&database_url)
-            .await
-            .expect("Failed to connect to database");
-        let store = Arc::new(MetadataStore::new(pool.clone()));
-        let outbox = Arc::new(rustshare_storage::OutboxStore::new(
-            pool.clone(),
-            Arc::new(rustshare_core::domain::ApplicationRegistry::first_party().unwrap()),
-        ));
-        let tenant_id = Uuid::new_v4();
-        sqlx::query(
-            "INSERT INTO tenants (id, name, created_at, updated_at) VALUES ($1, $2, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
-        )
-        .bind(tenant_id)
-        .bind(format!("Calendar Outlook Sync Test Tenant {tenant_id}"))
-        .execute(&pool)
-        .await
-        .expect("Failed to create test tenant");
-        sqlx::query(
-            "INSERT INTO application_enablements (tenant_id, workspace_id, application_id, enabled)
-             VALUES ($1, $1, 'io.elembra.calendar', true)",
-        )
-        .bind(tenant_id)
-        .execute(&pool)
-        .await
-        .expect("Failed to enable calendar application");
-        Self {
-            pool,
-            store,
-            secret_key: Arc::new(SecretEncryptionKey::from_bytes([7u8; 32])),
-            outbox,
-            tenant_id,
-        }
-    }
-
-    async fn create_user(&self, label: &str) -> User {
-        let username = format!("{}-{}", label, Uuid::new_v4());
-        let user = User::new(
-            username.clone(),
-            format!("{username} Display"),
-            "test_password_hash".to_string(),
-            format!("{username}@test.local"),
-            false,
-            10_737_418_240,
-            self.tenant_id,
-        );
-        self.store
-            .create_user(&user)
-            .await
-            .expect("Failed to create test user");
-        user
-    }
-
     /// Create an outlook source with valid unexpired tokens against the mock.
     async fn create_outlook_source(&self, user_id: Uuid) -> CalendarSource {
         self.create_outlook_source_with_access_expiry(user_id, 3600)
@@ -368,113 +72,17 @@ impl Harness {
         user_id: Uuid,
         access_expires_in_secs: i64,
     ) -> CalendarSource {
-        let refresh_enc = rustshare_crypto::encrypt_secret(TEST_REFRESH_TOKEN, &self.secret_key)
-            .expect("encrypt refresh token");
-        let access_enc = rustshare_crypto::encrypt_secret(TEST_ACCESS_TOKEN, &self.secret_key)
-            .expect("encrypt access token");
-        self.store
-            .create_oauth_calendar_source(
-                self.tenant_id,
-                user_id,
-                "outlook",
-                "Outlook (sync-user@test.local)",
-                "sync-user@test.local",
-                "primary",
-                &refresh_enc,
-                &access_enc,
-                chrono::Utc::now() + chrono::Duration::seconds(access_expires_in_secs),
-                SCOPE_READONLY,
-            )
-            .await
-            .expect("create oauth calendar source")
-    }
-
-    async fn reload_source(&self, source_id: Uuid) -> CalendarSource {
-        let row = sqlx::query_as!(
-            rustshare_core::domain::CalendarSource,
-            r#"SELECT id, tenant_id, owner_id, kind, display_name, external_account,
-                external_calendar_id, refresh_token_enc, access_token_enc,
-                access_token_expires_at, scopes, is_enabled, last_synced_at,
-                last_error, status, deleted_at, created_at, updated_at
-            FROM calendar_sources WHERE id = $1"#,
-            source_id,
+        self.create_oauth_source_with_access_expiry(
+            user_id,
+            "outlook",
+            "Outlook (sync-user@test.local)",
+            "sync-user@test.local",
+            SCOPE_READONLY,
+            access_expires_in_secs,
         )
-        .fetch_one(&self.pool)
         .await
-        .expect("reload source");
-        row
-    }
-
-    async fn list_source_events(&self, source_id: Uuid) -> Vec<CalendarEvent> {
-        sqlx::query_as!(
-            CalendarEvent,
-            r#"SELECT id, tenant_id, owner_id, source_id, external_uid, external_etag,
-                recurrence_id, title, description, location, starts_at, ends_at,
-                all_day, original_date, timezone, rrule, status, read_only, raw,
-                deleted_at, created_at, updated_at
-            FROM calendar_events WHERE source_id = $1 AND deleted_at IS NULL
-            ORDER BY external_uid, COALESCE(recurrence_id, '')"#,
-            source_id,
-        )
-        .fetch_all(&self.pool)
-        .await
-        .expect("list source events")
-    }
-
-    async fn cleanup(&self) {
-        let tenant_id = self.tenant_id;
-        sqlx::query(
-            "DELETE FROM calendar_sync_states WHERE source_id IN
-                (SELECT id FROM calendar_sources WHERE tenant_id = $1)",
-        )
-        .bind(tenant_id)
-        .execute(&self.pool)
-        .await
-        .expect("cleanup calendar_sync_states");
-        sqlx::query("DELETE FROM calendar_oauth_states WHERE tenant_id = $1")
-            .bind(tenant_id)
-            .execute(&self.pool)
-            .await
-            .expect("cleanup calendar_oauth_states");
-        sqlx::query("DELETE FROM integration_deliveries WHERE tenant_id = $1")
-            .bind(tenant_id)
-            .execute(&self.pool)
-            .await
-            .expect("cleanup integration_deliveries");
-        sqlx::query("DELETE FROM integration_outbox WHERE tenant_id = $1")
-            .bind(tenant_id)
-            .execute(&self.pool)
-            .await
-            .expect("cleanup integration_outbox");
-        for table in [
-            "calendar_import_jobs",
-            "calendar_events",
-            "calendar_sources",
-        ] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE tenant_id = $1"))
-                .bind(tenant_id)
-                .execute(&self.pool)
-                .await
-                .unwrap_or_else(|e| panic!("cleanup {table}: {e}"));
-        }
-        sqlx::query("DELETE FROM users WHERE tenant_id = $1")
-            .bind(tenant_id)
-            .execute(&self.pool)
-            .await
-            .expect("cleanup users");
-        sqlx::query("DELETE FROM application_enablements WHERE tenant_id = $1")
-            .bind(tenant_id)
-            .execute(&self.pool)
-            .await
-            .expect("cleanup enablements");
-        sqlx::query("DELETE FROM tenants WHERE id = $1")
-            .bind(tenant_id)
-            .execute(&self.pool)
-            .await
-            .expect("cleanup tenant");
     }
 }
-
 /// Standard delta entry used across tests (Z-suffixed RFC 3339 dates).
 fn graph_event(id: &str, subject: &str, start: &str, end: &str) -> Value {
     json!({
@@ -525,8 +133,10 @@ async fn connect_unconfigured_provider_returns_503_error() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn connect_flow_uses_single_use_state_and_stores_encrypted_tokens() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
-    *mock.me_email.lock().await = "sync-user@test.local".to_string();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
+    mock.set_identity_email("sync-user@test.local".to_string())
+        .await;
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_connect").await;
     let mut service = CalendarService::new(harness.store.clone(), harness.secret_key.clone());
@@ -663,9 +273,11 @@ async fn oauth_state_expiry_and_mismatch_are_rejected() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn connect_without_refresh_token_fails_closed() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
-    *mock.me_email.lock().await = "no-refresh@test.local".to_string();
-    *mock.omit_refresh_token.lock().await = true;
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
+    mock.set_identity_email("no-refresh@test.local".to_string())
+        .await;
+    mock.set_omit_refresh_token(true).await;
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_norefresh").await;
     let mut service = CalendarService::new(harness.store.clone(), harness.secret_key.clone());
@@ -727,8 +339,9 @@ async fn acquire_lease(harness: &Harness, source_id: Uuid, worker: &str) {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn worker_run_keeps_auth_required_parked_without_http() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
-    *mock.revoke_grants.lock().await = true;
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
+    mock.set_revoke_grants(true).await;
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_parked").await;
     let source = harness
@@ -780,7 +393,7 @@ async fn worker_run_keeps_auth_required_parked_without_http() {
         "parked run must not call the token endpoint"
     );
     assert!(
-        mock.delta_requests.lock().await.is_empty(),
+        mock.data_requests().await.is_empty(),
         "parked run must not call the delta API"
     );
 
@@ -794,7 +407,8 @@ async fn worker_run_keeps_auth_required_parked_without_http() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn worker_failed_run_preserves_incremental_cursor() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_failed").await;
     let source = harness.create_outlook_source(user.id).await;
@@ -803,11 +417,11 @@ async fn worker_failed_run_preserves_incremental_cursor() {
 
     // Run 1: full sync establishes a cursor.
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [graph_event("evt-f1", "First", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-kept"
-        })));
+        }))).await;
     }
     acquire_lease(&harness, source.id, worker).await;
     let source_id = source.id;
@@ -834,8 +448,8 @@ async fn worker_failed_run_preserves_incremental_cursor() {
     // Run 2: the provider 500s mid-incremental → Failed plan must keep the
     // cursor and leave last_synced_at at its previous watermark.
     {
-        let mut queue = mock.delta_queue.lock().await;
-        queue.push_back(MockResponse::internal_error());
+        let queue = mock.data_queue();
+        queue.push_back(MockResponse::internal_error()).await;
     }
     acquire_lease(&harness, source_id, worker).await;
     rustshare_server::calendar_sync_worker::run_sync(
@@ -1005,21 +619,22 @@ async fn run_claimed_sync(
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn full_sync_pages_materialize_events_and_establish_cursor() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_full").await;
     let source = harness.create_outlook_source(user.id).await;
     let client = mock_client(&base);
 
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [
                 graph_event("evt-1", "First", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z"),
                 graph_event("evt-2", "Second", "2026-10-06T09:00:00Z", "2026-10-06T09:30:00Z")
             ],
             "@odata.nextLink": "http://graph.example/v1.0/me/calendarView/delta?$skiptoken=page-2"
-        })));
+        }))).await;
         queue.push_back(MockResponse::ok(json!({
             "value": [
                 json!({
@@ -1036,7 +651,7 @@ async fn full_sync_pages_materialize_events_and_establish_cursor() {
                 })
             ],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-after-full"
-        })));
+        }))).await;
     }
 
     let outcome = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
@@ -1067,7 +682,7 @@ async fn full_sync_pages_materialize_events_and_establish_cursor() {
 
     // The second page was requested with the skiptoken from the first
     // page's nextLink.
-    let requests = mock.delta_requests.lock().await;
+    let requests = mock.data_requests().await;
     assert!(
         requests[1].contains("$skiptoken=page-2"),
         "second page must be requested with the skiptoken: {}",
@@ -1095,7 +710,8 @@ async fn full_sync_pages_materialize_events_and_establish_cursor() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn delta_applies_updates_tombstones_and_keeps_absent_unchanged() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_delta").await;
     let source = harness.create_outlook_source(user.id).await;
@@ -1103,7 +719,7 @@ async fn delta_applies_updates_tombstones_and_keeps_absent_unchanged() {
 
     // Run 1: full sync of three events.
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [
                 graph_event("evt-1", "Original title", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z"),
@@ -1111,7 +727,7 @@ async fn delta_applies_updates_tombstones_and_keeps_absent_unchanged() {
                 graph_event("evt-4", "Unchanged", "2026-10-08T09:00:00Z", "2026-10-08T09:30:00Z")
             ],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-1"
-        })));
+        }))).await;
     }
     let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
     assert!(matches!(first, SyncOutcome::Completed { upserted: 3, .. }));
@@ -1121,7 +737,7 @@ async fn delta_applies_updates_tombstones_and_keeps_absent_unchanged() {
     // absent from the delta payload; an unchanged event absent from a delta
     // must stay intact (the absent-entry sweep runs on full runs only).
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [
                 graph_event("evt-1", "Updated title", "2026-10-05T15:00:00Z", "2026-10-05T16:00:00Z"),
@@ -1146,7 +762,7 @@ async fn delta_applies_updates_tombstones_and_keeps_absent_unchanged() {
                 })
             ],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-2"
-        })));
+        }))).await;
     }
     let reloaded = harness.reload_source(source.id).await;
     let second = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
@@ -1165,7 +781,7 @@ async fn delta_applies_updates_tombstones_and_keeps_absent_unchanged() {
     );
 
     // The delta request used the stored cursor.
-    let requests = mock.delta_requests.lock().await;
+    let requests = mock.data_requests().await;
     assert!(
         requests[1].contains("$deltatoken=cursor-1"),
         "delta run must send the stored cursor: {}",
@@ -1252,7 +868,8 @@ async fn delta_applies_updates_tombstones_and_keeps_absent_unchanged() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn full_sync_sweep_soft_deletes_absent_in_window_events() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_sweep").await;
     let source = harness.create_outlook_source(user.id).await;
@@ -1260,14 +877,14 @@ async fn full_sync_sweep_soft_deletes_absent_in_window_events() {
 
     // Run 1: full sync of evt-1 and evt-2.
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [
                 graph_event("evt-1", "Kept", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z"),
                 graph_event("evt-2", "Deleted upstream", "2026-10-06T09:00:00Z", "2026-10-06T09:30:00Z")
             ],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-sweep-1"
-        })));
+        }))).await;
     }
     let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
     assert!(matches!(first, SyncOutcome::Completed { upserted: 2, .. }));
@@ -1314,11 +931,11 @@ async fn full_sync_sweep_soft_deletes_absent_in_window_events() {
     .await
     .expect("clear cursor for forced full resync");
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [graph_event("evt-1", "Kept", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-sweep-2"
-        })));
+        }))).await;
     }
     let reloaded = harness.reload_source(source.id).await;
     let second = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
@@ -1364,7 +981,8 @@ async fn full_sync_sweep_soft_deletes_absent_in_window_events() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn incremental_multi_page_sync_pages_with_skiptoken_and_terminates() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_paged").await;
     let source = harness.create_outlook_source(user.id).await;
@@ -1372,11 +990,11 @@ async fn incremental_multi_page_sync_pages_with_skiptoken_and_terminates() {
 
     // Run 1: full sync establishes a cursor.
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [graph_event("evt-p1", "One", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-paged-1"
-        })));
+        }))).await;
     }
     let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
     assert!(matches!(first, SyncOutcome::Completed { .. }));
@@ -1385,15 +1003,15 @@ async fn incremental_multi_page_sync_pages_with_skiptoken_and_terminates() {
     // carries `@odata.nextLink` with a $skiptoken; re-sending the
     // $deltatoken there would refetch page one forever.
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [graph_event("evt-p1", "One updated", "2026-10-05T15:00:00Z", "2026-10-05T16:00:00Z")],
             "@odata.nextLink": "http://graph.example/v1.0/me/calendarView/delta?$skiptoken=inc-page-2"
-        })));
+        }))).await;
         queue.push_back(MockResponse::ok(json!({
             "value": [],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-paged-2"
-        })));
+        }))).await;
     }
     let reloaded = harness.reload_source(source.id).await;
     let second = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
@@ -1411,7 +1029,7 @@ async fn incremental_multi_page_sync_pages_with_skiptoken_and_terminates() {
     // Request 1 was the full sync; request 2 opened the delta with the
     // cursor; request 3 paged with the skiptoken INSTEAD of re-sending the
     // deltatoken (the old bug re-fetched page one forever).
-    let requests = mock.delta_requests.lock().await;
+    let requests = mock.data_requests().await;
     assert!(
         requests[1].contains("$deltatoken=cursor-paged-1"),
         "delta run must open with the stored cursor: {}",
@@ -1449,7 +1067,8 @@ async fn incremental_multi_page_sync_pages_with_skiptoken_and_terminates() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn invalid_delta_token_triggers_exactly_one_full_resync() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_gone").await;
     let source = harness.create_outlook_source(user.id).await;
@@ -1457,11 +1076,11 @@ async fn invalid_delta_token_triggers_exactly_one_full_resync() {
 
     // Establish a cursor via a full sync.
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [graph_event("evt-a", "Alpha", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-doomed"
-        })));
+        }))).await;
     }
     let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
     assert!(matches!(first, SyncOutcome::Completed { .. }));
@@ -1470,12 +1089,12 @@ async fn invalid_delta_token_triggers_exactly_one_full_resync() {
     // exactly one full window request succeeds and establishes a fresh
     // cursor.
     {
-        let mut queue = mock.delta_queue.lock().await;
-        queue.push_back(MockResponse::invalid_delta_token());
+        let queue = mock.data_queue();
+        queue.push_back(MockResponse::invalid_delta_token()).await;
         queue.push_back(MockResponse::ok(json!({
             "value": [graph_event("evt-b", "Beta", "2026-10-06T14:00:00Z", "2026-10-06T15:00:00Z")],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-reborn"
-        })));
+        }))).await;
     }
     let reloaded = harness.reload_source(source.id).await;
     let outcome = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
@@ -1490,7 +1109,7 @@ async fn invalid_delta_token_triggers_exactly_one_full_resync() {
     assert_eq!(upserted, 1);
     assert_eq!(next_sync_token.as_deref(), Some("cursor-reborn"));
 
-    let requests = mock.delta_requests.lock().await;
+    let requests = mock.data_requests().await;
     // Run 1 performed the initial full sync; run 2 must make exactly one
     // incremental attempt (the stale cursor) followed by exactly one full
     // resync — no further retries.
@@ -1518,8 +1137,9 @@ async fn invalid_delta_token_triggers_exactly_one_full_resync() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn revoked_grant_flips_auth_required_and_further_runs_noop() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
-    *mock.revoke_grants.lock().await = true;
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
+    mock.set_revoke_grants(true).await;
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_revoked").await;
     // Access token already expired → the sync must refresh, and the provider
@@ -1573,7 +1193,7 @@ async fn revoked_grant_flips_auth_required_and_further_runs_noop() {
         "no-op run must not touch the token endpoint"
     );
     assert!(
-        mock.delta_requests.lock().await.is_empty(),
+        mock.data_requests().await.is_empty(),
         "no-op run must not call the delta API"
     );
 
@@ -1618,15 +1238,16 @@ async fn revoked_grant_flips_auth_required_and_further_runs_noop() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn rate_limit_backs_off_with_retry_after() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_limited").await;
     let source = harness.create_outlook_source(user.id).await;
     let client = mock_client(&base);
 
     {
-        let mut queue = mock.delta_queue.lock().await;
-        queue.push_back(MockResponse::rate_limited(42));
+        let queue = mock.data_queue();
+        queue.push_back(MockResponse::rate_limited(42)).await;
     }
     let outcome = rustshare_server::services::outlook_calendar::sync_source(
         &harness.store,
@@ -1649,8 +1270,9 @@ async fn rate_limit_backs_off_with_retry_after() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
-    *mock.rotate_refresh.lock().await = true;
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
+    mock.set_rotate_refresh(true).await;
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_concurrent").await;
     // Access token expired → the sync run refreshes and, still holding the
@@ -1660,11 +1282,11 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
         .await;
     let client = mock_client(&base);
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [graph_event("evt-c", "Concurrent", "2026-10-09T14:00:00Z", "2026-10-09T15:00:00Z")],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-concurrent"
-        })));
+        }))).await;
     }
 
     // Worker A claims the source; worker B gets nothing (SKIP LOCKED).
@@ -1739,7 +1361,7 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
         .expect("finish sync");
 
     // Exactly one refresh ran, with the original stored refresh token.
-    let seen = mock.refresh_tokens_seen.lock().await;
+    let seen = mock.refresh_tokens_seen().await;
     assert_eq!(
         seen.as_slice(),
         [TEST_REFRESH_TOKEN.to_string()],
@@ -1782,23 +1404,24 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn delta_requests_send_prefer_utc_header() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_prefer").await;
     let source = harness.create_outlook_source(user.id).await;
     let client = mock_client(&base);
 
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [graph_event("evt-p", "T", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-prefer"
-        })));
+        }))).await;
     }
     let outcome = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
     assert!(matches!(outcome, SyncOutcome::Completed { .. }));
 
-    let prefer = mock.delta_prefer_headers.lock().await;
+    let prefer = mock.data_prefer_headers().await;
     assert_eq!(
         prefer.as_slice(),
         [r#"outlook.timezone="UTC""#.to_string()],
@@ -1815,14 +1438,15 @@ async fn delta_requests_send_prefer_utc_header() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn non_z_fractional_datetime_parses_to_correct_instant() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_frac").await;
     let source = harness.create_outlook_source(user.id).await;
     let client = mock_client(&base);
 
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [json!({
                 "id": "evt-frac",
@@ -1834,7 +1458,7 @@ async fn non_z_fractional_datetime_parses_to_correct_instant() {
                 "isAllDay": false,
             })],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-frac"
-        })));
+        }))).await;
     }
     let outcome = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
     assert!(matches!(
@@ -1866,7 +1490,8 @@ async fn non_z_fractional_datetime_parses_to_correct_instant() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn series_occurrence_not_swept_on_following_full_sync() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_series").await;
     let source = harness.create_outlook_source(user.id).await;
@@ -1913,8 +1538,10 @@ async fn series_occurrence_not_swept_on_following_full_sync() {
     }
 
     {
-        let mut queue = mock.delta_queue.lock().await;
-        queue.push_back(MockResponse::ok(series_payload("cursor-series-1")));
+        let queue = mock.data_queue();
+        queue
+            .push_back(MockResponse::ok(series_payload("cursor-series-1")))
+            .await;
     }
     let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
     let SyncOutcome::Completed {
@@ -1958,8 +1585,10 @@ async fn series_occurrence_not_swept_on_following_full_sync() {
     .await
     .expect("clear cursor for forced full resync");
     {
-        let mut queue = mock.delta_queue.lock().await;
-        queue.push_back(MockResponse::ok(series_payload("cursor-series-2")));
+        let queue = mock.data_queue();
+        queue
+            .push_back(MockResponse::ok(series_payload("cursor-series-2")))
+            .await;
     }
     let reloaded = harness.reload_source(source.id).await;
     let second = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
@@ -1991,7 +1620,8 @@ async fn series_occurrence_not_swept_on_following_full_sync() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn removed_tombstone_soft_deletes_mirror_without_bogus_row() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_removed").await;
     let source = harness.create_outlook_source(user.id).await;
@@ -1999,11 +1629,11 @@ async fn removed_tombstone_soft_deletes_mirror_without_bogus_row() {
 
     // Run 1: full sync mirrors the event.
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [graph_event("evt-del", "Doomed", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-del-1"
-        })));
+        }))).await;
     }
     let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
     assert!(matches!(first, SyncOutcome::Completed { upserted: 1, .. }));
@@ -2013,11 +1643,11 @@ async fn removed_tombstone_soft_deletes_mirror_without_bogus_row() {
     // Run 2: incremental delta carries the realistic minimal `@removed`
     // tombstone (no subject/start/end).
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [{"id": "evt-del", "@removed": {"reason": "deleted"}}],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-del-2"
-        })));
+        }))).await;
     }
     let reloaded = harness.reload_source(source.id).await;
     let second = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
@@ -2060,7 +1690,8 @@ async fn removed_tombstone_soft_deletes_mirror_without_bogus_row() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn full_run_counts_tombstone_outside_sweep_window() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_tomb_count").await;
     let source = harness.create_outlook_source(user.id).await;
@@ -2100,11 +1731,11 @@ async fn full_run_counts_tombstone_outside_sweep_window() {
 
     // Full run (no cursor yet) carries only the tombstone.
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [{"id": "evt-old-del", "@removed": {"reason": "deleted"}}],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-old-del"
-        })));
+        }))).await;
     }
     let outcome = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
     let SyncOutcome::Completed { soft_deleted, .. } = outcome else {
@@ -2125,7 +1756,8 @@ async fn full_run_counts_tombstone_outside_sweep_window() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn master_tombstone_cascades_to_recurrence_overrides() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_master_cascade").await;
     let source = harness.create_outlook_source(user.id).await;
@@ -2176,11 +1808,11 @@ async fn master_tombstone_cascades_to_recurrence_overrides() {
 
     // Run 2: an incremental delta carries the master's `@removed` tombstone.
     {
-        let mut queue = mock.delta_queue.lock().await;
+        let queue = mock.data_queue();
         queue.push_back(MockResponse::ok(json!({
             "value": [{"id": "master-cas", "@removed": {"reason": "deleted"}}],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-cas"
-        })));
+        }))).await;
     }
     let reloaded = harness.reload_source(source.id).await;
     let second = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
@@ -2211,15 +1843,16 @@ async fn master_tombstone_cascades_to_recurrence_overrides() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn graph_403_access_denied_parks_auth_required() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let mock = MockProvider::microsoft();
+    let base = mock.base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_403").await;
     let source = harness.create_outlook_source(user.id).await;
     let client = mock_client(&base);
 
     {
-        let mut queue = mock.delta_queue.lock().await;
-        queue.push_back(MockResponse::access_denied());
+        let queue = mock.data_queue();
+        queue.push_back(MockResponse::access_denied()).await;
     }
     let outcome = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
     assert_eq!(
@@ -2240,7 +1873,7 @@ async fn graph_403_access_denied_parks_auth_required() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn disconnect_revocation_makes_no_provider_call() {
     let _guard = SERIAL.lock().await;
-    let (base, _mock) = spawn_mock_microsoft();
+    let base = MockProvider::microsoft().base_url().to_string();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_disconnect").await;
     let source = harness.create_outlook_source(user.id).await;
