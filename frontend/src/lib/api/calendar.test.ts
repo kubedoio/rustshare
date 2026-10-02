@@ -81,6 +81,25 @@ describe('calendarApi', () => {
 		expect(apiClient.get).toHaveBeenCalledWith('/calendar/sources');
 	});
 
+	it('lists provider status with redirect URIs', async () => {
+		vi.mocked(apiClient.get).mockResolvedValueOnce({
+			public_url: 'https://app.example.com',
+			providers: [
+				{
+					kind: 'google',
+					configured: false,
+					redirect_uri: 'https://app.example.com/api/v1/calendar/oauth/google/callback'
+				}
+			]
+		});
+
+		const result = await calendarApi.listProviders();
+
+		expect(apiClient.get).toHaveBeenCalledWith('/calendar/providers');
+		expect(result.providers[0].configured).toBe(false);
+		expect(result.providers[0].redirect_uri).toContain('/calendar/oauth/google/callback');
+	});
+
 	it('creates ical_import sources and updates them', async () => {
 		vi.mocked(apiClient.post).mockResolvedValueOnce({ id: 'src-1' });
 		vi.mocked(apiClient.patch).mockResolvedValueOnce({ id: 'src-1' });

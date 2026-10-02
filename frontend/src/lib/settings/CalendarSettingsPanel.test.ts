@@ -7,6 +7,7 @@ import CalendarSettingsPanel from './CalendarSettingsPanel.svelte';
 const mocks = vi.hoisted(() => ({
 	listSources: vi.fn(),
 	listImportJobs: vi.fn(),
+	listProviders: vi.fn(),
 	uploadIcs: vi.fn(),
 	connectSource: vi.fn(),
 	disconnectSource: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock('$lib/api/calendar', () => ({
 	calendarApi: {
 		listSources: mocks.listSources,
 		listImportJobs: mocks.listImportJobs,
+		listProviders: mocks.listProviders,
 		uploadIcs: mocks.uploadIcs,
 		connectSource: mocks.connectSource,
 		disconnectSource: mocks.disconnectSource,
@@ -74,6 +76,21 @@ describe('CalendarSettingsPanel', () => {
 		setUrl('');
 		mocks.listSources.mockResolvedValue([internalSource, googleSource]);
 		mocks.listImportJobs.mockResolvedValue([]);
+		mocks.listProviders.mockResolvedValue({
+			public_url: 'https://app.example.com',
+			providers: [
+				{
+					kind: 'google',
+					configured: true,
+					redirect_uri: 'https://app.example.com/api/v1/calendar/oauth/google/callback'
+				},
+				{
+					kind: 'outlook',
+					configured: true,
+					redirect_uri: 'https://app.example.com/api/v1/calendar/oauth/outlook/callback'
+				}
+			]
+		});
 	});
 
 	it('renders sources and import jobs', async () => {
@@ -131,6 +148,37 @@ describe('CalendarSettingsPanel', () => {
 		);
 	});
 
+	it('shows the expected redirect URI for a provider reported unconfigured', async () => {
+		mocks.listProviders.mockResolvedValue({
+			public_url: 'https://app.example.com',
+			providers: [
+				{
+					kind: 'google',
+					configured: false,
+					redirect_uri: 'https://app.example.com/api/v1/calendar/oauth/google/callback'
+				},
+				{
+					kind: 'outlook',
+					configured: true,
+					redirect_uri: 'https://app.example.com/api/v1/calendar/oauth/outlook/callback'
+				}
+			]
+		});
+		render(CalendarSettingsPanel);
+
+		const disabled = await screen.findByText('Connect Google Calendar', {
+			selector: 'button:disabled'
+		});
+		expect(disabled.title).toContain(
+			'https://app.example.com/api/v1/calendar/oauth/google/callback'
+		);
+		// A configured provider stays enabled and shows no unconfigured copy.
+		const outlook = await screen.findByText('Connect Outlook Calendar', {
+			selector: 'button:not(:disabled)'
+		});
+		expect(outlook.title).not.toContain('not configured');
+	});
+
 	it('shows a success toast from the ?connected= redirect param and strips it', async () => {
 		setUrl('?connected=google');
 		render(CalendarSettingsPanel);
@@ -147,6 +195,33 @@ describe('CalendarSettingsPanel', () => {
 
 		await waitFor(() => {
 			expect(toastSpy).toHaveBeenCalledWith('Provider access was denied.', 'error');
+		});
+		expect(replaceStateSpy).toHaveBeenCalledWith('/settings/apps/calendar', {});
+	});
+
+	it('maps reason=redirect_uri to actionable copy and strips reason from the URL', async () => {
+		setUrl('?error=oauth_exchange&reason=redirect_uri');
+		render(CalendarSettingsPanel);
+
+		await waitFor(() => {
+			expect(toastSpy).toHaveBeenCalledWith(
+				'The provider rejected the redirect URI; check the registered callback URL.',
+				'error'
+			);
+		});
+		// Both error and reason must be consumed, leaving a bare path.
+		expect(replaceStateSpy).toHaveBeenCalledWith('/settings/apps/calendar', {});
+	});
+
+	it('maps reason=not_configured to copy pointing at the providers endpoint', async () => {
+		setUrl('?error=oauth_unconfigured&reason=not_configured');
+		render(CalendarSettingsPanel);
+
+		await waitFor(() => {
+			expect(toastSpy).toHaveBeenCalledWith(
+				expect.stringContaining('GET /api/v1/calendar/providers'),
+				'error'
+			);
 		});
 		expect(replaceStateSpy).toHaveBeenCalledWith('/settings/apps/calendar', {});
 	});

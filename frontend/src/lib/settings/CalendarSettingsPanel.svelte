@@ -1,7 +1,12 @@
 <script lang="ts">
 	import { createQuery } from '$lib/query-compat';
 	import { replaceState } from '$app/navigation';
-	import { calendarApi, type CalendarSource, type CalendarSourceKind } from '$lib/api/calendar';
+	import {
+		calendarApi,
+		type CalendarProviderStatus,
+		type CalendarSource,
+		type CalendarSourceKind
+	} from '$lib/api/calendar';
 	import { ApiError } from '$lib/api/types';
 	import { queryClient } from '$lib/query-client';
 	import { toastStore } from '$lib/stores/toast';
@@ -10,6 +15,11 @@
 	const sourcesQuery = createQuery({
 		queryKey: ['calendar-sources'],
 		queryFn: () => calendarApi.listSources()
+	});
+
+	const providersQuery = createQuery({
+		queryKey: ['calendar-providers'],
+		queryFn: () => calendarApi.listProviders()
 	});
 
 	const importJobsQuery = createQuery({
@@ -51,6 +61,18 @@
 		oauth_unconfigured: 'This provider is not configured on this deployment.'
 	};
 
+	// Finer-grained copy for the `reason=` code the callback pairs with each
+	// `error=oauth_*`; reason-specific text wins so the operator gets an
+	// actionable next step instead of the coarse generic message.
+	const OAUTH_REASON_MESSAGES: Record<string, string> = {
+		not_configured:
+			'This provider is not configured on this deployment. See GET /api/v1/calendar/providers for the redirect URI to register.',
+		redirect_uri: 'The provider rejected the redirect URI; check the registered callback URL.',
+		denied: 'Provider access was denied.',
+		state: 'The connect session expired or is invalid. Try again.',
+		exchange: 'The provider rejected the authorization. Try again.'
+	};
+
 	// OAuth callback redirect params: show a toast once, then strip them from
 	// the URL so a refresh does not re-trigger the toast.
 	function consumeOauthRedirectParams() {
@@ -58,6 +80,7 @@
 		const params = new URLSearchParams(window.location.search);
 		const connected = params.get('connected');
 		const error = params.get('error');
+		const reason = params.get('reason');
 		if (connected) {
 			toastStore.show(
 				`Connected ${KIND_LABELS[connected as CalendarSourceKind] ?? connected} Calendar`,
@@ -65,7 +88,9 @@
 			);
 		} else if (error?.startsWith('oauth_')) {
 			toastStore.show(
-				OAUTH_ERROR_MESSAGES[error] ?? 'Connecting the calendar provider failed.',
+				(reason ? OAUTH_REASON_MESSAGES[reason] : undefined) ??
+					OAUTH_ERROR_MESSAGES[error] ??
+					'Connecting the calendar provider failed.',
 				'error'
 			);
 		} else {
@@ -73,6 +98,7 @@
 		}
 		params.delete('connected');
 		params.delete('error');
+		params.delete('reason');
 		const query = params.toString();
 		const url = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
 		replaceState(url, {});
@@ -83,6 +109,7 @@
 	const sources = $derived($sourcesQuery.data ?? []);
 	const importJobs = $derived(($importJobsQuery.data ?? []).slice(0, 10));
 	const internalSource = $derived(sources.find((source) => source.kind === 'internal') ?? null);
+	const providerStatuses = $derived($providersQuery.data?.providers ?? []);
 
 	function isOauthKind(kind: CalendarSourceKind): boolean {
 		return kind === 'google' || kind === 'outlook';
@@ -124,7 +151,21 @@
 		}
 	}
 
+	function providerStatus(kind: 'google' | 'outlook'): CalendarProviderStatus | null {
+		return providerStatuses.find((provider) => provider.kind === kind) ?? null;
+	}
+
+	// A provider is unconfigured if the status endpoint says so, or if a connect
+	// attempt already came back 503 (the status query may be stale or erroring).
+	function providerIsUnconfigured(kind: 'google' | 'outlook'): boolean {
+		return unconfigured.includes(kind) || providerStatus(kind)?.configured === false;
+	}
+
 	function connectDisabledReason(kind: 'google' | 'outlook'): string | null {
+		const status = providerStatus(kind);
+		if (status && !status.configured) {
+			return `${KIND_LABELS[kind]} Calendar is not configured on this deployment. Register this redirect URI in the provider console: ${status.redirect_uri}`;
+		}
 		if (unconfigured.includes(kind)) {
 			return `${KIND_LABELS[kind]} Calendar is not configured on this deployment.`;
 		}
@@ -363,7 +404,7 @@
 					<button
 						type="button"
 						class="btn btn-outline btn-sm"
-						disabled={connecting !== null || unconfigured.includes(kind as CalendarSourceKind)}
+						disabled={connecting !== null || providerIsUnconfigured(kind as 'google' | 'outlook')}
 						title={connectDisabledReason(kind as 'google' | 'outlook') ??
 							`Connect your ${KIND_LABELS[kind as CalendarSourceKind]} account`}
 						onclick={() => connectProvider(kind as 'google' | 'outlook')}

@@ -89,6 +89,19 @@ export interface CalendarImportResponse {
 	status: CalendarImportJobStatus;
 }
 
+export interface CalendarProviderStatus {
+	kind: string;
+	/** Whether this deployment has OAuth client credentials for the provider. */
+	configured: boolean;
+	/** The exact redirect URI to register in the provider console. */
+	redirect_uri: string;
+}
+
+export interface CalendarProvidersResponse {
+	public_url: string;
+	providers: CalendarProviderStatus[];
+}
+
 export const calendarApi = {
 	listEvents: async (params: ListCalendarEventsParams): Promise<CalendarEvent[]> => {
 		const query = new URLSearchParams({ from: params.from, to: params.to });
@@ -118,6 +131,10 @@ export const calendarApi = {
 	listSources: async (): Promise<CalendarSource[]> => {
 		const res = await apiClient.get<{ sources: CalendarSource[] }>('/calendar/sources');
 		return res.sources;
+	},
+
+	listProviders: async (): Promise<CalendarProvidersResponse> => {
+		return apiClient.get<CalendarProvidersResponse>('/calendar/providers');
 	},
 
 	createIcsSource: async (displayName: string): Promise<CalendarSource> => {
