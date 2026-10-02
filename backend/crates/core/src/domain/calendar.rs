@@ -281,3 +281,71 @@ pub struct CalendarImportJob {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_kind_round_trips_and_rejects_unknown() {
+        for kind in [
+            CalendarSourceKind::Internal,
+            CalendarSourceKind::IcalImport,
+            CalendarSourceKind::Google,
+            CalendarSourceKind::Outlook,
+        ] {
+            assert_eq!(kind.as_str().parse::<CalendarSourceKind>().unwrap(), kind);
+        }
+        assert!("caldav".parse::<CalendarSourceKind>().is_err());
+    }
+
+    #[test]
+    fn source_status_round_trips_and_rejects_unknown() {
+        for status in [
+            CalendarSourceStatus::Healthy,
+            CalendarSourceStatus::Degraded,
+            CalendarSourceStatus::AuthRequired,
+            CalendarSourceStatus::RateLimited,
+            CalendarSourceStatus::Paused,
+            CalendarSourceStatus::Failed,
+        ] {
+            assert_eq!(
+                status.as_str().parse::<CalendarSourceStatus>().unwrap(),
+                status
+            );
+        }
+        assert!("unknown".parse::<CalendarSourceStatus>().is_err());
+    }
+
+    #[test]
+    fn event_status_round_trips_and_rejects_unknown() {
+        for status in [
+            CalendarEventStatus::Confirmed,
+            CalendarEventStatus::Tentative,
+            CalendarEventStatus::Cancelled,
+        ] {
+            assert_eq!(
+                status.as_str().parse::<CalendarEventStatus>().unwrap(),
+                status
+            );
+        }
+        assert!("maybe".parse::<CalendarEventStatus>().is_err());
+    }
+
+    #[test]
+    fn import_job_status_round_trips_and_rejects_unknown() {
+        for status in [
+            CalendarImportJobStatus::Pending,
+            CalendarImportJobStatus::Running,
+            CalendarImportJobStatus::Completed,
+            CalendarImportJobStatus::Failed,
+            CalendarImportJobStatus::Cancelled,
+        ] {
+            assert_eq!(
+                status.as_str().parse::<CalendarImportJobStatus>().unwrap(),
+                status
+            );
+        }
+        assert!("queued".parse::<CalendarImportJobStatus>().is_err());
+    }
+}

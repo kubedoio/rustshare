@@ -130,7 +130,7 @@ pub struct CalendarEventPatch {
     pub rrule: Option<String>,
 }
 
-fn validate_timezone(timezone: &str) -> Result<(), CalendarError> {
+pub(crate) fn validate_timezone(timezone: &str) -> Result<(), CalendarError> {
     if timezone.parse::<chrono_tz::Tz>().is_err() {
         return Err(CalendarError::InvalidInput(format!(
             "Unknown IANA timezone: {timezone}"
@@ -139,7 +139,7 @@ fn validate_timezone(timezone: &str) -> Result<(), CalendarError> {
     Ok(())
 }
 
-fn validate_event_times(
+pub(crate) fn validate_event_times(
     starts_at: DateTime<Utc>,
     ends_at: DateTime<Utc>,
     all_day: bool,
@@ -165,7 +165,7 @@ fn validate_event_times(
 /// Validate a stored-verbatim RRULE string the same way expansion parses it,
 /// so a bad RRULE is rejected with a 400 at write time instead of silently
 /// producing no instances at read time.
-fn validate_rrule(rrule: &str) -> Result<(), CalendarError> {
+pub(crate) fn validate_rrule(rrule: &str) -> Result<(), CalendarError> {
     // Expansion always prefixes the stored value with a DTSTART line; parse
     // with a fixed DTSTART here so validation and expansion agree.
     const VALIDATION_DTSTART: &str = "DTSTART:20261001T000000Z";
@@ -175,6 +175,23 @@ fn validate_rrule(rrule: &str) -> Result<(), CalendarError> {
     {
         return Err(CalendarError::InvalidInput(format!(
             "Invalid RRULE: {rrule}"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate a listing window: `from` must precede `to`, and the span may not
+/// exceed [`MAX_RANGE_WINDOW_DAYS`]. The cap is exclusive: a span of exactly
+/// `MAX_RANGE_WINDOW_DAYS` days is accepted.
+pub(crate) fn validate_window(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<(), CalendarError> {
+    if from >= to {
+        return Err(CalendarError::InvalidInput(
+            "from must be before to".to_string(),
+        ));
+    }
+    if to - from > Duration::days(MAX_RANGE_WINDOW_DAYS) {
+        return Err(CalendarError::InvalidInput(format!(
+            "Range window must be at most {MAX_RANGE_WINDOW_DAYS} days"
         )));
     }
     Ok(())
@@ -1060,16 +1077,7 @@ impl CalendarService {
         source_ids: &[Uuid],
         include_cancelled: bool,
     ) -> Result<Vec<CalendarEventOccurrence>, CalendarError> {
-        if from >= to {
-            return Err(CalendarError::InvalidInput(
-                "from must be before to".to_string(),
-            ));
-        }
-        if to - from > Duration::days(MAX_RANGE_WINDOW_DAYS) {
-            return Err(CalendarError::InvalidInput(format!(
-                "Range window must be at most {MAX_RANGE_WINDOW_DAYS} days"
-            )));
-        }
+        validate_window(from, to)?;
 
         let sources = self.list_sources(tenant_id, owner_id).await?;
         let kind_by_id: HashMap<Uuid, CalendarSourceKind> = sources
@@ -1271,5 +1279,47 @@ mod tests {
             &["2026-10-12T14:00:00Z".to_string()],
         );
         assert_eq!(starts, vec![utc("2026-10-05T14:00:00Z")]);
+    }
+
+    #[test]
+    fn validate_timezone_accepts_iana_and_rejects_unknown() {
+        assert!(validate_timezone("Europe/Berlin").is_ok());
+        assert!(validate_timezone("UTC").is_ok());
+        assert!(validate_timezone("Mars/Olympus").is_err());
+        assert!(validate_timezone("").is_err());
+    }
+
+    #[test]
+    fn validate_event_times_rejects_end_before_or_equal_start() {
+        let start = utc("2026-10-14T09:00:00Z");
+        assert!(validate_event_times(start, start, false).is_err());
+        assert!(validate_event_times(start, utc("2026-10-14T08:00:00Z"), false).is_err());
+        assert!(validate_event_times(start, utc("2026-10-14T10:00:00Z"), false).is_ok());
+    }
+
+    #[test]
+    fn validate_event_times_requires_whole_day_alignment_for_all_day() {
+        // All-day events must both start and end at UTC midnight and span a
+        // whole number of days. The existing rule is midnight alignment, not
+        // merely whole-day duration.
+        let start = utc("2026-10-14T00:00:00Z");
+        assert!(validate_event_times(start, utc("2026-10-16T00:00:00Z"), true).is_ok());
+        assert!(validate_event_times(start, utc("2026-10-14T12:00:00Z"), true).is_err());
+        // Whole-day span but not midnight-aligned: still rejected.
+        assert!(validate_event_times(
+            utc("2026-10-14T06:00:00Z"),
+            utc("2026-10-16T06:00:00Z"),
+            true
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn validate_window_enforces_order_and_the_366_day_cap() {
+        let from = utc("2026-01-01T00:00:00Z");
+        assert!(validate_window(from, from).is_err());
+        assert!(validate_window(from, utc("2026-01-01T00:00:01Z")).is_ok());
+        assert!(validate_window(from, utc("2027-01-01T00:00:00Z")).is_ok()); // exactly 366 days
+        assert!(validate_window(from, utc("2027-01-02T00:00:01Z")).is_err()); // beyond the cap
     }
 }
