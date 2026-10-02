@@ -326,8 +326,12 @@ authoritative; Elembra stores a read-only cache.
   90 days back, 365 days forward).
 - Microsoft: `calendarView/delta` with `deltaToken`; an expired/invalid delta
   token triggers the same full-resync fallback.
-- Provider deletions propagate: removed remote events soft-delete the mirror
-  rows. Cancelled instances map to `status = 'cancelled'` tombstones.
+- Provider deletions propagate two ways: cancelled instances arrive as
+  `status = 'cancelled'` tombstone entries in delta payloads, and on FULL
+  runs the absent-entry sweep soft-deletes in-window mirror rows missing
+  from the complete window payload. Incremental deltas carry only changed
+  entries, so the sweep never runs there — an unchanged event absent from
+  a delta is untouched.
 - Change detection: the worker compares a normalized column set (or
   `external_etag` when present) and updates the row only on actual change.
 - Rate limits (429 / `Retry-After`) pause the source (`status =

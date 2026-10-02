@@ -746,8 +746,8 @@ async fn worker_run_keeps_auth_required_parked_without_http() {
 }
 
 /// A transient failure mid-incremental must preserve the stored delta cursor
-/// so the next run stays incremental (a forced full resync would not
-/// propagate provider deletions and could resurrect deleted events).
+/// so the next run stays incremental (a forced full resync is heavier and
+/// its absent-entry sweep covers only the synced window).
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn worker_failed_run_preserves_incremental_cursor() {
@@ -1046,7 +1046,7 @@ async fn full_sync_pages_materialize_events_and_establish_cursor() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
-async fn delta_applies_updates_tombstones_cancelled_and_soft_deletes_absent() {
+async fn delta_applies_updates_tombstones_and_keeps_absent_unchanged() {
     let _guard = SERIAL.lock().await;
     let (base, mock) = spawn_mock_microsoft();
     let harness = Harness::new().await;
@@ -1061,7 +1061,7 @@ async fn delta_applies_updates_tombstones_cancelled_and_soft_deletes_absent() {
             "value": [
                 graph_event("evt-1", "Original title", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z"),
                 graph_event("evt-2", "To be cancelled", "2026-10-06T09:00:00Z", "2026-10-06T09:30:00Z"),
-                graph_event("evt-4", "To vanish", "2026-10-08T09:00:00Z", "2026-10-08T09:30:00Z")
+                graph_event("evt-4", "Unchanged", "2026-10-08T09:00:00Z", "2026-10-08T09:30:00Z")
             ],
             "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-1"
         })));
@@ -1069,8 +1069,10 @@ async fn delta_applies_updates_tombstones_cancelled_and_soft_deletes_absent() {
     let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
     assert!(matches!(first, SyncOutcome::Completed { upserted: 3, .. }));
 
-    // Run 2: incremental delta — evt-1 updated, evt-2 cancelled, evt-4 absent
-    // (soft-delete), plus a series exception override row.
+    // Run 2: incremental delta — evt-1 updated, evt-2 cancelled, plus a
+    // series exception override row. evt-4 did NOT change and is therefore
+    // absent from the delta payload; an unchanged event absent from a delta
+    // must stay intact (the absent-entry sweep runs on full runs only).
     {
         let mut queue = mock.delta_queue.lock().await;
         queue.push_back(MockResponse::ok(json!({
@@ -1110,7 +1112,10 @@ async fn delta_applies_updates_tombstones_cancelled_and_soft_deletes_absent() {
         panic!("expected Completed, got {second:?}");
     };
     assert_eq!(upserted, 3);
-    assert_eq!(soft_deleted, 1, "absent evt-4 must be soft-deleted");
+    assert_eq!(
+        soft_deleted, 0,
+        "incremental deltas must never run the absent-entry sweep"
+    );
 
     // The delta request used the stored cursor.
     let requests = mock.delta_requests.lock().await;
@@ -1134,12 +1139,11 @@ async fn delta_applies_updates_tombstones_cancelled_and_soft_deletes_absent() {
         .find(|event| event.external_uid.as_deref() == Some("evt-2"))
         .expect("evt-2 tombstone kept");
     assert_eq!(cancelled.status, "cancelled");
-    assert!(
-        !events
-            .iter()
-            .any(|event| event.external_uid.as_deref() == Some("evt-4")),
-        "absent evt-4 must be gone from active rows"
-    );
+    let unchanged = events
+        .iter()
+        .find(|event| event.external_uid.as_deref() == Some("evt-4"))
+        .expect("unchanged evt-4 must stay intact when absent from a delta");
+    assert_eq!(unchanged.title, "Unchanged");
     let occurrence = events
         .iter()
         .find(|event| event.external_uid.as_deref() == Some("master-1"))
@@ -1190,6 +1194,206 @@ async fn delta_applies_updates_tombstones_cancelled_and_soft_deletes_absent() {
             .any(|event| event.external_uid.as_deref() == Some("evt-2")),
         "cancelled tombstone visible with include_cancelled"
     );
+
+    harness.cleanup().await;
+}
+
+/// A FULL run's payload is the complete live set for the synced window, so
+/// mirrored rows missing from it (and starting inside the window) are
+/// soft-deleted; out-of-window rows the payload cannot speak for survive.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn full_sync_sweep_soft_deletes_absent_in_window_events() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_microsoft();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_o_sweep").await;
+    let source = harness.create_outlook_source(user.id).await;
+    let client = mock_client(&base);
+
+    // Run 1: full sync of evt-1 and evt-2.
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "value": [
+                graph_event("evt-1", "Kept", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z"),
+                graph_event("evt-2", "Deleted upstream", "2026-10-06T09:00:00Z", "2026-10-06T09:30:00Z")
+            ],
+            "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-sweep-1"
+        })));
+    }
+    let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    assert!(matches!(first, SyncOutcome::Completed { upserted: 2, .. }));
+    // Seed an out-of-window far-future row directly (the sync window is
+    // 90d back / 365d forward; 2028 is well beyond it).
+    let far_future_event = CalendarEvent {
+        id: Uuid::new_v4(),
+        tenant_id: harness.tenant_id,
+        owner_id: user.id,
+        source_id: source.id,
+        external_uid: Some("evt-far".to_string()),
+        external_etag: None,
+        recurrence_id: None,
+        title: "Beyond the window".to_string(),
+        description: None,
+        location: None,
+        starts_at: "2028-01-01T09:00:00Z".parse().unwrap(),
+        ends_at: "2028-01-01T09:30:00Z".parse().unwrap(),
+        all_day: false,
+        original_date: None,
+        timezone: "UTC".to_string(),
+        rrule: None,
+        status: "confirmed".to_string(),
+        read_only: true,
+        raw: None,
+        deleted_at: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    harness
+        .store
+        .upsert_calendar_synced_event(&far_future_event)
+        .await
+        .expect("seed far-future event");
+
+    // Run 2 (forced full resync): the window payload no longer contains
+    // evt-2 → swept; evt-far is outside the window → untouched.
+    sqlx::query(
+        "UPDATE calendar_sync_states SET cursor_value = NULL, cursor_kind = NULL
+         WHERE source_id = $1",
+    )
+    .bind(source.id)
+    .execute(&harness.pool)
+    .await
+    .expect("clear cursor for forced full resync");
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "value": [graph_event("evt-1", "Kept", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
+            "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-sweep-2"
+        })));
+    }
+    let reloaded = harness.reload_source(source.id).await;
+    let second = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
+    let SyncOutcome::Completed {
+        upserted,
+        soft_deleted,
+        next_sync_token,
+    } = second
+    else {
+        panic!("expected Completed, got {second:?}");
+    };
+    assert_eq!(upserted, 1);
+    assert_eq!(soft_deleted, 1, "absent in-window evt-2 must be swept");
+    assert_eq!(next_sync_token.as_deref(), Some("cursor-sweep-2"));
+
+    let events = harness.list_source_events(source.id).await;
+    assert!(
+        events
+            .iter()
+            .any(|event| event.external_uid.as_deref() == Some("evt-1")),
+        "evt-1 must remain"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.external_uid.as_deref() == Some("evt-2")),
+        "absent in-window evt-2 must be soft-deleted"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.external_uid.as_deref() == Some("evt-far")),
+        "out-of-window evt-far must survive a window sweep"
+    );
+
+    harness.cleanup().await;
+}
+
+/// A multi-page INCREMENTAL run must page with the skiptoken from
+/// `@odata.nextLink` (which Graph returns on delta runs too), terminate on
+/// the final page, and persist the new delta cursor.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn incremental_multi_page_sync_pages_with_skiptoken_and_terminates() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_microsoft();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_o_paged").await;
+    let source = harness.create_outlook_source(user.id).await;
+    let client = mock_client(&base);
+
+    // Run 1: full sync establishes a cursor.
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "value": [graph_event("evt-p1", "One", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
+            "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-paged-1"
+        })));
+    }
+    let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    assert!(matches!(first, SyncOutcome::Completed { .. }));
+
+    // Run 2: incremental delta spanning two pages. The intermediate page
+    // carries `@odata.nextLink` with a $skiptoken; re-sending the
+    // $deltatoken there would refetch page one forever.
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "value": [graph_event("evt-p1", "One updated", "2026-10-05T15:00:00Z", "2026-10-05T16:00:00Z")],
+            "@odata.nextLink": "http://graph.example/v1.0/me/calendarView/delta?$skiptoken=inc-page-2"
+        })));
+        queue.push_back(MockResponse::ok(json!({
+            "value": [],
+            "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-paged-2"
+        })));
+    }
+    let reloaded = harness.reload_source(source.id).await;
+    let second = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
+    let SyncOutcome::Completed {
+        upserted,
+        next_sync_token,
+        ..
+    } = second
+    else {
+        panic!("expected Completed, got {second:?}");
+    };
+    assert_eq!(upserted, 1);
+    assert_eq!(next_sync_token.as_deref(), Some("cursor-paged-2"));
+
+    // Request 1 was the full sync; request 2 opened the delta with the
+    // cursor; request 3 paged with the skiptoken INSTEAD of re-sending the
+    // deltatoken (the old bug re-fetched page one forever).
+    let requests = mock.delta_requests.lock().await;
+    assert!(
+        requests[1].contains("$deltatoken=cursor-paged-1"),
+        "delta run must open with the stored cursor: {}",
+        requests[1]
+    );
+    assert!(
+        requests[2].contains("$skiptoken=inc-page-2"),
+        "second page must use the skiptoken: {}",
+        requests[2]
+    );
+    assert!(
+        !requests[2].contains("$deltatoken="),
+        "mid-paging request must not re-send the deltatoken: {}",
+        requests[2]
+    );
+    assert_eq!(
+        requests.len(),
+        3,
+        "run must terminate after the final page: {requests:?}"
+    );
+    drop(requests);
+
+    let sync_state = harness
+        .store
+        .get_calendar_sync_state(source.id)
+        .await
+        .expect("sync state")
+        .expect("sync state row");
+    assert_eq!(sync_state.cursor_value.as_deref(), Some("cursor-paged-2"));
 
     harness.cleanup().await;
 }

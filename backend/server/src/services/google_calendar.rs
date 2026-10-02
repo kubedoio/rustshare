@@ -24,7 +24,6 @@ const EVENTS_PAGE_SIZE: u32 = 2500;
 /// Base delay between successful sync runs when the scheduler is free-running.
 pub const DEFAULT_SYNC_INTERVAL: Duration = Duration::from_secs(900);
 /// Access tokens are refreshed this long before their advertised expiry.
-/// Access tokens are refreshed this long before their advertised expiry.
 pub const TOKEN_EXPIRY_MARGIN: Duration = Duration::from_secs(60);
 const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(60);
 
@@ -224,15 +223,20 @@ impl GoogleCalendarClient {
             .ok_or_else(|| GoogleError::UserInfo("response had no email".to_string()))
     }
 
-    /// Best-effort token revocation (disconnect). Errors are logged by the
-    /// caller and never propagated to the user.
-    pub async fn revoke_token(&self, token: &str) {
-        let _ = self
+    /// Best-effort token revocation (disconnect). Returns whether the
+    /// provider accepted the revocation; errors are logged by the caller and
+    /// never propagated to the user.
+    pub async fn revoke_token(&self, token: &str) -> bool {
+        match self
             .http
             .post(&self.revoke_url)
             .query(&[("token", token)])
             .send()
-            .await;
+            .await
+        {
+            Ok(response) => response.status().is_success(),
+            Err(_) => false,
+        }
     }
 }
 
@@ -258,7 +262,9 @@ impl CalendarSyncConfig {
 pub enum SyncOutcome {
     /// A run completed. `next_sync_token` is the new incremental cursor
     /// (`None` until the provider supplies one). `soft_deleted` counts
-    /// provider deletions propagated; non-zero only on incremental runs.
+    /// provider deletions propagated; non-zero only on full window runs
+    /// (incremental deltas carry only changed entries, so the absent-entry
+    /// sweep runs only where the payload is a complete set).
     Completed {
         upserted: usize,
         soft_deleted: u64,
@@ -433,6 +439,9 @@ async fn fetch_events_page(
             .query(&[("timeMax", window_end.to_rfc3339())])
             .query(&[("singleEvents", "false")]);
     }
+    // Mid-paging requests carry the page token in addition to the mode
+    // parameters (Google combines pageToken with syncToken/window filters),
+    // so a multi-page response advances pages instead of restarting.
     if let Some(page_token) = page_token {
         request = request.query(&[("pageToken", page_token)]);
     }
@@ -628,12 +637,21 @@ pub async fn sync_source(
             page_token = page.next_page_token;
         }
 
-        // Provider deletions propagate on incremental runs only (a full
-        // window sync cannot speak for events outside the window).
+        // Provider deletions propagate on FULL runs only: a full window
+        // payload is the complete set of live events in the window, so any
+        // in-window mirrored row missing from it was deleted upstream.
+        // Incremental deltas carry only CHANGED entries — an absent-key sweep
+        // there would soft-delete every unchanged mirrored event (upstream
+        // deletions already arrive as cancelled/isCancelled tombstones).
         let mut soft_deleted = 0u64;
-        if incremental {
+        if !incremental {
             match store
-                .soft_delete_calendar_events_absent(source.id, &present_keys)
+                .soft_delete_calendar_events_absent(
+                    source.id,
+                    &present_keys,
+                    window_start,
+                    window_end,
+                )
                 .await
             {
                 Ok(count) => soft_deleted = count,

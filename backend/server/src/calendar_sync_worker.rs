@@ -26,10 +26,16 @@ use crate::services::google_calendar::{
 use crate::services::outlook_calendar::OutlookCalendarClient;
 
 /// `calendar_sync_states.cursor_kind` for the provider cursor a kind stores.
-fn cursor_kind_for(source_kind: &str) -> &'static str {
+/// `None` for unknown kinds so a future provider cannot silently persist its
+/// cursor under the wrong kind (the run keeps its prior cursor instead).
+fn cursor_kind_for(source_kind: &str) -> Option<&'static str> {
     match source_kind {
-        "outlook" => "ms_delta_token",
-        _ => "google_sync_token",
+        "google" => Some("google_sync_token"),
+        "outlook" => Some("ms_delta_token"),
+        other => {
+            tracing::warn!(kind = %other, "no cursor kind registered for calendar source kind");
+            None
+        }
     }
 }
 
@@ -246,6 +252,12 @@ pub async fn run_sync(
     // "sync" that changed nothing.
     let synced = matches!(outcome, SyncOutcome::Completed { .. });
     let now = Utc::now();
+    // Pair the preserved cursor with its kind; an unknown kind writes no
+    // cursor at all rather than persisting it under the wrong kind.
+    let prior = |kind: Option<&'static str>| match (&prior_cursor, kind) {
+        (Some(cursor), Some(kind)) => (Some(cursor.clone()), Some(kind)),
+        _ => (None, None),
+    };
     let plan = match outcome {
         SyncOutcome::Completed {
             upserted,
@@ -262,8 +274,11 @@ pub async fn run_sync(
                 next_sync_at: now
                     + chrono::Duration::from_std(DEFAULT_SYNC_INTERVAL)
                         .unwrap_or(chrono::Duration::seconds(900)),
-                cursor: next_sync_token,
-                cursor_kind: Some(cursor_kind),
+                cursor: match cursor_kind {
+                    Some(_) => next_sync_token,
+                    None => None,
+                },
+                cursor_kind,
                 status: if parked { None } else { Some("healthy") },
                 last_error: None,
             }
@@ -272,10 +287,11 @@ pub async fn run_sync(
             let backoff =
                 chrono::Duration::from_std(retry_after).unwrap_or(chrono::Duration::seconds(60));
             tracing::warn!(source_id = %source_id, "calendar sync rate limited; backing off");
+            let (cursor, cursor_kind) = prior(cursor_kind);
             SyncPlan {
                 next_sync_at: now + backoff,
-                cursor: prior_cursor.clone(),
-                cursor_kind: prior_cursor.is_some().then_some(cursor_kind),
+                cursor,
+                cursor_kind,
                 status: Some("rate_limited"),
                 last_error: Some("rate limited by provider".to_string()),
             }
@@ -295,15 +311,17 @@ pub async fn run_sync(
         SyncOutcome::Failed(message) => {
             tracing::warn!(source_id = %source_id, "calendar sync failed: {message}");
             // Keep the pre-run cursor: a transient failure must not force
-            // the next run into a full window sync (full syncs do not
-            // propagate provider deletions, so a forced full resync can
-            // silently resurrect deleted events).
+            // the next run into a full window resync (the absent-entry sweep
+            // only covers the synced window, so out-of-window deletions
+            // would still be missed and cheap incremental deltas are
+            // preferable).
+            let (cursor, cursor_kind) = prior(cursor_kind);
             SyncPlan {
                 next_sync_at: now
                     + chrono::Duration::from_std(DEFAULT_SYNC_INTERVAL)
                         .unwrap_or(chrono::Duration::seconds(900)),
-                cursor: prior_cursor.clone(),
-                cursor_kind: prior_cursor.is_some().then_some(cursor_kind),
+                cursor,
+                cursor_kind,
                 status: Some("failed"),
                 last_error: Some(message.chars().take(500).collect()),
             }

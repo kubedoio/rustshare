@@ -434,6 +434,7 @@ impl CalendarService {
             ));
         }
         // Best-effort provider revocation; local wipe happens regardless.
+        // Revocation failures are logged, not propagated.
         if kind == CalendarSourceKind::Google {
             if let (Some(client), Some(refresh_enc)) =
                 (self.google.clone(), source.refresh_token_enc)
@@ -441,7 +442,9 @@ impl CalendarService {
                 if let Ok(refresh_token) =
                     rustshare_crypto::decrypt_secret(&refresh_enc, &self.secret_key)
                 {
-                    client.revoke_token(&refresh_token).await;
+                    if !client.revoke_token(&refresh_token).await {
+                        tracing::warn!(source_id = %source_id, "google token revocation was not accepted");
+                    }
                 }
             }
         }
@@ -452,7 +455,9 @@ impl CalendarService {
                 if let Ok(access_token) =
                     rustshare_crypto::decrypt_secret(&access_enc, &self.secret_key)
                 {
-                    client.revoke_token(&access_token).await;
+                    if !client.revoke_token(&access_token).await {
+                        tracing::warn!(source_id = %source_id, "microsoft sign-in-session revocation was not accepted");
+                    }
                 }
             }
         }

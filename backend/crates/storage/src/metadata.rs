@@ -7485,12 +7485,17 @@ impl MetadataStore {
     }
 
     /// Soft-delete every mirrored event of the source whose
-    /// `external_uid|recurrence_id` key is absent from the provider delta
-    /// (provider deletion propagation).
+    /// `external_uid|recurrence_id` key is absent from a FULL window sync
+    /// payload, restricted to events starting inside the synced window
+    /// (provider deletion propagation). Callers must only run this on full
+    /// runs: incremental deltas contain only changed entries, so an
+    /// absent-key sweep there would delete every unchanged mirrored event.
     pub async fn soft_delete_calendar_events_absent(
         &self,
         source_id: Uuid,
         present_keys: &[String],
+        window_start: DateTime<Utc>,
+        window_end: DateTime<Utc>,
     ) -> Result<u64> {
         let result = sqlx::query!(
             r#"
@@ -7499,10 +7504,14 @@ impl MetadataStore {
             WHERE source_id = $1
               AND deleted_at IS NULL
               AND external_uid IS NOT NULL
+              AND starts_at >= $3
+              AND starts_at < $4
               AND (external_uid || '|' || COALESCE(recurrence_id, '')) != ALL($2)
             "#,
             source_id,
             present_keys,
+            window_start,
+            window_end,
         )
         .execute(&self.pool)
         .await?;

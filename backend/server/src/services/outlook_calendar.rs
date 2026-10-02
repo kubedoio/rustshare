@@ -202,15 +202,24 @@ impl OutlookCalendarClient {
             .ok_or_else(|| OutlookError::UserInfo("response had no email".to_string()))
     }
 
-    /// Best-effort sign-in-session revocation (disconnect). Errors are logged
-    /// by the caller and never propagated to the user.
-    pub async fn revoke_token(&self, access_token: &str) {
-        let _ = self
+    /// Best-effort sign-in-session revocation (disconnect). **Side effect:**
+    /// `revokeSignInSessions` invalidates ALL of the user's Microsoft
+    /// sign-in sessions across every Entra-integrated app — not just this
+    /// Elembra grant. This needs a frontend warning and an ADR note; a
+    /// grant-scoped alternative would require admin-consent Graph permissions
+    /// beyond `Calendars.Read`. Errors are logged by the caller and never
+    /// propagated to the user.
+    pub async fn revoke_token(&self, access_token: &str) -> bool {
+        match self
             .http
             .post(&self.revoke_url)
             .bearer_auth(access_token)
             .send()
-            .await;
+            .await
+        {
+            Ok(response) => response.status().is_success(),
+            Err(_) => false,
+        }
     }
 }
 
@@ -492,10 +501,14 @@ async fn fetch_delta_page(
         .http
         .get(format!("{}/me/calendarView/delta", client.api_base))
         .bearer_auth(access_token);
-    if incremental {
-        request = request.query(&[("$deltatoken", cursor.unwrap_or_default())]);
-    } else if let Some(page_token) = page_token {
+    // Mid-paging requests (a `$skiptoken` from `@odata.nextLink`) take
+    // priority over the mode: Graph returns nextLinks on incremental delta
+    // runs too, and re-sending the `$deltatoken` there would refetch page one
+    // forever while holding the lease.
+    if let Some(page_token) = page_token {
         request = request.query(&[("$skiptoken", page_token)]);
+    } else if incremental {
+        request = request.query(&[("$deltatoken", cursor.unwrap_or_default())]);
     } else {
         request = request
             .query(&[("startDateTime", window_start.to_rfc3339())])
@@ -714,12 +727,21 @@ pub async fn sync_source(
             break;
         }
 
-        // Provider deletions propagate on incremental runs only (a full
-        // window sync cannot speak for events outside the window).
+        // Provider deletions propagate on FULL runs only: a full window
+        // payload is the complete set of live events in the window, so any
+        // in-window mirrored row missing from it was deleted upstream.
+        // Incremental deltas carry only CHANGED entries — an absent-key sweep
+        // there would soft-delete every unchanged mirrored event (upstream
+        // deletions already arrive as isCancelled tombstones).
         let mut soft_deleted = 0u64;
-        if incremental {
+        if !incremental {
             match store
-                .soft_delete_calendar_events_absent(source.id, &present_keys)
+                .soft_delete_calendar_events_absent(
+                    source.id,
+                    &present_keys,
+                    window_start,
+                    window_end,
+                )
                 .await
             {
                 Ok(count) => soft_deleted = count,
