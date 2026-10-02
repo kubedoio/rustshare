@@ -37,6 +37,40 @@ describe('shiftWindow', () => {
 		expect(shiftWindow('month', at('2026-10-14T10:00:00'), -1).getMonth()).toBe(8);
 		expect(shiftWindow('agenda', at('2026-10-14T10:00:00'), 1).getDate()).toBe(13); // +30d
 	});
+
+	it('anchors month stepping to the target month so month-end days cannot skip or stick', () => {
+		const november = shiftWindow('month', at('2026-10-31T10:00:00'), 1);
+		expect(november.getMonth()).toBe(10);
+		expect(november.getDate()).toBe(1);
+
+		const february = shiftWindow('month', at('2026-03-31T10:00:00'), -1);
+		expect(february.getMonth()).toBe(1);
+		expect(february.getDate()).toBe(1);
+	});
+
+	it('visits every month exactly once when stepping 12 times from Jan 31', () => {
+		let cursor = at('2026-01-31T10:00:00');
+		const visited: string[] = [];
+		for (let i = 0; i < 12; i++) {
+			cursor = shiftWindow('month', cursor, 1);
+			visited.push(`${cursor.getFullYear()}-${cursor.getMonth()}`);
+		}
+		expect(new Set(visited).size).toBe(12);
+		expect(visited).toEqual([
+			'2026-1',
+			'2026-2',
+			'2026-3',
+			'2026-4',
+			'2026-5',
+			'2026-6',
+			'2026-7',
+			'2026-8',
+			'2026-9',
+			'2026-10',
+			'2026-11',
+			'2027-0'
+		]);
+	});
 });
 
 describe('startOfWeekMonday', () => {

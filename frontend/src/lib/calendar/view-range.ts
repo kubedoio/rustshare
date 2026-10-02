@@ -54,7 +54,8 @@ export function shiftWindow(view: CalendarView, cursor: Date, direction: 1 | -1)
 		case 'week':
 			return addDays(cursor, 7 * direction);
 		case 'month':
-			return new Date(cursor.getFullYear(), cursor.getMonth() + direction, cursor.getDate());
+			// Anchor to the 1st so a month-end cursor cannot skip or stick a month.
+			return new Date(cursor.getFullYear(), cursor.getMonth() + direction, 1);
 		case 'agenda':
 			return addDays(cursor, 30 * direction);
 	}
