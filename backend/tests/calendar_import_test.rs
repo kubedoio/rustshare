@@ -1076,3 +1076,54 @@ async fn cancelled_import_job_does_not_publish_completion_event() {
     cleanup_outbox(&state.db_pool, tenant_id).await;
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn huge_duration_is_a_component_failure_without_stalling_the_job() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_import_duration", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    spawn_import_worker(&state).await;
+
+    // A DURATION that would overflow `chrono` must be rejected per component:
+    // the job still completes (the worker task must not panic and strand the
+    // job running, which the stale reset would requeue forever).
+    let ics = "\
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:huge-duration-1
+DTSTART:20261005T140000Z
+DURATION:P1000000000000D
+SUMMARY:Absurd duration
+END:VEVENT
+BEGIN:VEVENT
+UID:good-duration-1
+DTSTART:20261006T140000Z
+DURATION:PT2H
+SUMMARY:Sane duration
+END:VEVENT
+END:VCALENDAR
+";
+
+    let (status, body) = upload_ics(&app, &token, "duration.ics", ics).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let job = wait_for_job(
+        &app,
+        &token,
+        Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap(),
+    )
+    .await;
+
+    assert_eq!(job["status"], "completed");
+    assert_eq!(job["total_events"], 2);
+    assert_eq!(job["failed_events"], 1);
+    assert_eq!(job["processed_events"], 1);
+    assert_eq!(count_imported_events(&state, tenant_id).await, 1);
+
+    cleanup_outbox(&state.db_pool, tenant_id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}

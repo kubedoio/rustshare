@@ -203,7 +203,17 @@ fn parse_yearly_rule(raw: &str) -> Option<YearlyRule> {
                     .find(|c: char| c.is_ascii_alphabetic())
                     .unwrap_or(token.len());
                 let (ordinal, weekday) = token.split_at(split);
-                let ordinal: i32 = ordinal.parse().unwrap_or(1);
+                // RFC 5545 allows at most an ordinal of ±53; anything else is
+                // an unparseable rule (and `i32::MIN` would overflow when the
+                // ordinal is negated while placing the occurrence).
+                let ordinal: i32 = if ordinal.is_empty() {
+                    1
+                } else {
+                    ordinal.parse().ok()?
+                };
+                if !(1..=53).contains(&ordinal) && !(-53..=-1).contains(&ordinal) {
+                    return None;
+                }
                 by_day = parse_weekday(weekday).map(|weekday| (ordinal, weekday));
             }
             _ => {}
@@ -349,13 +359,15 @@ fn resolve_vtimezone(def: &VTimezoneDef, naive: NaiveDateTime) -> Result<DateTim
                 // Nonexistent local time: the transition instant itself.
                 return Ok((local - Duration::seconds(offset_from as i64)).and_utc());
             }
-        } else if offset_from > offset_to {
-            let overlap = Duration::seconds((offset_from - offset_to) as i64);
-            if naive < local + overlap {
-                // Repeated local time: keep the earliest occurrence.
-                return Ok((naive - Duration::seconds(offset_from as i64)).and_utc());
-            }
         }
+        // Fall-back (`offset_from > offset_to`) has no branch here: its
+        // repeated wall times are `[local - overlap, local)`, i.e. *before*
+        // the selected transition, while the selection guarantees
+        // `local <= naive`. Such times are resolved when the preceding
+        // transition is selected instead, whose `offset_to` equals this
+        // transition's `offset_from` (the earlier occurrence). A guard here
+        // could only ever fire on the hour *after* the transition and would
+        // resolve it with the wrong offset.
         return Ok((naive - Duration::seconds(offset_to as i64)).and_utc());
     }
 
@@ -391,6 +403,11 @@ fn resolve_iana_local(tz: &chrono_tz::Tz, naive: NaiveDateTime) -> DateTime<Utc>
     }
 }
 
+/// Upper bound on an accepted DURATION magnitude: 100 years. RFC 5545 allows a
+/// theoretically unbounded magnitude, but `chrono` panics on out-of-range spans
+/// and arithmetic, so anything larger is rejected as a per-component error.
+const MAX_DURATION_SECONDS: i64 = 100 * 366 * 86_400;
+
 /// Parse an RFC 5545 DURATION (`[+-]P[nW][nD][T[nH][nM][nS]]`).
 fn parse_duration(raw: &str) -> Result<Duration, String> {
     fn take(number: &mut String, raw: &str) -> Result<i64, String> {
@@ -402,6 +419,17 @@ fn parse_duration(raw: &str) -> Result<Duration, String> {
             .map_err(|_| format!("invalid DURATION '{raw}'"))?;
         number.clear();
         Ok(value)
+    }
+
+    fn accumulate(seconds: &mut i64, value: i64, factor: i64, raw: &str) -> Result<(), String> {
+        let contribution = value
+            .checked_mul(factor)
+            .ok_or_else(|| format!("DURATION '{raw}' is out of range"))?;
+        *seconds = seconds
+            .checked_add(contribution)
+            .filter(|total| *total <= MAX_DURATION_SECONDS)
+            .ok_or_else(|| format!("DURATION '{raw}' is out of range"))?;
+        Ok(())
     }
 
     let raw = raw.trim();
@@ -422,8 +450,8 @@ fn parse_duration(raw: &str) -> Result<Duration, String> {
     for c in date_part.chars() {
         match c {
             '0'..='9' => number.push(c),
-            'W' => seconds += take(&mut number, raw)? * 7 * 86_400,
-            'D' => seconds += take(&mut number, raw)? * 86_400,
+            'W' => accumulate(&mut seconds, take(&mut number, raw)?, 7 * 86_400, raw)?,
+            'D' => accumulate(&mut seconds, take(&mut number, raw)?, 86_400, raw)?,
             _ => return Err(format!("invalid DURATION '{raw}'")),
         }
     }
@@ -434,9 +462,9 @@ fn parse_duration(raw: &str) -> Result<Duration, String> {
         for c in time_part.chars() {
             match c {
                 '0'..='9' => number.push(c),
-                'H' => seconds += take(&mut number, raw)? * 3600,
-                'M' => seconds += take(&mut number, raw)? * 60,
-                'S' => seconds += take(&mut number, raw)?,
+                'H' => accumulate(&mut seconds, take(&mut number, raw)?, 3600, raw)?,
+                'M' => accumulate(&mut seconds, take(&mut number, raw)?, 60, raw)?,
+                'S' => accumulate(&mut seconds, take(&mut number, raw)?, 1, raw)?,
                 _ => return Err(format!("invalid DURATION '{raw}'")),
             }
         }
@@ -444,7 +472,9 @@ fn parse_duration(raw: &str) -> Result<Duration, String> {
             return Err(format!("invalid DURATION '{raw}'"));
         }
     }
-    Ok(Duration::seconds(sign * seconds))
+    // `seconds` is bounded above by `MAX_DURATION_SECONDS`, so the negation
+    // cannot overflow and `try_seconds` cannot hit the `chrono` panic.
+    Duration::try_seconds(sign * seconds).ok_or_else(|| format!("DURATION '{raw}' is out of range"))
 }
 
 /// Parse one DTSTART/DTEND/RECURRENCE-ID value into a UTC instant plus the
@@ -533,7 +563,10 @@ fn map_vevent(
                 None if all_day => Duration::days(1),
                 None => Duration::hours(1),
             };
-            (starts_at + span, timezone.clone(), all_day, original_date)
+            let ends_at = starts_at
+                .checked_add_signed(span)
+                .ok_or("event end is outside the representable range")?;
+            (ends_at, timezone.clone(), all_day, original_date)
         }
     };
 
@@ -1343,5 +1376,125 @@ END:VCALENDAR
         assert_eq!(parse_duration("-PT15M").unwrap(), Duration::minutes(-15));
         assert_eq!(parse_duration("PT0S").unwrap(), Duration::seconds(0));
         assert!(parse_duration("1 day").is_err());
+    }
+
+    #[test]
+    fn out_of_range_durations_are_rejected() {
+        // Magnitudes that would overflow intermediate math or panic `chrono`.
+        assert!(parse_duration("P1000000000000D").is_err());
+        assert!(parse_duration("P99999999999999999999D").is_err());
+        assert!(parse_duration("PT9223372036854775807S").is_err());
+        // Reasonable magnitudes still parse, including negative spans.
+        assert_eq!(parse_duration("P3650D").unwrap(), Duration::days(3650));
+        assert_eq!(parse_duration("-P365D").unwrap(), Duration::days(-365));
+    }
+
+    #[test]
+    fn huge_duration_is_a_component_failure_not_a_panic() {
+        let ics = "\
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:huge-duration-1
+DTSTART:20261005T140000Z
+DURATION:P1000000000000D
+SUMMARY:Absurd duration
+END:VEVENT
+END:VCALENDAR
+";
+        let parsed = parse_file(ics.as_bytes()).expect("parses");
+        let error = parsed.events[0].as_ref().unwrap_err();
+        assert!(error.contains("out of range"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn out_of_range_byday_ordinal_is_unparseable() {
+        assert!(parse_yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU").is_some());
+        // Zero and out-of-range ordinals must be rejected, not overflow.
+        assert!(parse_yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=0SU").is_none());
+        assert!(parse_yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=54SU").is_none());
+        assert!(parse_yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=-54SU").is_none());
+        assert!(parse_yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=-2147483648SU").is_none());
+        // Ordinal-less BYDAY defaults to the first occurrence.
+        assert_eq!(
+            parse_yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=SU").and_then(|rule| rule.by_day),
+            Some((1, Weekday::Sun))
+        );
+    }
+
+    const OUTLOOK_DST_BOUNDARY_ICS: &str = "\
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN
+BEGIN:VTIMEZONE
+TZID:W. Europe Standard Time
+BEGIN:STANDARD
+DTSTART:16011028T030000
+TZOFFSETFROM:+0200
+TZOFFSETTO:+0100
+RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
+END:STANDARD
+BEGIN:DAYLIGHT
+DTSTART:16010325T020000
+TZOFFSETFROM:+0100
+TZOFFSETTO:+0200
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU
+END:DAYLIGHT
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:spring-gap-1
+DTSTART;TZID=W. Europe Standard Time:20260329T023000
+DTEND;TZID=W. Europe Standard Time:20260329T033000
+SUMMARY:Spring gap
+END:VEVENT
+BEGIN:VEVENT
+UID:spring-after-1
+DTSTART;TZID=W. Europe Standard Time:20260329T033000
+DTEND;TZID=W. Europe Standard Time:20260329T043000
+SUMMARY:Spring after
+END:VEVENT
+BEGIN:VEVENT
+UID:fall-ambiguous-1
+DTSTART;TZID=W. Europe Standard Time:20261025T023000
+DTEND;TZID=W. Europe Standard Time:20261025T033000
+SUMMARY:Fall ambiguous
+END:VEVENT
+BEGIN:VEVENT
+UID:fall-transition-1
+DTSTART;TZID=W. Europe Standard Time:20261025T030000
+DTEND;TZID=W. Europe Standard Time:20261025T040000
+SUMMARY:Fall transition
+END:VEVENT
+BEGIN:VEVENT
+UID:fall-after-1
+DTSTART;TZID=W. Europe Standard Time:20261025T033000
+DTEND;TZID=W. Europe Standard Time:20261025T043000
+SUMMARY:Fall after
+END:VEVENT
+END:VCALENDAR
+";
+
+    #[test]
+    fn vtimezone_dst_transitions_resolve_correctly() {
+        let parsed = parse_file(OUTLOOK_DST_BOUNDARY_ICS.as_bytes()).expect("parses");
+        let starts: Vec<String> = parsed
+            .events
+            .iter()
+            .map(|event| event.as_ref().expect("event maps").starts_at.to_rfc3339())
+            .collect();
+        assert_eq!(
+            starts,
+            vec![
+                // Spring-forward gap pushes to the transition instant (CEST).
+                "2026-03-29T01:00:00+00:00",
+                // Hour after the spring transition (CEST).
+                "2026-03-29T01:30:00+00:00",
+                // Ambiguous hour before the fall transition: first pass (CEST).
+                "2026-10-25T00:30:00+00:00",
+                // Transition wall time itself (CET).
+                "2026-10-25T02:00:00+00:00",
+                // Hour after the fall transition (CET), not one hour early.
+                "2026-10-25T02:30:00+00:00",
+            ]
+        );
     }
 }
