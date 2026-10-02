@@ -377,37 +377,88 @@ describe('CalendarApplicationView', () => {
 		expect(cellForDay(masterLabel).textContent).not.toContain('Company holiday');
 	});
 
-	it('does not offer editing for a recurring occurrence and points at the series', async () => {
+	it('offers a series edit for an occurrence and warns the whole series changes', async () => {
+		const masterDay = dayFromToday(2);
+		const occurrenceDay = dayFromToday(9);
 		mocks.listEvents.mockResolvedValue([
-			eventAt(dayFromToday(2), {
+			eventAt(masterDay, {
 				id: 'evt-weekly',
 				title: 'Weekly sync',
 				rrule: 'FREQ=WEEKLY;COUNT=3',
-				instance_start: `${dayFromToday(9)}T14:00:00`
+				starts_at: `${masterDay}T14:00:00`,
+				ends_at: `${masterDay}T15:00:00`,
+				instance_start: `${occurrenceDay}T14:00:00`
 			})
 		]);
 		render(CalendarApplicationView, { module: testModule });
 
 		await fireEvent.click(await screen.findByText(/Weekly sync/));
 
-		expect(await screen.findByText(/one occurrence of a recurring series/)).toBeTruthy();
+		// The occurrence must not pretend to be a single-event edit.
 		expect(screen.queryByRole('button', { name: /Edit event/ })).toBeNull();
+		expect(await screen.findByText(/one occurrence of a recurring series/)).toBeTruthy();
+
+		await fireEvent.click(screen.getByRole('button', { name: /Edit series/ }));
+		expect(await screen.findByText(/updates the entire series/)).toBeTruthy();
 	});
 
-	it('warns that editing a recurring master updates the whole series', async () => {
+	it('saves a series edit with the master id and master starts_at, not the occurrence instant', async () => {
+		const masterDay = dayFromToday(2);
+		const occurrenceDay = dayFromToday(9);
 		mocks.listEvents.mockResolvedValue([
-			eventAt(dayFromToday(2), {
-				id: 'evt-weekly-master',
+			eventAt(masterDay, {
+				id: 'evt-weekly',
 				title: 'Weekly sync',
-				rrule: 'FREQ=WEEKLY;COUNT=3'
+				rrule: 'FREQ=WEEKLY;COUNT=3',
+				starts_at: `${masterDay}T14:00:00`,
+				ends_at: `${masterDay}T15:00:00`,
+				instance_start: `${occurrenceDay}T14:00:00`
 			})
 		]);
 		render(CalendarApplicationView, { module: testModule });
 
 		await fireEvent.click(await screen.findByText(/Weekly sync/));
-		await fireEvent.click(await screen.findByRole('button', { name: /Edit event/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Edit series/ }));
+		await fireEvent.submit(screen.getByRole('form', { name: 'Edit event' }));
 
-		expect(await screen.findByText(/updates the entire series/)).toBeTruthy();
+		await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1));
+		const [id, payload] = mocks.updateEvent.mock.calls[0] as [string, { starts_at: string }];
+		expect(id).toBe('evt-weekly');
+		// Master start (local day), never the occurrence instant's day.
+		expect(new Date(payload.starts_at).toLocaleDateString()).toBe(
+			new Date(`${masterDay}T14:00:00`).toLocaleDateString()
+		);
+		expect(new Date(payload.starts_at).toLocaleDateString()).not.toBe(
+			new Date(`${occurrenceDay}T14:00:00`).toLocaleDateString()
+		);
+	});
+
+	it('confirms that deleting an occurrence deletes the entire series', async () => {
+		const confirmMock = vi.fn(() => false);
+		vi.stubGlobal('confirm', confirmMock);
+		try {
+			const masterDay = dayFromToday(2);
+			mocks.listEvents.mockResolvedValue([
+				eventAt(masterDay, {
+					id: 'evt-weekly',
+					title: 'Weekly sync',
+					rrule: 'FREQ=WEEKLY;COUNT=3',
+					starts_at: `${masterDay}T14:00:00`,
+					ends_at: `${masterDay}T15:00:00`,
+					instance_start: `${dayFromToday(9)}T14:00:00`
+				})
+			]);
+			render(CalendarApplicationView, { module: testModule });
+
+			await fireEvent.click(await screen.findByText(/Weekly sync/));
+			await fireEvent.click(await screen.findByRole('button', { name: 'Delete entire series' }));
+
+			expect(confirmMock).toHaveBeenCalledWith(expect.stringMatching(/entire recurring series/));
+			// Declined confirm must not issue the delete.
+			expect(mocks.deleteEvent).not.toHaveBeenCalled();
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it('shows all-day as "All day" and does not offer editing for all-day events', async () => {

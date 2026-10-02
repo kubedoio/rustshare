@@ -336,9 +336,12 @@
 		editorOpen = true;
 	}
 
-	function openEditor(event: CalendarEvent) {
-		const start = occurrenceStart(event);
-		const end = occurrenceEnd(event);
+	// `wholeSeries` seeds the form from the stored (master) times when editing
+	// an expanded occurrence's series; the occurrence instant must never be
+	// PATCHed back as the master's starts_at.
+	function openEditor(event: CalendarEvent, wholeSeries = false) {
+		const start = wholeSeries ? new Date(event.starts_at) : occurrenceStart(event);
+		const end = wholeSeries ? new Date(event.ends_at) : occurrenceEnd(event);
 		editingEvent = event;
 		formTitle = event.title;
 		formDate = toLocalInputDate(start);
@@ -374,8 +377,14 @@
 		});
 	}
 
+	// Expanded occurrences carry the master's id, so an occurrence's Delete
+	// removes the whole series — the confirm text must say so rather than
+	// imply a single-occurrence delete.
 	async function handleDelete(event: CalendarEvent) {
-		if (!confirm(`Delete "${event.title}"?`)) return;
+		const message = isOccurrence(event)
+			? `Delete the entire recurring series "${event.title}"? All occurrences will be removed.`
+			: `Delete "${event.title}"?`;
+		if (!confirm(message)) return;
 		await deleteMutation.mutateAsync(event.id);
 	}
 
@@ -691,30 +700,47 @@
 			{/if}
 			<div class="mt-4 flex flex-wrap items-center justify-end gap-2">
 				{#if !selectedEvent.read_only}
-					<button
-						type="button"
-						class="btn btn-outline btn-error btn-sm"
-						onclick={() => handleDelete(selectedEvent!)}
-					>
-						Delete
-					</button>
 					{#if isOccurrence(selectedEvent)}
+						<button
+							type="button"
+							class="btn btn-outline btn-error btn-sm"
+							onclick={() => handleDelete(selectedEvent!)}
+						>
+							Delete entire series
+						</button>
+						<button
+							type="button"
+							class="btn btn-primary btn-sm"
+							onclick={() => openEditor(selectedEvent!, true)}
+						>
+							<Pencil size={13} /> Edit series
+						</button>
 						<p class="w-full text-right text-xs text-base-content/60">
-							This is one occurrence of a recurring series. Edit the series from its master event,
-							or delete and recreate it.
-						</p>
-					{:else if selectedEvent.all_day}
-						<p class="w-full text-right text-xs text-base-content/60">
-							All-day events cannot be edited here yet. Delete and recreate it to change its dates.
+							This is one occurrence of a recurring series. Editing or deleting here affects the
+							entire series.
 						</p>
 					{:else}
 						<button
 							type="button"
-							class="btn btn-primary btn-sm"
-							onclick={() => openEditor(selectedEvent!)}
+							class="btn btn-outline btn-error btn-sm"
+							onclick={() => handleDelete(selectedEvent!)}
 						>
-							<Pencil size={13} /> Edit event
+							Delete
 						</button>
+						{#if selectedEvent.all_day}
+							<p class="w-full text-right text-xs text-base-content/60">
+								All-day events cannot be edited here yet. Delete and recreate it to change its
+								dates.
+							</p>
+						{:else}
+							<button
+								type="button"
+								class="btn btn-primary btn-sm"
+								onclick={() => openEditor(selectedEvent!)}
+							>
+								<Pencil size={13} /> Edit event
+							</button>
+						{/if}
 					{/if}
 				{/if}
 			</div>
