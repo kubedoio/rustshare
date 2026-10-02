@@ -219,33 +219,6 @@ impl OutlookCalendarClient {
             .map(str::to_string)
             .ok_or_else(|| OutlookError::UserInfo("response had no email".to_string()))
     }
-
-    /// Best-effort revocation reported to the disconnect caller. **No
-    /// provider HTTP call is made.** Microsoft Graph has no grant-scoped
-    /// revoke endpoint usable with the requested `offline_access
-    /// Calendars.Read` scope: `POST /me/revokeSignInSessions` requires
-    /// `User.RevokeSessions.All`, which this app registration neither requests
-    /// nor can obtain without admin consent, so the call always failed 403 in
-    /// real deployments while the UI promised a Microsoft-wide sign-out. The
-    /// effective revocation of this app's access is the local wipe of the
-    /// encrypted access/refresh tokens (performed by the caller), after which
-    /// the refresh token can no longer be exchanged; the user removes the
-    /// Elembra grant from their Microsoft account to invalidate it upstream.
-    ///
-    /// Returns `true` so the caller does not log a spurious "revocation was
-    /// not accepted" warning for a step that is intentionally a no-op.
-    ///
-    /// NOTE: kept only as the signature the (separately owned)
-    /// `CalendarService::disconnect_source` call site compiles against; that
-    /// call site can drop it entirely.
-    pub async fn revoke_token(&self, access_token: &str) -> bool {
-        let _ = access_token;
-        tracing::debug!(
-            "outlook disconnect: no provider-side revocation is available within \
-             Calendars.Read; local token wipe is the effective revocation"
-        );
-        true
-    }
 }
 
 // ---------------------------------------------------------------------------

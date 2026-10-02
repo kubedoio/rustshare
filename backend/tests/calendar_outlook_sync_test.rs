@@ -2080,22 +2080,35 @@ async fn graph_403_access_denied_parks_auth_required() {
     harness.cleanup().await;
 }
 
-/// O5: disconnect performs no provider-side `revokeSignInSessions` call (the
-/// least-privileged permission is not in scope, so it always 403s); local
-/// token wipe is the effective revocation. The revoke endpoint must never be
-/// hit.
+/// O5: disconnecting an Outlook source performs no provider-side
+/// `revokeSignInSessions` call (the least-privileged permission is not in
+/// scope, so it always 403s); the local token wipe is the effective
+/// revocation. The revoke endpoint must never be hit.
 #[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
 async fn disconnect_revocation_makes_no_provider_call() {
+    let _guard = SERIAL.lock().await;
     let (base, mock) = spawn_mock_microsoft();
-    let client = mock_client(&base);
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_o_disconnect").await;
+    let source = harness.create_outlook_source(user.id).await;
+    let mut service = CalendarService::new(harness.store.clone(), harness.secret_key.clone());
+    service.configure_outlook(Some(mock_client(&base)));
 
-    assert!(
-        client.revoke_token(TEST_ACCESS_TOKEN).await,
-        "best-effort revocation reports success for the disconnect path"
-    );
+    service
+        .disconnect_source(harness.tenant_id, user.id, source.id)
+        .await
+        .expect("disconnect with no live lease must succeed");
+
     assert_eq!(
         *mock.revoke_hits.lock().await,
         0,
         "no revokeSignInSessions request may be made"
     );
+    let reloaded = harness.reload_source(source.id).await;
+    assert_eq!(reloaded.status, "auth_required");
+    assert!(reloaded.refresh_token_enc.is_none(), "tokens must be wiped");
+    assert!(reloaded.access_token_enc.is_none(), "tokens must be wiped");
+
+    harness.cleanup().await;
 }

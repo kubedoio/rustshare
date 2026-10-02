@@ -1026,12 +1026,25 @@ impl ApplicationService {
                 ))
             }
             "io.elembra.calendar" => {
-                // Matches the UI: cancelled mirrors are tombstones, not events.
+                // Matches the events listing's visibility: cancelled mirrors
+                // are tombstones, and events of disabled sources are excluded
+                // (the `/events` path only includes disabled sources when they
+                // are explicitly requested, which the dashboard never does).
+                // Recurring series are counted once by their master
+                // `starts_at`; per-occurrence expansion is intentionally not
+                // done here.
                 let row = sqlx::query!(
-                    "SELECT COUNT(*) as count FROM calendar_events \
-                     WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL \
-                       AND status <> 'cancelled' \
-                       AND starts_at >= NOW() AND starts_at < NOW() + interval '7 days'",
+                    r#"
+                    SELECT COUNT(*) as count FROM calendar_events e
+                    WHERE e.tenant_id = $1 AND e.owner_id = $2
+                      AND e.deleted_at IS NULL
+                      AND e.status <> 'cancelled'
+                      AND e.starts_at >= NOW() AND e.starts_at < NOW() + interval '7 days'
+                      AND e.source_id IN (
+                          SELECT s.id FROM calendar_sources s
+                          WHERE s.owner_id = $2 AND s.is_enabled AND s.deleted_at IS NULL
+                      )
+                    "#,
                     tenant_id,
                     user_id
                 )

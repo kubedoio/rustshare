@@ -22,6 +22,12 @@ use std::sync::{Arc, LazyLock};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use axum::routing::get;
+use chrono::{DateTime, Utc};
+use rustshare_server::services::calendar_service::CalendarError;
+use rustshare_server::services::google_calendar::{
+    CalendarSyncConfig, GoogleCalendarClient, SyncOutcome,
+};
 use rustshare_server::state::AppState;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -1109,6 +1115,871 @@ async fn outbox_publish_rolls_back_with_source_transaction() {
         outbox_rows, 0,
         "rolled-back mutation must leave no outbox row"
     );
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+// ---------------------------------------------------------------------------
+// B1: override suppression for recurring external events
+// ---------------------------------------------------------------------------
+
+async fn insert_google_source(pool: &PgPool, tenant_id: Uuid, owner_id: Uuid) -> Uuid {
+    let source_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO calendar_sources
+            (id, tenant_id, owner_id, kind, display_name, external_account, external_calendar_id, status)
+         VALUES ($1, $2, $3, 'google', 'Test Google', 'u@example.com', 'primary', 'healthy')",
+    )
+    .bind(source_id)
+    .bind(tenant_id)
+    .bind(owner_id)
+    .execute(pool)
+    .await
+    .expect("insert google source");
+    source_id
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_mirrored_event(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    owner_id: Uuid,
+    source_id: Uuid,
+    external_uid: &str,
+    recurrence_id: Option<&str>,
+    title: &str,
+    starts_at: &str,
+    ends_at: &str,
+    status: &str,
+    rrule: Option<&str>,
+) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO calendar_events
+            (id, tenant_id, owner_id, source_id, external_uid, recurrence_id, title,
+             starts_at, ends_at, timezone, rrule, status, read_only)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'UTC', $10, $11, true)",
+    )
+    .bind(id)
+    .bind(tenant_id)
+    .bind(owner_id)
+    .bind(source_id)
+    .bind(external_uid)
+    .bind(recurrence_id)
+    .bind(title)
+    .bind(starts_at.parse::<DateTime<Utc>>().unwrap())
+    .bind(ends_at.parse::<DateTime<Utc>>().unwrap())
+    .bind(rrule)
+    .bind(status)
+    .execute(pool)
+    .await
+    .expect("insert mirrored event");
+    id
+}
+
+/// A cancelled override of a recurring master must not be regenerated as a
+/// phantom occurrence: with `include_cancelled=false` the cancelled slot is
+/// absent, and with `include_cancelled=true` it renders as a cancelled row.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn cancelled_recurring_override_suppresses_phantom_occurrence() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_override_cancelled", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+
+    let source_id = insert_google_source(&state.db_pool, tenant_id, user.id).await;
+    insert_mirrored_event(
+        &state.db_pool,
+        tenant_id,
+        user.id,
+        source_id,
+        "series-1",
+        None,
+        "Weekly series",
+        "2026-10-05T14:00:00Z",
+        "2026-10-05T15:00:00Z",
+        "confirmed",
+        Some("FREQ=WEEKLY;COUNT=3"),
+    )
+    .await;
+    // The cancelled occurrence is stored with its ORIGINAL slot as
+    // recurrence_id (the master's start), but may be excluded by status.
+    insert_mirrored_event(
+        &state.db_pool,
+        tenant_id,
+        user.id,
+        source_id,
+        "series-1",
+        Some("2026-10-12T14:00:00Z"),
+        "Weekly series",
+        "2026-10-12T14:00:00Z",
+        "2026-10-12T15:00:00Z",
+        "cancelled",
+        None,
+    )
+    .await;
+
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    // include_cancelled=false: master expands to 10-05 and 10-19 only.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events?from=2026-10-01T00:00:00Z&to=2026-10-31T00:00:00Z")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    let events = body["events"].as_array().unwrap();
+    let starts: Vec<&str> = events
+        .iter()
+        .map(|event| event["instance_start"].as_str().unwrap())
+        .collect();
+    assert_eq!(starts, vec!["2026-10-05T14:00:00Z", "2026-10-19T14:00:00Z"]);
+    assert!(
+        !events
+            .iter()
+            .any(|event| event["starts_at"] == "2026-10-12T14:00:00Z"),
+        "cancelled occurrence must not reappear as a phantom"
+    );
+
+    // include_cancelled=true: the cancelled override renders as its own row.
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events?from=2026-10-01T00:00:00Z&to=2026-10-31T00:00:00Z&include_cancelled=true")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    let events = body["events"].as_array().unwrap();
+    let cancelled = events
+        .iter()
+        .filter(|event| event["status"] == "cancelled")
+        .collect::<Vec<_>>();
+    assert_eq!(cancelled.len(), 1, "cancelled override must be listed");
+    assert_eq!(cancelled[0]["starts_at"], "2026-10-12T14:00:00Z");
+    // The master still expands to the two non-overridden occurrences.
+    let instance_starts: Vec<&str> = events
+        .iter()
+        .filter_map(|event| event["instance_start"].as_str())
+        .collect();
+    assert_eq!(
+        instance_starts,
+        vec!["2026-10-05T14:00:00Z", "2026-10-19T14:00:00Z"]
+    );
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+/// A moved override whose new time falls outside the requested window must
+/// still suppress the master's original slot (which is inside the window).
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn moved_recurring_override_outside_window_suppresses_original_slot() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_override_moved", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+
+    let source_id = insert_google_source(&state.db_pool, tenant_id, user.id).await;
+    insert_mirrored_event(
+        &state.db_pool,
+        tenant_id,
+        user.id,
+        source_id,
+        "series-2",
+        None,
+        "Moved series",
+        "2026-10-05T14:00:00Z",
+        "2026-10-05T15:00:00Z",
+        "confirmed",
+        Some("FREQ=WEEKLY;COUNT=2"),
+    )
+    .await;
+    // The 10-12 instance was moved to 11-20, outside the October window.
+    insert_mirrored_event(
+        &state.db_pool,
+        tenant_id,
+        user.id,
+        source_id,
+        "series-2",
+        Some("2026-10-12T14:00:00Z"),
+        "Moved series",
+        "2026-11-20T09:00:00Z",
+        "2026-11-20T10:00:00Z",
+        "confirmed",
+        None,
+    )
+    .await;
+
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events?from=2026-10-01T00:00:00Z&to=2026-10-31T00:00:00Z")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    let events = body["events"].as_array().unwrap();
+    assert_eq!(events.len(), 1, "only the 10-05 occurrence should render");
+    assert_eq!(events[0]["instance_start"], "2026-10-05T14:00:00Z");
+    assert!(
+        !events
+            .iter()
+            .any(|event| event["starts_at"] == "2026-10-12T14:00:00Z"
+                || event["instance_start"] == "2026-10-12T14:00:00Z"),
+        "the moved slot must not appear at its original time"
+    );
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+// ---------------------------------------------------------------------------
+// B3: empty string clears optional PATCH fields
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn patch_empty_string_clears_optional_fields() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_clear_fields", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    // Create treats an empty string as "no value".
+    let mut create_body = create_event_body();
+    create_body["description"] = json!("");
+    create_body["location"] = json!("");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(create_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(body["description"].is_null());
+    assert!(body["location"].is_null());
+    let event_id = body["id"].as_str().unwrap().to_string();
+
+    // Set recurrence + fields, then clear them via empty strings.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}"))
+                .method("PATCH")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    json!({"description": "note", "location": "Room 7", "rrule": "FREQ=WEEKLY;COUNT=2"})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["description"], "note");
+    assert_eq!(body["rrule"], "FREQ=WEEKLY;COUNT=2");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}"))
+                .method("PATCH")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    json!({"description": "", "location": "", "rrule": ""}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["description"].is_null(), "empty string must clear");
+    assert!(body["location"].is_null(), "empty string must clear");
+    assert!(body["rrule"].is_null(), "empty string must stop recurrence");
+
+    // A null value leaves the field unchanged.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}"))
+                .method("PATCH")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    json!({"description": null, "title": "Renamed"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["title"], "Renamed");
+    assert!(body["description"].is_null());
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+// ---------------------------------------------------------------------------
+// B4: concurrent soft-delete during update must not publish updated.v1
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn update_on_soft_deleted_event_returns_404_and_publishes_nothing() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_update_race", tenant_id).await;
+
+    let created = state
+        .calendar_service
+        .create_event(
+            tenant_id,
+            user.id,
+            rustshare_server::services::calendar_service::NewCalendarEvent {
+                title: "Race".to_string(),
+                description: None,
+                location: None,
+                starts_at: "2026-10-05T14:00:00Z".parse().unwrap(),
+                ends_at: "2026-10-05T15:00:00Z".parse().unwrap(),
+                all_day: false,
+                timezone: "UTC".to_string(),
+                rrule: None,
+            },
+        )
+        .await
+        .expect("create event");
+
+    // Simulate the row being soft-deleted between the read and the write.
+    sqlx::query("UPDATE calendar_events SET deleted_at = NOW() WHERE id = $1")
+        .bind(created.id)
+        .execute(&state.db_pool)
+        .await
+        .expect("soft delete row");
+
+    let err = state
+        .calendar_service
+        .update_event(
+            tenant_id,
+            user.id,
+            created.id,
+            rustshare_server::services::calendar_service::CalendarEventPatch {
+                title: Some("Renamed".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("update of a soft-deleted row must fail");
+    assert!(matches!(err, CalendarError::NotFound(_)), "got {err:?}");
+
+    let updated_envelopes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM integration_outbox \
+         WHERE tenant_id = $1 AND event_type = 'io.elembra.calendar.event.updated.v1'",
+    )
+    .bind(tenant_id)
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("count updated envelopes");
+    assert_eq!(
+        updated_envelopes, 0,
+        "no updated.v1 envelope may be published for a mutation that did not land"
+    );
+
+    cleanup_outbox(&state.db_pool, tenant_id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+// ---------------------------------------------------------------------------
+// B5: disconnect lease coordination
+// ---------------------------------------------------------------------------
+
+async fn insert_oauth_source_with_tokens(state: &AppState, tenant_id: Uuid, user_id: Uuid) -> Uuid {
+    let refresh_enc =
+        rustshare_crypto::encrypt_secret("refresh-token-value", &state.secret_key).unwrap();
+    let access_enc =
+        rustshare_crypto::encrypt_secret("access-token-value", &state.secret_key).unwrap();
+    state
+        .metadata_store
+        .create_oauth_calendar_source(
+            tenant_id,
+            user_id,
+            "google",
+            "Google (disconnect@test.local)",
+            "disconnect@test.local",
+            "primary",
+            &refresh_enc,
+            &access_enc,
+            Utc::now() + chrono::Duration::hours(1),
+            "scope",
+        )
+        .await
+        .expect("create oauth source")
+        .id
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn disconnect_without_lease_wipes_tokens_and_parks_source() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_disconnect_ok", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let source_id = insert_oauth_source_with_tokens(&state, tenant_id, user.id).await;
+
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/sources/{source_id}/disconnect"))
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, _) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let reloaded = state
+        .metadata_store
+        .get_calendar_source(tenant_id, user.id, source_id)
+        .await
+        .expect("load source")
+        .expect("source exists");
+    assert_eq!(reloaded.status, "auth_required");
+    assert!(reloaded.refresh_token_enc.is_none(), "tokens must be wiped");
+    assert!(reloaded.access_token_enc.is_none(), "tokens must be wiped");
+
+    // A parked source makes subsequent sync runs no-ops: `sync_source` returns
+    // `Parked` before any provider call or token use.
+    let mut client = GoogleCalendarClient::new(
+        "id".to_string(),
+        "secret".to_string(),
+        "http://elembra.test",
+    );
+    client.api_base = "http://127.0.0.1:1/calendar/v3".to_string();
+    let outcome = rustshare_server::services::google_calendar::sync_source(
+        &state.metadata_store,
+        &client,
+        &state.secret_key,
+        &reloaded,
+        &CalendarSyncConfig {
+            past_days: 90,
+            future_days: 365,
+        },
+        "disconnect-test",
+    )
+    .await;
+    assert!(
+        matches!(outcome, SyncOutcome::Parked),
+        "a parked source must no-op, got {outcome:?}"
+    );
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn disconnect_while_lease_held_returns_409_and_keeps_tokens() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_disconnect_busy", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let source_id = insert_oauth_source_with_tokens(&state, tenant_id, user.id).await;
+
+    state
+        .metadata_store
+        .ensure_calendar_sync_state(source_id)
+        .await
+        .expect("sync state");
+    sqlx::query(
+        "UPDATE calendar_sync_states SET locked_at = NOW(), locked_by = 'disconnect-test' \
+         WHERE source_id = $1",
+    )
+    .bind(source_id)
+    .execute(&state.db_pool)
+    .await
+    .expect("acquire lease");
+
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/sources/{source_id}/disconnect"))
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, _) = response_json(response).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let reloaded = state
+        .metadata_store
+        .get_calendar_source(tenant_id, user.id, source_id)
+        .await
+        .expect("load source")
+        .expect("source exists");
+    assert_eq!(
+        reloaded.status, "healthy",
+        "a rejected disconnect must not wipe"
+    );
+    assert!(reloaded.refresh_token_enc.is_some());
+    assert!(reloaded.access_token_enc.is_some());
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+// ---------------------------------------------------------------------------
+// B6 + T1: cross-tenant IDs are indistinguishable from unknown ones
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn cross_tenant_ids_are_not_visible() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_a = create_test_tenant(&state.db_pool).await;
+    let tenant_b = create_test_tenant(&state.db_pool).await;
+    let user_a = create_test_user(&state, "calendar_xtenant_a", tenant_a).await;
+    let user_b = create_test_user(&state, "calendar_xtenant_b", tenant_b).await;
+    configure_calendar(&state, tenant_a, user_a.id, true).await;
+    configure_calendar(&state, tenant_b, user_b.id, true).await;
+
+    let event_a = state
+        .calendar_service
+        .create_event(
+            tenant_a,
+            user_a.id,
+            rustshare_server::services::calendar_service::NewCalendarEvent {
+                title: "Tenant A private".to_string(),
+                description: None,
+                location: None,
+                starts_at: "2026-10-05T14:00:00Z".parse().unwrap(),
+                ends_at: "2026-10-05T15:00:00Z".parse().unwrap(),
+                all_day: false,
+                timezone: "UTC".to_string(),
+                rrule: None,
+            },
+        )
+        .await
+        .expect("create event");
+    let source_a = state
+        .calendar_service
+        .create_source(
+            tenant_a,
+            user_a.id,
+            rustshare_core::domain::CalendarSourceKind::IcalImport,
+            "Tenant A import".to_string(),
+        )
+        .await
+        .expect("create source");
+    let now = Utc::now();
+    let job_a = rustshare_core::domain::CalendarImportJob {
+        id: Uuid::new_v4(),
+        tenant_id: tenant_a,
+        owner_id: user_a.id,
+        source_id: source_a.id,
+        status: "pending".to_string(),
+        filename: "tenant-a.ics".to_string(),
+        size_bytes: 16,
+        total_events: 0,
+        processed_events: 0,
+        failed_events: 0,
+        last_error: None,
+        started_at: None,
+        completed_at: None,
+        deleted_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+    state
+        .metadata_store
+        .create_calendar_import_job(&job_a, b"BEGIN:VCALENDAR")
+        .await
+        .expect("create import job");
+
+    let token_b = create_auth_token(&state, user_b.id, tenant_b);
+    let app = build_app(state.clone());
+
+    // Tenant-B user cannot read tenant-A's event, source, or import job.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{}", event_a.id))
+                .header("Authorization", format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, _) = response_json(response).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "cross-tenant event must be 404"
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/sources/{}", source_a.id))
+                .method("PATCH")
+                .header("Authorization", format!("Bearer {token_b}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(json!({"display_name": "Hijacked"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, _) = response_json(response).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "cross-tenant source must be 404"
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/import-jobs/{}", job_a.id))
+                .header("Authorization", format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, _) = response_json(response).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "cross-tenant job must be 404"
+    );
+
+    // B6: DELETE of a foreign-tenant event is indistinguishable from a random
+    // ID — an idempotent success, never a 404 that would confirm existence in
+    // another tenant.
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{}", event_a.id))
+                .method("DELETE")
+                .header("Authorization", format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, _) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+
+    cleanup_tenant(&state.db_pool, tenant_a).await;
+    cleanup_tenant(&state.db_pool, tenant_b).await;
+}
+
+// ---------------------------------------------------------------------------
+// B7: oversized multipart text field is bounded
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn oversized_source_id_multipart_field_is_rejected() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_big_field", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let boundary = "----rustshareTestBoundary";
+    let oversized = "a".repeat(1024);
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"source_id\"\r\n\r\n\
+         {oversized}\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.ics\"\r\n\
+         Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n\
+         --{boundary}--\r\n"
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/import")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header(
+                    "Content-Type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "an oversized source_id field must be rejected before parsing"
+    );
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+// ---------------------------------------------------------------------------
+// T2: malformed provider payload fails the run safely
+// ---------------------------------------------------------------------------
+
+async fn spawn_non_json_google() -> String {
+    let app = axum::Router::new().route(
+        "/calendar/v3/calendars/primary/events",
+        get(|| async { (StatusCode::OK, "definitely not json") }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock server");
+    let addr = listener.local_addr().expect("mock addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    format!("http://{addr}")
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn malformed_provider_payload_fails_run_without_corruption() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_bad_payload", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+
+    let base = spawn_non_json_google().await;
+    let secret_key = rustshare_crypto::SecretEncryptionKey::from_bytes([0u8; 32]);
+    let refresh_enc = rustshare_crypto::encrypt_secret("refresh", &secret_key).unwrap();
+    let access_enc = rustshare_crypto::encrypt_secret("access", &secret_key).unwrap();
+    let source = state
+        .metadata_store
+        .create_oauth_calendar_source(
+            tenant_id,
+            user.id,
+            "google",
+            "Google (bad-payload@test.local)",
+            "bad-payload@test.local",
+            "primary",
+            &refresh_enc,
+            &access_enc,
+            Utc::now() + chrono::Duration::hours(1),
+            "scope",
+        )
+        .await
+        .expect("create source");
+
+    state
+        .metadata_store
+        .ensure_calendar_sync_state(source.id)
+        .await
+        .expect("sync state");
+    sqlx::query(
+        "UPDATE calendar_sync_states SET locked_at = NOW(), locked_by = 'bad-payload' \
+         WHERE source_id = $1",
+    )
+    .bind(source.id)
+    .execute(&state.db_pool)
+    .await
+    .expect("acquire lease");
+
+    let mut client = GoogleCalendarClient::new(
+        "id".to_string(),
+        "secret".to_string(),
+        "http://elembra.test",
+    );
+    client.api_base = format!("{base}/calendar/v3");
+    client.token_url = format!("{base}/token");
+
+    let outcome = rustshare_server::services::google_calendar::sync_source(
+        &state.metadata_store,
+        &client,
+        &secret_key,
+        &source,
+        &CalendarSyncConfig {
+            past_days: 90,
+            future_days: 365,
+        },
+        "bad-payload",
+    )
+    .await;
+    assert!(
+        matches!(outcome, SyncOutcome::Failed(_)),
+        "non-JSON provider body must fail the run, got {outcome:?}"
+    );
+
+    let event_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM calendar_events WHERE source_id = $1")
+            .bind(source.id)
+            .fetch_one(&state.db_pool)
+            .await
+            .expect("count events");
+    assert_eq!(event_count, 0, "no events may be materialized");
+
+    let reloaded = state
+        .metadata_store
+        .get_calendar_source(tenant_id, user.id, source.id)
+        .await
+        .expect("load source")
+        .expect("source exists");
+    assert_eq!(reloaded.status, "healthy");
+    assert!(reloaded.refresh_token_enc.is_some());
+    assert!(reloaded.access_token_enc.is_some());
 
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }

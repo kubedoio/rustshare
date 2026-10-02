@@ -19,6 +19,32 @@ use crate::state::AppState;
 const CALENDAR_APPLICATION_ID: &str = "io.elembra.calendar";
 /// Calendar .ics uploads are capped at 10 MB (spec §Import semantics).
 const MAX_CALENDAR_IMPORT_SIZE_BYTES: usize = 10 * 1024 * 1024;
+/// Hard byte cap for the multipart `source_id` text field. A UUID is 36 bytes;
+/// the small allowance tolerates surrounding whitespace without letting an
+/// authenticated caller force a large allocation (the router still permits a
+/// multi-GB request body, so `Field::text`'s unbounded read is not safe here).
+const MAX_CALENDAR_SOURCE_ID_FIELD_BYTES: usize = 128;
+
+/// Read a small multipart text field with a hard byte cap, returning 413 when
+/// the field exceeds it. The read is bounded chunk-by-chunk so an oversized
+/// field is never buffered in full.
+async fn read_bounded_field_text(
+    field: &mut axum::extract::multipart::Field<'_>,
+    max_bytes: usize,
+) -> Result<String, AppError> {
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = field
+        .chunk()
+        .await
+        .map_err(|e| AppError::bad_request(format!("Invalid source_id field: {e}")))?
+    {
+        if buf.len() + chunk.len() > max_bytes {
+            return Err(AppError::payload_too_large("source_id field is too large"));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    String::from_utf8(buf).map_err(|_| AppError::bad_request("Invalid source_id: expected a UUID"))
+}
 
 async fn require_calendar_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
     let module = state
@@ -58,12 +84,17 @@ pub struct CreateCalendarEventRequest {
 pub struct UpdateCalendarEventRequest {
     #[validate(length(min = 1, max = 512))]
     pub title: Option<String>,
+    /// PATCH convention: an absent or `null` value leaves the stored value
+    /// unchanged, while an empty string clears it.
     pub description: Option<String>,
+    /// PATCH convention: absent/`null` leaves unchanged, empty string clears.
     pub location: Option<String>,
     pub starts_at: Option<DateTime<Utc>>,
     pub ends_at: Option<DateTime<Utc>>,
     pub all_day: Option<bool>,
     pub timezone: Option<String>,
+    /// PATCH convention: absent/`null` leaves the recurrence unchanged, empty
+    /// string removes it (stops the series).
     pub rrule: Option<String>,
 }
 
@@ -455,10 +486,8 @@ pub async fn import_calendar_file(
                         "Duplicate source_id field: expected a single value",
                     ));
                 }
-                let raw = field
-                    .text()
-                    .await
-                    .map_err(|e| AppError::bad_request(format!("Invalid source_id field: {e}")))?;
+                let raw =
+                    read_bounded_field_text(&mut field, MAX_CALENDAR_SOURCE_ID_FIELD_BYTES).await?;
                 source_id =
                     Some(Uuid::parse_str(raw.trim()).map_err(|_| {
                         AppError::bad_request("Invalid source_id: expected a UUID")
@@ -577,10 +606,6 @@ pub struct CalendarConnectResponse {
     pub authorize_url: String,
 }
 
-/// Staleness window used when rejecting a resync while a sync lease is live
-/// (mirrors `RUSTSHARE_CALENDAR_SYNC_WORKER_STALE_SECS`'s default).
-const RESYNC_LOCK_STALE_SECS: i64 = 300;
-
 /// `GET /api/v1/calendar/sources/{kind}/connect` — begin the OAuth connect
 /// flow for `google` / `outlook` and return the provider consent URL.
 /// `503` when the deployment lacks the client id/secret env config.
@@ -668,9 +693,12 @@ pub async fn calendar_oauth_callback(
     }
 }
 
-/// `POST /api/v1/calendar/sources/{id}/disconnect` — best-effort provider
-/// revocation, token wipe, `status: auth_required`. Events remain until the
-/// source is deleted. `400` for non-OAuth sources.
+/// `POST /api/v1/calendar/sources/{id}/disconnect` — wipe stored tokens and
+/// mark the source `status: auth_required`; `409` while a live sync lease
+/// holds the source (the in-flight run would otherwise overwrite the wipe),
+/// `400` for non-OAuth sources. Local token wipe is the effective revocation;
+/// no Microsoft-wide session revoke is attempted. Events remain until the
+/// source is deleted.
 pub async fn disconnect_calendar_source(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -694,14 +722,10 @@ pub async fn resync_calendar_source(
     Path(source_id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
     require_calendar_enabled(&state, auth.tenant_id).await?;
+    let stale = state.calendar_service.sync_lease_stale_threshold();
     state
         .calendar_service
-        .resync_source(
-            auth.tenant_id,
-            auth.user_id,
-            source_id,
-            chrono::Duration::seconds(RESYNC_LOCK_STALE_SECS),
-        )
+        .resync_source(auth.tenant_id, auth.user_id, source_id, stale)
         .await?;
 
     Ok((

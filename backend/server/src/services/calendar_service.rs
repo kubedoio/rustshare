@@ -66,6 +66,25 @@ pub enum CalendarError {
 /// How long a connect-flow OAuth state stays valid.
 const OAUTH_STATE_TTL: Duration = Duration::minutes(10);
 
+/// Fallback sync-lease staleness window (seconds), matching the default of
+/// `AppConfig::calendar_sync_worker_stale_secs`.
+const DEFAULT_SYNC_LEASE_STALE_SECS: i64 = 300;
+
+/// The sync-lease staleness window this deployment uses, read from the same
+/// `RUSTSHARE_CALENDAR_SYNC_WORKER_STALE_SECS` environment variable that
+/// `AppConfig` (via `envy`) binds into `calendar_sync_worker_stale_secs`. The
+/// resync and disconnect endpoints must apply the worker's own liveness rule
+/// when deciding whether an in-flight sync still holds a source, otherwise a
+/// 409-vs-force decision can disagree with the worker. Absent or unparseable
+/// values fall back to the config default.
+fn configured_sync_lease_stale() -> Duration {
+    let secs = std::env::var("RUSTSHARE_CALENDAR_SYNC_WORKER_STALE_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<i64>().ok())
+        .unwrap_or(DEFAULT_SYNC_LEASE_STALE_SECS);
+    Duration::seconds(secs.max(0))
+}
+
 #[derive(Clone)]
 pub struct CalendarService {
     metadata_store: Arc<MetadataStore>,
@@ -74,6 +93,7 @@ pub struct CalendarService {
     google: Option<Arc<crate::services::google_calendar::GoogleCalendarClient>>,
     outlook: Option<Arc<crate::services::outlook_calendar::OutlookCalendarClient>>,
     outbox: Option<Arc<OutboxStore>>,
+    sync_lease_stale: Duration,
 }
 
 /// One event as returned by range queries: the stored row (or its recurring
@@ -310,7 +330,14 @@ impl CalendarService {
             google: None,
             outlook: None,
             outbox: None,
+            sync_lease_stale: configured_sync_lease_stale(),
         }
+    }
+
+    /// The sync-lease staleness window this service applies to resync/
+    /// disconnect conflict decisions (see `configured_sync_lease_stale`).
+    pub fn sync_lease_stale_threshold(&self) -> Duration {
+        self.sync_lease_stale
     }
 
     /// Attach the transactional integration outbox. When configured, internal
@@ -516,8 +543,13 @@ impl CalendarService {
             .map_err(db_error)
     }
 
-    /// Revoke best-effort at the provider, wipe stored tokens, and mark the
-    /// source `auth_required`. Events remain until the source is deleted.
+    /// Disconnect an OAuth source: reject with a conflict while a live sync
+    /// lease holds it, otherwise wipe stored tokens and mark the source
+    /// `auth_required`. Events remain until the source is deleted. Local token
+    /// wipe is the effective revocation — Outlook never had the
+    /// `User.RevokeSessions.All` permission for a Microsoft-wide session
+    /// revoke, so no provider call is attempted for it; Google revocation
+    /// stays best-effort.
     pub async fn disconnect_source(
         &self,
         tenant_id: Uuid,
@@ -542,7 +574,21 @@ impl CalendarService {
                 "only OAuth-connected sources can be disconnected".to_string(),
             ));
         }
-        // Best-effort provider revocation; local wipe happens regardless.
+        // Refuse while a live sync lease holds the source: the in-flight run's
+        // terminal status write would otherwise resurrect `healthy` over the
+        // token wipe (and could leave the source with no refresh token). The
+        // caller retries once the run finishes or the lease goes stale.
+        let stale =
+            std::time::Duration::from_secs(self.sync_lease_stale.num_seconds().max(0) as u64);
+        if self
+            .metadata_store
+            .calendar_source_is_locked(source_id, stale)
+            .await
+            .map_err(db_error)?
+        {
+            return Err(CalendarError::SyncInProgress);
+        }
+        // Best-effort Google revocation; local wipe happens regardless.
         // Revocation failures are logged, not propagated.
         if kind == CalendarSourceKind::Google {
             if let (Some(client), Some(refresh_enc)) =
@@ -553,19 +599,6 @@ impl CalendarService {
                 {
                     if !client.revoke_token(&refresh_token).await {
                         tracing::warn!(source_id = %source_id, "google token revocation was not accepted");
-                    }
-                }
-            }
-        }
-        if kind == CalendarSourceKind::Outlook {
-            if let (Some(client), Some(access_enc)) =
-                (self.outlook.clone(), source.access_token_enc)
-            {
-                if let Ok(access_token) =
-                    rustshare_crypto::decrypt_secret(&access_enc, &self.secret_key)
-                {
-                    if !client.revoke_token(&access_token).await {
-                        tracing::warn!(source_id = %source_id, "microsoft sign-in-session revocation was not accepted");
                     }
                 }
             }
@@ -772,6 +805,12 @@ impl CalendarService {
         owner_id: UserId,
         input: NewCalendarEvent,
     ) -> Result<CalendarEvent, CalendarError> {
+        // Create has nothing to clear, so an empty optional string means "no
+        // value" (the frontend sends either an empty string or null).
+        let mut input = input;
+        input.description = input.description.filter(|value| !value.is_empty());
+        input.location = input.location.filter(|value| !value.is_empty());
+        input.rrule = input.rrule.filter(|value| !value.is_empty());
         if input.title.is_empty() || input.title.len() > MAX_EVENT_TITLE_LEN {
             return Err(CalendarError::InvalidInput(format!(
                 "title must be 1-{MAX_EVENT_TITLE_LEN} characters"
@@ -865,11 +904,15 @@ impl CalendarService {
             }
             event.title = title;
         }
-        if patch.description.is_some() {
-            event.description = patch.description;
+        if let Some(description) = patch.description {
+            // PATCH wire convention: an empty string clears the field; a
+            // non-empty string sets it. (serde cannot distinguish an absent
+            // key from an explicit null, both of which mean "leave
+            // unchanged".)
+            event.description = (!description.is_empty()).then_some(description);
         }
-        if patch.location.is_some() {
-            event.location = patch.location;
+        if let Some(location) = patch.location {
+            event.location = (!location.is_empty()).then_some(location);
         }
         if let Some(starts_at) = patch.starts_at {
             event.starts_at = starts_at;
@@ -885,17 +928,29 @@ impl CalendarService {
             event.timezone = timezone;
         }
         if let Some(value) = patch.rrule {
-            validate_rrule(&value)?;
-            event.rrule = Some(value);
+            if value.is_empty() {
+                event.rrule = None;
+            } else {
+                validate_rrule(&value)?;
+                event.rrule = Some(value);
+            }
         }
         validate_event_times(event.starts_at, event.ends_at, event.all_day)?;
         event.original_date = event.all_day.then(|| event.starts_at.date_naive());
         if let Some(outbox) = &self.outbox {
             let mut tx = self.metadata_store.pool().begin().await.map_err(tx_error)?;
-            self.metadata_store
+            let updated = self
+                .metadata_store
                 .update_calendar_event_in_tx(&mut tx, &event)
                 .await
                 .map_err(db_error)?;
+            if !updated {
+                // The row was concurrently soft-deleted (or no longer belongs
+                // to the caller) after the read above; do not announce an
+                // update that did not land.
+                tx.rollback().await.map_err(tx_error)?;
+                return Err(CalendarError::NotFound(event_id));
+            }
             let envelope =
                 build_event_envelope(tenant_id, owner_id, &event, CALENDAR_EVENT_UPDATED_V1)?;
             outbox
@@ -912,9 +967,10 @@ impl CalendarService {
         Ok(event)
     }
 
-    /// Soft-delete an internal event. Unknown IDs belonging to another user
-    /// are 404; deleting an already-deleted (or never-existing) row is a
-    /// successful no-op so retries cannot fail.
+    /// Soft-delete an internal event. An ID that names a live row for the
+    /// tenant but not the caller is a 404; an already-deleted, never-existing,
+    /// or foreign-tenant ID is a successful no-op, so a cross-tenant ID is
+    /// indistinguishable from a random one.
     pub async fn delete_event(
         &self,
         tenant_id: Uuid,
@@ -962,7 +1018,7 @@ impl CalendarService {
             None => {
                 if self
                     .metadata_store
-                    .calendar_event_exists_any_owner(event_id)
+                    .calendar_event_exists_in_tenant(tenant_id, event_id)
                     .await
                     .map_err(db_error)?
                 {
@@ -1020,6 +1076,25 @@ impl CalendarService {
             .await
             .map_err(db_error)?;
 
+        // Override keys are fetched independently of the listing's status and
+        // time-window filters: a cancelled or moved occurrence of a recurring
+        // master is stored as an override row that may carry
+        // `status = 'cancelled'` or fall outside `[from, to)`, so deriving the
+        // suppression set only from `rows` would let `expand_master` regenerate
+        // a phantom occurrence at the original slot.
+        let overrides = self
+            .metadata_store
+            .list_calendar_event_overrides(tenant_id, owner_id, source_ids)
+            .await
+            .map_err(db_error)?;
+        let mut suppressed_by_uid: HashMap<&str, Vec<String>> = HashMap::new();
+        for key in &overrides {
+            suppressed_by_uid
+                .entry(key.external_uid.as_str())
+                .or_default()
+                .push(key.recurrence_id.clone());
+        }
+
         let mut occurrences = Vec::new();
         for row in &rows {
             let source_kind = kind_by_id
@@ -1027,16 +1102,25 @@ impl CalendarService {
                 .copied()
                 .unwrap_or(CalendarSourceKind::Internal);
             if row.rrule.is_some() {
-                let override_starts: Vec<String> = rows
-                    .iter()
-                    .filter(|other| {
-                        other.source_id == row.source_id
-                            && other.external_uid.is_some()
-                            && other.external_uid == row.external_uid
-                            && other.recurrence_id.is_some()
-                    })
-                    .filter_map(|other| other.recurrence_id.clone())
-                    .collect();
+                // Both the full override set (above) and any override row
+                // returned alongside its master in-window suppress the
+                // master's occurrence at that recurrence id.
+                let mut override_starts: Vec<String> = row
+                    .external_uid
+                    .as_deref()
+                    .and_then(|uid| suppressed_by_uid.get(uid))
+                    .cloned()
+                    .unwrap_or_default();
+                override_starts.extend(
+                    rows.iter()
+                        .filter(|other| {
+                            other.source_id == row.source_id
+                                && other.external_uid.is_some()
+                                && other.external_uid == row.external_uid
+                                && other.recurrence_id.is_some()
+                        })
+                        .filter_map(|other| other.recurrence_id.clone()),
+                );
                 for instance_start in expand_master(row, from, to, &override_starts) {
                     occurrences.push(CalendarEventOccurrence {
                         event: row.clone(),
