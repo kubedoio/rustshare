@@ -24,7 +24,8 @@ const EVENTS_PAGE_SIZE: u32 = 2500;
 /// Base delay between successful sync runs when the scheduler is free-running.
 pub const DEFAULT_SYNC_INTERVAL: Duration = Duration::from_secs(900);
 /// Access tokens are refreshed this long before their advertised expiry.
-const TOKEN_EXPIRY_MARGIN: Duration = Duration::from_secs(60);
+/// Access tokens are refreshed this long before their advertised expiry.
+pub const TOKEN_EXPIRY_MARGIN: Duration = Duration::from_secs(60);
 const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(60);
 
 /// OAuth client + Calendar API endpoints for one Google app registration.

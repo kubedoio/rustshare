@@ -23,6 +23,15 @@ use crate::services::google_calendar;
 use crate::services::google_calendar::{
     CalendarSyncConfig, GoogleCalendarClient, SyncOutcome, DEFAULT_SYNC_INTERVAL,
 };
+use crate::services::outlook_calendar::OutlookCalendarClient;
+
+/// `calendar_sync_states.cursor_kind` for the provider cursor a kind stores.
+fn cursor_kind_for(source_kind: &str) -> &'static str {
+    match source_kind {
+        "outlook" => "ms_delta_token",
+        _ => "google_sync_token",
+    }
+}
 
 pub struct CalendarSyncWorkerConfig {
     pub poll_interval: Duration,
@@ -49,6 +58,7 @@ pub fn spawn_calendar_sync_worker(
     metadata_store: Arc<MetadataStore>,
     secret_key: Arc<rustshare_crypto::SecretEncryptionKey>,
     google: Option<Arc<GoogleCalendarClient>>,
+    outlook: Option<Arc<OutlookCalendarClient>>,
     mut shutdown: broadcast::Receiver<()>,
     config: CalendarSyncWorkerConfig,
 ) {
@@ -90,16 +100,24 @@ pub fn spawn_calendar_sync_worker(
                 let store = Arc::clone(&metadata_store);
                 let key = Arc::clone(&secret_key);
                 let client = google.clone();
+                let outlook_client = outlook.clone();
                 let sync_config = CalendarSyncConfig {
                     past_days: config.sync.past_days,
                     future_days: config.sync.future_days,
                 };
                 let holder = worker_id.clone();
                 join_set.spawn(async move {
-                    let result =
-                        AssertUnwindSafe(run_sync(store, key, client, source, sync_config, holder))
-                            .catch_unwind()
-                            .await;
+                    let result = AssertUnwindSafe(run_sync(
+                        store,
+                        key,
+                        client,
+                        outlook_client,
+                        source,
+                        sync_config,
+                        holder,
+                    ))
+                    .catch_unwind()
+                    .await;
                     match result {
                         Ok(()) => source_id,
                         Err(e) => {
@@ -159,6 +177,7 @@ pub async fn run_sync(
     store: Arc<MetadataStore>,
     secret_key: Arc<rustshare_crypto::SecretEncryptionKey>,
     google: Option<Arc<GoogleCalendarClient>>,
+    outlook: Option<Arc<OutlookCalendarClient>>,
     source: rustshare_core::domain::CalendarSource,
     sync_config: CalendarSyncConfig,
     worker_id: String,
@@ -172,6 +191,7 @@ pub async fn run_sync(
         .ok()
         .flatten()
         .and_then(|state| state.cursor_value);
+    let cursor_kind = cursor_kind_for(&source.kind);
     tracing::info!(source_id = %source_id, kind = %source.kind, "Syncing calendar source");
     let outcome = match source.kind.as_str() {
         "google" => match google {
@@ -188,7 +208,21 @@ pub async fn run_sync(
             }
             None => SyncOutcome::Failed("google OAuth is not configured".to_string()),
         },
-        // Outlook arrives with issue #315 Task 5; claim only what we can run.
+        "outlook" => match outlook {
+            Some(client) => {
+                crate::services::outlook_calendar::sync_source(
+                    &store,
+                    &client,
+                    &secret_key,
+                    &source,
+                    &sync_config,
+                    &worker_id,
+                )
+                .await
+            }
+            None => SyncOutcome::Failed("outlook OAuth is not configured".to_string()),
+        },
+        // Claim only what we can run.
         other => {
             tracing::debug!(source_id = %source_id, kind = %other, "no sync provider registered; skipping");
             SyncOutcome::Completed {
@@ -229,7 +263,7 @@ pub async fn run_sync(
                     + chrono::Duration::from_std(DEFAULT_SYNC_INTERVAL)
                         .unwrap_or(chrono::Duration::seconds(900)),
                 cursor: next_sync_token,
-                cursor_kind: Some("google_sync_token"),
+                cursor_kind: Some(cursor_kind),
                 status: if parked { None } else { Some("healthy") },
                 last_error: None,
             }
@@ -241,7 +275,7 @@ pub async fn run_sync(
             SyncPlan {
                 next_sync_at: now + backoff,
                 cursor: prior_cursor.clone(),
-                cursor_kind: prior_cursor.is_some().then_some("google_sync_token"),
+                cursor_kind: prior_cursor.is_some().then_some(cursor_kind),
                 status: Some("rate_limited"),
                 last_error: Some("rate limited by provider".to_string()),
             }
@@ -269,7 +303,7 @@ pub async fn run_sync(
                     + chrono::Duration::from_std(DEFAULT_SYNC_INTERVAL)
                         .unwrap_or(chrono::Duration::seconds(900)),
                 cursor: prior_cursor.clone(),
-                cursor_kind: prior_cursor.is_some().then_some("google_sync_token"),
+                cursor_kind: prior_cursor.is_some().then_some(cursor_kind),
                 status: Some("failed"),
                 last_error: Some(message.chars().take(500).collect()),
             }

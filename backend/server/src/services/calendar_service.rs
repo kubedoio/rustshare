@@ -58,6 +58,7 @@ pub struct CalendarService {
     #[allow(dead_code)]
     secret_key: Arc<SecretEncryptionKey>,
     google: Option<Arc<crate::services::google_calendar::GoogleCalendarClient>>,
+    outlook: Option<Arc<crate::services::outlook_calendar::OutlookCalendarClient>>,
 }
 
 /// One event as returned by range queries: the stored row (or its recurring
@@ -206,6 +207,7 @@ impl CalendarService {
             metadata_store,
             secret_key,
             google: None,
+            outlook: None,
         }
     }
 
@@ -218,6 +220,23 @@ impl CalendarService {
         self.google = client.map(Arc::new);
     }
 
+    /// Attach the Microsoft/Outlook OAuth client; absent when the deployment
+    /// has no Microsoft client id/secret.
+    pub fn configure_outlook(
+        &mut self,
+        client: Option<crate::services::outlook_calendar::OutlookCalendarClient>,
+    ) {
+        self.outlook = client.map(Arc::new);
+    }
+
+    /// The configured Microsoft/Outlook client, if any (sync worker + revoke
+    /// paths).
+    pub fn outlook_client(
+        &self,
+    ) -> Option<Arc<crate::services::outlook_calendar::OutlookCalendarClient>> {
+        self.outlook.clone()
+    }
+
     /// The configured Google client, if any (sync worker + revoke paths).
     pub fn google_client(
         &self,
@@ -225,28 +244,35 @@ impl CalendarService {
         self.google.clone()
     }
 
-    /// Begin the OAuth connect flow for `kind` (`google` today): persist a
-    /// single-use 256-bit state bound to the user and return the provider
-    /// consent URL.
+    /// Begin the OAuth connect flow for `kind` (`google` / `outlook`):
+    /// persist a single-use 256-bit state bound to the user and return the
+    /// provider consent URL.
     pub async fn begin_connect(
         &self,
         tenant_id: Uuid,
         owner_id: UserId,
         kind: CalendarSourceKind,
     ) -> Result<String, CalendarError> {
-        let client = match kind {
-            CalendarSourceKind::Google => self.google.as_ref(),
+        let mut state_bytes = [0u8; 32];
+        rand::rng().fill_bytes(&mut state_bytes);
+        let state = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(state_bytes);
+        let authorize_url = match kind {
+            CalendarSourceKind::Google => self
+                .google
+                .as_ref()
+                .map(|client| client.authorize_url(&state)),
+            CalendarSourceKind::Outlook => self
+                .outlook
+                .as_ref()
+                .map(|client| client.authorize_url(&state)),
             _ => None,
         };
-        let Some(client) = client else {
+        let Some(authorize_url) = authorize_url else {
             return Err(CalendarError::OAuthNotConfigured(format!(
                 "{} OAuth is not configured",
                 kind.as_str()
             )));
         };
-        let mut state_bytes = [0u8; 32];
-        rand::rng().fill_bytes(&mut state_bytes);
-        let state = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(state_bytes);
         self.metadata_store
             .insert_calendar_oauth_state(
                 &state,
@@ -257,7 +283,7 @@ impl CalendarService {
             )
             .await
             .map_err(db_error)?;
-        Ok(client.authorize_url(&state))
+        Ok(authorize_url)
     }
 
     /// Complete the OAuth flow: validate-and-consume the state, exchange the
@@ -322,6 +348,65 @@ impl CalendarService {
             .map_err(db_error)
     }
 
+    /// Complete the Microsoft/Outlook OAuth flow: validate-and-consume the
+    /// state, exchange the code, resolve the account email, and store
+    /// encrypted tokens. The new source is due for its initial sync
+    /// immediately.
+    pub async fn complete_outlook_connect(
+        &self,
+        state: &str,
+        code: &str,
+    ) -> Result<CalendarSource, CalendarError> {
+        use crate::services::outlook_calendar::OutlookError;
+        let oauth_state = self
+            .metadata_store
+            .consume_calendar_oauth_state(state)
+            .await
+            .map_err(db_error)?
+            .ok_or(CalendarError::OAuthStateInvalid)?;
+        if oauth_state.kind != CalendarSourceKind::Outlook.as_str() {
+            return Err(CalendarError::OAuthStateInvalid);
+        }
+        let client = self.outlook.clone().ok_or_else(|| {
+            CalendarError::OAuthNotConfigured("outlook OAuth is not configured".to_string())
+        })?;
+        let tokens = client.exchange_code(code).await.map_err(|err| match err {
+            OutlookError::AuthRequired => {
+                CalendarError::OAuthFailed("provider rejected the grant".to_string())
+            }
+            other => CalendarError::OAuthFailed(other.to_string()),
+        })?;
+        let Some(refresh_token) = tokens.rotated_refresh_token() else {
+            return Err(CalendarError::OAuthFailed(
+                "provider did not return a refresh token; run the connect flow again".to_string(),
+            ));
+        };
+        let external_account = client
+            .user_email(tokens.access_token())
+            .await
+            .map_err(|e| CalendarError::OAuthFailed(e.to_string()))?;
+        let refresh_enc = rustshare_crypto::encrypt_secret(refresh_token, &self.secret_key)
+            .map_err(|e| CalendarError::Storage(e.to_string()))?;
+        let access_enc = rustshare_crypto::encrypt_secret(tokens.access_token(), &self.secret_key)
+            .map_err(|e| CalendarError::Storage(e.to_string()))?;
+        let display_name = format!("Outlook ({external_account})");
+        self.metadata_store
+            .create_oauth_calendar_source(
+                oauth_state.tenant_id,
+                oauth_state.owner_id,
+                CalendarSourceKind::Outlook.as_str(),
+                &display_name,
+                &external_account,
+                "primary",
+                &refresh_enc,
+                &access_enc,
+                tokens.expires_at(),
+                "offline_access Calendars.Read",
+            )
+            .await
+            .map_err(db_error)
+    }
+
     /// Revoke best-effort at the provider, wipe stored tokens, and mark the
     /// source `auth_required`. Events remain until the source is deleted.
     pub async fn disconnect_source(
@@ -357,6 +442,17 @@ impl CalendarService {
                     rustshare_crypto::decrypt_secret(&refresh_enc, &self.secret_key)
                 {
                     client.revoke_token(&refresh_token).await;
+                }
+            }
+        }
+        if kind == CalendarSourceKind::Outlook {
+            if let (Some(client), Some(access_enc)) =
+                (self.outlook.clone(), source.access_token_enc)
+            {
+                if let Ok(access_token) =
+                    rustshare_crypto::decrypt_secret(&access_enc, &self.secret_key)
+                {
+                    client.revoke_token(&access_token).await;
                 }
             }
         }

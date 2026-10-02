@@ -16,6 +16,7 @@ pub mod mail_service;
 pub mod meeting_service;
 pub mod note_index_sink;
 pub mod note_service;
+pub mod outlook_calendar;
 pub mod standup_service;
 pub mod template_service;
 pub mod unified_search;

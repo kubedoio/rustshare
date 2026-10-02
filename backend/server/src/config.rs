@@ -102,6 +102,12 @@ pub struct AppConfig {
     pub calendar_google_client_id: Option<String>,
     #[serde(default, rename = "RUSTSHARE_CALENDAR_GOOGLE_CLIENT_SECRET")]
     pub calendar_google_client_secret: Option<String>,
+    /// Microsoft/Outlook OAuth client credentials. Absent = provider
+    /// unconfigured (connect returns 503, not a startup error).
+    #[serde(default, rename = "RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_ID")]
+    pub calendar_microsoft_client_id: Option<String>,
+    #[serde(default, rename = "RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_SECRET")]
+    pub calendar_microsoft_client_secret: Option<String>,
     #[serde(
         default = "default_calendar_sync_worker_enabled",
         rename = "RUSTSHARE_CALENDAR_SYNC_WORKER_ENABLED"

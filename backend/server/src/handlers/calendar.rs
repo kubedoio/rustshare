@@ -582,9 +582,8 @@ pub struct CalendarConnectResponse {
 const RESYNC_LOCK_STALE_SECS: i64 = 300;
 
 /// `GET /api/v1/calendar/sources/{kind}/connect` — begin the OAuth connect
-/// flow for `google` (Outlook arrives with its own task) and return the
-/// provider consent URL. `503` when the deployment lacks the client
-/// id/secret env config.
+/// flow for `google` / `outlook` and return the provider consent URL.
+/// `503` when the deployment lacks the client id/secret env config.
 pub async fn connect_calendar_source(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -620,7 +619,7 @@ fn oauth_redirect(target: &str) -> axum::response::Response {
 /// `GET /api/v1/calendar/oauth/{kind}/callback` — provider redirect target,
 /// authenticated by the single-use `state` rather than a session. Exchanges
 /// the code, stores encrypted tokens, enqueues the initial sync, and always
-/// answers with a browser redirect: `?connected=google` on success,
+/// answers with a browser redirect: `?connected={kind}` on success,
 /// `?error=oauth_*` on failure.
 pub async fn calendar_oauth_callback(
     State(state): State<AppState>,
@@ -630,7 +629,10 @@ pub async fn calendar_oauth_callback(
     let base = "/settings/apps/calendar";
     let redirect = |reason: &str| oauth_redirect(&format!("{base}?error={reason}"));
 
-    if kind != CalendarSourceKind::Google {
+    if !matches!(
+        kind,
+        CalendarSourceKind::Google | CalendarSourceKind::Outlook
+    ) {
         return redirect("oauth_unconfigured");
     }
     // Provider-side denial (user declined consent).
@@ -641,16 +643,23 @@ pub async fn calendar_oauth_callback(
         return redirect("oauth_state");
     };
 
-    match state
-        .calendar_service
-        .complete_google_connect(state_param, code)
-        .await
-    {
+    let result = if kind == CalendarSourceKind::Google {
+        state
+            .calendar_service
+            .complete_google_connect(state_param, code)
+            .await
+    } else {
+        state
+            .calendar_service
+            .complete_outlook_connect(state_param, code)
+            .await
+    };
+    match result {
         Ok(_) => oauth_redirect(&format!("{base}?connected={}", kind.as_str())),
         Err(CalendarError::OAuthNotConfigured(_)) => redirect("oauth_unconfigured"),
         Err(CalendarError::OAuthStateInvalid) => redirect("oauth_state"),
         Err(CalendarError::OAuthFailed(message)) => {
-            tracing::warn!("google calendar connect failed: {message}");
+            tracing::warn!("{} calendar connect failed: {message}", kind.as_str());
             redirect("oauth_exchange")
         }
         // Storage/database errors likewise redirect rather than render

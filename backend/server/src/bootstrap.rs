@@ -377,6 +377,13 @@ async fn init_services(
             &config.public_url,
         ),
     );
+    calendar_service.configure_outlook(
+        crate::services::outlook_calendar::OutlookCalendarClient::from_config(
+            config.calendar_microsoft_client_id.clone(),
+            config.calendar_microsoft_client_secret.clone(),
+            &config.public_url,
+        ),
+    );
     let calendar_service = Arc::new(calendar_service);
 
     // Shared content indexer used both by the AI service and by the note
@@ -805,6 +812,7 @@ pub async fn init_app() -> Result<AppState> {
             Arc::clone(&metadata_store),
             Arc::clone(&secret_key),
             services.calendar_service.google_client(),
+            services.calendar_service.outlook_client(),
             shutdown_tx.subscribe(),
             crate::calendar_sync_worker::CalendarSyncWorkerConfig::from_config(&config),
         );
