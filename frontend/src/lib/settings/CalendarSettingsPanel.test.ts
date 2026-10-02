@@ -29,6 +29,11 @@ vi.mock('$lib/stores/toast', () => ({
 	toastStore: { show: toastSpy }
 }));
 
+const replaceStateSpy = vi.hoisted(() => vi.fn());
+vi.mock('$app/navigation', () => ({
+	replaceState: replaceStateSpy
+}));
+
 const internalSource = {
 	id: 'src-internal',
 	kind: 'internal',
@@ -128,26 +133,22 @@ describe('CalendarSettingsPanel', () => {
 
 	it('shows a success toast from the ?connected= redirect param and strips it', async () => {
 		setUrl('?connected=google');
-		const replaceState = vi.spyOn(window.history, 'replaceState');
 		render(CalendarSettingsPanel);
 
 		await waitFor(() => {
 			expect(toastSpy).toHaveBeenCalledWith('Connected Google Calendar', 'success');
 		});
-		expect(replaceState).toHaveBeenCalledWith(null, '', '/settings/apps/calendar');
-		replaceState.mockRestore();
+		expect(replaceStateSpy).toHaveBeenCalledWith('/settings/apps/calendar', {});
 	});
 
 	it('shows an error toast from the ?error=oauth_* redirect param', async () => {
 		setUrl('?error=oauth_denied');
-		const replaceState = vi.spyOn(window.history, 'replaceState');
 		render(CalendarSettingsPanel);
 
 		await waitFor(() => {
 			expect(toastSpy).toHaveBeenCalledWith('Provider access was denied.', 'error');
 		});
-		expect(replaceState).toHaveBeenCalledWith(null, '', '/settings/apps/calendar');
-		replaceState.mockRestore();
+		expect(replaceStateSpy).toHaveBeenCalledWith('/settings/apps/calendar', {});
 	});
 
 	it('disconnects an OAuth source after confirmation', async () => {

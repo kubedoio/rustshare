@@ -100,13 +100,15 @@
 			description: string;
 			starts_at: string;
 			ends_at: string;
-			timezone: string | null;
+			timezone: string;
 		}) => {
 			if (input.id) {
+				// Empty string clears description/location; the backend leaves
+				// them unchanged for null/absent (F7 convention).
 				return calendarApi.updateEvent(input.id, {
 					title: input.title,
-					location: input.location || null,
-					description: input.description || null,
+					location: input.location,
+					description: input.description,
 					starts_at: input.starts_at,
 					ends_at: input.ends_at,
 					timezone: input.timezone
@@ -219,19 +221,44 @@
 			: `${windowRange.from.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${addDays(windowRange.to, -1).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
 	);
 
+	// Calendar-date arithmetic on YYYY-MM-DD keys. UTC avoids the DST shifts
+	// that local Date construction would introduce.
+	function dayKeyToUtc(key: string): number {
+		const [year, month, day] = key.split('-').map(Number);
+		return Date.UTC(year, month - 1, day);
+	}
+
+	function daysBetween(startKey: string, endKey: string): number {
+		return Math.round((dayKeyToUtc(endKey) - dayKeyToUtc(startKey)) / DAY_MS);
+	}
+
+	function addDaysToKey(key: string, days: number): string {
+		return new Date(dayKeyToUtc(key) + days * DAY_MS).toISOString().slice(0, 10);
+	}
+
 	// All-day events carry their wall-clock date in original_date; the
 	// starts_at/ends_at instants are UTC midnights that can shift to the
 	// previous local day for negative-offset users. Compare calendar-date
 	// fields directly, and treat the all-day ends_at as an exclusive DTEND.
+	// Expanded all-day occurrences carry instance_start too, so derive the
+	// displayed occurrence day from it (falling back to original_date) and
+	// shift the exclusive end by the master's whole-day duration.
 	function eventsOn(events: CalendarEvent[], date: Date): CalendarEvent[] {
+		// Local day boundaries, not dayStart + 24h: DST transition days are
+		// 23h/25h long, so a fixed DAY_MS window misbuckets their events.
 		const dayStart = startOfDay(date).getTime();
-		const dayEnd = dayStart + DAY_MS;
+		const dayEnd = startOfDay(addDays(date, 1)).getTime();
 		const dayKey = toLocalInputDate(date);
 		return events
 			.filter((event) => {
 				if (event.all_day) {
-					const startDay = (event.original_date ?? event.starts_at).slice(0, 10);
-					const endDay = event.ends_at.slice(0, 10);
+					const startDay = (event.instance_start ?? event.original_date ?? event.starts_at).slice(
+						0,
+						10
+					);
+					const masterStartDay = (event.original_date ?? event.starts_at).slice(0, 10);
+					const durationDays = Math.max(1, daysBetween(masterStartDay, event.ends_at.slice(0, 10)));
+					const endDay = addDaysToKey(startDay, durationDays);
 					return startDay <= dayKey && dayKey < endDay;
 				}
 				const start = occurrenceStart(event).getTime();
@@ -259,8 +286,8 @@
 
 	// Range responses carry the occurrence instant only in `instance_start`;
 	// `starts_at`/`ends_at` remain the recurring master's values. All-day
-	// events never carry instance_start (their wall-clock date lives in
-	// original_date), so they keep the master-based special-casing below.
+	// occurrences carry instance_start as well, so the all-day branch of
+	// eventsOn derives its date from it (falling back to original_date).
 	function occurrenceStart(event: CalendarEvent): Date {
 		return new Date(event.instance_start ?? event.starts_at);
 	}
@@ -269,6 +296,19 @@
 		if (!event.instance_start) return new Date(event.ends_at);
 		const duration = new Date(event.ends_at).getTime() - new Date(event.starts_at).getTime();
 		return new Date(new Date(event.instance_start).getTime() + duration);
+	}
+
+	/** An expanded instance of a recurring series: same id as the master. */
+	function isOccurrence(event: CalendarEvent): boolean {
+		return event.instance_start != null;
+	}
+
+	function eventDetailDateLabel(event: CalendarEvent): string {
+		if (event.all_day) {
+			const key = (event.instance_start ?? event.original_date ?? event.starts_at).slice(0, 10);
+			return new Date(`${key}T00:00:00`).toLocaleDateString();
+		}
+		return occurrenceStart(event).toLocaleDateString();
 	}
 
 	function eventTimeLabel(event: CalendarEvent): string {
@@ -328,7 +368,9 @@
 			description: formDescription.trim(),
 			starts_at: start.toISOString(),
 			ends_at: end.toISOString(),
-			timezone: editingEvent?.timezone ?? null
+			// Create requires a concrete IANA zone; reuse the master's zone when
+			// editing, otherwise fall back to the browser's zone.
+			timezone: editingEvent?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
 		});
 	}
 
@@ -337,8 +379,16 @@
 		await deleteMutation.mutateAsync(event.id);
 	}
 
+	function handleKeydown(event: KeyboardEvent) {
+		if (event.key !== 'Escape') return;
+		if (editorOpen) editorOpen = false;
+		else if (selectedEvent) selectedEvent = null;
+	}
+
 	const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <ApplicationPageShell title={module.displayName} subtitle={module.description}>
 	{#if $eventsQuery.isLoading}
@@ -619,9 +669,14 @@
 				</button>
 			</div>
 			<p class="mt-2 text-sm text-base-content/70">
-				{occurrenceStart(selectedEvent).toLocaleString()} – {occurrenceEnd(
-					selectedEvent
-				).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+				{eventDetailDateLabel(selectedEvent)}
+				{#if selectedEvent.all_day}
+					· All day
+				{:else}
+					· {formatTime(occurrenceStart(selectedEvent).toISOString())} – {formatTime(
+						occurrenceEnd(selectedEvent).toISOString()
+					)}
+				{/if}
 			</p>
 			{#if selectedEvent.location}
 				<p class="mt-1 text-sm text-base-content/70">{selectedEvent.location}</p>
@@ -634,7 +689,7 @@
 			{#if selectedEvent.read_only}
 				<p class="mt-3 text-xs text-base-content/50">{sourceAttribution(selectedEvent)}</p>
 			{/if}
-			<div class="mt-4 flex justify-end gap-2">
+			<div class="mt-4 flex flex-wrap items-center justify-end gap-2">
 				{#if !selectedEvent.read_only}
 					<button
 						type="button"
@@ -643,13 +698,24 @@
 					>
 						Delete
 					</button>
-					<button
-						type="button"
-						class="btn btn-primary btn-sm"
-						onclick={() => openEditor(selectedEvent!)}
-					>
-						<Pencil size={13} /> Edit event
-					</button>
+					{#if isOccurrence(selectedEvent)}
+						<p class="w-full text-right text-xs text-base-content/60">
+							This is one occurrence of a recurring series. Edit the series from its master event,
+							or delete and recreate it.
+						</p>
+					{:else if selectedEvent.all_day}
+						<p class="w-full text-right text-xs text-base-content/60">
+							All-day events cannot be edited here yet. Delete and recreate it to change its dates.
+						</p>
+					{:else}
+						<button
+							type="button"
+							class="btn btn-primary btn-sm"
+							onclick={() => openEditor(selectedEvent!)}
+						>
+							<Pencil size={13} /> Edit event
+						</button>
+					{/if}
 				{/if}
 			</div>
 		</div>
@@ -660,14 +726,19 @@
 {#if editorOpen}
 	<div
 		class="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4"
-		role="presentation"
+		role="dialog"
+		aria-modal="true"
+		tabindex="-1"
+		aria-label={editingEvent ? 'Edit event' : 'Create event'}
 		onclick={(event) => {
 			if (event.target === event.currentTarget) editorOpen = false;
+		}}
+		onkeydown={(event) => {
+			if (event.key === 'Escape') editorOpen = false;
 		}}
 	>
 		<form
 			class="flex w-full max-w-md flex-col gap-3 rounded-xl border border-[var(--rs-border)] bg-[var(--rs-surface-raised)] p-4"
-			role="dialog"
 			aria-label={editingEvent ? 'Edit event' : 'Create event'}
 			onsubmit={(event) => {
 				event.preventDefault();
@@ -687,6 +758,11 @@
 					<X size={14} />
 				</button>
 			</div>
+			{#if editingEvent?.rrule}
+				<p class="text-xs text-warning" role="note">
+					This is a recurring event; saving changes updates the entire series.
+				</p>
+			{/if}
 			<input
 				class="input-bordered input input-sm"
 				placeholder="Event title"

@@ -83,7 +83,7 @@ function eventAt(date: string, overrides: Partial<CalendarEvent> = {}): Calendar
 		ends_at: `${date}T15:00:00`,
 		all_day: false,
 		original_date: null,
-		timezone: null,
+		timezone: 'UTC',
 		rrule: null,
 		recurrence_id: null,
 		instance_start: null,
@@ -202,7 +202,7 @@ describe('CalendarApplicationView', () => {
 		);
 	});
 
-	it('creates an internal event from the editor', async () => {
+	it('creates an internal event from the editor with a concrete IANA timezone', async () => {
 		render(CalendarApplicationView, { module: testModule });
 		await fireEvent.click(await screen.findByRole('button', { name: /New event/ }));
 
@@ -210,10 +210,14 @@ describe('CalendarApplicationView', () => {
 		await fireEvent.input(screen.getByLabelText('Date'), {
 			target: { value: dayFromToday(1) }
 		});
-		await fireEvent.submit(screen.getByRole('dialog', { name: 'Create event' }));
+		await fireEvent.submit(screen.getByRole('form', { name: 'Create event' }));
 
 		await waitFor(() => expect(mocks.createEvent).toHaveBeenCalledTimes(1));
-		expect(mocks.createEvent).toHaveBeenCalledWith(expect.objectContaining({ title: 'Dentist' }));
+		const payload = mocks.createEvent.mock.calls[0][0] as { timezone: unknown };
+		expect(payload).toMatchObject({ title: 'Dentist' });
+		// The create request requires a non-null IANA zone.
+		expect(typeof payload.timezone).toBe('string');
+		expect(payload.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
 	});
 
 	it('buckets all-day events by original_date and treats ends_at as exclusive', async () => {
@@ -281,7 +285,7 @@ describe('CalendarApplicationView', () => {
 
 		await fireEvent.click(await screen.findByText(/Sprint review/));
 		await fireEvent.click(await screen.findByRole('button', { name: /Edit event/ }));
-		await fireEvent.submit(screen.getByRole('dialog', { name: 'Edit event' }));
+		await fireEvent.submit(screen.getByRole('form', { name: 'Edit event' }));
 
 		await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1));
 		expect(mocks.updateEvent).toHaveBeenCalledWith(
@@ -300,13 +304,14 @@ describe('CalendarApplicationView', () => {
 
 	it('buckets recurring occurrences by instance_start across different days', async () => {
 		// A weekly master: starts_at/ends_at stay the master's values and each
-		// expanded occurrence carries its own instant in instance_start.
+		// expanded occurrence carries the master's id plus its own instant in
+		// instance_start.
 		const masterDay = dayFromToday(2);
 		const occurrenceDays = [dayFromToday(2), dayFromToday(9), dayFromToday(16)];
 		mocks.listEvents.mockResolvedValue(
-			occurrenceDays.map((day, index) =>
+			occurrenceDays.map((day) =>
 				eventAt(masterDay, {
-					id: `occ-${index}`,
+					id: 'evt-weekly',
 					title: 'Weekly sync',
 					rrule: 'FREQ=WEEKLY;COUNT=3',
 					starts_at: `${masterDay}T14:00:00`,
@@ -328,5 +333,191 @@ describe('CalendarApplicationView', () => {
 				?.getAttribute('aria-label')
 		);
 		expect(new Set(cellLabels).size).toBe(3);
+	});
+
+	// Navigate the month cursor to a given month regardless of the current date.
+	async function goToMonth(year: number, month: number) {
+		const now = new Date();
+		const diff = (year - now.getFullYear()) * 12 + (month - now.getMonth());
+		const name = diff >= 0 ? 'Next period' : 'Previous period';
+		for (let i = 0; i < Math.abs(diff); i++) {
+			await fireEvent.click(await screen.findByRole('button', { name }));
+		}
+	}
+
+	function cellForDay(label: string): HTMLElement {
+		return screen.getByRole('button', { name: `Create event on ${label}` }).closest('.min-h-24')!;
+	}
+
+	it('renders an all-day recurring occurrence on its instance date, not the master date', async () => {
+		// Weekly all-day master starting 2026-10-01. The expanded occurrence on
+		// 2026-10-08 reuses the master's id/original_date but carries its own
+		// instance_start, which must win when picking the displayed day.
+		mocks.listEvents.mockResolvedValue([
+			eventAt('2026-10-01', {
+				id: 'evt-allday-series',
+				title: 'Company holiday',
+				all_day: true,
+				original_date: '2026-10-01',
+				starts_at: '2026-10-01T00:00:00Z',
+				ends_at: '2026-10-02T00:00:00Z',
+				rrule: 'FREQ=WEEKLY;COUNT=4',
+				instance_start: '2026-10-08T00:00:00Z'
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		const occurrenceLabel = new Date('2026-10-08T12:00:00').toLocaleDateString();
+		const occurrenceCell = await screen.findByRole('button', {
+			name: `Create event on ${occurrenceLabel}`
+		});
+		expect(occurrenceCell.closest('.min-h-24')!.textContent).toContain('Company holiday');
+
+		const masterLabel = new Date('2026-10-01T12:00:00').toLocaleDateString();
+		expect(cellForDay(masterLabel).textContent).not.toContain('Company holiday');
+	});
+
+	it('does not offer editing for a recurring occurrence and points at the series', async () => {
+		mocks.listEvents.mockResolvedValue([
+			eventAt(dayFromToday(2), {
+				id: 'evt-weekly',
+				title: 'Weekly sync',
+				rrule: 'FREQ=WEEKLY;COUNT=3',
+				instance_start: `${dayFromToday(9)}T14:00:00`
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Weekly sync/));
+
+		expect(await screen.findByText(/one occurrence of a recurring series/)).toBeTruthy();
+		expect(screen.queryByRole('button', { name: /Edit event/ })).toBeNull();
+	});
+
+	it('warns that editing a recurring master updates the whole series', async () => {
+		mocks.listEvents.mockResolvedValue([
+			eventAt(dayFromToday(2), {
+				id: 'evt-weekly-master',
+				title: 'Weekly sync',
+				rrule: 'FREQ=WEEKLY;COUNT=3'
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Weekly sync/));
+		await fireEvent.click(await screen.findByRole('button', { name: /Edit event/ }));
+
+		expect(await screen.findByText(/updates the entire series/)).toBeTruthy();
+	});
+
+	it('shows all-day as "All day" and does not offer editing for all-day events', async () => {
+		const day = dayFromToday(3);
+		mocks.listEvents.mockResolvedValue([
+			eventAt(day, {
+				id: 'evt-allday',
+				title: 'All hands',
+				all_day: true,
+				original_date: day,
+				starts_at: `${day}T00:00:00Z`,
+				ends_at: `${dayFromToday(4)}T00:00:00Z`
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/All hands/));
+
+		// Detail popover must not render a midnight clock range.
+		expect(await screen.findByText(/All day/)).toBeTruthy();
+		expect(await screen.findByText(/All-day events cannot be edited/)).toBeTruthy();
+		expect(screen.queryByRole('button', { name: /Edit event/ })).toBeNull();
+	});
+
+	it('clears description and location by sending empty strings on update', async () => {
+		mocks.listEvents.mockResolvedValue([
+			eventAt(dayFromToday(1), {
+				id: 'evt-clear',
+				title: 'Dentist',
+				location: 'Room 1',
+				description: 'Bring forms'
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Dentist/));
+		await fireEvent.click(await screen.findByRole('button', { name: /Edit event/ }));
+		await fireEvent.input(screen.getByLabelText('Location'), { target: { value: '' } });
+		await fireEvent.input(screen.getByLabelText('Description'), { target: { value: '' } });
+		await fireEvent.submit(screen.getByRole('form', { name: 'Edit event' }));
+
+		await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1));
+		expect(mocks.updateEvent).toHaveBeenCalledWith(
+			'evt-clear',
+			expect.objectContaining({ location: '', description: '' })
+		);
+	});
+
+	it('closes the detail popover on Escape', async () => {
+		mocks.listEvents.mockResolvedValue([eventAt(dayFromToday(1))]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+		expect(await screen.findByRole('dialog', { name: 'Event details' })).toBeTruthy();
+
+		await fireEvent.keyDown(window, { key: 'Escape' });
+
+		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Event details' })).toBeNull());
+	});
+
+	it('buckets a fall-back DST day event by local day boundaries', async () => {
+		const originalTz = process.env.TZ;
+		process.env.TZ = 'America/New_York';
+		try {
+			// 2026-11-01 is 25h long; 23:30 -> 00:30 spans the extra hour.
+			const start = new Date(2026, 10, 1, 23, 30);
+			const end = new Date(2026, 10, 2, 0, 30);
+			mocks.listEvents.mockResolvedValue([
+				eventAt('2026-11-01', {
+					id: 'evt-dst-fall',
+					title: 'Late night',
+					starts_at: start.toISOString(),
+					ends_at: end.toISOString()
+				})
+			]);
+			render(CalendarApplicationView, { module: testModule });
+			await goToMonth(2026, 10);
+
+			const label = new Date(2026, 10, 1, 12).toLocaleDateString();
+			expect(cellForDay(label).textContent).toContain('Late night');
+		} finally {
+			process.env.TZ = originalTz;
+		}
+	});
+
+	it('does not leak a next-day early event into a spring-forward DST day', async () => {
+		const originalTz = process.env.TZ;
+		process.env.TZ = 'America/New_York';
+		try {
+			// 2026-03-08 is 23h long; an event on 03-09 00:30 must not appear
+			// on 03-08 (a fixed 24h window would wrongly include it).
+			const start = new Date(2026, 2, 9, 0, 30);
+			const end = new Date(2026, 2, 9, 1, 30);
+			mocks.listEvents.mockResolvedValue([
+				eventAt('2026-03-09', {
+					id: 'evt-dst-spring',
+					title: 'Early bird',
+					starts_at: start.toISOString(),
+					ends_at: end.toISOString()
+				})
+			]);
+			render(CalendarApplicationView, { module: testModule });
+			await goToMonth(2026, 2);
+
+			const mar8 = new Date(2026, 2, 8, 12).toLocaleDateString();
+			const mar9 = new Date(2026, 2, 9, 12).toLocaleDateString();
+			expect(cellForDay(mar9).textContent).toContain('Early bird');
+			expect(cellForDay(mar8).textContent).not.toContain('Early bird');
+		} finally {
+			process.env.TZ = originalTz;
+		}
 	});
 });

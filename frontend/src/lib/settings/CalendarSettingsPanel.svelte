@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { createQuery } from '$lib/query-compat';
+	import { replaceState } from '$app/navigation';
 	import { calendarApi, type CalendarSource, type CalendarSourceKind } from '$lib/api/calendar';
 	import { ApiError } from '$lib/api/types';
 	import { queryClient } from '$lib/query-client';
@@ -74,7 +75,7 @@
 		params.delete('error');
 		const query = params.toString();
 		const url = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
-		window.history.replaceState(null, '', url);
+		replaceState(url, {});
 	}
 
 	consumeOauthRedirectParams();

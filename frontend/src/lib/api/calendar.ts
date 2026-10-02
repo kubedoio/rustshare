@@ -18,7 +18,7 @@ export interface CalendarEvent {
 	ends_at: string;
 	all_day: boolean;
 	original_date: string | null;
-	timezone: string | null;
+	timezone: string;
 	rrule: string | null;
 	recurrence_id: string | null;
 	instance_start: string | null;
@@ -59,12 +59,18 @@ export interface CalendarImportJob {
 
 export interface CreateCalendarEventRequest {
 	title: string;
+	/**
+	 * PATCH semantics for `description`/`location`: an absent or `null` value
+	 * leaves the stored value unchanged, while an empty string clears it.
+	 * Create ignores the distinction (both mean "no value").
+	 */
 	description?: string | null;
 	location?: string | null;
 	starts_at: string;
 	ends_at: string;
 	all_day?: boolean;
-	timezone?: string | null;
+	/** Required, non-null IANA zone (e.g. `Europe/Berlin`). */
+	timezone: string;
 	rrule?: string | null;
 }
 
