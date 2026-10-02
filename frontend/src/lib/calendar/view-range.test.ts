@@ -7,7 +7,8 @@ describe('windowRange', () => {
 	it('day view covers exactly the local day', () => {
 		const { from, to } = windowRange('day', at('2026-10-14T15:00:00'));
 		expect(from.getHours()).toBe(0);
-		expect(to.getTime() - from.getTime()).toBe(24 * 3600 * 1000);
+		// The next local midnight, not a fixed 24h: DST days are 23h/25h long.
+		expect(to.getTime()).toBe(new Date(2026, 9, 15).getTime());
 	});
 
 	it('work week runs Monday 00:00 to Saturday 00:00 (5 days)', () => {

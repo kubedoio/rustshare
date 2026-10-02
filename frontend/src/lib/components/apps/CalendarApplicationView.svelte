@@ -17,7 +17,6 @@
 		addDays,
 		shiftWindow,
 		startOfDay,
-		startOfWeekMonday,
 		VIEW_OPTIONS,
 		windowRange,
 		type CalendarView
@@ -71,9 +70,10 @@
 		eventsQuery.setOptions(buildEventQueryOptions());
 	});
 
-	// Day view draws a now-line; keep its clock fresh while it is mounted.
+	// Day view draws a now-line; repin the clock on entry, then keep it fresh.
 	$effect(() => {
 		if (view !== 'day') return;
+		now = new Date();
 		const timer = setInterval(() => (now = new Date()), 60_000);
 		return () => clearInterval(timer);
 	});
@@ -199,9 +199,9 @@
 
 	const weekCells = $derived.by((): Array<{ date: Date; events: CalendarEvent[] }> => {
 		const events = $eventsQuery.data ?? [];
-		const monday = startOfWeekMonday(range.from);
+		// range.from for the week view is already Monday 00:00.
 		return Array.from({ length: 5 }, (_, i) => {
-			const date = addDays(monday, i);
+			const date = addDays(range.from, i);
 			return { date, events: eventsOn(events, date) };
 		});
 	});
@@ -296,10 +296,16 @@
 		return Math.min(Math.max(value, min), max);
 	}
 
-	/** Minutes elapsed since local midnight of `day`, clamped to one day. */
+	/**
+	 * Wall-clock minutes since midnight of `day`, so an event lands on its
+	 * displayed hour row even on a DST-transition day. Earlier calendar days
+	 * clamp to 0, later ones to 1440.
+	 */
 	function minutesFromMidnight(date: Date, day: Date): number {
-		const minutes = (date.getTime() - startOfDay(day).getTime()) / 60_000;
-		return clamp(Math.round(minutes), 0, 1440);
+		const dayDiff = daysBetween(toLocalInputDate(day), toLocalInputDate(date));
+		if (dayDiff < 0) return 0;
+		if (dayDiff > 0) return 1440;
+		return clamp(date.getHours() * 60 + date.getMinutes(), 0, 1440);
 	}
 
 	function isToday(date: Date): boolean {
@@ -550,7 +556,7 @@
 									</span>
 									<button
 										type="button"
-										class="btn btn-ghost px-1 opacity-0 transition-opacity btn-xs [div:hover>&]:opacity-100"
+										class="btn btn-ghost px-1 opacity-0 transition-opacity btn-xs focus-visible:opacity-100 [div:hover>&]:opacity-100"
 										aria-label="Create event on {cell.date.toLocaleDateString()}"
 										onclick={() => openCreate(cell.date)}
 									>
@@ -595,7 +601,7 @@
 								<div class="flex justify-end">
 									<button
 										type="button"
-										class="btn btn-ghost px-1 opacity-0 transition-opacity btn-xs group-hover:opacity-100"
+										class="btn btn-ghost px-1 opacity-0 transition-opacity btn-xs group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
 										aria-label="Create event on {cell.date.toLocaleDateString()}"
 										onclick={() => openCreate(cell.date)}
 									>
@@ -659,7 +665,7 @@
 								<div class="group h-12 border-b border-[var(--rs-border)] last:border-b-0">
 									<button
 										type="button"
-										class="btn btn-ghost px-1 opacity-0 transition-opacity btn-xs group-hover:opacity-100"
+										class="btn btn-ghost px-1 opacity-0 transition-opacity btn-xs group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
 										aria-label="Create event on {cursor.toLocaleDateString()} at {hour}:00"
 										onclick={() => openCreate(cursor, hour)}
 									>
@@ -675,19 +681,16 @@
 							{/if}
 							{#each dayTimedEvents as event (eventKey(event))}
 								{@const start = occurrenceStart(event)}
-								{@const end = occurrenceEnd(event)}
-								{@const topPct = (minutesFromMidnight(start, cursor) / 1440) * 100}
-								{@const heightPct = Math.max(
-									2,
-									((minutesFromMidnight(end, cursor) - minutesFromMidnight(start, cursor)) / 1440) *
-										100
-								)}
+								{@const startMin = minutesFromMidnight(start, cursor)}
+								{@const endMin = minutesFromMidnight(occurrenceEnd(event), cursor)}
+								{@const topPct = clamp((startMin / 1440) * 100, 0, 98)}
+								{@const heightPct = clamp(((endMin - startMin) / 1440) * 100, 2, 100 - topPct)}
 								<button
 									type="button"
 									class="absolute right-1 left-1 overflow-hidden rounded px-1.5 py-0.5 text-left text-2xs text-white {eventColor(
 										event
 									)}"
-									style={`top:${clamp(topPct, 0, 98)}%; height:${clamp(heightPct, 2, 100 - clamp(topPct, 0, 98))}%`}
+									style={`top:${topPct}%; height:${heightPct}%`}
 									onclick={() => openDetail(event)}
 								>
 									<span class="font-semibold">{formatTime(start.toISOString())}</span>

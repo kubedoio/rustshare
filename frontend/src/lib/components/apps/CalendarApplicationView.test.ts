@@ -664,7 +664,17 @@ describe('CalendarApplicationView', () => {
 		return new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
 	}
 
-	it('day view requests exactly one local day and renders one column', async () => {
+	/** Wire-shaped event: UTC instants like the range API returns. */
+	function utcEventAt(startLocal: Date, overrides: Partial<CalendarEvent> = {}): CalendarEvent {
+		const end = new Date(startLocal.getTime() + 60 * 60 * 1000);
+		return eventAt(localInputDate(startLocal), {
+			starts_at: startLocal.toISOString(),
+			ends_at: end.toISOString(),
+			...overrides
+		});
+	}
+
+	it('day view requests exactly one local day and shows the day heading', async () => {
 		render(CalendarApplicationView, { module: testModule });
 		await screen.findByLabelText('Filter by source');
 		await fireEvent.click(screen.getByRole('button', { name: 'Day' }));
@@ -716,7 +726,10 @@ describe('CalendarApplicationView', () => {
 	it('work week excludes a Sunday event', async () => {
 		const sunday = sundayOfCurrentWeek();
 		mocks.listEvents.mockResolvedValue([
-			eventAt(localInputDate(sunday), { id: 'evt-sunday', title: 'Sunday brunch' })
+			utcEventAt(new Date(sunday.getFullYear(), sunday.getMonth(), sunday.getDate(), 12), {
+				id: 'evt-sunday',
+				title: 'Sunday brunch'
+			})
 		]);
 		render(CalendarApplicationView, { module: testModule });
 
@@ -786,5 +799,81 @@ describe('CalendarApplicationView', () => {
 			localInputDate(new Date(today.getFullYear(), today.getMonth(), today.getDate()))
 		);
 		expect((screen.getByLabelText('Start') as HTMLInputElement).value).toBe('14:00');
+	});
+
+	it('places a timed UTC event on its wall-clock row in day view', async () => {
+		const originalTz = process.env.TZ;
+		process.env.TZ = 'UTC';
+		try {
+			const day = dayFromToday(0);
+			mocks.listEvents.mockResolvedValue([
+				utcEventAt(new Date(`${day}T10:00:00Z`), { id: 'evt-timed', title: 'Standup' })
+			]);
+			render(CalendarApplicationView, { module: testModule });
+			await screen.findByLabelText('Filter by source');
+			await fireEvent.click(screen.getByRole('button', { name: 'Day' }));
+
+			const chip = await screen.findByRole('button', { name: /Standup/ });
+			// 10:00 -> 600 minutes into a 1440-minute grid; one hour tall.
+			expect(parseFloat(chip.style.top)).toBeCloseTo((600 / 1440) * 100, 1);
+			expect(parseFloat(chip.style.height)).toBeCloseTo((60 / 1440) * 100, 1);
+		} finally {
+			process.env.TZ = originalTz;
+		}
+	});
+
+	it('places a spring-forward event on its wall-clock hour despite the skipped hour', async () => {
+		const originalTz = process.env.TZ;
+		process.env.TZ = 'America/New_York';
+		vi.useFakeTimers({ toFake: ['Date'] });
+		try {
+			const springForward = new Date(2026, 2, 8, 12, 0, 0); // 2026-03-08 skips 02:00 -> 03:00.
+			vi.setSystemTime(springForward);
+			mocks.listEvents.mockResolvedValue([
+				utcEventAt(new Date(2026, 2, 8, 3, 0, 0), {
+					id: 'evt-dst-day',
+					title: 'After the jump'
+				})
+			]);
+			render(CalendarApplicationView, { module: testModule });
+			await screen.findByLabelText('Filter by source');
+			await fireEvent.click(screen.getByRole('button', { name: 'Day' }));
+
+			const chip = await screen.findByRole('button', { name: /After the jump/ });
+			// 03:00 wall clock -> the 180-minute row, not the 120-minute elapsed row.
+			expect(parseFloat(chip.style.top)).toBeCloseTo((180 / 1440) * 100, 1);
+		} finally {
+			vi.useRealTimers();
+			process.env.TZ = originalTz;
+		}
+	});
+
+	it('clamps a multi-day event inside the day grid', async () => {
+		const originalTz = process.env.TZ;
+		process.env.TZ = 'UTC';
+		try {
+			const day = dayFromToday(0);
+			const next = dayFromToday(1);
+			mocks.listEvents.mockResolvedValue([
+				eventAt(day, {
+					id: 'evt-overnight',
+					title: 'Overnight deploy',
+					starts_at: `${day}T22:00:00Z`,
+					ends_at: `${next}T02:00:00Z`
+				})
+			]);
+			render(CalendarApplicationView, { module: testModule });
+			await screen.findByLabelText('Filter by source');
+			await fireEvent.click(screen.getByRole('button', { name: 'Day' }));
+
+			const chip = await screen.findByRole('button', { name: /Overnight deploy/ });
+			const top = parseFloat(chip.style.top);
+			const height = parseFloat(chip.style.height);
+			expect(top).toBeCloseTo((22 / 24) * 100, 1);
+			expect(height).toBeGreaterThan(0);
+			expect(top + height).toBeLessThanOrEqual(100.001);
+		} finally {
+			process.env.TZ = originalTz;
+		}
 	});
 });

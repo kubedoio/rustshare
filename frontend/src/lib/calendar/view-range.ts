@@ -1,11 +1,11 @@
 export type CalendarView = 'day' | 'week' | 'month' | 'agenda';
 
-export const VIEW_OPTIONS: { id: CalendarView; label: string }[] = [
+export const VIEW_OPTIONS = [
 	{ id: 'day', label: 'Day' },
 	{ id: 'week', label: 'Work week' },
 	{ id: 'month', label: 'Month' },
 	{ id: 'agenda', label: 'Agenda' }
-];
+] as const satisfies readonly { id: CalendarView; label: string }[];
 
 export function startOfDay(date: Date): Date {
 	return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -44,6 +44,10 @@ export function windowRange(view: CalendarView, cursor: Date): { from: Date; to:
 		}
 		case 'agenda':
 			return { from: day, to: addDays(day, 30) };
+		default: {
+			const _never: never = view;
+			throw new Error(`Unhandled calendar view: ${String(_never)}`);
+		}
 	}
 }
 
@@ -58,5 +62,9 @@ export function shiftWindow(view: CalendarView, cursor: Date, direction: 1 | -1)
 			return new Date(cursor.getFullYear(), cursor.getMonth() + direction, 1);
 		case 'agenda':
 			return addDays(cursor, 30 * direction);
+		default: {
+			const _never: never = view;
+			throw new Error(`Unhandled calendar view: ${String(_never)}`);
+		}
 	}
 }
