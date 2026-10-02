@@ -69,18 +69,14 @@
 			: (['calendar-events', fromIso, toIso] as const)
 	);
 
-	const eventsQuery = createQuery<CalendarEvent[]>({
-		queryKey: eventQueryKey as unknown as string[],
-		queryFn: () =>
-			calendarApi.listEvents({
-				from: fromIso,
-				to: toIso,
-				sourceIds: activeSourceId ? [activeSourceId] : undefined
-			})
-	});
+	const eventsQuery = createQuery<CalendarEvent[]>(buildEventQueryOptions());
 
 	$effect(() => {
-		eventsQuery.setOptions({
+		eventsQuery.setOptions(buildEventQueryOptions());
+	});
+
+	function buildEventQueryOptions() {
+		return {
 			queryKey: eventQueryKey as unknown as string[],
 			queryFn: () =>
 				calendarApi.listEvents({
@@ -88,8 +84,8 @@
 					to: toIso,
 					sourceIds: activeSourceId ? [activeSourceId] : undefined
 				})
-		});
-	});
+		};
+	}
 
 	const sourcesQuery = createQuery<CalendarSource[]>({
 		queryKey: ['calendar-sources'],
@@ -104,6 +100,7 @@
 			description: string;
 			starts_at: string;
 			ends_at: string;
+			timezone: string | null;
 		}) => {
 			if (input.id) {
 				return calendarApi.updateEvent(input.id, {
@@ -111,7 +108,8 @@
 					location: input.location || null,
 					description: input.description || null,
 					starts_at: input.starts_at,
-					ends_at: input.ends_at
+					ends_at: input.ends_at,
+					timezone: input.timezone
 				});
 			}
 			return calendarApi.createEvent({
@@ -119,7 +117,8 @@
 				location: input.location || null,
 				description: input.description || null,
 				starts_at: input.starts_at,
-				ends_at: input.ends_at
+				ends_at: input.ends_at,
+				timezone: input.timezone
 			});
 		},
 		onSuccess: async (_data, variables) => {
@@ -220,15 +219,24 @@
 			: `${windowRange.from.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${addDays(windowRange.to, -1).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
 	);
 
+	// All-day events carry their wall-clock date in original_date; the
+	// starts_at/ends_at instants are UTC midnights that can shift to the
+	// previous local day for negative-offset users. Compare calendar-date
+	// fields directly, and treat the all-day ends_at as an exclusive DTEND.
 	function eventsOn(events: CalendarEvent[], date: Date): CalendarEvent[] {
+		const dayStart = startOfDay(date).getTime();
+		const dayEnd = dayStart + DAY_MS;
+		const dayKey = toLocalInputDate(date);
 		return events
 			.filter((event) => {
-				const start = new Date(event.starts_at);
-				return (
-					start.getFullYear() === date.getFullYear() &&
-					start.getMonth() === date.getMonth() &&
-					start.getDate() === date.getDate()
-				);
+				if (event.all_day) {
+					const startDay = (event.original_date ?? event.starts_at).slice(0, 10);
+					const endDay = event.ends_at.slice(0, 10);
+					return startDay <= dayKey && dayKey < endDay;
+				}
+				const start = new Date(event.starts_at).getTime();
+				const end = new Date(event.ends_at).getTime();
+				return start < dayEnd && end > dayStart;
 			})
 			.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
 	}
@@ -247,6 +255,11 @@
 
 	function formatTime(iso: string): string {
 		return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+	}
+
+	function eventTimeLabel(event: CalendarEvent): string {
+		if (event.all_day) return 'All day';
+		return `${formatTime(event.starts_at)} – ${formatTime(event.ends_at)}`;
 	}
 
 	function sourceAttribution(event: CalendarEvent): string {
@@ -298,7 +311,8 @@
 			location: formLocation.trim(),
 			description: formDescription.trim(),
 			starts_at: start.toISOString(),
-			ends_at: end.toISOString()
+			ends_at: end.toISOString(),
+			timezone: editingEvent?.timezone ?? null
 		});
 	}
 
@@ -444,7 +458,7 @@
 											)}"
 											onclick={() => openDetail(event)}
 										>
-											{formatTime(event.starts_at)}
+											{#if !event.all_day}{formatTime(event.starts_at)}{/if}
 											{event.title}
 										</button>
 									{/each}
@@ -479,7 +493,7 @@
 											)}"
 											onclick={() => openDetail(event)}
 										>
-											{formatTime(event.starts_at)}
+											{#if !event.all_day}{formatTime(event.starts_at)}{/if}
 											{event.title}
 										</button>
 									{/each}
@@ -523,7 +537,7 @@
 										>
 											<span class="h-2 w-2 shrink-0 rounded-full {eventColor(event)}"></span>
 											<span class="w-24 shrink-0 text-2xs text-base-content/60">
-												{formatTime(event.starts_at)} – {formatTime(event.ends_at)}
+												{eventTimeLabel(event)}
 											</span>
 											<span class="truncate text-sm text-base-content">{event.title}</span>
 										</button>

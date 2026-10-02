@@ -216,6 +216,80 @@ describe('CalendarApplicationView', () => {
 		expect(mocks.createEvent).toHaveBeenCalledWith(expect.objectContaining({ title: 'Dentist' }));
 	});
 
+	it('buckets all-day events by original_date and treats ends_at as exclusive', async () => {
+		const day = dayFromToday(3);
+		const nextDay = dayFromToday(4);
+		// starts_at instant falls on the PREVIOUS UTC day (mimics a
+		// negative-offset user seeing a UTC-midnight all-day start); the
+		// original_date wall-clock date must win.
+		mocks.listEvents.mockResolvedValue([
+			eventAt(day, {
+				id: 'evt-allday',
+				title: 'All hands',
+				all_day: true,
+				original_date: day,
+				starts_at: `${day}T00:00:00+14:00`,
+				ends_at: `${nextDay}T00:00:00+14:00`
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		const dayLabel = new Date(`${day}T12:00:00`).toLocaleDateString();
+		const cell = (
+			await screen.findByRole('button', { name: `Create event on ${dayLabel}` })
+		).closest('.min-h-24')!;
+		expect(cell.textContent).toContain('All hands');
+
+		// Exclusive DTEND: the following day must not show the event.
+		const nextDayLabel = new Date(`${nextDay}T12:00:00`).toLocaleDateString();
+		const nextCell = screen
+			.getByRole('button', { name: `Create event on ${nextDayLabel}` })
+			.closest('.min-h-24')!;
+		expect(nextCell.textContent).not.toContain('All hands');
+	});
+
+	it('renders multi-day events on every covered day', async () => {
+		const start = dayFromToday(3);
+		const middle = dayFromToday(4);
+		const end = dayFromToday(5);
+		mocks.listEvents.mockResolvedValue([
+			eventAt(start, {
+				id: 'evt-multiday',
+				title: 'Roadtrip',
+				starts_at: `${start}T22:00:00`,
+				ends_at: `${end}T02:00:00`
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		// Covers the start day, the full middle day, and the end day.
+		expect((await screen.findAllByText(/Roadtrip/)).length).toBe(3);
+		for (const day of [start, middle, end]) {
+			const label = new Date(`${day}T12:00:00`).toLocaleDateString();
+			const cell = screen
+				.getByRole('button', { name: `Create event on ${label}` })
+				.closest('.min-h-24')!;
+			expect(cell.textContent).toContain('Roadtrip');
+		}
+	});
+
+	it('preserves the existing timezone when editing an event', async () => {
+		mocks.listEvents.mockResolvedValue([
+			eventAt(dayFromToday(1), { id: 'evt-tz', timezone: 'Europe/Berlin' })
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+		await fireEvent.click(await screen.findByRole('button', { name: /Edit event/ }));
+		await fireEvent.submit(screen.getByRole('dialog', { name: 'Edit event' }));
+
+		await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1));
+		expect(mocks.updateEvent).toHaveBeenCalledWith(
+			'evt-tz',
+			expect.objectContaining({ timezone: 'Europe/Berlin' })
+		);
+	});
+
 	it('points the empty state at the calendar settings page', async () => {
 		render(CalendarApplicationView, { module: testModule });
 

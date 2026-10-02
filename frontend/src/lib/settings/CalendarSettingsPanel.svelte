@@ -13,7 +13,10 @@
 	const importJobsQuery = createQuery({
 		queryKey: ['calendar-import-jobs'],
 		queryFn: () => calendarApi.listImportJobs(),
-		refetchInterval: 3000
+		refetchInterval: (query) =>
+			query.state.data?.some((job) => job.status === 'pending' || job.status === 'running')
+				? 3000
+				: false
 	});
 
 	let importInput: HTMLInputElement | null = $state(null);
@@ -65,6 +68,7 @@
 			toastStore.show(`Import queued for ${file.name} (${result.status})`, 'success');
 			await queryClient.invalidateQueries({ queryKey: ['calendar-import-jobs'] });
 			await queryClient.invalidateQueries({ queryKey: ['calendar-sources'] });
+			await queryClient.invalidateQueries({ queryKey: ['calendar-events'] });
 		} catch (error) {
 			toastStore.show(
 				`Import failed: ${error instanceof Error ? error.message : 'unknown error'}`,
