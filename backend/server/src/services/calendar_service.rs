@@ -959,10 +959,22 @@ impl CalendarService {
                 .map_err(|e| CalendarError::Storage(e.to_string()))?;
             tx.commit().await.map_err(tx_error)?;
         } else {
-            self.metadata_store
-                .update_calendar_event(&event)
+            // Use the in-transaction helper even without an outbox: its
+            // rows-affected result detects a row concurrently soft-deleted (or
+            // no longer owned by the caller) after the read above, which the
+            // non-transactional wrapper would discard — returning 200 with
+            // stale values instead of 404.
+            let mut tx = self.metadata_store.pool().begin().await.map_err(tx_error)?;
+            let updated = self
+                .metadata_store
+                .update_calendar_event_in_tx(&mut tx, &event)
                 .await
                 .map_err(db_error)?;
+            if !updated {
+                tx.rollback().await.map_err(tx_error)?;
+                return Err(CalendarError::NotFound(event_id));
+            }
+            tx.commit().await.map_err(tx_error)?;
         }
         Ok(event)
     }
@@ -1087,10 +1099,13 @@ impl CalendarService {
             .list_calendar_event_overrides(tenant_id, owner_id, source_ids)
             .await
             .map_err(db_error)?;
-        let mut suppressed_by_uid: HashMap<&str, Vec<String>> = HashMap::new();
+        // Keyed by `(source_id, external_uid)`: two sources may expose the
+        // same external UID, and an override in one must not suppress the
+        // other source's legitimate occurrence.
+        let mut suppressed_by_uid: HashMap<(Uuid, &str), Vec<String>> = HashMap::new();
         for key in &overrides {
             suppressed_by_uid
-                .entry(key.external_uid.as_str())
+                .entry((key.source_id, key.external_uid.as_str()))
                 .or_default()
                 .push(key.recurrence_id.clone());
         }
@@ -1108,7 +1123,7 @@ impl CalendarService {
                 let mut override_starts: Vec<String> = row
                     .external_uid
                     .as_deref()
-                    .and_then(|uid| suppressed_by_uid.get(uid))
+                    .and_then(|uid| suppressed_by_uid.get(&(row.source_id, uid)))
                     .cloned()
                     .unwrap_or_default();
                 override_starts.extend(

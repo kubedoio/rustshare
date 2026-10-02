@@ -127,8 +127,11 @@ Additional rulings:
   transaction as the state change, so the mutation and its envelope commit or
   roll back together. The per-run `.imported.v1` is published best-effort
   *after* the import/sync run commits; a failed publication is logged and the
-  run is not retried, so consumers must treat these events as at-least-once
-  and deduplicate by envelope id, per `0031-durable-integration-events.md`.
+  run is not retried, so an event that never reaches the outbox is not
+  redelivered. The per-run guarantee is therefore at-most-once at publish
+  time — the outbox provides at-least-once only once a row is persisted.
+  Consumers must deduplicate by envelope id, per
+  `0031-durable-integration-events.md`.
   Calendar becomes a third outbox
   publisher (after Files and Chat) through the
   generic `OutboxStore::insert_in_tx` path, which already validates

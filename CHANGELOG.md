@@ -21,11 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   incremental updates and full-resync fallback. Internal create/update/delete
   publish `io.elembra.calendar.event.*.v1` transactionally with the mutation,
   while per-run import/sync `imported.v1` events are best-effort after the run
-  commits (counts and identifiers only, per minimum-safe-data; at-least-once,
-  dedupe by envelope id). Disconnecting an OAuth source wipes the local tokens
-  and parks the source at `auth_required` without a provider-side session
-  revoke; the settings panel gains provider connect/disconnect/resync with
-  import-job status.
+  commits (counts and identifiers only, per minimum-safe-data; at-most-once at
+  publish time, at-least-once once outbox-persisted, dedupe by envelope id).
+  Disconnecting an OAuth source wipes the local tokens
+  and parks the source at `auth_required` without a Microsoft session
+  revoke (Google's best-effort token revocation is unchanged); the settings
+  panel gains provider connect/disconnect/resync with import-job status.
 
 ### Changed
 

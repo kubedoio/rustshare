@@ -125,9 +125,12 @@ cleared (empty is a `400`).
 
 ### `DELETE /api/v1/calendar/events/{id}`
 
-Soft-delete an internal event. `200 { "ok": true }` (idempotent; deleting
-twice returns `200`), `404` unknown, `409` read-only mirror. Publishes
-`io.elembra.calendar.event.deleted.v1`.
+Soft-delete an internal event. `200 { "ok": true }`. Deletion is idempotent:
+an already-deleted, never-existing, or foreign-tenant ID is a successful no-op
+(`200`), so a cross-tenant ID is indistinguishable from a random one. A live
+row in the caller's tenant that is owned by someone else is a `404`; a
+read-only mirror is a `409`. Publishes `io.elembra.calendar.event.deleted.v1`
+only when a row was actually deleted.
 
 ## Sources
 
@@ -218,7 +221,8 @@ Failure codes in the redirect: `oauth_state`, `oauth_exchange`,
 ### `POST /api/v1/calendar/sources/{id}/disconnect`
 
 Deletes the stored tokens and sets `status: "auth_required"` (events remain
-until the source is deleted). No provider-side session revoke is attempted.
+until the source is deleted). No Microsoft session revoke is attempted;
+Google's best-effort token revocation is unchanged.
 `409` while a live sync lease holds the source; `200 { "ok": true }` / `404` /
 `400` for non-OAuth sources.
 

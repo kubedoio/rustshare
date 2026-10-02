@@ -1124,15 +1124,25 @@ async fn outbox_publish_rolls_back_with_source_transaction() {
 // ---------------------------------------------------------------------------
 
 async fn insert_google_source(pool: &PgPool, tenant_id: Uuid, owner_id: Uuid) -> Uuid {
+    insert_google_source_with_account(pool, tenant_id, owner_id, "u@example.com").await
+}
+
+async fn insert_google_source_with_account(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    owner_id: Uuid,
+    account: &str,
+) -> Uuid {
     let source_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO calendar_sources
             (id, tenant_id, owner_id, kind, display_name, external_account, external_calendar_id, status)
-         VALUES ($1, $2, $3, 'google', 'Test Google', 'u@example.com', 'primary', 'healthy')",
+         VALUES ($1, $2, $3, 'google', 'Test Google', $4, 'primary', 'healthy')",
     )
     .bind(source_id)
     .bind(tenant_id)
     .bind(owner_id)
+    .bind(account)
     .execute(pool)
     .await
     .expect("insert google source");
@@ -1350,6 +1360,92 @@ async fn moved_recurring_override_outside_window_suppresses_original_slot() {
                 || event["instance_start"] == "2026-10-12T14:00:00Z"),
         "the moved slot must not appear at its original time"
     );
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+/// Override suppression is keyed by `(source_id, external_uid)`: two sources
+/// exposing the same external UID must not let one source's override suppress
+/// the other source's legitimate occurrence.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn override_in_one_source_does_not_suppress_other_source_with_same_uid() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_override_cross_source", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+
+    let source_a = insert_google_source(&state.db_pool, tenant_id, user.id).await;
+    let source_b =
+        insert_google_source_with_account(&state.db_pool, tenant_id, user.id, "other@example.com")
+            .await;
+
+    // Both sources expose a recurring series under the SAME external UID.
+    for source_id in [source_a, source_b] {
+        insert_mirrored_event(
+            &state.db_pool,
+            tenant_id,
+            user.id,
+            source_id,
+            "shared-uid",
+            None,
+            "Shared series",
+            "2026-10-05T14:00:00Z",
+            "2026-10-05T15:00:00Z",
+            "confirmed",
+            Some("FREQ=WEEKLY;COUNT=2"),
+        )
+        .await;
+    }
+    // Source A cancels its 10-12 instance.
+    insert_mirrored_event(
+        &state.db_pool,
+        tenant_id,
+        user.id,
+        source_a,
+        "shared-uid",
+        Some("2026-10-12T14:00:00Z"),
+        "Shared series",
+        "2026-10-12T14:00:00Z",
+        "2026-10-12T15:00:00Z",
+        "cancelled",
+        None,
+    )
+    .await;
+
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events?from=2026-10-01T00:00:00Z&to=2026-10-31T00:00:00Z")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    let events = body["events"].as_array().unwrap();
+
+    let source_b_starts: Vec<&str> = events
+        .iter()
+        .filter(|event| event["source_id"] == source_b.to_string())
+        .map(|event| event["instance_start"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        source_b_starts,
+        vec!["2026-10-05T14:00:00Z", "2026-10-12T14:00:00Z"],
+        "source B's 10-12 occurrence must survive source A's override"
+    );
+    let source_a_starts: Vec<&str> = events
+        .iter()
+        .filter(|event| event["source_id"] == source_a.to_string())
+        .map(|event| event["instance_start"].as_str().unwrap())
+        .collect();
+    assert_eq!(source_a_starts, vec!["2026-10-05T14:00:00Z"]);
 
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }

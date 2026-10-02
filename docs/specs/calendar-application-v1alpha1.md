@@ -353,8 +353,10 @@ authoritative; Elembra stores a read-only cache.
 The three internal-mutation events are published transactionally with the
 mutation (outbox row in the same commit). The per-run `imported.v1` is
 published best-effort *after* the import/sync run commits — a failed
-publication is logged and does not fail or retry the run. Delivery is
-therefore at-least-once; consumers must deduplicate by envelope id. Envelope
+publication is logged and does not fail or retry the run, so an event that
+never reaches the outbox is not redelivered: the per-run guarantee is
+at-most-once at publish time, and the outbox provides at-least-once only once
+a row is persisted. Consumers must deduplicate by envelope id. Envelope
 per `integration-event-v1alpha1.md`:
 
 - `io.elembra.calendar.event.created.v1` — internal event created.
@@ -397,7 +399,8 @@ Normative request/response definitions live in
   while a live sync lease holds the source.
 - `POST /api/v1/calendar/sources/{id}/disconnect` — wipe the stored tokens and
   park the source at `auth_required`; `409` while a live sync lease holds the
-  source. No provider-side session revoke is attempted.
+  source. No Microsoft session revoke is attempted; Google's best-effort token
+  revocation is unchanged.
 - Stretch: `GET /api/v1/calendar/feed/{token}` — read-only per-user ICS export
   feed; feed tokens are created/revoked via session-authenticated `POST`/`DELETE
   /api/v1/calendar/feed-token`. (axum 0.8 matches the whole final segment, so a
