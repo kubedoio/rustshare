@@ -255,23 +255,16 @@ pub async fn run_sync(
     // failures keep the previous watermark so dashboards do not report a
     // "sync" that changed nothing.
     let synced = matches!(outcome, SyncOutcome::Completed { .. });
-    if let SyncOutcome::Completed {
-        upserted,
-        soft_deleted,
-        ..
-    } = &outcome
-    {
-        // One imported.v1 per completed run, counts + source ResourceRef
-        // only (best-effort; failures are logged inside the helper).
-        crate::services::calendar_service::publish_imported_event(
-            &outbox,
-            source.tenant_id,
-            source.owner_id,
-            source_id,
-            serde_json::json!({ "upserted": upserted, "soft_deleted": soft_deleted }),
-        )
-        .await;
-    }
+    // Captured before the plan match consumes `outcome`; published only after
+    // the run state (cursor, watermark, lease) persisted successfully below.
+    let completed_counts = match &outcome {
+        SyncOutcome::Completed {
+            upserted,
+            soft_deleted,
+            ..
+        } => Some((*upserted, *soft_deleted)),
+        _ => None,
+    };
     let now = Utc::now();
     // Pair the preserved cursor with its kind; an unknown kind writes no
     // cursor at all rather than persisting it under the wrong kind.
@@ -352,7 +345,7 @@ pub async fn run_sync(
     let _ = store
         .heartbeat_calendar_source_lease(source_id, &worker_id)
         .await;
-    if let Err(e) = store
+    let persisted = store
         .finish_calendar_source_sync(
             source_id,
             &worker_id,
@@ -363,8 +356,23 @@ pub async fn run_sync(
             synced,
         )
         .await
-    {
-        tracing::error!(source_id = %source_id, "failed to release calendar sync lease: {e}");
+        .inspect_err(|e| {
+            tracing::error!(source_id = %source_id, "failed to release calendar sync lease: {e}");
+        })
+        .is_ok();
+    if let Some((upserted, soft_deleted)) = completed_counts.filter(|_| persisted) {
+        // One imported.v1 per completed run, counts + source ResourceRef
+        // only. Published after the run state persisted so a failed persist
+        // cannot leave a retried run double-publishing; best-effort — a
+        // publish failure is logged inside the helper and never fails the run.
+        crate::services::calendar_service::publish_imported_event(
+            &outbox,
+            source.tenant_id,
+            source.owner_id,
+            source_id,
+            serde_json::json!({ "upserted": upserted, "soft_deleted": soft_deleted }),
+        )
+        .await;
     }
     if let Some(status) = plan.status {
         if let Err(e) = store

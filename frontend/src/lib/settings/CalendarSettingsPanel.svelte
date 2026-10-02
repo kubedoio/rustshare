@@ -115,10 +115,8 @@
 					'info'
 				);
 			} else {
-				toastStore.show(
-					`Could not start ${KIND_LABELS[kind]} connect: ${error instanceof Error ? error.message : 'unknown error'}`,
-					'error'
-				);
+				console.debug('calendar provider connect failed', error);
+				toastStore.show(`Could not start ${KIND_LABELS[kind]} connect. Try again.`, 'error');
 			}
 		} finally {
 			connecting = null;
@@ -138,10 +136,8 @@
 			await calendarApi.disconnectSource(source.id);
 			toastStore.show(`Disconnected ${source.display_name}`, 'success');
 		} catch (error) {
-			toastStore.show(
-				`Disconnect failed: ${error instanceof Error ? error.message : 'unknown error'}`,
-				'error'
-			);
+			console.debug('calendar source disconnect failed', error);
+			toastStore.show('Disconnect failed. Try again.', 'error');
 		} finally {
 			await queryClient.invalidateQueries({ queryKey: ['calendar-sources'] });
 		}
@@ -153,14 +149,12 @@
 			await calendarApi.resyncSource(source.id);
 			toastStore.show(`Resync requested for ${source.display_name}`, 'success');
 		} catch (error) {
-			const message =
-				error instanceof ApiError && error.status === 409
-					? 'A sync is already running for this source.'
-					: `Resync failed: ${error instanceof Error ? error.message : 'unknown error'}`;
-			toastStore.show(
-				message,
-				error instanceof ApiError && error.status === 409 ? 'info' : 'error'
-			);
+			if (error instanceof ApiError && error.status === 409) {
+				toastStore.show('A sync is already running for this source.', 'info');
+			} else {
+				console.debug('calendar source resync failed', error);
+				toastStore.show('Resync failed. Try again.', 'error');
+			}
 		} finally {
 			resyncingId = null;
 		}
@@ -179,10 +173,8 @@
 			await queryClient.invalidateQueries({ queryKey: ['calendar-sources'] });
 			await queryClient.invalidateQueries({ queryKey: ['calendar-events'] });
 		} catch (error) {
-			toastStore.show(
-				`Import failed: ${error instanceof Error ? error.message : 'unknown error'}`,
-				'error'
-			);
+			console.debug('calendar .ics import failed', error);
+			toastStore.show('Import failed. Try again.', 'error');
 		} finally {
 			uploading = false;
 		}
