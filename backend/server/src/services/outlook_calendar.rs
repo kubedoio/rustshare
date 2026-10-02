@@ -7,6 +7,24 @@
 //! logged or returned. Sync mirrors the Google path
 //! (`google_calendar::SyncOutcome` taxonomy, cursor in
 //! `calendar_sync_states.cursor_value` with `cursor_kind = 'ms_delta_token'`).
+//!
+//! Two Graph behaviours the read-only delta sync must handle explicitly:
+//!
+//! * Date/time fidelity: Graph sends `dateTime` as a wall clock with up to 7
+//!   fractional digits and the zone in the separate `timeZone` field, so every
+//!   `calendarView` request carries `Prefer: outlook.timezone="UTC"` and the
+//!   parser accepts fractional, offset-less values (see `GraphTime::starts_at`).
+//! * Deletions: `calendarView/delta` reports removed events as minimal objects
+//!   under `@removed` (`reason: deleted`), not as `isCancelled` tombstones.
+//!   These soft-delete the mirrored row by `(external_uid, recurrence_id)` and
+//!   are never mapped/upserted (see `@removed` handling in `sync_source`).
+//!
+//! Disconnect performs **no** provider-side revocation call: Microsoft exposes
+//! no grant-scoped revoke endpoint within the `Calendars.Read` scope (the
+//! `revokeSignInSessions` API needs `User.RevokeSessions.All`, which this app
+//! does not request and cannot obtain without admin consent), so the effective
+//! revocation is the local token wipe and the user removes the Elembra grant
+//! from their Microsoft account.
 
 use std::time::Duration;
 
@@ -34,7 +52,6 @@ pub struct OutlookCalendarClient {
     pub token_url: String,
     pub api_base: String,
     pub me_url: String,
-    pub revoke_url: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -80,7 +97,6 @@ impl OutlookCalendarClient {
             token_url: TOKEN_URL.to_string(),
             api_base: API_BASE.to_string(),
             me_url: format!("{API_BASE}/me"),
-            revoke_url: format!("{API_BASE}/me/revokeSignInSessions"),
         }
     }
 
@@ -202,24 +218,31 @@ impl OutlookCalendarClient {
             .ok_or_else(|| OutlookError::UserInfo("response had no email".to_string()))
     }
 
-    /// Best-effort sign-in-session revocation (disconnect). **Side effect:**
-    /// `revokeSignInSessions` invalidates ALL of the user's Microsoft
-    /// sign-in sessions across every Entra-integrated app — not just this
-    /// Elembra grant. The settings panel warns about this before the user
-    /// confirms a disconnect (ADR-0037 §Security); a grant-scoped alternative
-    /// would require admin-consent Graph permissions beyond `Calendars.Read`.
-    /// Errors are logged by the caller and never propagated to the user.
+    /// Best-effort revocation reported to the disconnect caller. **No
+    /// provider HTTP call is made.** Microsoft Graph has no grant-scoped
+    /// revoke endpoint usable with the requested `offline_access
+    /// Calendars.Read` scope: `POST /me/revokeSignInSessions` requires
+    /// `User.RevokeSessions.All`, which this app registration neither requests
+    /// nor can obtain without admin consent, so the call always failed 403 in
+    /// real deployments while the UI promised a Microsoft-wide sign-out. The
+    /// effective revocation of this app's access is the local wipe of the
+    /// encrypted access/refresh tokens (performed by the caller), after which
+    /// the refresh token can no longer be exchanged; the user removes the
+    /// Elembra grant from their Microsoft account to invalidate it upstream.
+    ///
+    /// Returns `true` so the caller does not log a spurious "revocation was
+    /// not accepted" warning for a step that is intentionally a no-op.
+    ///
+    /// NOTE: kept only as the signature the (separately owned)
+    /// `CalendarService::disconnect_source` call site compiles against; that
+    /// call site can drop it entirely.
     pub async fn revoke_token(&self, access_token: &str) -> bool {
-        match self
-            .http
-            .post(&self.revoke_url)
-            .bearer_auth(access_token)
-            .send()
-            .await
-        {
-            Ok(response) => response.status().is_success(),
-            Err(_) => false,
-        }
+        let _ = access_token;
+        tracing::debug!(
+            "outlook disconnect: no provider-side revocation is available within \
+             Calendars.Read; local token wipe is the effective revocation"
+        );
+        true
     }
 }
 
@@ -256,6 +279,17 @@ struct GraphEvent {
     change_key: Option<String>,
     #[serde(rename = "isAllDay")]
     is_all_day: Option<bool>,
+    /// Present on `calendarView/delta` deletion tombstones. Graph reports
+    /// removed events as minimal objects (`{"id": "...", "@removed":
+    /// {"reason": "deleted"}}`) with no `subject`/`start`/`end`; they must be
+    /// treated as deletions, never mapped onto a live row.
+    #[serde(rename = "@removed")]
+    removed: Option<GraphRemoved>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphRemoved {
+    reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -299,33 +333,78 @@ struct GraphRange {
 }
 
 impl GraphTime {
+    /// The UTC instant for a Graph `dateTime`/`timeZone` pair.
+    ///
+    /// Graph sends `dateTime` either as an offset-qualified RFC 3339 value
+    /// (`...Z`, rare in calendar payloads) or, far more often, as an
+    /// offset-less wall clock with up to 7 fractional digits — e.g.
+    /// `2017-08-29T04:00:00.0000000` — with the zone carried separately in
+    /// `timeZone`. Both shapes must parse; the old RFC 3339 + whole-second
+    /// parse failed on the common shape and silently substituted "now".
     fn starts_at(&self) -> Option<DateTime<Utc>> {
-        // Graph returns `dateTime` (ISO, often without offset) plus
-        // `timeZone`; the UTC instant follows from the wall clock in that
-        // zone, mirroring the wall-clock read-time expansion. Providers send
-        // Z-suffixed values for UTC-zone events, so parse RFC 3339 first and
-        // only fall back to a naive parse when there is genuinely no offset.
-        if let Some(dt) = &self.date_time {
-            if let Ok(parsed) = DateTime::parse_from_rfc3339(dt) {
-                return Some(parsed.with_timezone(&Utc));
-            }
-            if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(dt, "%Y-%m-%dT%H:%M:%S") {
-                let tz = self
-                    .time_zone
-                    .as_deref()
-                    .and_then(|name| name.parse::<chrono_tz::Tz>().ok())
-                    .unwrap_or(chrono_tz::Tz::UTC);
-                return Some(
-                    naive
-                        .and_local_timezone(tz)
-                        .single()
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or(naive.and_utc()),
-                );
-            }
+        let raw = self.date_time.as_deref()?;
+        // Explicit offset (Z or ±hh:mm): the instant is unambiguous.
+        if let Ok(parsed) = DateTime::parse_from_rfc3339(raw) {
+            return Some(parsed.with_timezone(&Utc));
         }
-        None
+        // Offset-less wall clock, fractional or whole-second.
+        let naive = chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S%.f")
+            .or_else(|_| chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S"))
+            .ok()?;
+        Some(self.wall_clock_to_utc(naive))
     }
+
+    /// Interpret an offset-less wall clock in `timeZone`.
+    ///
+    /// All calendarView requests send `Prefer: outlook.timezone="UTC"`, so
+    /// Graph returns UTC wall clocks and a UTC instant is exact. If a
+    /// non-IANA zone name is nevertheless present (e.g. the Windows name
+    /// `"Pacific Standard Time"`), there is no safe conversion available: the
+    /// raw name is preserved on the row for display, but the wall clock is
+    /// taken as-is rather than silently shifted by a guessed zone. Recurrence
+    /// expansion (`calendar_service.rs::expand_master`) then falls back to UTC
+    /// for such rows, which matches the value stored here.
+    fn wall_clock_to_utc(&self, naive: chrono::NaiveDateTime) -> DateTime<Utc> {
+        match self
+            .time_zone
+            .as_deref()
+            .and_then(|name| name.parse::<chrono_tz::Tz>().ok())
+        {
+            Some(tz) => naive
+                .and_local_timezone(tz)
+                .single()
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|| naive.and_utc()),
+            None => naive.and_utc(),
+        }
+    }
+}
+
+/// The mirrored-event identity `(external_uid, recurrence_id)` for a Graph
+/// entry. Occurrences and exceptions of a recurring master ride on the
+/// master's id with the original start as the recurrence id; the master and
+/// single instances use their own id with a null recurrence id.
+///
+/// `map_event` and the full-run `present_keys` sweep both derive identity
+/// through this one function so the upserted key and the sweep key can never
+/// diverge (a mismatch would sweep a just-synced occurrence as "absent").
+fn event_identity(item: &GraphEvent) -> (String, Option<String>) {
+    match (&item.series_master_id, &item.original_start_time) {
+        (Some(master_id), Some(original)) => (
+            master_id.clone(),
+            original
+                .starts_at()
+                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)),
+        ),
+        _ => (item.id.clone(), None),
+    }
+}
+
+/// The sweep/upsert key format `external_uid|recurrence_id`, matching the
+/// `(external_uid || '|' || COALESCE(recurrence_id, ''))` expression used by
+/// `soft_delete_calendar_events_absent`.
+fn identity_key(external_uid: &str, recurrence_id: Option<&str>) -> String {
+    format!("{external_uid}|{}", recurrence_id.unwrap_or_default())
 }
 
 /// Map a Graph recurrence pattern to a verbatim RRULE. Only patterns that
@@ -391,19 +470,10 @@ fn map_rrule(recurrence: &GraphRecurrence) -> Option<String> {
 fn map_event(source: &CalendarSource, item: GraphEvent, now: DateTime<Utc>) -> CalendarEvent {
     // Instances/exceptions of a recurring master carry `seriesMasterId` and
     // `originalStartTime`; they become override rows on the master's external
-    // id (the master itself is a separate `seriesMaster` entry).
-    let (external_uid, recurrence_id) = match (&item.series_master_id, &item.original_start_time) {
-        (Some(master_id), Some(original)) => (
-            master_id.clone(),
-            Some(
-                original
-                    .starts_at()
-                    .unwrap_or(now)
-                    .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
-            ),
-        ),
-        _ => (item.id.clone(), None),
-    };
+    // id (the master itself is a separate `seriesMaster` entry). Identity is
+    // derived by the shared `event_identity` helper so it always matches the
+    // `present_keys` used by the absent-entry sweep.
+    let (external_uid, recurrence_id) = event_identity(&item);
     let fallback_start = item
         .original_start_time
         .as_ref()
@@ -468,6 +538,41 @@ fn map_event(source: &CalendarSource, item: GraphEvent, now: DateTime<Utc>) -> C
     }
 }
 
+/// Soft-delete the mirrored row for a Graph `@removed` tombstone, keyed by the
+/// same `(source_id, external_uid, recurrence_id)` identity used by the
+/// upsert. Returns the number of rows removed (0 when the mirror was never
+/// seen or is already deleted). A store failure is logged, not fatal: the next
+/// full sync's absent-entry sweep is the backstop.
+async fn soft_delete_removed_event(
+    store: &MetadataStore,
+    source: &CalendarSource,
+    external_uid: &str,
+    recurrence_id: Option<&str>,
+) -> u64 {
+    match sqlx::query(
+        r#"
+        UPDATE calendar_events
+        SET deleted_at = now(), updated_at = now()
+        WHERE source_id = $1
+          AND external_uid = $2
+          AND COALESCE(recurrence_id, '') = $3
+          AND deleted_at IS NULL
+        "#,
+    )
+    .bind(source.id)
+    .bind(external_uid)
+    .bind(recurrence_id.unwrap_or_default())
+    .execute(store.pool())
+    .await
+    {
+        Ok(result) => result.rows_affected(),
+        Err(e) => {
+            tracing::warn!(source_id = %source.id, "removed-tombstone soft delete failed: {e}");
+            0
+        }
+    }
+}
+
 /// Extract the opaque paging/delta token from a provider next/delta link.
 /// Only the token is kept and re-sent to the fixed API base (a provider
 /// answer must never redirect fetches to a caller-controlled host).
@@ -487,7 +592,9 @@ fn token_from_link(link: &str, names: &[&str]) -> Option<String> {
 
 /// One `calendarView/delta` request; classifies provider status codes so the
 /// caller can react (400/410 delta-token errors → one full resync, 429 →
-/// backoff, 401 → auth_required).
+/// backoff, 401/403 → auth_required). Sends `Prefer: outlook.timezone="UTC"`
+/// so Graph returns UTC `dateTime` wall clocks regardless of the user's
+/// mailbox timezone (see `GraphTime::starts_at`).
 async fn fetch_delta_page(
     client: &OutlookCalendarClient,
     access_token: &str,
@@ -500,6 +607,7 @@ async fn fetch_delta_page(
     let mut request = client
         .http
         .get(format!("{}/me/calendarView/delta", client.api_base))
+        .header("Prefer", "outlook.timezone=\"UTC\"")
         .bearer_auth(access_token);
     // Mid-paging requests (a `$skiptoken` from `@odata.nextLink`) take
     // priority over the mode: Graph returns nextLinks on incremental delta
@@ -532,7 +640,7 @@ async fn fetch_delta_page(
         429 => Err(OutlookError::RateLimited {
             retry_after: parse_retry_after(response.headers()),
         }),
-        401 => Err(OutlookError::AuthRequired),
+        401 | 403 => Err(OutlookError::AuthRequired),
         status => Err(OutlookError::Api(format!("HTTP {status}"))),
     }
 }
@@ -644,6 +752,7 @@ pub async fn sync_source(
         // sets it before `break`).
         let next_sync_token: Option<String>;
         let mut upserted = 0usize;
+        let mut removed_deleted = 0u64;
         let mut present_keys: Vec<String> = Vec::new();
 
         loop {
@@ -689,15 +798,29 @@ pub async fn sync_source(
             };
             let now = Utc::now();
             for item in page.value.unwrap_or_default() {
-                present_keys.push(format!(
-                    "{}|{}",
-                    item.series_master_id.as_deref().unwrap_or(&item.id),
-                    item.original_start_time
-                        .as_ref()
-                        .and_then(GraphTime::starts_at)
-                        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true))
-                        .unwrap_or_default()
-                ));
+                let (external_uid, recurrence_id) = event_identity(&item);
+                // `calendarView/delta` deletion tombstones arrive as minimal
+                // `@removed` objects with no subject/times. Mapping one would
+                // upsert a bogus confirmed row over the real mirrored event;
+                // instead soft-delete the mirror by identity and never treat
+                // the tombstone as a live entry.
+                if let Some(removed) = item.removed.as_ref() {
+                    tracing::debug!(
+                        source_id = %source.id,
+                        external_uid = %external_uid,
+                        reason = removed.reason.as_deref().unwrap_or("unknown"),
+                        "graph removed tombstone; soft-deleting mirror"
+                    );
+                    removed_deleted += soft_delete_removed_event(
+                        store,
+                        source,
+                        &external_uid,
+                        recurrence_id.as_deref(),
+                    )
+                    .await;
+                    continue;
+                }
+                present_keys.push(identity_key(&external_uid, recurrence_id.as_deref()));
                 let event = map_event(source, item, now);
                 match store.upsert_calendar_synced_event(&event).await {
                     Ok(_) => upserted += 1,
@@ -727,13 +850,15 @@ pub async fn sync_source(
             break;
         }
 
-        // Provider deletions propagate on FULL runs only: a full window
-        // payload is the complete set of live events in the window, so any
-        // in-window mirrored row missing from it was deleted upstream.
-        // Incremental deltas carry only CHANGED entries — an absent-key sweep
-        // there would soft-delete every unchanged mirrored event (upstream
-        // deletions already arrive as isCancelled tombstones).
-        let mut soft_deleted = 0u64;
+        // The absent-key sweep propagates deletions on FULL runs only: a full
+        // window payload is the complete set of live events in the window, so
+        // any in-window mirrored row missing from it was deleted upstream.
+        // Incremental deltas carry only CHANGED entries, so an absent-key
+        // sweep there would soft-delete every unchanged mirrored event;
+        // upstream deletions on incremental runs are carried explicitly as
+        // `@removed` tombstones (`removed_deleted` above), not inferred from
+        // absence.
+        let mut soft_deleted = removed_deleted;
         if !incremental {
             match store
                 .soft_delete_calendar_events_absent(
@@ -788,6 +913,53 @@ mod tests {
         assert_eq!(
             map_rrule(&recurrence).as_deref(),
             Some("FREQ=MONTHLY;BYMONTHDAY=15;COUNT=6")
+        );
+    }
+
+    #[test]
+    fn parses_graph_fractional_datetime_without_offset() {
+        let time: GraphTime = serde_json::from_value(serde_json::json!({
+            "dateTime": "2017-08-29T04:00:00.0000000",
+            "timeZone": "UTC"
+        }))
+        .unwrap();
+        assert_eq!(
+            time.starts_at(),
+            Some("2017-08-29T04:00:00Z".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn parses_offset_suffixed_datetime() {
+        let time: GraphTime = serde_json::from_value(serde_json::json!({
+            "dateTime": "2026-10-05T14:00:00Z",
+            "timeZone": "UTC"
+        }))
+        .unwrap();
+        assert_eq!(
+            time.starts_at(),
+            Some("2026-10-05T14:00:00Z".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn event_identity_matches_between_map_and_present_keys() {
+        let item: GraphEvent = serde_json::from_value(serde_json::json!({
+            "id": "master-1",
+            "type": "occurrence",
+            "seriesMasterId": "master-1",
+            "originalStartTime": {
+                "dateTime": "2026-10-12T14:00:00.0000000",
+                "timeZone": "UTC"
+            }
+        }))
+        .unwrap();
+        let (external_uid, recurrence_id) = event_identity(&item);
+        assert_eq!(external_uid, "master-1");
+        assert_eq!(recurrence_id.as_deref(), Some("2026-10-12T14:00:00Z"));
+        assert_eq!(
+            identity_key(&external_uid, recurrence_id.as_deref()),
+            "master-1|2026-10-12T14:00:00Z"
         );
     }
 

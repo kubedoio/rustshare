@@ -82,6 +82,15 @@ impl MockResponse {
         }
     }
 
+    /// Graph `ErrorAccessDenied` (HTTP 403), e.g. consent withdrawn.
+    fn access_denied() -> Self {
+        Self {
+            status: axum::http::StatusCode::FORBIDDEN,
+            body: json!({"error": {"code": "ErrorAccessDenied", "message": "Access is denied."}}),
+            retry_after: None,
+        }
+    }
+
     fn internal_error() -> Self {
         Self {
             status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -105,6 +114,10 @@ struct MockState {
     delta_queue: Mutex<VecDeque<MockResponse>>,
     /// Query strings of delta requests, in arrival order.
     delta_requests: Mutex<Vec<String>>,
+    /// `Prefer` header of each delta request, in arrival order.
+    delta_prefer_headers: Mutex<Vec<String>>,
+    /// Number of calls to the (now unused) revoke endpoint.
+    revoke_hits: Mutex<u32>,
     /// Refresh-token values seen at the token endpoint (rotation tracking).
     refresh_tokens_seen: Mutex<Vec<String>>,
     token_requests: Mutex<u32>,
@@ -191,12 +204,16 @@ fn spawn_mock_microsoft() -> (String, Arc<MockState>) {
         )
         .route(
             "/me/revokeSignInSessions",
-            post(|| async { Json(json!({})) }),
+            post(|AxumState(state): AxumState<Arc<MockState>>| async move {
+                *state.revoke_hits.lock().await += 1;
+                Json(json!({}))
+            }),
         )
         .route(
             "/me/calendarView/delta",
             get(
                 |AxumState(state): AxumState<Arc<MockState>>,
+                 headers: axum::http::HeaderMap,
                  req: axum::extract::Query<HashMap<String, String>>| async move {
                     let query = req.0;
                     state
@@ -204,6 +221,13 @@ fn spawn_mock_microsoft() -> (String, Arc<MockState>) {
                         .lock()
                         .await
                         .push(serde_urlencoded_params(&query));
+                    state.delta_prefer_headers.lock().await.push(
+                        headers
+                            .get("prefer")
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or_default()
+                            .to_string(),
+                    );
                     let queued = state.delta_queue.lock().await.pop_front();
                     let response = queued.unwrap_or_else(|| {
                         // Default: empty result; a deltaToken request advances
@@ -266,7 +290,6 @@ fn mock_client(base: &str) -> OutlookCalendarClient {
     client.api_base = base.to_string();
     client.me_url = format!("{base}/me");
     client.auth_base = format!("{base}/authorize");
-    client.revoke_url = format!("{base}/me/revokeSignInSessions");
     client
 }
 
@@ -458,7 +481,7 @@ impl Harness {
     }
 }
 
-/// Standard delta entry used across tests.
+/// Standard delta entry used across tests (Z-suffixed RFC 3339 dates).
 fn graph_event(id: &str, subject: &str, start: &str, end: &str) -> Value {
     json!({
         "id": id,
@@ -469,6 +492,13 @@ fn graph_event(id: &str, subject: &str, start: &str, end: &str) -> Value {
         "end": {"dateTime": end, "timeZone": "UTC"},
         "isAllDay": false,
     })
+}
+
+/// Graph's real `dateTime` shape: an offset-less wall clock with 7 fractional
+/// digits, zone carried separately in `timeZone` (e.g.
+/// `2017-08-29T04:00:00.0000000`).
+fn graph_time(date_time: &str, time_zone: &str) -> Value {
+    json!({"dateTime": date_time, "timeZone": time_zone})
 }
 
 // ---------------------------------------------------------------------------
@@ -1710,4 +1740,332 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
     );
 
     harness.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// Microsoft Graph review-finding regressions
+// ---------------------------------------------------------------------------
+
+/// O2a: Graph `calendarView/delta` requests must carry
+/// `Prefer: outlook.timezone="UTC"` so `dateTime` values are UTC wall clocks.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn delta_requests_send_prefer_utc_header() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_microsoft();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_o_prefer").await;
+    let source = harness.create_outlook_source(user.id).await;
+    let client = mock_client(&base);
+
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "value": [graph_event("evt-p", "T", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
+            "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-prefer"
+        })));
+    }
+    let outcome = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    assert!(matches!(outcome, SyncOutcome::Completed { .. }));
+
+    let prefer = mock.delta_prefer_headers.lock().await;
+    assert_eq!(
+        prefer.as_slice(),
+        [r#"outlook.timezone="UTC""#.to_string()],
+        "every delta request must request UTC wall clocks: {prefer:?}"
+    );
+
+    harness.cleanup().await;
+}
+
+/// O2b: the real Graph payload shape — offset-less `dateTime` with 7
+/// fractional digits and the zone in `timeZone` — must parse to the correct
+/// instant, not silently fall back to "now".
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn non_z_fractional_datetime_parses_to_correct_instant() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_microsoft();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_o_frac").await;
+    let source = harness.create_outlook_source(user.id).await;
+    let client = mock_client(&base);
+
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "value": [json!({
+                "id": "evt-frac",
+                "type": "singleInstance",
+                "changeKey": "change-evt-frac",
+                "subject": "Fractional",
+                "start": graph_time("2017-08-29T04:00:00.0000000", "UTC"),
+                "end": graph_time("2017-08-29T05:00:00.0000000", "UTC"),
+                "isAllDay": false,
+            })],
+            "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-frac"
+        })));
+    }
+    let outcome = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    assert!(matches!(
+        outcome,
+        SyncOutcome::Completed { upserted: 1, .. }
+    ));
+
+    let events = harness.list_source_events(source.id).await;
+    let event = events
+        .iter()
+        .find(|event| event.external_uid.as_deref() == Some("evt-frac"))
+        .expect("fractional event materialized");
+    let expected: chrono::DateTime<chrono::Utc> = "2017-08-29T04:00:00Z".parse().unwrap();
+    assert_eq!(
+        event.starts_at, expected,
+        "offset-less 7-digit fractional dateTime must parse to the correct instant"
+    );
+    assert_eq!(event.timezone, "UTC");
+
+    harness.cleanup().await;
+}
+
+/// O2c: a `seriesMaster` + occurrence + exception round-trips, and on the
+/// following FULL sync the occurrence is NOT swept as absent. Before the fix
+/// the occurrence's `recurrence_id` (built with a `now` fallback) and the
+/// `present_keys` entry (built with `unwrap_or_default`) disagreed, so the
+/// sweep soft-deleted the occurrence it had just upserted.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn series_occurrence_not_swept_on_following_full_sync() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_microsoft();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_o_series").await;
+    let source = harness.create_outlook_source(user.id).await;
+    let client = mock_client(&base);
+
+    fn series_payload(delta: &str) -> Value {
+        json!({
+            "value": [
+                {
+                    "id": "master-1",
+                    "type": "seriesMaster",
+                    "changeKey": "change-master-1",
+                    "subject": "Weekly standup",
+                    "start": graph_time("2026-10-05T14:00:00.0000000", "UTC"),
+                    "end": graph_time("2026-10-05T15:00:00.0000000", "UTC"),
+                    "recurrence": {
+                        "pattern": {"type": "weekly", "interval": 1, "daysOfWeek": ["monday"]},
+                        "range": {"startDate": "2026-10-05", "numberOfOccurrences": 3}
+                    }
+                },
+                {
+                    "id": "master-1",
+                    "type": "occurrence",
+                    "seriesMasterId": "master-1",
+                    "changeKey": "change-occurrence",
+                    "subject": "Weekly standup",
+                    "originalStartTime": graph_time("2026-10-12T14:00:00.0000000", "UTC"),
+                    "start": graph_time("2026-10-12T14:00:00.0000000", "UTC"),
+                    "end": graph_time("2026-10-12T15:00:00.0000000", "UTC")
+                },
+                {
+                    "id": "master-1",
+                    "type": "exception",
+                    "seriesMasterId": "master-1",
+                    "changeKey": "change-exception",
+                    "subject": "Moved occurrence",
+                    "originalStartTime": graph_time("2026-10-19T14:00:00.0000000", "UTC"),
+                    "start": graph_time("2026-10-19T18:00:00.0000000", "UTC"),
+                    "end": graph_time("2026-10-19T19:00:00.0000000", "UTC")
+                }
+            ],
+            "@odata.deltaLink": format!("http://graph.example/v1.0/me/calendarView/delta?$deltatoken={delta}")
+        })
+    }
+
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::ok(series_payload("cursor-series-1")));
+    }
+    let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    let SyncOutcome::Completed {
+        upserted,
+        soft_deleted,
+        ..
+    } = first
+    else {
+        panic!("expected Completed, got {first:?}");
+    };
+    assert_eq!(upserted, 3);
+    assert_eq!(
+        soft_deleted, 0,
+        "the occurrence's upsert key must match its present-key on the same run"
+    );
+
+    let events = harness.list_source_events(source.id).await;
+    assert_eq!(
+        events.len(),
+        3,
+        "master + occurrence + exception all stored"
+    );
+    let occurrence = events
+        .iter()
+        .find(|event| event.recurrence_id.as_deref() == Some("2026-10-12T14:00:00Z"))
+        .expect("occurrence stored under its parsed recurrence id");
+    assert_eq!(occurrence.status, "confirmed");
+    let exception = events
+        .iter()
+        .find(|event| event.recurrence_id.as_deref() == Some("2026-10-19T14:00:00Z"))
+        .expect("exception stored under its parsed recurrence id");
+
+    // Run 2: forced FULL resync with the same payload. Nothing changed, so
+    // nothing may be swept.
+    sqlx::query(
+        "UPDATE calendar_sync_states SET cursor_value = NULL, cursor_kind = NULL
+         WHERE source_id = $1",
+    )
+    .bind(source.id)
+    .execute(&harness.pool)
+    .await
+    .expect("clear cursor for forced full resync");
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::ok(series_payload("cursor-series-2")));
+    }
+    let reloaded = harness.reload_source(source.id).await;
+    let second = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
+    let SyncOutcome::Completed {
+        upserted,
+        soft_deleted,
+        ..
+    } = second
+    else {
+        panic!("expected Completed, got {second:?}");
+    };
+    assert_eq!(upserted, 3);
+    assert_eq!(
+        soft_deleted, 0,
+        "an unchanged occurrence must not be swept as absent"
+    );
+
+    let events = harness.list_source_events(source.id).await;
+    assert_eq!(events.len(), 3, "no occurrence was swept on the full run");
+    assert!(events.iter().any(|event| event.id == occurrence.id));
+    assert!(events.iter().any(|event| event.id == exception.id));
+
+    harness.cleanup().await;
+}
+
+/// O1: a Graph `@removed` deletion tombstone must soft-delete the previously
+/// mirrored event and must not upsert a bogus empty live row over it.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn removed_tombstone_soft_deletes_mirror_without_bogus_row() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_microsoft();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_o_removed").await;
+    let source = harness.create_outlook_source(user.id).await;
+    let client = mock_client(&base);
+
+    // Run 1: full sync mirrors the event.
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "value": [graph_event("evt-del", "Doomed", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
+            "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-del-1"
+        })));
+    }
+    let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    assert!(matches!(first, SyncOutcome::Completed { upserted: 1, .. }));
+    let mirrored = harness.list_source_events(source.id).await;
+    assert_eq!(mirrored.len(), 1);
+
+    // Run 2: incremental delta carries the realistic minimal `@removed`
+    // tombstone (no subject/start/end).
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "value": [{"id": "evt-del", "@removed": {"reason": "deleted"}}],
+            "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-del-2"
+        })));
+    }
+    let reloaded = harness.reload_source(source.id).await;
+    let second = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
+    let SyncOutcome::Completed {
+        upserted,
+        soft_deleted,
+        ..
+    } = second
+    else {
+        panic!("expected Completed, got {second:?}");
+    };
+    assert_eq!(upserted, 0, "a tombstone is not a live upsert");
+    assert_eq!(soft_deleted, 1, "the mirror must be soft-deleted");
+
+    let events = harness.list_source_events(source.id).await;
+    assert!(
+        events.is_empty(),
+        "no live row may remain after the removal tombstone: {events:?}"
+    );
+    // The soft-deleted row is retained (not physically removed) and carries
+    // its original title — no bogus empty confirmed row overwrote it.
+    let (title, deleted_at): (String, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+        "SELECT title, deleted_at FROM calendar_events WHERE source_id = $1 AND external_uid = 'evt-del'",
+    )
+    .bind(source.id)
+    .fetch_one(&harness.pool)
+    .await
+    .expect("soft-deleted row retained");
+    assert_eq!(title, "Doomed");
+    assert!(deleted_at.is_some(), "row is soft-deleted, not live");
+
+    harness.cleanup().await;
+}
+
+/// O4: Graph HTTP 403 `ErrorAccessDenied` (consent withdrawn) must park the
+/// source as `auth_required`, not retry forever as a transient API failure.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn graph_403_access_denied_parks_auth_required() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_microsoft();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_o_403").await;
+    let source = harness.create_outlook_source(user.id).await;
+    let client = mock_client(&base);
+
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::access_denied());
+    }
+    let outcome = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    assert_eq!(
+        outcome,
+        SyncOutcome::AuthRequired,
+        "403 ErrorAccessDenied must map to AuthRequired"
+    );
+    let parked = harness.reload_source(source.id).await;
+    assert_eq!(parked.status, "auth_required");
+
+    harness.cleanup().await;
+}
+
+/// O5: disconnect performs no provider-side `revokeSignInSessions` call (the
+/// least-privileged permission is not in scope, so it always 403s); local
+/// token wipe is the effective revocation. The revoke endpoint must never be
+/// hit.
+#[tokio::test]
+async fn disconnect_revocation_makes_no_provider_call() {
+    let (base, mock) = spawn_mock_microsoft();
+    let client = mock_client(&base);
+
+    assert!(
+        client.revoke_token(TEST_ACCESS_TOKEN).await,
+        "best-effort revocation reports success for the disconnect path"
+    );
+    assert_eq!(
+        *mock.revoke_hits.lock().await,
+        0,
+        "no revokeSignInSessions request may be made"
+    );
 }
