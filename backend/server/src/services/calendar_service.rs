@@ -365,8 +365,7 @@ impl CalendarService {
         self.outlook = client.map(Arc::new);
     }
 
-    /// The configured Microsoft/Outlook client, if any (sync worker + revoke
-    /// paths).
+    /// The configured Microsoft/Outlook client, if any (sync worker path).
     pub fn outlook_client(
         &self,
     ) -> Option<Arc<crate::services::outlook_calendar::OutlookCalendarClient>> {
@@ -577,7 +576,9 @@ impl CalendarService {
         // Refuse while a live sync lease holds the source: the in-flight run's
         // terminal status write would otherwise resurrect `healthy` over the
         // token wipe (and could leave the source with no refresh token). The
-        // caller retries once the run finishes or the lease goes stale.
+        // pre-check avoids a pointless Google revocation below; the wipe itself
+        // is lease-guarded too, so a worker that claims the source in the
+        // window between this check and the wipe still wins (see below).
         let stale =
             std::time::Duration::from_secs(self.sync_lease_stale.num_seconds().max(0) as u64);
         if self
@@ -603,10 +604,17 @@ impl CalendarService {
                 }
             }
         }
-        self.metadata_store
-            .wipe_calendar_source_tokens(source_id)
+        // The lease guard is inside the wipe: 0 rows affected means a worker
+        // claimed the source after the pre-check (or the row vanished), so we
+        // must not report a successful disconnect.
+        if !self
+            .metadata_store
+            .wipe_calendar_source_tokens(source_id, stale)
             .await
-            .map_err(db_error)?;
+            .map_err(db_error)?
+        {
+            return Err(CalendarError::SyncInProgress);
+        }
         Ok(())
     }
 

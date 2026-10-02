@@ -1503,6 +1503,99 @@ async fn full_sync_sweep_soft_deletes_recurring_master_with_old_dtstart() {
     harness.cleanup().await;
 }
 
+/// R5: when a FULL payload omits a recurring series, sweeping the master must
+/// also soft-delete its override rows, even when their stored `starts_at`
+/// falls outside the sync window. The master is window-exempt, but its
+/// overrides are not; without this an orphaned override survives as a
+/// standalone event and as a stale suppression key.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn full_sync_sweep_soft_deletes_orphan_override_outside_window() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "sweep-override@test.local".to_string();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_sweep_override").await;
+    let source = harness.create_google_source(user.id, &mock).await;
+    let client = mock_client(&base);
+
+    // A recurring master mirrored earlier, DTSTART well before the window.
+    let mut event = CalendarEvent {
+        id: Uuid::new_v4(),
+        tenant_id: harness.tenant_id,
+        owner_id: user.id,
+        source_id: source.id,
+        external_uid: Some("series-old".to_string()),
+        external_etag: None,
+        recurrence_id: None,
+        title: "Old recurring series".to_string(),
+        description: None,
+        location: None,
+        starts_at: "2020-01-01T10:00:00Z".parse().unwrap(),
+        ends_at: "2020-01-01T11:00:00Z".parse().unwrap(),
+        all_day: false,
+        original_date: None,
+        timezone: "UTC".to_string(),
+        rrule: Some("FREQ=DAILY".to_string()),
+        status: "confirmed".to_string(),
+        read_only: true,
+        raw: None,
+        deleted_at: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    harness
+        .store
+        .upsert_calendar_synced_event(&event)
+        .await
+        .expect("seed old recurring master");
+
+    // An override of that master, itself outside the window.
+    event.id = Uuid::new_v4();
+    event.recurrence_id = Some("2020-01-02T10:00:00Z".to_string());
+    event.starts_at = "2020-01-02T10:00:00Z".parse().unwrap();
+    event.ends_at = "2020-01-02T11:00:00Z".parse().unwrap();
+    event.rrule = None;
+    harness
+        .store
+        .upsert_calendar_synced_event(&event)
+        .await
+        .expect("seed orphan override");
+
+    // The full payload omits the whole series (deleted upstream).
+    {
+        let mut queue = mock.events_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "items": [event_item("evt-keep", "Kept", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
+            "nextSyncToken": "cursor-override-sweep"
+        })));
+    }
+    let outcome = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    let SyncOutcome::Completed { soft_deleted, .. } = outcome else {
+        panic!("expected Completed, got {outcome:?}");
+    };
+    assert!(
+        soft_deleted >= 2,
+        "the master and its outside-window override must both be swept, got {soft_deleted}"
+    );
+
+    let rows: Vec<(String, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+        "SELECT external_uid, deleted_at FROM calendar_events \
+         WHERE source_id = $1 AND external_uid = 'series-old'",
+    )
+    .bind(source.id)
+    .fetch_all(&harness.pool)
+    .await
+    .expect("series rows");
+    assert_eq!(rows.len(), 2, "master and override rows");
+    assert!(
+        rows.iter().all(|(_, deleted_at)| deleted_at.is_some()),
+        "both the master and its outside-window override must be soft-deleted"
+    );
+
+    harness.cleanup().await;
+}
+
 /// A multi-page INCREMENTAL run must page with pageToken (in addition to the
 /// syncToken), terminate on the final page, and persist the new cursor.
 #[tokio::test]
@@ -2269,6 +2362,13 @@ async fn lease_guarded_writes_reject_a_stale_holder() {
     );
 
     let watermark_before = harness.reload_source(source.id).await.last_synced_at;
+    // Mark the source non-healthy so a stale holder's `healthy` status write
+    // would be visible if it were not rejected.
+    sqlx::query("UPDATE calendar_sources SET status = 'failed' WHERE id = $1")
+        .bind(source.id)
+        .execute(&harness.pool)
+        .await
+        .expect("seed non-healthy status");
     let finished = harness
         .store
         .finish_calendar_source_sync(
@@ -2308,6 +2408,10 @@ async fn lease_guarded_writes_reject_a_stale_holder() {
     assert_eq!(
         after.last_error, None,
         "stale finish must not write last_error"
+    );
+    assert_ne!(
+        after.status, "healthy",
+        "a stale finish must not overwrite the source status"
     );
 
     harness.cleanup().await;

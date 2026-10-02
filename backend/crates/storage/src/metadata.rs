@@ -6654,14 +6654,6 @@ impl MetadataStore {
         Ok(exists.unwrap_or(false))
     }
 
-    /// Update the mutable columns of a calendar event.
-    pub async fn update_calendar_event(&self, event: &CalendarEvent) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-        self.update_calendar_event_in_tx(&mut tx, event).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
     /// Update the mutable columns of a calendar event inside an existing
     /// transaction (atomic outbox publish, issue #315).
     ///
@@ -7562,9 +7554,22 @@ impl MetadataStore {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Wipe stored tokens and set `auth_required` (disconnect). Returns true
-    /// when a row was updated.
-    pub async fn wipe_calendar_source_tokens(&self, source_id: Uuid) -> Result<bool> {
+    /// Wipe stored tokens and set `auth_required` (disconnect).
+    ///
+    /// Lease-guarded: the wipe applies only while the source holds no live
+    /// (non-stale) sync lease, using the same staleness threshold the worker
+    /// uses. Folding the liveness check into the write makes check-and-wipe
+    /// atomic — a worker that claimed the source between the caller's
+    /// pre-check and this update wins, so an in-flight run's terminal status
+    /// write cannot resurrect a source whose tokens were just wiped. Returns
+    /// `false` when nothing was written (a live lease, or the row was
+    /// concurrently soft-deleted); the caller maps that to a 409.
+    pub async fn wipe_calendar_source_tokens(
+        &self,
+        source_id: Uuid,
+        stale: Duration,
+    ) -> Result<bool> {
+        let stale_secs = stale.as_secs_f64();
         let result = sqlx::query!(
             r#"
             UPDATE calendar_sources
@@ -7572,8 +7577,15 @@ impl MetadataStore {
                 access_token_expires_at = NULL, scopes = NULL,
                 status = 'auth_required', updated_at = now()
             WHERE id = $1 AND deleted_at IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM calendar_sync_states st
+                  WHERE st.source_id = $1
+                    AND st.locked_at IS NOT NULL
+                    AND st.locked_at >= NOW() - interval '1 second' * $2
+              )
             "#,
             source_id,
+            stale_secs,
         )
         .execute(&self.pool)
         .await?;
@@ -7690,6 +7702,13 @@ impl MetadataStore {
     /// original DTSTART even when only its in-window instances are relevant,
     /// so a master predating the window would otherwise never be swept and a
     /// series deleted upstream would expand phantom occurrences forever.
+    ///
+    /// Once a master is swept, its override rows (`recurrence_id IS NOT NULL`)
+    /// are swept with it even when their stored `starts_at` falls outside the
+    /// window: an orphaned override would otherwise still be listed as a
+    /// standalone event and returned as a stale suppression key. Overrides are
+    /// *not* blanket-exempt from the window — only those sharing the swept
+    /// master's `external_uid` are removed.
     pub async fn soft_delete_calendar_events_absent(
         &self,
         source_id: Uuid,
@@ -7697,24 +7716,44 @@ impl MetadataStore {
         window_start: DateTime<Utc>,
         window_end: DateTime<Utc>,
     ) -> Result<u64> {
-        let result = sqlx::query!(
+        let row = sqlx::query!(
             r#"
-            UPDATE calendar_events
-            SET deleted_at = now(), updated_at = now()
-            WHERE source_id = $1
-              AND deleted_at IS NULL
-              AND external_uid IS NOT NULL
-              AND (rrule IS NOT NULL OR (starts_at >= $3 AND starts_at < $4))
-              AND (external_uid || '|' || COALESCE(recurrence_id, '')) != ALL($2)
+            WITH swept_masters AS (
+                UPDATE calendar_events
+                SET deleted_at = now(), updated_at = now()
+                WHERE source_id = $1
+                  AND deleted_at IS NULL
+                  AND external_uid IS NOT NULL
+                  AND (rrule IS NOT NULL OR (starts_at >= $3 AND starts_at < $4))
+                  AND (external_uid || '|' || COALESCE(recurrence_id, '')) != ALL($2)
+                RETURNING external_uid, rrule
+            ),
+            swept_overrides AS (
+                UPDATE calendar_events
+                SET deleted_at = now(), updated_at = now()
+                WHERE source_id = $1
+                  AND deleted_at IS NULL
+                  AND recurrence_id IS NOT NULL
+                  AND rrule IS NULL
+                  AND NOT (starts_at >= $3 AND starts_at < $4)
+                  AND (external_uid || '|' || recurrence_id) != ALL($2)
+                  AND external_uid IN (
+                      SELECT external_uid FROM swept_masters WHERE rrule IS NOT NULL
+                  )
+                RETURNING id
+            )
+            SELECT
+                (SELECT count(*) FROM swept_masters)
+                    + (SELECT count(*) FROM swept_overrides) AS "count!"
             "#,
             source_id,
             present_keys,
             window_start,
             window_end,
         )
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await?;
-        Ok(result.rows_affected())
+        Ok(row.count as u64)
     }
 }
 

@@ -1625,6 +1625,84 @@ async fn update_on_soft_deleted_event_returns_404_and_publishes_nothing() {
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
 
+// B4b: the non-outbox update path (the fix that returns NotFound when
+// `update_calendar_event_in_tx` reports false). The existing test above
+// soft-deletes before the read, so it exits at the read; a true
+// read-then-delete race cannot be forced deterministically here. This test
+// therefore covers both halves: the storage helper reports `false` for a
+// soft-deleted row, and a service built WITHOUT `configure_outbox` returns
+// NotFound instead of a stale 200.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn update_without_outbox_on_soft_deleted_event_returns_404() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_update_nooutbox", tenant_id).await;
+
+    // Mirror the harness's service construction but deliberately skip
+    // `configure_outbox`, exercising the non-outbox branch.
+    let service = rustshare_server::services::calendar_service::CalendarService::new(
+        state.metadata_store.clone(),
+        Arc::new(state.secret_key.clone()),
+    );
+
+    let created = service
+        .create_event(
+            tenant_id,
+            user.id,
+            rustshare_server::services::calendar_service::NewCalendarEvent {
+                title: "No outbox".to_string(),
+                description: None,
+                location: None,
+                starts_at: "2026-10-05T14:00:00Z".parse().unwrap(),
+                ends_at: "2026-10-05T15:00:00Z".parse().unwrap(),
+                all_day: false,
+                timezone: "UTC".to_string(),
+                rrule: None,
+            },
+        )
+        .await
+        .expect("create event");
+
+    sqlx::query("UPDATE calendar_events SET deleted_at = NOW() WHERE id = $1")
+        .bind(created.id)
+        .execute(&state.db_pool)
+        .await
+        .expect("soft delete row");
+
+    // Storage helper: a soft-deleted row yields Ok(false), the signal the
+    // service branch relies on.
+    let mut tx = state.db_pool.begin().await.expect("begin tx");
+    let updated = state
+        .metadata_store
+        .update_calendar_event_in_tx(&mut tx, &created)
+        .await
+        .expect("update in tx");
+    assert!(
+        !updated,
+        "update_calendar_event_in_tx must report a soft-deleted row as not updated"
+    );
+    tx.rollback().await.expect("rollback");
+
+    // Service without an outbox must surface NotFound, not a stale 200.
+    let err = service
+        .update_event(
+            tenant_id,
+            user.id,
+            created.id,
+            rustshare_server::services::calendar_service::CalendarEventPatch {
+                title: Some("Renamed".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("update of a soft-deleted row must be NotFound");
+    assert!(matches!(err, CalendarError::NotFound(_)), "got {err:?}");
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
 // ---------------------------------------------------------------------------
 // B5: disconnect lease coordination
 // ---------------------------------------------------------------------------
@@ -1767,6 +1845,52 @@ async fn disconnect_while_lease_held_returns_409_and_keeps_tokens() {
         reloaded.status, "healthy",
         "a rejected disconnect must not wipe"
     );
+    assert!(reloaded.refresh_token_enc.is_some());
+    assert!(reloaded.access_token_enc.is_some());
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+/// The lease guard lives inside the wipe itself, so a worker that claims the
+/// source after the caller's pre-check cannot be overwritten: `false` is
+/// returned and the tokens are left intact.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn wipe_tokens_is_lease_guarded() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_wipe_guard", tenant_id).await;
+    let source_id = insert_oauth_source_with_tokens(&state, tenant_id, user.id).await;
+
+    state
+        .metadata_store
+        .ensure_calendar_sync_state(source_id)
+        .await
+        .expect("sync state");
+    sqlx::query(
+        "UPDATE calendar_sync_states SET locked_at = NOW(), locked_by = 'wipe-guard' \
+         WHERE source_id = $1",
+    )
+    .bind(source_id)
+    .execute(&state.db_pool)
+    .await
+    .expect("acquire lease");
+
+    let wiped = state
+        .metadata_store
+        .wipe_calendar_source_tokens(source_id, std::time::Duration::from_secs(300))
+        .await
+        .expect("lease-guarded wipe");
+    assert!(!wiped, "a live lease must block the token wipe");
+
+    let reloaded = state
+        .metadata_store
+        .get_calendar_source(tenant_id, user.id, source_id)
+        .await
+        .expect("load source")
+        .expect("source exists");
+    assert_eq!(reloaded.status, "healthy", "the wipe must not have run");
     assert!(reloaded.refresh_token_enc.is_some());
     assert!(reloaded.access_token_enc.is_some());
 
