@@ -118,6 +118,11 @@ Partial update of internal events (same fields as create, all optional).
 `200` with the updated event; `404` unknown; `409` if the event belongs to a
 non-internal source. Publishes `io.elembra.calendar.event.updated.v1`.
 
+For the nullable string fields `description`, `location`, and `rrule`, an
+absent or `null` value leaves the stored value unchanged, while an empty
+string clears it (for `rrule`, this stops the recurrence). `title` cannot be
+cleared (empty is a `400`).
+
 ### `DELETE /api/v1/calendar/events/{id}`
 
 Soft-delete an internal event. `200 { "ok": true }` (idempotent; deleting
@@ -212,9 +217,10 @@ Failure codes in the redirect: `oauth_state`, `oauth_exchange`,
 
 ### `POST /api/v1/calendar/sources/{id}/disconnect`
 
-Revokes the grant at the provider best-effort, deletes stored tokens, and sets
-`status: "auth_required"` (events remain until the source is deleted).
-`200 { "ok": true }` / `404` / `400` for non-OAuth sources.
+Deletes the stored tokens and sets `status: "auth_required"` (events remain
+until the source is deleted). No provider-side session revoke is attempted.
+`409` while a live sync lease holds the source; `200 { "ok": true }` / `404` /
+`400` for non-OAuth sources.
 
 ### `POST /api/v1/calendar/sources/{id}/resync`
 

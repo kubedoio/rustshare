@@ -122,8 +122,14 @@ Additional rulings:
   `backend/server/src/bootstrap.rs`.
 - **Integration events**: Calendar publishes namespaced outbox events
   (`io.elembra.calendar.event.imported.v1`, `.created.v1`, `.updated.v1`,
-  `.deleted.v1`) atomically with state mutations, per
-  `0031-durable-integration-events.md`. Calendar becomes a third outbox
+  `.deleted.v1`) through the durable outbox. The three internal-event
+  mutations (`.created/.updated/.deleted.v1`) are inserted in the same
+  transaction as the state change, so the mutation and its envelope commit or
+  roll back together. The per-run `.imported.v1` is published best-effort
+  *after* the import/sync run commits; a failed publication is logged and the
+  run is not retried, so consumers must treat these events as at-least-once
+  and deduplicate by envelope id, per `0031-durable-integration-events.md`.
+  Calendar becomes a third outbox
   publisher (after Files and Chat) through the
   generic `OutboxStore::insert_in_tx` path, which already validates
   event-type ownership against the manifest registry
@@ -240,11 +246,13 @@ tests plus human review before merge:
 - Outbound fetches to Google/Microsoft follow existing SSRF posture: fixed
   provider base URLs, no user-controlled fetch URLs (`.ics` import is an
   upload, not a URL fetch).
-- Disconnecting an Outlook source revokes all of the account's Microsoft
-  sign-in sessions across every Entra-integrated app (not just this Elembra
-  grant): the settings panel warns before confirming disconnect, and a
-  grant-scoped alternative would require admin-consent Graph permissions
-  beyond `Calendars.Read`.
+- Disconnecting an Outlook source is a local operation: it wipes the encrypted
+  access/refresh tokens and parks the source at `auth_required`. No
+  provider-side revoke is attempted — Microsoft Graph's
+  `POST /me/revokeSignInSessions` requires `User.RevokeSessions.All`, which
+  this app registration neither requests nor can obtain, so the call always
+  failed 403 while the UI promised a Microsoft-wide sign-out. The user removes
+  the Elembra grant in their Microsoft account to invalidate it upstream.
 - All `/api/v1/calendar/...` JSON API routes are gated on tenant application
   enablement; unauthenticated and cross-tenant access fail closed. The OAuth
   callback (authenticated by its single-use `state`) and the stretch ICS feed
@@ -266,8 +274,10 @@ tests plus human review before merge:
       duplicates; malformed files fail the job with a safe `last_error`.
 - [ ] Google and Microsoft sync honor cursors (`syncToken`/`deltaToken`),
       reset on `410 GONE`, and surface `auth_required` when tokens are revoked.
-- [ ] Calendar outbox events publish atomically with mutations and pass the
-      envelope validator (`io.elembra.calendar.*.v1`).
+- [ ] Calendar outbox events pass the envelope validator
+      (`io.elembra.calendar.*.v1`); internal created/updated/deleted publish
+      atomically with their mutation, and per-run imported events are
+      best-effort after the run commits.
 - [ ] Frontend month/week/agenda views render internal + imported + synced
       events with source attribution; settings panel connects/disconnects
       sources without exposing tokens.

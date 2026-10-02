@@ -267,16 +267,24 @@ Rows are deleted on consume (single use); expired rows are ignored/swept.
   idempotent upsert: unchanged events are untouched, changed events update,
   and duplicates are never created.
 - Time handling: `DTSTART;TZID=...` is converted to UTC using the embedded
-  VTIMEZONE or the system tz database; floating times are interpreted as UTC
-  and marked `timezone = 'UTC'`. All-day `DATE` values become UTC-midnight
-  spans with `all_day = true` and `original_date` preserved.
+  VTIMEZONE definition — including non-IANA Windows zone names such as
+  `W. Europe Standard Time`, whose STANDARD/DAYLIGHT transition rules are
+  resolved — or the system IANA tz database; floating times are interpreted
+  as UTC and marked `timezone = 'UTC'`. All-day `DATE` values become
+  UTC-midnight spans with `all_day = true` and `original_date` preserved.
+- Timezone limitation for recurrence: an event imported with a non-IANA
+  `TZID` stores that raw TZID string, which the read-time expander cannot
+  resolve, so a recurring master with such a timezone expands on UTC
+  wall-clock (the stored master `starts_at` instant and non-recurring events
+  remain correct). Recurrence expansion is exact for IANA `TZID` values and
+  for floating/UTC times.
 - RRULE strings are stored verbatim; v1 does not validate every RRULE form
   and never expands more than the requested range window at read time.
 - Expansion semantics (normative): iteration is wall-clock in the event's
   IANA `TZID` (not UTC-instant); DST gaps push forward and overlaps keep the
   first occurrence; `UNTIL`/`COUNT` expansion is capped at 1000 instances per
-  master; floating times (no `TZID`) are interpreted in the viewer's
-  configured timezone.
+  master; floating times (no `TZID`) are interpreted as UTC, matching
+  import-time storage.
 - VEVENT `STATUS` maps verbatim to `status` (`CONFIRMED`/`TENTATIVE`/
   `CANCELLED`); a missing `STATUS` defaults to `confirmed`.
 - Change detection: the importer compares a normalized column set (or
@@ -342,15 +350,19 @@ authoritative; Elembra stores a read-only cache.
 
 ## Integration events
 
-Published transactionally with the mutation (outbox row in the same commit),
-envelope per `integration-event-v1alpha1.md`:
+The three internal-mutation events are published transactionally with the
+mutation (outbox row in the same commit). The per-run `imported.v1` is
+published best-effort *after* the import/sync run commits — a failed
+publication is logged and does not fail or retry the run. Delivery is
+therefore at-least-once; consumers must deduplicate by envelope id. Envelope
+per `integration-event-v1alpha1.md`:
 
 - `io.elembra.calendar.event.created.v1` — internal event created.
 - `io.elembra.calendar.event.updated.v1` — internal event updated.
 - `io.elembra.calendar.event.deleted.v1` — internal event deleted.
 - `io.elembra.calendar.event.imported.v1` — an import or sync run
   materialized events; `data` carries counts and the source ResourceRef, not
-  event bodies.
+  event bodies. Best-effort after the run commits (see above).
 
 Event payloads contain identifiers and provenance only (`ResourceRef`,
 counts, source kind). Sensitive content (titles, descriptions, attendees) is
@@ -381,9 +393,11 @@ Normative request/response definitions live in
   `GET /api/v1/calendar/oauth/{kind}/callback` — OAuth flow.
 - `POST /api/v1/calendar/import` (multipart), `GET
   /api/v1/calendar/import-jobs[/{id}]` — import.
-- `POST /api/v1/calendar/sources/{id}/resync` — manual full resync.
-- `POST /api/v1/calendar/sources/{id}/disconnect` — revoke the provider grant
-  and clear stored tokens.
+- `POST /api/v1/calendar/sources/{id}/resync` — manual full resync; `409`
+  while a live sync lease holds the source.
+- `POST /api/v1/calendar/sources/{id}/disconnect` — wipe the stored tokens and
+  park the source at `auth_required`; `409` while a live sync lease holds the
+  source. No provider-side session revoke is attempted.
 - Stretch: `GET /api/v1/calendar/feed/{token}` — read-only per-user ICS export
   feed; feed tokens are created/revoked via session-authenticated `POST`/`DELETE
   /api/v1/calendar/feed-token`. (axum 0.8 matches the whole final segment, so a

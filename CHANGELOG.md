@@ -16,11 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Calendar application (issue #315): internal events with recurrence
-  expansion, `.ics` import, and read-only Google/Outlook OAuth sync. Internal
-  create/update/delete and import/sync runs publish
-  `io.elembra.calendar.event.*.v1` through the transactional integration
-  outbox (counts and identifiers only, per minimum-safe-data); the settings
-  panel gains provider connect/disconnect/resync with import-job status.
+  expansion, `.ics` import (including embedded-VTIMEZONE resolution for
+  non-IANA TZIDs), and read-only Google/Outlook OAuth sync with cursor-based
+  incremental updates and full-resync fallback. Internal create/update/delete
+  publish `io.elembra.calendar.event.*.v1` transactionally with the mutation,
+  while per-run import/sync `imported.v1` events are best-effort after the run
+  commits (counts and identifiers only, per minimum-safe-data; at-least-once,
+  dedupe by envelope id). Disconnecting an OAuth source wipes the local tokens
+  and parks the source at `auth_required` without a provider-side session
+  revoke; the settings panel gains provider connect/disconnect/resync with
+  import-job status.
 
 ### Changed
 
