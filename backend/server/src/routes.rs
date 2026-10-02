@@ -472,6 +472,22 @@ pub fn calendar_routes() -> Router<AppState> {
                 .delete(crate::handlers::calendar::delete_calendar_source),
         )
         .route(
+            "/api/v1/calendar/sources/{kind}/connect",
+            get(crate::handlers::calendar::connect_calendar_source),
+        )
+        .route(
+            "/api/v1/calendar/oauth/{kind}/callback",
+            get(crate::handlers::calendar::calendar_oauth_callback),
+        )
+        .route(
+            "/api/v1/calendar/sources/{id}/disconnect",
+            post(crate::handlers::calendar::disconnect_calendar_source),
+        )
+        .route(
+            "/api/v1/calendar/sources/{id}/resync",
+            post(crate::handlers::calendar::resync_calendar_source),
+        )
+        .route(
             "/api/v1/calendar/import",
             post(crate::handlers::calendar::import_calendar_file),
         )

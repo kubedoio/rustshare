@@ -249,6 +249,17 @@ pub struct CalendarSyncState {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow, ToSchema)]
+pub struct CalendarOauthState {
+    pub state: String,
+    pub tenant_id: Uuid,
+    #[schema(value_type = Uuid)]
+    pub owner_id: UserId,
+    pub kind: String,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow, ToSchema)]
 pub struct CalendarImportJob {
     #[schema(value_type = Uuid)]
     pub id: Uuid,

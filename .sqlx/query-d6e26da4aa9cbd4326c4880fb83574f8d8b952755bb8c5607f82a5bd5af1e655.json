@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO calendar_sync_states (source_id, next_sync_at)\n            VALUES ($1, NOW())\n            ON CONFLICT (source_id) DO UPDATE SET next_sync_at = NOW(), updated_at = now()\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d6e26da4aa9cbd4326c4880fb83574f8d8b952755bb8c5607f82a5bd5af1e655"
+}

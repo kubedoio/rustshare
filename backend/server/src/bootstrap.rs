@@ -366,10 +366,18 @@ async fn init_services(
         Arc::clone(&secret_key),
     ));
 
-    let calendar_service = Arc::new(crate::services::calendar_service::CalendarService::new(
+    let mut calendar_service = crate::services::calendar_service::CalendarService::new(
         Arc::clone(&metadata_store),
         Arc::clone(&secret_key),
-    ));
+    );
+    calendar_service.configure_google(
+        crate::services::google_calendar::GoogleCalendarClient::from_config(
+            config.calendar_google_client_id.clone(),
+            config.calendar_google_client_secret.clone(),
+            &config.public_url,
+        ),
+    );
+    let calendar_service = Arc::new(calendar_service);
 
     // Shared content indexer used both by the AI service and by the note
     // service's indexing callback sink. Kept outside the tokio::join! so both
@@ -790,6 +798,18 @@ pub async fn init_app() -> Result<AppState> {
         );
     } else {
         info!("Calendar import worker disabled");
+    }
+
+    if config.calendar_sync_worker_enabled {
+        crate::calendar_sync_worker::spawn_calendar_sync_worker(
+            Arc::clone(&metadata_store),
+            Arc::clone(&secret_key),
+            services.calendar_service.google_client(),
+            shutdown_tx.subscribe(),
+            crate::calendar_sync_worker::CalendarSyncWorkerConfig::from_config(&config),
+        );
+    } else {
+        info!("Calendar sync worker disabled");
     }
 
     if !metadata_store.has_users().await? {

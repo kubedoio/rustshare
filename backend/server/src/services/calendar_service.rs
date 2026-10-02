@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use base64::Engine as _;
+use rand::Rng as _;
+
 use chrono::{DateTime, Duration, Timelike, Utc};
 use rustshare_core::domain::{
     CalendarEvent, CalendarEventStatus, CalendarSource, CalendarSourceKind, UserId,
@@ -36,13 +39,25 @@ pub enum CalendarError {
     Storage(String),
     #[error("Database error: {0}")]
     Database(String),
+    #[error("OAuth provider is not configured: {0}")]
+    OAuthNotConfigured(String),
+    #[error("OAuth state is invalid, expired, or already used")]
+    OAuthStateInvalid,
+    #[error("OAuth flow failed: {0}")]
+    OAuthFailed(String),
+    #[error("A sync is already running for this source")]
+    SyncInProgress,
 }
+
+/// How long a connect-flow OAuth state stays valid.
+const OAUTH_STATE_TTL: Duration = Duration::minutes(10);
 
 #[derive(Clone)]
 pub struct CalendarService {
     metadata_store: Arc<MetadataStore>,
     #[allow(dead_code)]
     secret_key: Arc<SecretEncryptionKey>,
+    google: Option<Arc<crate::services::google_calendar::GoogleCalendarClient>>,
 }
 
 /// One event as returned by range queries: the stored row (or its recurring
@@ -190,7 +205,194 @@ impl CalendarService {
         Self {
             metadata_store,
             secret_key,
+            google: None,
         }
+    }
+
+    /// Attach the Google OAuth client; absent when the deployment has no
+    /// Google client id/secret (connect then returns 503, not a startup error).
+    pub fn configure_google(
+        &mut self,
+        client: Option<crate::services::google_calendar::GoogleCalendarClient>,
+    ) {
+        self.google = client.map(Arc::new);
+    }
+
+    /// The configured Google client, if any (sync worker + revoke paths).
+    pub fn google_client(
+        &self,
+    ) -> Option<Arc<crate::services::google_calendar::GoogleCalendarClient>> {
+        self.google.clone()
+    }
+
+    /// Begin the OAuth connect flow for `kind` (`google` today): persist a
+    /// single-use 256-bit state bound to the user and return the provider
+    /// consent URL.
+    pub async fn begin_connect(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        kind: CalendarSourceKind,
+    ) -> Result<String, CalendarError> {
+        let client = match kind {
+            CalendarSourceKind::Google => self.google.as_ref(),
+            _ => None,
+        };
+        let Some(client) = client else {
+            return Err(CalendarError::OAuthNotConfigured(format!(
+                "{} OAuth is not configured",
+                kind.as_str()
+            )));
+        };
+        let mut state_bytes = [0u8; 32];
+        rand::rng().fill_bytes(&mut state_bytes);
+        let state = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(state_bytes);
+        self.metadata_store
+            .insert_calendar_oauth_state(
+                &state,
+                tenant_id,
+                owner_id,
+                kind.as_str(),
+                Utc::now() + OAUTH_STATE_TTL,
+            )
+            .await
+            .map_err(db_error)?;
+        Ok(client.authorize_url(&state))
+    }
+
+    /// Complete the OAuth flow: validate-and-consume the state, exchange the
+    /// code, resolve the account email, and store encrypted tokens. The new
+    /// source is due for its initial sync immediately.
+    pub async fn complete_google_connect(
+        &self,
+        state: &str,
+        code: &str,
+    ) -> Result<CalendarSource, CalendarError> {
+        use crate::services::google_calendar::GoogleError;
+        let oauth_state = self
+            .metadata_store
+            .consume_calendar_oauth_state(state)
+            .await
+            .map_err(db_error)?
+            .ok_or(CalendarError::OAuthStateInvalid)?;
+        if oauth_state.kind != CalendarSourceKind::Google.as_str() {
+            return Err(CalendarError::OAuthStateInvalid);
+        }
+        let client = self.google.clone().ok_or_else(|| {
+            CalendarError::OAuthNotConfigured("google OAuth is not configured".to_string())
+        })?;
+        let tokens = client.exchange_code(code).await.map_err(|err| match err {
+            GoogleError::AuthRequired => {
+                CalendarError::OAuthFailed("provider rejected the grant".to_string())
+            }
+            other => CalendarError::OAuthFailed(other.to_string()),
+        })?;
+        let external_account = client
+            .user_email(tokens.access_token())
+            .await
+            .map_err(|e| CalendarError::OAuthFailed(e.to_string()))?;
+        let refresh_enc = rustshare_crypto::encrypt_secret(
+            tokens.rotated_refresh_token().unwrap_or_default(),
+            &self.secret_key,
+        )
+        .map_err(|e| CalendarError::Storage(e.to_string()))?;
+        let access_enc = rustshare_crypto::encrypt_secret(tokens.access_token(), &self.secret_key)
+            .map_err(|e| CalendarError::Storage(e.to_string()))?;
+        let display_name = format!("Google ({external_account})");
+        self.metadata_store
+            .create_oauth_calendar_source(
+                oauth_state.tenant_id,
+                oauth_state.owner_id,
+                CalendarSourceKind::Google.as_str(),
+                &display_name,
+                &external_account,
+                "primary",
+                &refresh_enc,
+                &access_enc,
+                tokens.expires_at(),
+                "https://www.googleapis.com/auth/calendar.readonly",
+            )
+            .await
+            .map_err(db_error)
+    }
+
+    /// Revoke best-effort at the provider, wipe stored tokens, and mark the
+    /// source `auth_required`. Events remain until the source is deleted.
+    pub async fn disconnect_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        source_id: Uuid,
+    ) -> Result<(), CalendarError> {
+        let source = self
+            .metadata_store
+            .get_calendar_source(tenant_id, owner_id, source_id)
+            .await
+            .map_err(db_error)?
+            .ok_or(CalendarError::SourceNotFound(source_id))?;
+        let kind: CalendarSourceKind = source
+            .kind
+            .parse()
+            .map_err(|_| CalendarError::InvalidInput("unknown source kind".to_string()))?;
+        if !matches!(
+            kind,
+            CalendarSourceKind::Google | CalendarSourceKind::Outlook
+        ) {
+            return Err(CalendarError::InvalidInput(
+                "only OAuth-connected sources can be disconnected".to_string(),
+            ));
+        }
+        // Best-effort provider revocation; local wipe happens regardless.
+        if kind == CalendarSourceKind::Google {
+            if let (Some(client), Some(refresh_enc)) =
+                (self.google.clone(), source.refresh_token_enc)
+            {
+                if let Ok(refresh_token) =
+                    rustshare_crypto::decrypt_secret(&refresh_enc, &self.secret_key)
+                {
+                    client.revoke_token(&refresh_token).await;
+                }
+            }
+        }
+        self.metadata_store
+            .wipe_calendar_source_tokens(source_id)
+            .await
+            .map_err(db_error)?;
+        Ok(())
+    }
+
+    /// Clear the cursor and force a full resync now; rejected while a sync
+    /// lease is live (409).
+    pub async fn resync_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        source_id: Uuid,
+        stale: Duration,
+    ) -> Result<(), CalendarError> {
+        let source = self
+            .metadata_store
+            .get_calendar_source(tenant_id, owner_id, source_id)
+            .await
+            .map_err(db_error)?
+            .ok_or(CalendarError::SourceNotFound(source_id))?;
+        if !matches!(source.kind.as_str(), "google" | "outlook") {
+            return Err(CalendarError::InvalidInput(
+                "only external sources can be resynced".to_string(),
+            ));
+        }
+        let forced = self
+            .metadata_store
+            .force_calendar_source_resync(
+                source_id,
+                std::time::Duration::from_secs(stale.num_seconds().max(0) as u64),
+            )
+            .await
+            .map_err(db_error)?;
+        if !forced {
+            return Err(CalendarError::SyncInProgress);
+        }
+        Ok(())
     }
 
     /// The implicit `internal` source, created lazily on first use.

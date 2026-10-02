@@ -1,0 +1,125 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH target AS (\n                SELECT s.id\n                FROM calendar_sources s\n                JOIN calendar_sync_states st ON st.source_id = s.id\n                JOIN application_enablements e\n                  ON e.tenant_id = s.tenant_id\n                 AND e.workspace_id = s.tenant_id\n                 AND e.application_id = 'io.elembra.calendar'\n                WHERE s.is_enabled\n                  AND s.deleted_at IS NULL\n                  AND s.kind IN ('google', 'outlook')\n                  AND e.enabled = true\n                  AND st.next_sync_at <= NOW()\n                  AND (st.locked_at IS NULL OR st.locked_at < NOW() - interval '1 second' * $1)\n                ORDER BY st.next_sync_at ASC\n                FOR UPDATE OF st SKIP LOCKED\n                LIMIT 1\n            ),\n            updated AS (\n                UPDATE calendar_sync_states\n                SET locked_at = NOW(), locked_by = $2, updated_at = NOW()\n                FROM target\n                WHERE calendar_sync_states.source_id = target.id\n                RETURNING calendar_sync_states.source_id\n            )\n            SELECT\n                s.id, s.tenant_id, s.owner_id, s.kind, s.display_name,\n                s.external_account, s.external_calendar_id, s.refresh_token_enc,\n                s.access_token_enc, s.access_token_expires_at, s.scopes,\n                s.is_enabled, s.last_synced_at, s.last_error, s.status,\n                s.deleted_at, s.created_at, s.updated_at\n            FROM calendar_sources s\n            JOIN updated u ON u.source_id = s.id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "owner_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "kind",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "external_account",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "external_calendar_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "refresh_token_enc",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "access_token_enc",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "access_token_expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "scopes",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "is_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "last_synced_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "last_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 15,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Float8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "cdfb4e94aff181d7198b2ebd2f593076015aa94935c44eb0161d4096d8e1ed2e"
+}

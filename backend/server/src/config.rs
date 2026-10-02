@@ -96,6 +96,42 @@ pub struct AppConfig {
         rename = "RUSTSHARE_CALENDAR_IMPORT_WORKER_STALE_SECS"
     )]
     pub calendar_import_worker_stale_secs: i64,
+    /// Google Calendar OAuth client credentials. Absent = provider
+    /// unconfigured (connect returns 503, not a startup error).
+    #[serde(default, rename = "RUSTSHARE_CALENDAR_GOOGLE_CLIENT_ID")]
+    pub calendar_google_client_id: Option<String>,
+    #[serde(default, rename = "RUSTSHARE_CALENDAR_GOOGLE_CLIENT_SECRET")]
+    pub calendar_google_client_secret: Option<String>,
+    #[serde(
+        default = "default_calendar_sync_worker_enabled",
+        rename = "RUSTSHARE_CALENDAR_SYNC_WORKER_ENABLED"
+    )]
+    pub calendar_sync_worker_enabled: bool,
+    #[serde(
+        default = "default_calendar_sync_worker_poll_secs",
+        rename = "RUSTSHARE_CALENDAR_SYNC_WORKER_POLL_SECS"
+    )]
+    pub calendar_sync_worker_poll_secs: u64,
+    #[serde(
+        default = "default_calendar_sync_worker_max_concurrent",
+        rename = "RUSTSHARE_CALENDAR_SYNC_WORKER_MAX_CONCURRENT"
+    )]
+    pub calendar_sync_worker_max_concurrent: usize,
+    #[serde(
+        default = "default_calendar_sync_worker_stale_secs",
+        rename = "RUSTSHARE_CALENDAR_SYNC_WORKER_STALE_SECS"
+    )]
+    pub calendar_sync_worker_stale_secs: i64,
+    #[serde(
+        default = "default_calendar_sync_past_days",
+        rename = "RUSTSHARE_CALENDAR_SYNC_PAST_DAYS"
+    )]
+    pub calendar_sync_past_days: i64,
+    #[serde(
+        default = "default_calendar_sync_future_days",
+        rename = "RUSTSHARE_CALENDAR_SYNC_FUTURE_DAYS"
+    )]
+    pub calendar_sync_future_days: i64,
 }
 
 fn default_jwt_issuer() -> String {
@@ -201,6 +237,30 @@ fn default_calendar_import_worker_max_concurrent() -> usize {
 
 fn default_calendar_import_worker_stale_secs() -> i64 {
     300
+}
+
+fn default_calendar_sync_worker_enabled() -> bool {
+    true
+}
+
+fn default_calendar_sync_worker_poll_secs() -> u64 {
+    10
+}
+
+fn default_calendar_sync_worker_max_concurrent() -> usize {
+    2
+}
+
+fn default_calendar_sync_worker_stale_secs() -> i64 {
+    300
+}
+
+fn default_calendar_sync_past_days() -> i64 {
+    90
+}
+
+fn default_calendar_sync_future_days() -> i64 {
+    365
 }
 
 /// Configuration for the durable integration-event outbox dispatcher

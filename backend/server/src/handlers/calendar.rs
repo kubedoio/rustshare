@@ -571,6 +571,136 @@ pub struct CalendarImportAcceptedResponse {
     pub status: String,
 }
 
+/// `200` body for `GET /api/v1/calendar/sources/{kind}/connect`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarConnectResponse {
+    pub authorize_url: String,
+}
+
+/// Staleness window used when rejecting a resync while a sync lease is live
+/// (mirrors `RUSTSHARE_CALENDAR_SYNC_WORKER_STALE_SECS`'s default).
+const RESYNC_LOCK_STALE_SECS: i64 = 300;
+
+/// `GET /api/v1/calendar/sources/{kind}/connect` — begin the OAuth connect
+/// flow for `google` (Outlook arrives with its own task) and return the
+/// provider consent URL. `503` when the deployment lacks the client
+/// id/secret env config.
+pub async fn connect_calendar_source(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(kind): Path<CalendarSourceKind>,
+) -> Result<Json<CalendarConnectResponse>, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    let authorize_url = state
+        .calendar_service
+        .begin_connect(auth.tenant_id, auth.user_id, kind)
+        .await?;
+    Ok(Json(CalendarConnectResponse { authorize_url }))
+}
+
+/// Query parameters of the provider redirect target.
+#[derive(Debug, Deserialize)]
+pub struct CalendarOauthCallbackQuery {
+    pub state: Option<String>,
+    pub code: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Build the contract-mandated `302` redirect. Axum's `Redirect` helpers
+/// emit 303/307/308, so the status code and Location header are set
+/// manually. The response never renders token data.
+fn oauth_redirect(target: &str) -> axum::response::Response {
+    axum::http::Response::builder()
+        .status(StatusCode::FOUND)
+        .header(axum::http::header::LOCATION, target)
+        .body(axum::body::Body::empty())
+        .expect("redirect response is always buildable")
+}
+
+/// `GET /api/v1/calendar/oauth/{kind}/callback` — provider redirect target,
+/// authenticated by the single-use `state` rather than a session. Exchanges
+/// the code, stores encrypted tokens, enqueues the initial sync, and always
+/// answers with a browser redirect: `?connected=google` on success,
+/// `?error=oauth_*` on failure.
+pub async fn calendar_oauth_callback(
+    State(state): State<AppState>,
+    Path(kind): Path<CalendarSourceKind>,
+    Query(query): Query<CalendarOauthCallbackQuery>,
+) -> axum::response::Response {
+    let base = "/settings/apps/calendar";
+    let redirect = |reason: &str| oauth_redirect(&format!("{base}?error={reason}"));
+
+    if kind != CalendarSourceKind::Google {
+        return redirect("oauth_unconfigured");
+    }
+    // Provider-side denial (user declined consent).
+    if query.error.is_some() {
+        return redirect("oauth_denied");
+    }
+    let (Some(state_param), Some(code)) = (query.state.as_deref(), query.code.as_deref()) else {
+        return redirect("oauth_state");
+    };
+
+    match state
+        .calendar_service
+        .complete_google_connect(state_param, code)
+        .await
+    {
+        Ok(_) => oauth_redirect(&format!("{base}?connected={}", kind.as_str())),
+        Err(CalendarError::OAuthNotConfigured(_)) => redirect("oauth_unconfigured"),
+        Err(CalendarError::OAuthStateInvalid) => redirect("oauth_state"),
+        Err(CalendarError::OAuthFailed(message)) => {
+            tracing::warn!("google calendar connect failed: {message}");
+            redirect("oauth_exchange")
+        }
+        // Storage/database errors likewise redirect rather than render
+        // anything sensitive.
+        Err(_) => redirect("oauth_state"),
+    }
+}
+
+/// `POST /api/v1/calendar/sources/{id}/disconnect` — best-effort provider
+/// revocation, token wipe, `status: auth_required`. Events remain until the
+/// source is deleted. `400` for non-OAuth sources.
+pub async fn disconnect_calendar_source(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(source_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    state
+        .calendar_service
+        .disconnect_source(auth.tenant_id, auth.user_id, source_id)
+        .await?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `POST /api/v1/calendar/sources/{id}/resync` — clear the stored cursor and
+/// force a full resync of the configured window now. `202`; `400` for
+/// non-external kinds; `409` while a sync lease is live.
+pub async fn resync_calendar_source(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(source_id): Path<Uuid>,
+) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    state
+        .calendar_service
+        .resync_source(
+            auth.tenant_id,
+            auth.user_id,
+            source_id,
+            chrono::Duration::seconds(RESYNC_LOCK_STALE_SECS),
+        )
+        .await?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "ok": true })),
+    ))
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CalendarImportJobResponse {
     pub id: Uuid,
@@ -655,8 +785,13 @@ impl From<CalendarError> for AppError {
             }
             CalendarError::ReadOnlyMirror
             | CalendarError::DuplicateSource
-            | CalendarError::InternalSource => AppError::Conflict(err.to_string()),
+            | CalendarError::InternalSource
+            | CalendarError::SyncInProgress => AppError::Conflict(err.to_string()),
             CalendarError::InvalidInput(_) => AppError::BadRequest(err.to_string()),
+            CalendarError::OAuthNotConfigured(_) => AppError::service_unavailable(err.to_string()),
+            CalendarError::OAuthStateInvalid | CalendarError::OAuthFailed(_) => {
+                AppError::bad_request(err.to_string())
+            }
             CalendarError::Storage(_) | CalendarError::Database(_) => {
                 AppError::Internal("Internal server error".to_string())
             }

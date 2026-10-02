@@ -24,8 +24,9 @@ pub mod mail_account;
 pub use mail_account::*;
 
 pub use calendar::{
-    CalendarEvent, CalendarEventStatus, CalendarImportJob, CalendarImportJobStatus, CalendarSource,
-    CalendarSourceKind, CalendarSourceStatus, CalendarSyncState,
+    CalendarEvent, CalendarEventStatus, CalendarImportJob, CalendarImportJobStatus,
+    CalendarOauthState, CalendarSource, CalendarSourceKind, CalendarSourceStatus,
+    CalendarSyncState,
 };
 
 pub use device_token::{DevicePairRequest, DeviceToken};

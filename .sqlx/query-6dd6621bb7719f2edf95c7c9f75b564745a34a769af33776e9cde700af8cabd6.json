@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE calendar_events\n            SET deleted_at = now(), updated_at = now()\n            WHERE source_id = $1\n              AND deleted_at IS NULL\n              AND external_uid IS NOT NULL\n              AND (external_uid || '|' || COALESCE(recurrence_id, '')) != ALL($2)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6dd6621bb7719f2edf95c7c9f75b564745a34a769af33776e9cde700af8cabd6"
+}
