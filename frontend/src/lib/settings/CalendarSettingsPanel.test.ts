@@ -171,6 +171,30 @@ describe('CalendarSettingsPanel', () => {
 		});
 	});
 
+	it('tells Outlook users disconnect only removes local access', async () => {
+		const outlookSource = {
+			...internalSource,
+			id: 'src-outlook',
+			kind: 'outlook',
+			display_name: 'Outlook (bob@example.com)',
+			external_account: 'bob@example.com'
+		};
+		mocks.listSources.mockResolvedValue([internalSource, outlookSource]);
+		render(CalendarSettingsPanel);
+
+		const outlookRow = (await screen.findByText('Outlook (bob@example.com)')).closest('li');
+		const disconnect = Array.from(outlookRow!.querySelectorAll('button')).find((button) =>
+			button.textContent?.includes('Disconnect')
+		);
+		await fireEvent.click(disconnect!);
+
+		expect(
+			await screen.findByText(
+				/To fully revoke Elembra's access, remove the app from your Microsoft account\./
+			)
+		).toBeTruthy();
+	});
+
 	it('requests a resync and surfaces the 409 lease-conflict as info', async () => {
 		mocks.resyncSource.mockRejectedValue(
 			new ApiError(409, 'A sync is already running for this source')

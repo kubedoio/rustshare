@@ -271,8 +271,8 @@
 									{#if confirmDisconnectId === source.id}
 										{#if source.kind === 'outlook'}
 											<p class="w-full text-2xs text-warning" role="alert">
-												Disconnecting also signs this account out of all Microsoft sessions, not
-												just Elembra.
+												Disconnecting removes Elembra's stored access. To fully revoke Elembra's
+												access, remove the app from your Microsoft account.
 											</p>
 										{/if}
 										<button
