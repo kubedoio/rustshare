@@ -289,6 +289,8 @@ describe('CalendarSettingsPanel', () => {
 	});
 
 	it('offers Reconnect for a source parked in auth_required', async () => {
+		const assign = vi.fn();
+		Object.defineProperty(window.location, 'assign', { value: assign, configurable: true });
 		const authRequiredSource = {
 			...googleSource,
 			id: 'src-google-stale',
@@ -311,6 +313,12 @@ describe('CalendarSettingsPanel', () => {
 
 		await waitFor(() => {
 			expect(mocks.connectSource).toHaveBeenCalledWith('google');
+			expect(assign).toHaveBeenCalledWith('https://accounts.google.com/o/oauth');
 		});
+		// Reconnect must take the success path, not the generic failure toast.
+		expect(toastSpy).not.toHaveBeenCalledWith(
+			expect.stringContaining('Could not start'),
+			expect.anything()
+		);
 	});
 });
