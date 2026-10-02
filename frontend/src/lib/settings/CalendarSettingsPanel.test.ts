@@ -212,4 +212,105 @@ describe('CalendarSettingsPanel', () => {
 		});
 		expect(toastSpy).toHaveBeenCalledWith('A sync is already running for this source.', 'info');
 	});
+
+	it('shows the fixed failure copy for a non-503 connect error', async () => {
+		const assign = vi.fn();
+		Object.defineProperty(window.location, 'assign', { value: assign, configurable: true });
+		mocks.connectSource.mockRejectedValue(new Error('boom'));
+		render(CalendarSettingsPanel);
+
+		await fireEvent.click(await screen.findByText('Connect Google Calendar'));
+
+		await waitFor(() => {
+			expect(toastSpy).toHaveBeenCalledWith('Could not start Google connect. Try again.', 'error');
+		});
+		// The raw provider error must never reach the user.
+		expect(toastSpy).not.toHaveBeenCalledWith(expect.stringContaining('boom'), expect.anything());
+		expect(assign).not.toHaveBeenCalled();
+	});
+
+	it('connects Outlook through the same authorize flow', async () => {
+		const assign = vi.fn();
+		Object.defineProperty(window.location, 'assign', { value: assign, configurable: true });
+		mocks.connectSource.mockResolvedValue({
+			authorize_url: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
+		});
+		render(CalendarSettingsPanel);
+
+		await fireEvent.click(await screen.findByText('Connect Outlook Calendar'));
+
+		await waitFor(() => {
+			expect(mocks.connectSource).toHaveBeenCalledWith('outlook');
+			expect(assign).toHaveBeenCalledWith(
+				'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
+			);
+		});
+	});
+
+	it('shows a success toast after a resync', async () => {
+		mocks.resyncSource.mockResolvedValue(undefined);
+		render(CalendarSettingsPanel);
+
+		const googleRow = (await screen.findByText('Google (alice@example.com)')).closest('li');
+		const resync = Array.from(googleRow!.querySelectorAll('button')).find((button) =>
+			button.textContent?.includes('Resync')
+		);
+		await fireEvent.click(resync!);
+
+		await waitFor(() => {
+			expect(mocks.resyncSource).toHaveBeenCalledWith('src-google');
+			expect(toastSpy).toHaveBeenCalledWith(
+				'Resync requested for Google (alice@example.com)',
+				'success'
+			);
+		});
+	});
+
+	it('keeps the source list usable when disconnect fails', async () => {
+		mocks.disconnectSource.mockRejectedValue(new Error('boom'));
+		render(CalendarSettingsPanel);
+
+		const googleRow = (await screen.findByText('Google (alice@example.com)')).closest('li');
+		const disconnect = Array.from(googleRow!.querySelectorAll('button')).find((button) =>
+			button.textContent?.includes('Disconnect')
+		);
+		await fireEvent.click(disconnect!);
+		const confirm = Array.from(googleRow!.querySelectorAll('button')).find((button) =>
+			button.textContent?.includes('Confirm disconnect')
+		);
+		await fireEvent.click(confirm!);
+
+		await waitFor(() => {
+			expect(toastSpy).toHaveBeenCalledWith('Disconnect failed. Try again.', 'error');
+		});
+		// The failed action must not blow away the list.
+		expect(await screen.findByText('My calendar')).toBeTruthy();
+		expect(await screen.findByText('Google (alice@example.com)')).toBeTruthy();
+	});
+
+	it('offers Reconnect for a source parked in auth_required', async () => {
+		const authRequiredSource = {
+			...googleSource,
+			id: 'src-google-stale',
+			status: 'auth_required',
+			display_name: 'Google (stale@example.com)',
+			external_account: 'stale@example.com'
+		};
+		mocks.listSources.mockResolvedValue([internalSource, authRequiredSource]);
+		mocks.connectSource.mockResolvedValue({ authorize_url: 'https://accounts.google.com/o/oauth' });
+		render(CalendarSettingsPanel);
+
+		const row = (await screen.findByText('Google (stale@example.com)')).closest('li');
+		const reconnect = Array.from(row!.querySelectorAll('button')).find((button) =>
+			button.textContent?.includes('Reconnect')
+		);
+		expect(reconnect).toBeTruthy();
+		expect(await screen.findByText('Re-authorization required')).toBeTruthy();
+
+		await fireEvent.click(reconnect!);
+
+		await waitFor(() => {
+			expect(mocks.connectSource).toHaveBeenCalledWith('google');
+		});
+	});
 });

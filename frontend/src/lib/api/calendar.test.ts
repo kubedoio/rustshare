@@ -137,4 +137,37 @@ describe('calendarApi', () => {
 		expect(apiClient.get).toHaveBeenNthCalledWith(1, '/calendar/import-jobs');
 		expect(apiClient.get).toHaveBeenNthCalledWith(2, '/calendar/import-jobs/job-1');
 	});
+
+	it('connectSource requests the provider connect endpoint and returns the authorize URL', async () => {
+		vi.mocked(apiClient.get).mockResolvedValueOnce({
+			authorize_url: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=x&state=y'
+		});
+
+		const result = await calendarApi.connectSource('google');
+
+		expect(apiClient.get).toHaveBeenCalledWith('/calendar/sources/google/connect');
+		expect(result.authorize_url).toContain('accounts.google.com');
+	});
+
+	it('disconnectSource posts to the source disconnect endpoint', async () => {
+		vi.mocked(apiClient.post).mockResolvedValueOnce({});
+
+		await calendarApi.disconnectSource('src-1');
+
+		expect(apiClient.post).toHaveBeenCalledWith('/calendar/sources/src-1/disconnect');
+	});
+
+	it('resyncSource posts to the resync endpoint and propagates a 409', async () => {
+		vi.mocked(apiClient.post).mockResolvedValueOnce({});
+
+		await calendarApi.resyncSource('src-1');
+
+		expect(apiClient.post).toHaveBeenCalledWith('/calendar/sources/src-1/resync');
+
+		vi.mocked(apiClient.post).mockRejectedValueOnce(
+			Object.assign(new Error('sync in progress'), { status: 409 })
+		);
+
+		await expect(calendarApi.resyncSource('src-1')).rejects.toMatchObject({ status: 409 });
+	});
 });

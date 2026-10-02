@@ -876,4 +876,26 @@ describe('CalendarApplicationView', () => {
 			process.env.TZ = originalTz;
 		}
 	});
+
+	it('shows an error state with retry when the range query fails', async () => {
+		mocks.listEvents.mockRejectedValue(new Error('boom'));
+		render(CalendarApplicationView, { module: testModule });
+
+		// retry: 1 in the shared client delays the error state past the default timeout.
+		const retry = await screen.findByRole('button', { name: /retry/i }, { timeout: 4000 });
+		expect(await screen.findByText('Calendar could not be loaded.')).toBeTruthy();
+
+		mocks.listEvents.mockResolvedValue([]);
+		await fireEvent.click(retry);
+
+		expect(await screen.findByText('No events in this period')).toBeTruthy();
+	});
+
+	it('renders an event whose source_kind is omitted', async () => {
+		const { source_kind: _omitted, ...withoutKind } = eventAt(dayFromToday(3));
+		mocks.listEvents.mockResolvedValue([withoutKind]);
+		render(CalendarApplicationView, { module: testModule });
+
+		expect(await screen.findByText(new RegExp(withoutKind.title))).toBeTruthy();
+	});
 });
