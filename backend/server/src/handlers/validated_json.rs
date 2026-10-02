@@ -126,9 +126,9 @@ mod tests {
     async fn validation_failure_still_reports_details() {
         let (status, body) = post_json("{\"name\": \"\"}").await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(body["error"]
-            .as_str()
-            .expect("error is a string")
-            .starts_with("Validation failed:"));
+        let err = body["error"].as_str().expect("error is a string");
+        assert!(err.starts_with("Validation failed:"));
+        // The field-level detail the validation branch must preserve.
+        assert!(err.contains("name"), "missing field detail in: {err}");
     }
 }

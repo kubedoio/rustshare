@@ -242,8 +242,8 @@ describe('CalendarApplicationView', () => {
 		expect(payload.title).toBe('Board meeting');
 		// The day cell's date, at the editor's default 09:00 start.
 		expect(payload.starts_at).toBe(new Date(2026, 9, 14, 9, 0, 0).toISOString());
-		expect(typeof payload.timezone).toBe('string');
-		expect((payload.timezone as string).length).toBeGreaterThan(0);
+		// Same concrete zone the sibling create test asserts.
+		expect(payload.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
 	});
 
 	it('falls back to UTC when the browser reports no timezone', async () => {
