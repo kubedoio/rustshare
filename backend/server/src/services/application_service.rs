@@ -1026,9 +1026,11 @@ impl ApplicationService {
                 ))
             }
             "io.elembra.calendar" => {
+                // Matches the UI: cancelled mirrors are tombstones, not events.
                 let row = sqlx::query!(
                     "SELECT COUNT(*) as count FROM calendar_events \
                      WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL \
+                       AND status <> 'cancelled' \
                        AND starts_at >= NOW() AND starts_at < NOW() + interval '7 days'",
                     tenant_id,
                     user_id

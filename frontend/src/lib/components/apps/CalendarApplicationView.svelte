@@ -234,11 +234,11 @@
 					const endDay = event.ends_at.slice(0, 10);
 					return startDay <= dayKey && dayKey < endDay;
 				}
-				const start = new Date(event.starts_at).getTime();
-				const end = new Date(event.ends_at).getTime();
+				const start = occurrenceStart(event).getTime();
+				const end = occurrenceEnd(event).getTime();
 				return start < dayEnd && end > dayStart;
 			})
-			.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+			.sort((a, b) => occurrenceStart(a).getTime() - occurrenceStart(b).getTime());
 	}
 
 	function shiftWindow(direction: 1 | -1) {
@@ -257,9 +257,25 @@
 		return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 	}
 
+	// Range responses carry the occurrence instant only in `instance_start`;
+	// `starts_at`/`ends_at` remain the recurring master's values. All-day
+	// events never carry instance_start (their wall-clock date lives in
+	// original_date), so they keep the master-based special-casing below.
+	function occurrenceStart(event: CalendarEvent): Date {
+		return new Date(event.instance_start ?? event.starts_at);
+	}
+
+	function occurrenceEnd(event: CalendarEvent): Date {
+		if (!event.instance_start) return new Date(event.ends_at);
+		const duration = new Date(event.ends_at).getTime() - new Date(event.starts_at).getTime();
+		return new Date(new Date(event.instance_start).getTime() + duration);
+	}
+
 	function eventTimeLabel(event: CalendarEvent): string {
 		if (event.all_day) return 'All day';
-		return `${formatTime(event.starts_at)} – ${formatTime(event.ends_at)}`;
+		return `${formatTime(occurrenceStart(event).toISOString())} – ${formatTime(
+			occurrenceEnd(event).toISOString()
+		)}`;
 	}
 
 	function sourceAttribution(event: CalendarEvent): string {
@@ -281,8 +297,8 @@
 	}
 
 	function openEditor(event: CalendarEvent) {
-		const start = new Date(event.starts_at);
-		const end = new Date(event.ends_at);
+		const start = occurrenceStart(event);
+		const end = occurrenceEnd(event);
 		editingEvent = event;
 		formTitle = event.title;
 		formDate = toLocalInputDate(start);
@@ -458,7 +474,7 @@
 											)}"
 											onclick={() => openDetail(event)}
 										>
-											{#if !event.all_day}{formatTime(event.starts_at)}{/if}
+											{#if !event.all_day}{formatTime(occurrenceStart(event).toISOString())}{/if}
 											{event.title}
 										</button>
 									{/each}
@@ -493,7 +509,7 @@
 											)}"
 											onclick={() => openDetail(event)}
 										>
-											{#if !event.all_day}{formatTime(event.starts_at)}{/if}
+											{#if !event.all_day}{formatTime(occurrenceStart(event).toISOString())}{/if}
 											{event.title}
 										</button>
 									{/each}
@@ -603,8 +619,8 @@
 				</button>
 			</div>
 			<p class="mt-2 text-sm text-base-content/70">
-				{new Date(selectedEvent.starts_at).toLocaleString()} – {new Date(
-					selectedEvent.ends_at
+				{occurrenceStart(selectedEvent).toLocaleString()} – {occurrenceEnd(
+					selectedEvent
 				).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
 			</p>
 			{#if selectedEvent.location}

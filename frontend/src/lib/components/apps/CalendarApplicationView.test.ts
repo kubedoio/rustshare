@@ -297,4 +297,36 @@ describe('CalendarApplicationView', () => {
 		const link = screen.getByRole('link', { name: 'Open Calendar settings' });
 		expect(link.getAttribute('href')).toBe('/settings/apps/calendar');
 	});
+
+	it('buckets recurring occurrences by instance_start across different days', async () => {
+		// A weekly master: starts_at/ends_at stay the master's values and each
+		// expanded occurrence carries its own instant in instance_start.
+		const masterDay = dayFromToday(2);
+		const occurrenceDays = [dayFromToday(2), dayFromToday(9), dayFromToday(16)];
+		mocks.listEvents.mockResolvedValue(
+			occurrenceDays.map((day, index) =>
+				eventAt(masterDay, {
+					id: `occ-${index}`,
+					title: 'Weekly sync',
+					rrule: 'FREQ=WEEKLY;COUNT=3',
+					starts_at: `${masterDay}T14:00:00`,
+					ends_at: `${masterDay}T15:00:00`,
+					instance_start: `${day}T14:00:00`
+				})
+			)
+		);
+		render(CalendarApplicationView, { module: testModule });
+
+		const chips = await screen.findAllByText(/Weekly sync/);
+		expect(chips).toHaveLength(3);
+		// Each chip must render in its own day cell, not stacked on the
+		// master's day: the cell's "Create event on …" label is unique per day.
+		const cellLabels = chips.map((chip) =>
+			chip
+				.closest('.min-h-24')
+				?.querySelector('button[aria-label^="Create event on"]')
+				?.getAttribute('aria-label')
+		);
+		expect(new Set(cellLabels).size).toBe(3);
+	});
 });

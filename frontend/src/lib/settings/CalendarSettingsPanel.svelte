@@ -268,6 +268,12 @@
 										</button>
 									{/if}
 									{#if confirmDisconnectId === source.id}
+										{#if source.kind === 'outlook'}
+											<p class="w-full text-2xs text-warning" role="alert">
+												Disconnecting also signs this account out of all Microsoft sessions, not
+												just Elembra.
+											</p>
+										{/if}
 										<button
 											type="button"
 											class="btn btn-error btn-xs"

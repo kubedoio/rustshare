@@ -205,10 +205,10 @@ impl OutlookCalendarClient {
     /// Best-effort sign-in-session revocation (disconnect). **Side effect:**
     /// `revokeSignInSessions` invalidates ALL of the user's Microsoft
     /// sign-in sessions across every Entra-integrated app — not just this
-    /// Elembra grant. This needs a frontend warning and an ADR note; a
-    /// grant-scoped alternative would require admin-consent Graph permissions
-    /// beyond `Calendars.Read`. Errors are logged by the caller and never
-    /// propagated to the user.
+    /// Elembra grant. The settings panel warns about this before the user
+    /// confirms a disconnect (ADR-0037 §Security); a grant-scoped alternative
+    /// would require admin-consent Graph permissions beyond `Calendars.Read`.
+    /// Errors are logged by the caller and never propagated to the user.
     pub async fn revoke_token(&self, access_token: &str) -> bool {
         match self
             .http

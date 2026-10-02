@@ -240,6 +240,11 @@ tests plus human review before merge:
 - Outbound fetches to Google/Microsoft follow existing SSRF posture: fixed
   provider base URLs, no user-controlled fetch URLs (`.ics` import is an
   upload, not a URL fetch).
+- Disconnecting an Outlook source revokes all of the account's Microsoft
+  sign-in sessions across every Entra-integrated app (not just this Elembra
+  grant): the settings panel warns before confirming disconnect, and a
+  grant-scoped alternative would require admin-consent Graph permissions
+  beyond `Calendars.Read`.
 - All `/api/v1/calendar/...` JSON API routes are gated on tenant application
   enablement; unauthenticated and cross-tenant access fail closed. The OAuth
   callback (authenticated by its single-use `state`) and the stretch ICS feed
