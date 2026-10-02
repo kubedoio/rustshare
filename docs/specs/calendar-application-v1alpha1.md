@@ -314,9 +314,21 @@ authoritative; Elembra stores a read-only cache.
   deployment fails the flow even when client credentials are present. The URL
   must be an absolute `http`/`https` URL; the `http://localhost:5173` dev
   default is rejected at startup unless explicitly allowed for local
-  development, and non-localhost hosts must use `https`. Startup validation
-  refuses to boot with a clear message naming the variable, and logs the
-  effective redirect URIs at `info` so operators can register them exactly.
+  development, and non-localhost hosts must use `https`. Trailing `/`
+  characters are stripped at startup so the derived redirect URI never
+  contains a doubled slash. Startup validation refuses to boot with a clear
+  message naming the variable, and logs the effective redirect URIs at `info`
+  so operators can register them exactly.
+- **Cleartext `http` is accepted only for loopback hosts.** A host counts as
+  loopback when it is `localhost` (with or without a trailing dot), any address
+  in the whole `127.0.0.0/8` range, or the IPv6 loopback `::1`. A LAN
+  self-host on `http://192.168.x.x` therefore **cannot start**; to run such a
+  deployment it must be reachable over `https` (terminate TLS at a reverse
+  proxy and set `RUSTSHARE_PUBLIC_URL` to that public origin). The only
+  opt-out is `RUSTSHARE_ALLOW_DEV_PUBLIC_URL=1`, and it exempts only the
+  built-in `http://localhost:5173` development default — it does **not** permit
+  plain `http` on a non-loopback host. This is deliberate: Calendar OAuth
+  redirect URIs carry authorization codes that must not travel in cleartext.
 - Redirect URI pattern (must match the provider console registration
   byte-for-byte):
   `{RUSTSHARE_PUBLIC_URL}/api/v1/calendar/oauth/{google|outlook}/callback`.

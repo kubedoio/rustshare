@@ -192,7 +192,11 @@ Additional rulings:
   dev default is rejected outside local development), and the read-only
   `GET /api/v1/calendar/providers` endpoint surfaces the effective URL, the
   per-provider `configured` flag, and the derived redirect URIs for operator
-  diagnosis.
+  diagnosis. Cleartext `http` is accepted only for loopback hosts (`localhost`,
+  `localhost.`, the whole `127.0.0.0/8` range, `::1`), so a LAN self-host on
+  `http://192.168.x.x` cannot start; `RUSTSHARE_ALLOW_DEV_PUBLIC_URL=1` only
+  exempts the built-in dev default and does not permit plain `http` on a
+  non-loopback host.
 - v1 syncs only each provider's primary calendar (`primary` / default
   calendar); multi-calendar discovery (`calendarList`) is deferred to a
   follow-up.
