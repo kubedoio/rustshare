@@ -95,6 +95,12 @@ services:
       RUSTSHARE_BLOB_LOCK_POOL_ACQUIRE_TIMEOUT_SECONDS: ${RUSTSHARE_BLOB_LOCK_POOL_ACQUIRE_TIMEOUT_SECONDS:-30}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      # Optional bearer token protecting the /metrics endpoint. When set,
+      # the backend requires it on every /metrics request (see
+      # backend/server/src/metrics.rs). Consumed by
+      # docker-compose.monitoring.yml; empty/unset leaves /metrics open on
+      # the internal Docker network only (nginx does not proxy /metrics).
+      METRICS_API_TOKEN: ${METRICS_API_TOKEN:-}
       # CRITICAL: Must be strong random values. Server refuses to start with weak secrets.
       JWT_SECRET: ${JWT_SECRET}
       RUSTSHARE_SECRET_ENCRYPTION_KEY: ${RUSTSHARE_SECRET_ENCRYPTION_KEY}

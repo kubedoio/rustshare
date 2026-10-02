@@ -1,0 +1,70 @@
+# Prometheus scrape configuration for a hosted Elembra deployment.
+# Mounted by docker-compose.monitoring.yml.
+#
+# The backend /metrics bearer token is read from
+# /tmp/prometheus-metrics-token (authorization.credentials_file below).
+# Prometheus does NOT substitute environment variables in this file, so the
+# token cannot be inlined as ${METRICS_API_TOKEN}; the compose entrypoint
+# writes it to that file from the environment at container start with mode
+# 0600. Keep the token in .env, never in this file.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  - job_name: elembra-backend
+    metrics_path: /metrics
+    scheme: http
+    authorization:
+      type: Bearer
+      credentials_file: /tmp/prometheus-metrics-token
+    static_configs:
+      - targets: ["backend:8080"]
+        labels:
+          service: elembra-backend
+
+  - job_name: elembra-nginx
+    metrics_path: /nginx-status
+    scheme: http
+    static_configs:
+      - targets: ["nginx:80"]
+        labels:
+          service: elembra-nginx
+
+  # Readiness is probed (not scraped): /health/ready returns JSON, which
+  # Prometheus cannot scrape as metrics. The blackbox exporter performs an
+  # HTTP 2xx probe against it and exports probe_success, which the
+  # ElembraReadiness alert consumes. The backend returns 503 from
+  # /health/ready when the database, object storage, event delivery, or auth
+  # sessions are unhealthy.
+  - job_name: elembra-readiness
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ["http://backend:8080/health/ready"]
+        labels:
+          service: elembra-backend
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # Chat-runtime health is observed through the Elembra backend's own
+  # exported metrics (chat_observation_lag_seconds,
+  # chat_authorization_denials_total, chat_webhook_outcomes_total) rather
+  # than by scraping the Buzz relay directly, whose endpoints are not
+  # Prometheus-formatted. The observer and relay are additionally covered by
+  # the readiness probe above while the chat profile is running.

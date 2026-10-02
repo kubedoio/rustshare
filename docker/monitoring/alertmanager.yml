@@ -1,0 +1,48 @@
+# AlertManager routing for a hosted Elembra deployment.
+# Mounted by docker-compose.monitoring.yml.
+#
+# The committed default uses a placeholder receiver so the stack boots, but
+# the `alerting` beta gate (docs/releases/beta-gate.yaml) is only PASS once a
+# REAL route is configured and a test alert has fired and been acknowledged.
+#
+# Operator checklist to make alerting real:
+#   1. Replace the `placeholder` receiver with a real destination:
+#      - email: `smtp_smarthost`, `from`, and `to` (or a team alias), or
+#      - webhook: a chat relay webhook (most teams prefer this for beta).
+#   2. Restart: docker compose -f docker-compose.monitoring.yml restart alertmanager
+#   3. Fire a test alert and acknowledge it:
+#        curl -XPOST http://127.0.0.1:9093/api/v2/alerts -H 'Content-Type: application/json' \
+#          -d '[{"labels":{"alertname":"TestAlert","severity":"critical"}}]'
+#   4. Record the delivered notification in the beta gate evidence.
+#
+# Never commit real SMTP credentials or webhook URLs here; keep them in this
+# file only on the beta host (it is mounted read-only from the deployment
+# directory, not from the repository).
+route:
+  receiver: placeholder
+  group_by: ["alertname", "service"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: placeholder
+      repeat_interval: 30m
+    - matchers:
+        - severity = "warning"
+      receiver: placeholder
+
+receivers:
+  - name: placeholder
+    # Intentionally empty: alerts are visible in the AlertManager UI at
+    # http://127.0.0.1:9093 but nothing is sent until a real receiver is
+    # configured on the host. See the operator checklist above.
+    #
+
+# Example of a real chat-webhook receiver (fill in on the beta host):
+# receivers:
+#   - name: beta-oncall
+#     webhook_configs:
+#       - url: "https://example.invalid/hook/REPLACE_ME"
+#         send_resolved: true

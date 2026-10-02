@@ -117,6 +117,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Beta readiness program: `docs/plans/2026-09-30-beta-readiness-plan.md`
+  defines the phased path (feature freeze with the Calendar application as
+  the sole sanctioned feature, evidence campaign, hosted environment,
+  tester cohort, soak) from the current Customer Alpha NO-GO to a
+  controlled Public Beta, and `docs/releases/beta-gate.yaml` is the new
+  machine-readable launch decision record for it. Revision 2 adds the
+  Calendar application (issue #315) as a hard customer requirement, makes
+  security posture hardening (S-1..S-9) mandatory, and defers WebUI
+  enhancements to the post-beta backlog. The Calendar implementation itself
+  is defined by PR #321 (ADR-0037, spec `docs/specs/calendar-application-v1alpha1.md`,
+  API contract, and executor plan `docs/plans/2026-10-01-issue-315-calendar-application.md`),
+  and the beta scope follows that definition.
+- CodeQL static analysis workflow (`.github/workflows/codeql.yml`) for the
+  Rust workspace and frontend TypeScript with security-extended queries
+  (beta readiness security item S-1).
+- Monitoring/alerting stack for hosted deployments:
+  `docker-compose.monitoring.yml` with digest-pinned Prometheus, AlertManager
+  and optional Grafana, Prometheus scrape config and alert rules over the
+  backend's real exported metrics, and an AlertManager routing template with
+  the operator checklist for making notification delivery real.
+- `scripts/run-beta-smoke.sh`: full beta product-path smoke (login, folders,
+  upload/download, notes CRUD, permission-aware search with projection-lag
+  retry, chat status, internal-share revocation, admin audit, logout) with a
+  saved report, intended to run after every beta-host deploy.
+- Beta tester pack: operator onboarding/offboarding runbook
+  (`docs/runbooks/beta-tester-onboarding.md`) plus tester-facing
+  `docs/beta/tester-guide.md`, `feedback-template.md`, and
+  `known-limitations.md`.
+- `scripts/release-tag.sh` selftest now covers the `v0.8.0-beta.1` prerelease
+  grammar explicitly.
+
 - Customer Alpha operations now include a secret-safe `./scripts/elembra.sh
   support-bundle` command, an immutable release-profile lifecycle for the
   backend and managed observer, complete bundled-Chat backup/restore, and a

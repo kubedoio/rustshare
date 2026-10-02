@@ -1,0 +1,148 @@
+# Prometheus alert rules for a hosted Elembra deployment.
+# Mounted by docker-compose.monitoring.yml (referenced from prometheus.yml).
+#
+# Metric names below are the ones the backend actually exports
+# (backend/server/src + backend/crates/*): outbox_*, object_gc_*,
+# db_pool_*, chat_observation_lag_seconds, chat_authorization_denials_total,
+# chat_webhook_outcomes_total.
+#
+# Severity model (mirrors docs/runbooks/security-incident.md attitude):
+#   critical — page now: user-facing outage or data-integrity risk
+#   warning  — act within a day: degradation or backlog growth
+groups:
+  - name: elembra-availability
+    rules:
+      - alert: ElembraBackendDown
+        expr: up{job="elembra-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Elembra backend metrics endpoint is down
+          description: >-
+            Prometheus cannot scrape the backend /metrics endpoint on the
+            beta host for 2 minutes. Check container state and backend logs.
+
+      - alert: ElembraReadiness
+        expr: probe_success{job="elembra-readiness"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: Elembra backend readiness probe failing
+          description: >-
+            The blackbox HTTP probe against /health/ready has failed for 3
+            minutes. The backend reports 503 when database, object storage,
+            event delivery, or auth sessions fail; inspect the readiness
+            JSON and component logs.
+
+      - alert: ElembraNginxDown
+        expr: up{job="elembra-nginx"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: nginx status endpoint is down
+          description: >-
+            The reverse proxy in front of the beta host stopped answering.
+            Testers see an outage even if the backend is healthy.
+
+  - name: elembra-integration-events
+    rules:
+      - alert: ElembraOutboxBacklogGrowing
+        expr: outbox_oldest_pending_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: integration outbox backlog is older than 5 minutes
+          description: >-
+            The oldest pending outbox event has been waiting more than 5
+            minutes. Cross-Application effects (chat projection, search
+            indexing) are falling behind. Check the dispatcher logs and
+            consumer health.
+
+      - alert: ElembraOutboxDeadLetter
+        # outbox_dlq_count is a gauge set every dispatcher tick (not a
+        # monotonic counter), so delta() — not increase() — detects growth.
+        expr: delta(outbox_dlq_count[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: integration events hit the dead-letter queue
+          description: >-
+            Events are failing delivery repeatedly. Inspect DLQ entries and
+            the failing consumer before the backlog affects users.
+
+      - alert: ElembraOutboxStalled
+        expr: increase(outbox_dispatched_total[30m]) == 0 and outbox_oldest_pending_age_seconds > 60
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: outbox dispatcher appears stalled with pending events
+          description: >-
+            No events dispatched in 30 minutes while pending events age.
+            Durable cross-Application effects are not being delivered.
+
+  - name: elembra-database
+    rules:
+      - alert: ElembraDbPoolSaturated
+        expr: db_pool_active_connections / (db_pool_active_connections + db_pool_idle_connections) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: database connection pool above 90% utilization
+          description: >-
+            Sustained pool saturation will surface as request latency and
+            5xx responses. Check for long-running queries or load growth.
+
+  - name: elembra-object-gc
+    # NOTE: object_gc_* metrics are only exported while the GC loop runs;
+    # the default deployment ships RUSTSHARE_OBJECT_GC_ENABLED=false, so
+    # these alerts stay silent until GC is enabled on the beta host.
+    rules:
+      - alert: ElembraObjectGcDeleteFailures
+        expr: increase(object_gc_delete_failures_total[1h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: object GC failed to delete unreferenced blobs
+          description: >-
+            Blob deletions are failing; storage will grow and orphaned
+            objects accumulate. Check RustFS health and credentials.
+
+      - alert: ElembraObjectGcBacklog
+        expr: object_gc_oldest_pending_seconds > 86400
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: object GC backlog older than 24h
+          description: >-
+            Reference-aware GC has not drained its queue within a day.
+
+  - name: elembra-chat
+    rules:
+      - alert: ElembraChatObservationLag
+        expr: chat_observation_lag_seconds > 120
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: chat observation lag above 2 minutes
+          description: >-
+            The managed observer is behind the Buzz relay. Chat search and
+            Memory projection are stale. Check observer reconnects.
+
+      - alert: ElembraChatAuthorizationDenied
+        expr: increase(chat_authorization_denials_total[15m]) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: elevated chat authorization denials
+          description: >-
+            Repeated Buzz authorization failures can indicate a stale
+            binding, a rotated key, or an attempted abuse path. Inspect
+            before users report broken chat.
