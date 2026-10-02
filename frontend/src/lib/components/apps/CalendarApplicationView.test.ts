@@ -220,6 +220,51 @@ describe('CalendarApplicationView', () => {
 		expect(payload.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
 	});
 
+	it('creates an event from a day cell with that cell date and a concrete timezone', async () => {
+		render(CalendarApplicationView, { module: testModule });
+		await screen.findByLabelText('Filter by source');
+		await goToMonth(2026, 9);
+
+		const cellLabel = new Date(2026, 9, 14, 12).toLocaleDateString();
+		await fireEvent.click(screen.getByRole('button', { name: `Create event on ${cellLabel}` }));
+
+		await fireEvent.input(screen.getByLabelText('Event title'), {
+			target: { value: 'Board meeting' }
+		});
+		await fireEvent.submit(screen.getByRole('form', { name: 'Create event' }));
+
+		await waitFor(() => expect(mocks.createEvent).toHaveBeenCalledTimes(1));
+		const payload = mocks.createEvent.mock.calls[0][0] as {
+			title: string;
+			starts_at: string;
+			timezone: unknown;
+		};
+		expect(payload.title).toBe('Board meeting');
+		// The day cell's date, at the editor's default 09:00 start.
+		expect(payload.starts_at).toBe(new Date(2026, 9, 14, 9, 0, 0).toISOString());
+		expect(typeof payload.timezone).toBe('string');
+		expect((payload.timezone as string).length).toBeGreaterThan(0);
+	});
+
+	it('falls back to UTC when the browser reports no timezone', async () => {
+		const spy = vi
+			.spyOn(Intl, 'DateTimeFormat')
+			.mockReturnValue({ resolvedOptions: () => ({}) } as unknown as Intl.DateTimeFormat);
+		try {
+			render(CalendarApplicationView, { module: testModule });
+			await fireEvent.click(await screen.findByRole('button', { name: /New event/i }));
+			await fireEvent.input(screen.getByLabelText('Event title'), {
+				target: { value: 'TZ fallback' }
+			});
+			await fireEvent.submit(screen.getByRole('form', { name: 'Create event' }));
+
+			await waitFor(() => expect(mocks.createEvent).toHaveBeenCalledTimes(1));
+			expect(mocks.createEvent.mock.calls[0][0].timezone).toBe('UTC');
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
 	it('buckets all-day events by original_date and treats ends_at as exclusive', async () => {
 		const day = dayFromToday(3);
 		const nextDay = dayFromToday(4);

@@ -41,6 +41,14 @@
 		return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 	}
 
+	// Create requires a concrete IANA zone. The browser normally reports one,
+	// but a non-string/empty value falls back to UTC rather than sending null
+	// (which the backend rejects as invalid JSON).
+	const BROWSER_TIMEZONE = (() => {
+		const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		return typeof tz === 'string' && tz.length > 0 ? tz : 'UTC';
+	})();
+
 	function toLocalInputDate(date: Date): string {
 		const month = String(date.getMonth() + 1).padStart(2, '0');
 		const day = String(date.getDate()).padStart(2, '0');
@@ -372,8 +380,8 @@
 			starts_at: start.toISOString(),
 			ends_at: end.toISOString(),
 			// Create requires a concrete IANA zone; reuse the master's zone when
-			// editing, otherwise fall back to the browser's zone.
-			timezone: editingEvent?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+			// editing, otherwise fall back to the browser's zone (or UTC).
+			timezone: editingEvent?.timezone ?? BROWSER_TIMEZONE
 		});
 	}
 

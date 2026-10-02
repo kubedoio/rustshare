@@ -474,6 +474,87 @@ fn create_event_body() -> Value {
     })
 }
 
+/// Exactly the payload the Calendar UI sends for a create: the required
+/// fields plus explicit nulls for the optional ones, with no `all_day` and no
+/// `rrule` keys (serde defaults `all_day`, treats `rrule` as absent).
+fn minimal_ui_event_body() -> Value {
+    json!({
+        "title": "Board meeting",
+        "starts_at": "2026-10-14T09:00:00Z",
+        "ends_at": "2026-10-14T10:00:00Z",
+        "timezone": "Europe/Berlin",
+        "description": null,
+        "location": null
+    })
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn create_accepts_the_minimal_ui_payload() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_minimal_ui", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(minimal_ui_event_body().to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::CREATED, "body: {body}");
+    assert_eq!(body["title"], "Board meeting");
+    assert_eq!(body["timezone"], "Europe/Berlin");
+    assert_eq!(body["starts_at"], "2026-10-14T09:00:00Z");
+    assert!(body["description"].is_null());
+    assert!(body["location"].is_null());
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn create_with_null_timezone_is_rejected_400() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_null_timezone", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    // The stale-bundle payload that produced the user's "JSON error".
+    let mut payload = minimal_ui_event_body();
+    payload["timezone"] = Value::Null;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "Invalid JSON payload");
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn calendar_disabled_returns_403() {
