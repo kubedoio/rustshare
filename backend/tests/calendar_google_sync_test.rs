@@ -505,7 +505,7 @@ async fn worker_failed_run_preserves_incremental_cursor() {
     // cursor and leave last_synced_at at its previous watermark.
     {
         let queue = mock.data_queue();
-        queue.push_back(MockResponse::internal_error()).await;
+        queue.push_back(mock.internal_error()).await;
     }
     acquire_lease(&harness, source.id, worker).await;
     rustshare_server::calendar_sync_worker::run_sync(
@@ -1531,7 +1531,7 @@ async fn rate_limit_backs_off_with_retry_after() {
 
     {
         let queue = mock.data_queue();
-        queue.push_back(MockResponse::rate_limited(42)).await;
+        queue.push_back(mock.rate_limited(42)).await;
     }
     let outcome = rustshare_server::services::google_calendar::sync_source(
         &harness.store,

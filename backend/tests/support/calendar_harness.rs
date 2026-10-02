@@ -38,22 +38,44 @@ pub fn database_url() -> String {
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string())
 }
 
+/// The host of a Postgres URL, tolerating a missing userinfo section.
+///
+/// `postgres://deploy.example.com/db` must yield `deploy.example.com`, not
+/// `postgres`: the scheme is stripped before the authority is split on the
+/// last `@`, so a credential-less remote host cannot masquerade as the local
+/// docker service.
+fn database_host(url: &str) -> String {
+    let after_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(after_scheme);
+    // A password may contain '@', so the separator is the *last* one.
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    if let Some(rest) = authority.strip_prefix('[') {
+        rest.split(']').next().unwrap_or(rest).to_string()
+    } else {
+        authority.split(':').next().unwrap_or(authority).to_string()
+    }
+}
+
+fn is_local_host(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "::1" | "postgres")
+}
+
 /// Refuse to run DB-backed tests against a non-local database unless the
 /// operator explicitly opts in with `RUSTSHARE_TEST_ALLOW_REMOTE_DB=1`.
 pub fn assert_local_database() {
-    if std::env::var("RUSTSHARE_TEST_ALLOW_REMOTE_DB").as_deref() == Ok("1") {
+    let override_enabled = std::env::var("RUSTSHARE_TEST_ALLOW_REMOTE_DB").as_deref() == Ok("1");
+    assert_local_database_with(&database_url(), override_enabled);
+}
+
+fn assert_local_database_with(url: &str, override_enabled: bool) {
+    if override_enabled {
         return;
     }
-    let url = database_url();
-    // postgres://user:pass@host:port/db — take everything after the last '@'.
-    let authority = url.rsplit('@').next().unwrap_or(&url);
-    let host_port = authority.split('/').next().unwrap_or(authority);
-    let host = if let Some(rest) = host_port.strip_prefix('[') {
-        rest.split(']').next().unwrap_or(rest)
-    } else {
-        host_port.split(':').next().unwrap_or(host_port)
-    };
-    if !matches!(host, "localhost" | "127.0.0.1" | "::1" | "postgres") {
+    let host = database_host(url);
+    if !is_local_host(&host) {
         panic!(
             "refusing to run calendar DB tests against DATABASE_URL host `{host}`: \
              these tests write fixture rows (tenants, users, calendar sources). \
@@ -765,5 +787,80 @@ impl SyncHarness {
             .execute(&self.pool)
             .await
             .expect("cleanup tenant");
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::{assert_local_database, assert_local_database_with, database_host, is_local_host};
+
+    #[test]
+    fn host_parses_local_urls_with_and_without_credentials_or_port() {
+        for url in [
+            "postgres://localhost/db",
+            "postgres://localhost:5432/db",
+            "postgres://u:p@localhost:5432/db",
+            "postgres://127.0.0.1/db",
+            "postgres://u:p@127.0.0.1:5432/db",
+            "postgres://[::1]/db",
+            "postgres://[::1]:5432/db",
+            "postgres://postgres/db",
+            "postgres://u:p@postgres:5432/db",
+        ] {
+            let host = database_host(url);
+            assert!(is_local_host(&host), "{url} parsed to host `{host}`");
+        }
+    }
+
+    #[test]
+    fn host_parses_remote_urls_with_and_without_credentials() {
+        assert_eq!(
+            database_host("postgres://deploy.example.com/db"),
+            "deploy.example.com"
+        );
+        assert_eq!(
+            database_host("postgres://deploy.example.com:5432/db"),
+            "deploy.example.com"
+        );
+        assert_eq!(
+            database_host("postgres://u:p@deploy.example.com/db"),
+            "deploy.example.com"
+        );
+    }
+
+    #[test]
+    fn guard_refuses_remote_hosts_with_and_without_credentials() {
+        for url in [
+            "postgres://deploy.example.com/db",
+            "postgres://deploy.example.com:5432/db",
+            "postgres://u:p@deploy.example.com/db",
+            "postgres://u:p@deploy.example.com:5432/db",
+        ] {
+            let result = std::panic::catch_unwind(|| assert_local_database_with(url, false));
+            assert!(result.is_err(), "{url} must be refused");
+        }
+    }
+
+    #[test]
+    fn guard_allows_local_hosts_and_remote_override() {
+        for url in [
+            "postgres://localhost/db",
+            "postgres://127.0.0.1:5432/db",
+            "postgres://[::1]/db",
+            "postgres://postgres:5432/db",
+        ] {
+            assert_local_database_with(url, false);
+        }
+        // The documented opt-out lets a remote URL through.
+        assert_local_database_with("postgres://deploy.example.com/db", true);
+    }
+
+    #[test]
+    fn guard_env_override_is_honoured() {
+        std::env::set_var("DATABASE_URL", "postgres://deploy.example.com/db");
+        std::env::set_var("RUSTSHARE_TEST_ALLOW_REMOTE_DB", "1");
+        assert_local_database();
+        std::env::remove_var("RUSTSHARE_TEST_ALLOW_REMOTE_DB");
+        std::env::remove_var("DATABASE_URL");
     }
 }

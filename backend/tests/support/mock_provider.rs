@@ -69,18 +69,32 @@ impl MockResponse {
         }
     }
 
-    pub fn internal_error() -> Self {
+    pub fn internal_error(kind: MockProviderKind) -> Self {
+        let body = match kind {
+            MockProviderKind::Google => {
+                json!({"error": {"code": 500, "message": "transient backend error"}})
+            }
+            MockProviderKind::Microsoft => {
+                json!({"error": {"code": "UnknownError", "message": "transient backend error"}})
+            }
+        };
         Self {
             status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            body: json!({"error": {"code": 500, "message": "transient backend error"}}),
+            body,
             retry_after: None,
         }
     }
 
-    pub fn rate_limited(retry_after: u64) -> Self {
+    pub fn rate_limited(kind: MockProviderKind, retry_after: u64) -> Self {
+        let body = match kind {
+            MockProviderKind::Google => json!({"error": {"code": 429, "message": "rate limited"}}),
+            MockProviderKind::Microsoft => {
+                json!({"error": {"code": "TooManyRequests", "message": "rate limited"}})
+            }
+        };
         Self {
             status: axum::http::StatusCode::TOO_MANY_REQUESTS,
-            body: json!({"error": {"code": 429, "message": "rate limited"}}),
+            body,
             retry_after: Some(retry_after),
         }
     }
@@ -222,16 +236,18 @@ impl MockProvider {
         &self.base_url
     }
 
-    pub fn kind(&self) -> MockProviderKind {
-        self.inner.kind
-    }
-
     pub fn data_queue(&self) -> MockDataQueue<'_> {
         MockDataQueue { provider: self }
     }
 
-    pub async fn push_data_response(&self, response: MockResponse) {
-        self.inner.push_data_response(response).await;
+    /// A 500 whose body matches this provider's error shape.
+    pub fn internal_error(&self) -> MockResponse {
+        MockResponse::internal_error(self.inner.kind)
+    }
+
+    /// A 429 with `Retry-After`, body shaped per provider.
+    pub fn rate_limited(&self, retry_after: u64) -> MockResponse {
+        MockResponse::rate_limited(self.inner.kind, retry_after)
     }
 
     pub async fn data_requests(&self) -> Vec<String> {

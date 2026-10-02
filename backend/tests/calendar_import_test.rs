@@ -186,7 +186,7 @@ async fn count_imported_events(state: &AppState, tenant_id: Uuid) -> i64 {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn ics_upload_import_and_reimport_is_idempotent() {
     let _guard = SERIAL.lock().await;
-    let state = setup_test_env().await;
+    let state = setup_test_env_without_calendar_outbox().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let user = create_test_user(&state, "calendar_import", tenant_id).await;
     configure_calendar(&state, tenant_id, user.id, true).await;
@@ -317,7 +317,7 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn structurally_invalid_ics_fails_the_job() {
     let _guard = SERIAL.lock().await;
-    let state = setup_test_env().await;
+    let state = setup_test_env_without_calendar_outbox().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let user = create_test_user(&state, "calendar_import_bad", tenant_id).await;
     configure_calendar(&state, tenant_id, user.id, true).await;
@@ -345,7 +345,7 @@ async fn structurally_invalid_ics_fails_the_job() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn single_event_upsert_failure_does_not_fail_the_job() {
     let _guard = SERIAL.lock().await;
-    let state = setup_test_env().await;
+    let state = setup_test_env_without_calendar_outbox().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let user = create_test_user(&state, "calendar_import_onebad", tenant_id).await;
     configure_calendar(&state, tenant_id, user.id, true).await;
@@ -415,7 +415,7 @@ END:VCALENDAR
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn non_ics_upload_is_rejected() {
     let _guard = SERIAL.lock().await;
-    let state = setup_test_env().await;
+    let state = setup_test_env_without_calendar_outbox().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let user = create_test_user(&state, "calendar_import_type", tenant_id).await;
     configure_calendar(&state, tenant_id, user.id, true).await;
@@ -438,7 +438,7 @@ async fn non_ics_upload_is_rejected() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn duplicate_multipart_fields_are_rejected() {
     let _guard = SERIAL.lock().await;
-    let state = setup_test_env().await;
+    let state = setup_test_env_without_calendar_outbox().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let user = create_test_user(&state, "calendar_import_dup", tenant_id).await;
     configure_calendar(&state, tenant_id, user.id, true).await;
@@ -490,7 +490,7 @@ async fn duplicate_multipart_fields_are_rejected() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn source_id_must_belong_to_the_caller_and_be_ical_import() {
     let _guard = SERIAL.lock().await;
-    let state = setup_test_env().await;
+    let state = setup_test_env_without_calendar_outbox().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let owner = create_test_user(&state, "calendar_import_owner", tenant_id).await;
     let other = create_test_user(&state, "calendar_import_other", tenant_id).await;
@@ -556,7 +556,7 @@ async fn source_id_must_belong_to_the_caller_and_be_ical_import() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn cancelled_import_job_does_not_publish_completion_event() {
     let _guard = SERIAL.lock().await;
-    let state = setup_test_env().await;
+    let state = setup_test_env_without_calendar_outbox().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let user = create_test_user(&state, "calendar_import_cancel", tenant_id).await;
     configure_calendar(&state, tenant_id, user.id, true).await;
@@ -621,7 +621,7 @@ async fn cancelled_import_job_does_not_publish_completion_event() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn huge_duration_is_a_component_failure_without_stalling_the_job() {
     let _guard = SERIAL.lock().await;
-    let state = setup_test_env().await;
+    let state = setup_test_env_without_calendar_outbox().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let user = create_test_user(&state, "calendar_import_duration", tenant_id).await;
     configure_calendar(&state, tenant_id, user.id, true).await;
