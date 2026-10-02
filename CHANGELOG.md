@@ -99,6 +99,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Buzz bootstrap `401 Unauthorized` is now surfaced as an operator-actionable
   diagnostic (`Buzz rejected Elembra's service identity`) without leaking
   secrets or raw auth headers.
+- Configuration switches silently ignored: `envy` lowercases environment
+  variable names before matching, so ~18 uppercase
+  `serde(rename = "RUSTSHARE_...")` fields in `AppConfig` never matched and
+  kept their serde defaults. They now take effect when set — notably
+  `RUSTSHARE_LOG_FORMAT` (deployments that already set `json` actually get
+  structured logs now) and each worker's enabled toggle (a deployment that
+  already set `RUSTSHARE_MAIL_IMPORT_WORKER_ENABLED=false` or
+  `RUSTSHARE_CALENDAR_IMPORT_WORKER_ENABLED=false` now actually stops that
+  worker). Review these switches before upgrading (issue #315 follow-up).
+- Calendar provider configuration plumbing: the compose backend service now
+  forwards `RUSTSHARE_PUBLIC_URL` / `RUSTSHARE_ALLOW_DEV_PUBLIC_URL` from the
+  root `.env` and refuses to start when the public URL is unset, startup logs
+  the effective OAuth redirect URIs, and
+  `GET /api/v1/calendar/providers` surfaces each provider's configured state
+  and exact redirect URI (issue #315 follow-up).
 
 ### Added
 
