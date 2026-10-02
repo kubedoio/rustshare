@@ -35,11 +35,14 @@ pub struct MetadataStore {
     pool: PgPool,
 }
 
-/// Identity of a stored recurring-event override: the `external_uid` of the
-/// recurring master (or the row's own id) plus the `recurrence_id` of the
-/// overridden occurrence.
+/// Identity of a stored recurring-event override: the `source_id` the mirrored
+/// row belongs to, the `external_uid` of the recurring master (or the row's own
+/// id), and the `recurrence_id` of the overridden occurrence. The source is
+/// part of the key: two sources may expose the same `external_uid`, so keying
+/// suppression by uid alone would suppress the other source's occurrence.
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct CalendarEventOverrideKey {
+    pub source_id: Uuid,
     pub external_uid: String,
     pub recurrence_id: String,
 }
@@ -6651,23 +6654,6 @@ impl MetadataStore {
         Ok(exists.unwrap_or(false))
     }
 
-    /// Whether an active calendar event row exists with this ID **regardless
-    /// of tenant or owner**.
-    ///
-    /// NOTE: this is an existence oracle across tenant boundaries — a caller
-    /// passing an arbitrary ID learns whether it exists anywhere. It is kept
-    /// only until its sole call site (`CalendarService::delete_event`) moves to
-    /// `calendar_event_exists_in_tenant`; new code must not use it.
-    pub async fn calendar_event_exists_any_owner(&self, id: Uuid) -> Result<bool> {
-        let exists = sqlx::query_scalar!(
-            r#"SELECT EXISTS(SELECT 1 FROM calendar_events WHERE id = $1 AND deleted_at IS NULL)"#,
-            id
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(exists.unwrap_or(false))
-    }
-
     /// Update the mutable columns of a calendar event.
     pub async fn update_calendar_event(&self, event: &CalendarEvent) -> Result<()> {
         let mut tx = self.pool.begin().await?;
@@ -6812,12 +6798,12 @@ impl MetadataStore {
     /// requested time window or carry `status = 'cancelled'`, so the range
     /// listing can return the master without its overrides. Expansion then
     /// renders a phantom occurrence for a cancelled/moved instance. This query
-    /// returns the full `(external_uid, recurrence_id)` key set for the
-    /// caller's own non-deleted mirrored rows (optionally restricted to
+    /// returns the full `(source_id, external_uid, recurrence_id)` key set for
+    /// the caller's own non-deleted mirrored rows (optionally restricted to
     /// `source_ids`; an empty slice means all enabled-or-requested sources,
-    /// matching the range listing's own source filter), regardless of status
-    /// and regardless of time window, so the service can suppress those
-    /// occurrences.
+    /// matching `list_calendar_events_in_range`'s own source disjunction),
+    /// regardless of status and regardless of time window, so the service can
+    /// suppress those occurrences.
     pub async fn list_calendar_event_overrides(
         &self,
         tenant_id: Uuid,
@@ -6828,6 +6814,7 @@ impl MetadataStore {
             CalendarEventOverrideKey,
             r#"
             SELECT
+                e.source_id,
                 e.external_uid AS "external_uid!",
                 e.recurrence_id AS "recurrence_id!"
             FROM calendar_events e
@@ -6835,6 +6822,13 @@ impl MetadataStore {
               AND e.external_uid IS NOT NULL
               AND e.recurrence_id IS NOT NULL
               AND (cardinality($3::uuid[]) = 0 OR e.source_id = ANY($3))
+              AND (
+                e.source_id = ANY($3)
+                OR e.source_id IN (
+                  SELECT s.id FROM calendar_sources s
+                  WHERE s.owner_id = $2 AND s.is_enabled AND s.deleted_at IS NULL
+                )
+              )
             "#,
             tenant_id,
             owner_id,
@@ -7358,9 +7352,10 @@ impl MetadataStore {
     }
 
     /// Release the sync lease and record the outcome of a run: the next due
-    /// time, the (possibly nulled) cursor, and last-sync bookkeeping.
-    /// `mark_synced` gates the `calendar_sources.last_synced_at` watermark so
-    /// failed runs do not advance it.
+    /// time, the (possibly nulled) cursor, the health status, and last-sync
+    /// bookkeeping. `mark_synced` gates the `calendar_sources.last_synced_at`
+    /// watermark so failed runs do not advance it; `status` is written in the
+    /// same `calendar_sources` update (`None` leaves the current status alone).
     ///
     /// The whole write is lease-guarded and transactional: when the caller no
     /// longer owns the lease (`locked_by` no longer matches — a stale takeover
@@ -7378,6 +7373,7 @@ impl MetadataStore {
         cursor_kind: Option<&str>,
         cursor_value: Option<&str>,
         last_error: Option<&str>,
+        status: Option<&str>,
         mark_synced: bool,
     ) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
@@ -7407,18 +7403,48 @@ impl MetadataStore {
         sqlx::query!(
             r#"
             UPDATE calendar_sources
-            SET last_synced_at = CASE WHEN $3 THEN NOW() ELSE last_synced_at END,
-                last_error = $2, updated_at = now()
+            SET last_synced_at = CASE WHEN $4 THEN NOW() ELSE last_synced_at END,
+                last_error = $2,
+                status = COALESCE($3, status),
+                updated_at = now()
             WHERE id = $1
             "#,
             source_id,
             last_error,
+            status,
             mark_synced,
         )
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
         Ok(true)
+    }
+
+    /// Release the sync lease for a run that did no work (a parked
+    /// `auth_required` source) without recording any bookkeeping: it clears
+    /// `locked_at`/`locked_by` and reschedules the source on the normal
+    /// interval, but leaves the cursor, watermark, status, and last-error
+    /// untouched. Lease-guarded, so a stale former holder cannot release the
+    /// current holder's lease. Returns `false` when the lease was lost.
+    pub async fn release_calendar_source_lease(
+        &self,
+        source_id: Uuid,
+        worker_id: &str,
+        next_sync_at: DateTime<Utc>,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_sync_states
+            SET locked_at = NULL, locked_by = NULL, next_sync_at = $3, updated_at = NOW()
+            WHERE source_id = $1 AND locked_by = $2
+            "#,
+            source_id,
+            worker_id,
+            next_sync_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
     }
 
     /// Delete expired single-use OAuth states (abandoned consents); returns
@@ -7495,33 +7521,45 @@ impl MetadataStore {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Unconditional token write (newer wins) after a refresh; only the sync
-    /// lease holder calls this. A rotated refresh token overwrites the stored
-    /// one; a provider that omits it keeps the existing ciphertext.
+    /// Persist a refreshed token pair (newer wins) after a refresh. A rotated
+    /// refresh token overwrites the stored one; a provider that omits it keeps
+    /// the existing ciphertext.
+    ///
+    /// Lease-guarded: the write only applies while `worker_id` still holds the
+    /// source's sync lease (`calendar_sync_states.locked_by`). A stale former
+    /// holder that lost its lease to a takeover must not overwrite the new
+    /// holder's rotated refresh token with its own (older) rotation. Returns
+    /// `false` when the lease was lost and nothing was written.
     pub async fn update_calendar_source_tokens(
         &self,
         source_id: Uuid,
+        worker_id: &str,
         refresh_token_enc: Option<&str>,
         access_token_enc: &str,
         access_token_expires_at: DateTime<Utc>,
-    ) -> Result<()> {
-        sqlx::query!(
+    ) -> Result<bool> {
+        let result = sqlx::query!(
             r#"
             UPDATE calendar_sources
-            SET refresh_token_enc = COALESCE($2, refresh_token_enc),
-                access_token_enc = $3,
-                access_token_expires_at = $4,
+            SET refresh_token_enc = COALESCE($3, refresh_token_enc),
+                access_token_enc = $4,
+                access_token_expires_at = $5,
                 updated_at = now()
             WHERE id = $1
+              AND EXISTS (
+                SELECT 1 FROM calendar_sync_states st
+                WHERE st.source_id = $1 AND st.locked_by = $2
+              )
             "#,
             source_id,
+            worker_id,
             refresh_token_enc,
             access_token_enc,
             access_token_expires_at,
         )
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     /// Wipe stored tokens and set `auth_required` (disconnect). Returns true
@@ -7643,10 +7681,15 @@ impl MetadataStore {
 
     /// Soft-delete every mirrored event of the source whose
     /// `external_uid|recurrence_id` key is absent from a FULL window sync
-    /// payload, restricted to events starting inside the synced window
-    /// (provider deletion propagation). Callers must only run this on full
-    /// runs: incremental deltas contain only changed entries, so an
+    /// payload (provider deletion propagation). Callers must only run this on
+    /// full runs: incremental deltas contain only changed entries, so an
     /// absent-key sweep there would delete every unchanged mirrored event.
+    ///
+    /// The start-time window restriction applies to single events only.
+    /// Recurring masters are exempt: a provider returns the master with its
+    /// original DTSTART even when only its in-window instances are relevant,
+    /// so a master predating the window would otherwise never be swept and a
+    /// series deleted upstream would expand phantom occurrences forever.
     pub async fn soft_delete_calendar_events_absent(
         &self,
         source_id: Uuid,
@@ -7661,8 +7704,7 @@ impl MetadataStore {
             WHERE source_id = $1
               AND deleted_at IS NULL
               AND external_uid IS NOT NULL
-              AND starts_at >= $3
-              AND starts_at < $4
+              AND (rrule IS NOT NULL OR (starts_at >= $3 AND starts_at < $4))
               AND (external_uid || '|' || COALESCE(recurrence_id, '')) != ALL($2)
             "#,
             source_id,

@@ -283,9 +283,14 @@ impl CalendarSyncConfig {
 pub enum SyncOutcome {
     /// A run completed. `next_sync_token` is the new incremental cursor
     /// (`None` until the provider supplies one). `soft_deleted` counts
-    /// provider deletions propagated; non-zero only on full window runs
-    /// (incremental deltas carry only changed entries, so the absent-entry
-    /// sweep runs only where the payload is a complete set).
+    /// provider deletions propagated; on a full window run it is the
+    /// absent-entry sweep count (plus, for Outlook, explicit `@removed`
+    /// tombstones), and on an incremental run only the explicit tombstones.
+    ///
+    /// `upserted` is the payload size (entries the run attempted to
+    /// materialize), not a changed-row count: the upsert's `IS DISTINCT FROM`
+    /// guard suppresses the `updated_at` bump for unchanged rows, but the
+    /// counter still includes them. Both providers count it identically.
     Completed {
         upserted: usize,
         soft_deleted: u64,
@@ -297,6 +302,8 @@ pub enum SyncOutcome {
     /// The source is parked (`auth_required`): the run did no work and must
     /// not be treated as a success or a failure. The worker publishes no
     /// event, advances no watermark, writes no status, and records no error.
+    /// It still releases the lease and reschedules the source so a parked
+    /// source is not stuck "in progress" until the stale takeover.
     Parked,
     /// The sync lease was lost mid-run (stale takeover by another worker).
     /// Like `Parked`, the run must not publish or write status/watermark —
@@ -571,14 +578,31 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Duration {
 /// Refresh the access token and persist the (possibly rotated) token pair.
 /// Returns the new access token, or the `SyncOutcome` that should end the run
 /// (`AuthRequired` only when the refresh itself is rejected with
-/// `invalid_grant`).
+/// `invalid_grant`; `LeaseLost` when the worker no longer holds the lease).
+///
+/// The lease is re-checked before the provider refresh and the token write is
+/// lease-guarded, so a stale worker that lost its lease (stale takeover) can
+/// neither rotate the grant at the provider nor overwrite the new holder's
+/// rotated refresh token.
 async fn refresh_and_persist_access_token(
     store: &MetadataStore,
     client: &GoogleCalendarClient,
     secret_key: &SecretEncryptionKey,
     source_id: uuid::Uuid,
+    worker_id: &str,
     refresh_token: &str,
 ) -> Result<String, SyncOutcome> {
+    match store
+        .heartbeat_calendar_source_lease(source_id, worker_id)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => return Err(SyncOutcome::LeaseLost),
+        Err(e) => {
+            tracing::warn!(source_id = %source_id, "lease heartbeat failed before token refresh: {e}");
+            return Err(SyncOutcome::LeaseLost);
+        }
+    }
     match client.refresh_access_token(refresh_token).await {
         Ok(tokens) => {
             let rotated = tokens
@@ -591,18 +615,23 @@ async fn refresh_and_persist_access_token(
                         return Err(SyncOutcome::Failed("token encryption failed".to_string()))
                     }
                 };
-            if let Err(e) = store
+            match store
                 .update_calendar_source_tokens(
                     source_id,
+                    worker_id,
                     rotated.as_deref(),
                     &access_enc,
                     tokens.expires_at(),
                 )
                 .await
             {
-                return Err(SyncOutcome::Failed(format!(
-                    "failed to persist tokens: {e}"
-                )));
+                Ok(true) => {}
+                Ok(false) => return Err(SyncOutcome::LeaseLost),
+                Err(e) => {
+                    return Err(SyncOutcome::Failed(format!(
+                        "failed to persist tokens: {e}"
+                    )))
+                }
             }
             Ok(tokens.access_token().to_string())
         }
@@ -647,8 +676,15 @@ pub async fn sync_source(
         .map(|expires_at| expires_at - TOKEN_EXPIRY_MARGIN <= Utc::now())
         .unwrap_or(true);
     if access_token.is_none() || token_expired {
-        match refresh_and_persist_access_token(store, client, secret_key, source.id, &refresh_token)
-            .await
+        match refresh_and_persist_access_token(
+            store,
+            client,
+            secret_key,
+            source.id,
+            worker_id,
+            &refresh_token,
+        )
+        .await
         {
             Ok(token) => access_token = Some(token),
             Err(outcome) => return outcome,
@@ -721,6 +757,7 @@ pub async fn sync_source(
                         client,
                         secret_key,
                         source.id,
+                        worker_id,
                         &refresh_token,
                     )
                     .await

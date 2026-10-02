@@ -513,11 +513,15 @@ fn map_event(source: &CalendarSource, item: GraphEvent, now: DateTime<Utc>) -> C
     }
 }
 
-/// Soft-delete the mirrored row for a Graph `@removed` tombstone, keyed by the
-/// same `(source_id, external_uid, recurrence_id)` identity used by the
-/// upsert. Returns the number of rows removed (0 when the mirror was never
-/// seen or is already deleted). A store failure is logged, not fatal: the next
-/// full sync's absent-entry sweep is the backstop.
+/// Soft-delete the mirrored row(s) for a Graph `@removed` tombstone, keyed by
+/// the same `(source_id, external_uid, recurrence_id)` identity used by the
+/// upsert. A master tombstone (`recurrence_id` NULL) also cascades to that
+/// master's recurrence overrides, which share the master's `external_uid` but
+/// carry a non-null `recurrence_id` — otherwise the master vanishes while its
+/// overrides linger and keep suppressing/expanding occurrences. Returns the
+/// number of rows removed (0 when the mirror was never seen or is already
+/// deleted). A store failure is logged, not fatal: the next full sync's
+/// absent-entry sweep is the backstop.
 async fn soft_delete_removed_event(
     store: &MetadataStore,
     source: &CalendarSource,
@@ -530,8 +534,11 @@ async fn soft_delete_removed_event(
         SET deleted_at = now(), updated_at = now()
         WHERE source_id = $1
           AND external_uid = $2
-          AND COALESCE(recurrence_id, '') = $3
           AND deleted_at IS NULL
+          AND (
+            COALESCE(recurrence_id, '') = $3
+            OR ($3 = '' AND recurrence_id IS NOT NULL)
+          )
         "#,
     )
     .bind(source.id)
@@ -665,6 +672,20 @@ pub async fn sync_source(
         .map(|expires_at| expires_at - TOKEN_EXPIRY_MARGIN <= Utc::now())
         .unwrap_or(true);
     if access_token.is_none() || token_expired {
+        // Re-check the lease before touching the provider: a stale worker that
+        // lost its lease (stale takeover) must not rotate the grant at the
+        // provider or overwrite the new holder's persisted tokens.
+        match store
+            .heartbeat_calendar_source_lease(source.id, worker_id)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return SyncOutcome::LeaseLost,
+            Err(e) => {
+                tracing::warn!(source_id = %source.id, "lease heartbeat failed before token refresh: {e}");
+                return SyncOutcome::LeaseLost;
+            }
+        }
         match client.refresh_access_token(&refresh_token).await {
             Ok(tokens) => {
                 let rotated = match tokens.rotated_refresh_token() {
@@ -678,16 +699,19 @@ pub async fn sync_source(
                             return SyncOutcome::Failed("token encryption failed".to_string())
                         }
                     };
-                if let Err(e) = store
+                match store
                     .update_calendar_source_tokens(
                         source.id,
+                        worker_id,
                         rotated.as_deref(),
                         &access_enc,
                         tokens.expires_at(),
                     )
                     .await
                 {
-                    return SyncOutcome::Failed(format!("failed to persist tokens: {e}"));
+                    Ok(true) => {}
+                    Ok(false) => return SyncOutcome::LeaseLost,
+                    Err(e) => return SyncOutcome::Failed(format!("failed to persist tokens: {e}")),
                 }
                 access_token = Some(tokens.access_token().to_string());
             }
@@ -846,7 +870,10 @@ pub async fn sync_source(
                 )
                 .await
             {
-                Ok(count) => soft_deleted = count,
+                // Add to (do not replace) the explicit `@removed` tombstones
+                // already counted above: a tombstone for an entry outside the
+                // sweep window is a real deletion the count must report.
+                Ok(count) => soft_deleted += count,
                 Err(e) => tracing::warn!(source_id = %source.id, "absent-event sweep failed: {e}"),
             }
         }

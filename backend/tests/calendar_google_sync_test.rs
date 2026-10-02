@@ -745,6 +745,16 @@ async fn worker_run_keeps_auth_required_parked_without_http() {
     let parked = harness.reload_source(source.id).await;
     assert_eq!(parked.status, "auth_required");
     let token_hits_after_first = mock.token_hits().await;
+    let state_after_auth_required = harness
+        .store
+        .get_calendar_sync_state(source.id)
+        .await
+        .expect("sync state")
+        .expect("sync state row");
+    assert!(
+        state_after_auth_required.locked_at.is_none(),
+        "the run that parked the source must release its lease"
+    );
 
     // Run 2: full worker run over the parked source — no provider traffic,
     // status untouched (previously the Completed no-op arm wrote
@@ -765,6 +775,33 @@ async fn worker_run_keeps_auth_required_parked_without_http() {
     assert_eq!(
         still_parked.status, "auth_required",
         "a parked source must stay parked across worker runs"
+    );
+
+    // The parked run must release the lease (bookkeeping-free) and reschedule
+    // the source: a permanently locked parked source would be re-claimed every
+    // stale threshold and its disconnect/resync would 409 forever.
+    let state_after_park = harness
+        .store
+        .get_calendar_sync_state(source.id)
+        .await
+        .expect("sync state")
+        .expect("sync state row");
+    assert!(
+        state_after_park.locked_at.is_none() && state_after_park.locked_by.is_none(),
+        "a parked run must release its lease, got locked_by={:?}",
+        state_after_park.locked_by
+    );
+    assert!(
+        state_after_park.next_sync_at > chrono::Utc::now(),
+        "a parked source must be rescheduled on the normal interval"
+    );
+    assert!(
+        !harness
+            .store
+            .calendar_source_is_locked(source.id, std::time::Duration::from_secs(300))
+            .await
+            .expect("lock check"),
+        "a parked source must not remain lock-live"
     );
     assert_eq!(
         mock.token_hits().await,
@@ -1004,6 +1041,7 @@ async fn run_claimed_sync(
                     chrono::Utc::now() + chrono::Duration::seconds(900),
                     Some("google_sync_token"),
                     next_sync_token.as_deref(),
+                    None,
                     None,
                     true,
                 )
@@ -1377,6 +1415,94 @@ async fn full_sync_sweep_soft_deletes_absent_in_window_events() {
     harness.cleanup().await;
 }
 
+/// R3: a recurring master whose DTSTART predates the sync window must still be
+/// swept when a FULL payload omits it (its series was deleted upstream).
+/// Providers return a master with its original DTSTART even when only its
+/// in-window instances matter, so the window restriction must apply to single
+/// events only — otherwise the mirror expands phantom occurrences forever.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn full_sync_sweep_soft_deletes_recurring_master_with_old_dtstart() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "sweep-rrule@test.local".to_string();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_sweep_rrule").await;
+    let source = harness.create_google_source(user.id, &mock).await;
+    let client = mock_client(&base);
+
+    // A recurring master mirrored earlier, with a DTSTART well before the
+    // 90-day-back sync window.
+    let master = CalendarEvent {
+        id: Uuid::new_v4(),
+        tenant_id: harness.tenant_id,
+        owner_id: user.id,
+        source_id: source.id,
+        external_uid: Some("master-old".to_string()),
+        external_etag: None,
+        recurrence_id: None,
+        title: "Old recurring series".to_string(),
+        description: None,
+        location: None,
+        starts_at: "2020-01-01T10:00:00Z".parse().unwrap(),
+        ends_at: "2020-01-01T11:00:00Z".parse().unwrap(),
+        all_day: false,
+        original_date: None,
+        timezone: "UTC".to_string(),
+        rrule: Some("FREQ=DAILY".to_string()),
+        status: "confirmed".to_string(),
+        read_only: true,
+        raw: None,
+        deleted_at: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    harness
+        .store
+        .upsert_calendar_synced_event(&master)
+        .await
+        .expect("seed old recurring master");
+
+    // The full payload omits the master (deleted upstream) and carries one
+    // unrelated in-window event.
+    {
+        let mut queue = mock.events_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "items": [event_item("evt-keep", "Kept", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
+            "nextSyncToken": "cursor-rrule-sweep"
+        })));
+    }
+    let outcome = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    let SyncOutcome::Completed { soft_deleted, .. } = outcome else {
+        panic!("expected Completed, got {outcome:?}");
+    };
+    assert!(
+        soft_deleted >= 1,
+        "the omitted recurring master with an old DTSTART must be swept"
+    );
+
+    let (deleted_at,): (Option<chrono::DateTime<chrono::Utc>>,) = sqlx::query_as(
+        "SELECT deleted_at FROM calendar_events WHERE source_id = $1 AND external_uid = 'master-old'",
+    )
+    .bind(source.id)
+    .fetch_one(&harness.pool)
+    .await
+    .expect("master row retained");
+    assert!(
+        deleted_at.is_some(),
+        "the recurring master must be soft-deleted by the sweep"
+    );
+    let events = harness.list_source_events(source.id).await;
+    assert!(
+        events
+            .iter()
+            .any(|event| event.external_uid.as_deref() == Some("evt-keep")),
+        "the in-window event must remain"
+    );
+
+    harness.cleanup().await;
+}
+
 /// A multi-page INCREMENTAL run must page with pageToken (in addition to the
 /// syncToken), terminate on the final page, and persist the new cursor.
 #[tokio::test]
@@ -1550,6 +1676,9 @@ async fn revoked_grant_flips_auth_required_and_further_runs_noop() {
         .await;
     let client = mock_client(&base);
 
+    // A caller that refreshes tokens must hold the sync lease (only the lease
+    // holder may rotate OAuth tokens).
+    acquire_lease(&harness, source.id, WORKER_A).await;
     let outcome = rustshare_server::services::google_calendar::sync_source(
         &harness.store,
         &client,
@@ -1712,6 +1841,7 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
                         None,
                         None,
                         Some("swept aside by concurrent-claim test"),
+                        None,
                         false,
                     )
                     .await
@@ -1751,6 +1881,7 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
             Some("google_sync_token"),
             Some("cursor-concurrent"),
             None,
+            Some("healthy"),
             true,
         )
         .await
@@ -1959,6 +2090,9 @@ async fn google_401_parks_when_refresh_is_invalid_grant() {
         body: json!({"error": {"code": 401, "message": "Invalid Credentials"}}),
         retry_after: None,
     });
+    // The forced refresh requires the sync lease (only the lease holder may
+    // rotate OAuth tokens).
+    acquire_lease(&harness, source.id, WORKER_A).await;
     let outcome = rustshare_server::services::google_calendar::sync_source(
         &harness.store,
         &client,
@@ -2075,6 +2209,65 @@ async fn lease_guarded_writes_reject_a_stale_holder() {
         "a stale holder must not refresh the lease"
     );
 
+    // R1: only the lease holder may persist a refreshed token pair. A stale
+    // former holder's write must be rejected so it cannot overwrite the new
+    // holder's rotated refresh token.
+    let stale_wrote = harness
+        .store
+        .update_calendar_source_tokens(
+            source.id,
+            "calendar-sync-test-stale",
+            Some("stale-rotated-refresh"),
+            "stale-access-token",
+            chrono::Utc::now() + chrono::Duration::seconds(3600),
+        )
+        .await
+        .expect("stale token write");
+    assert!(
+        !stale_wrote,
+        "a stale holder's token write must be rejected"
+    );
+    let after_stale = harness.reload_source(source.id).await;
+    assert_eq!(
+        rustshare_crypto::decrypt_secret(
+            after_stale
+                .refresh_token_enc
+                .as_deref()
+                .expect("refresh token"),
+            &harness.secret_key,
+        )
+        .expect("decrypt"),
+        TEST_REFRESH_TOKEN,
+        "a stale holder must not persist a refresh-token rotation"
+    );
+    assert_eq!(
+        rustshare_crypto::decrypt_secret(
+            after_stale
+                .access_token_enc
+                .as_deref()
+                .expect("access token"),
+            &harness.secret_key,
+        )
+        .expect("decrypt"),
+        TEST_ACCESS_TOKEN,
+        "a stale holder must not overwrite the access token"
+    );
+    // Positive control: the actual holder's write does apply.
+    assert!(
+        harness
+            .store
+            .update_calendar_source_tokens(
+                source.id,
+                WORKER_A,
+                None,
+                "holder-access-token",
+                chrono::Utc::now() + chrono::Duration::seconds(3600),
+            )
+            .await
+            .expect("holder token write"),
+        "the lease holder's token write must apply"
+    );
+
     let watermark_before = harness.reload_source(source.id).await.last_synced_at;
     let finished = harness
         .store
@@ -2085,6 +2278,7 @@ async fn lease_guarded_writes_reject_a_stale_holder() {
             Some("google_sync_token"),
             Some("leaked-cursor"),
             Some("leaked error"),
+            Some("healthy"),
             true,
         )
         .await
@@ -2181,6 +2375,38 @@ async fn overrides_are_listed_regardless_of_status_and_window() {
     assert_eq!(overrides.len(), 1, "only the recurrence override is listed");
     assert_eq!(overrides[0].external_uid, "master-override");
     assert_eq!(overrides[0].recurrence_id, "2020-01-01T10:00:00Z");
+    assert_eq!(
+        overrides[0].source_id, source.id,
+        "override keys must carry the source so another source's uid cannot suppress this one"
+    );
+
+    // R4: with no explicit source filter, overrides of a disabled source are
+    // excluded (matching the range listing's own source disjunction), while an
+    // explicit `source_ids` request still returns them.
+    sqlx::query("UPDATE calendar_sources SET is_enabled = false WHERE id = $1")
+        .bind(source.id)
+        .execute(&harness.pool)
+        .await
+        .expect("disable source");
+    let hidden = harness
+        .store
+        .list_calendar_event_overrides(harness.tenant_id, user.id, &[])
+        .await
+        .expect("list overrides of disabled source");
+    assert!(
+        hidden.is_empty(),
+        "a disabled source's overrides must be hidden from the empty-filter listing"
+    );
+    let explicit = harness
+        .store
+        .list_calendar_event_overrides(harness.tenant_id, user.id, &[source.id])
+        .await
+        .expect("list overrides of explicitly requested source");
+    assert_eq!(
+        explicit.len(),
+        1,
+        "an explicitly requested source still returns its overrides"
+    );
 
     harness.cleanup().await;
 }

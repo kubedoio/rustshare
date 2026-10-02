@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE calendar_sources\n            SET refresh_token_enc = COALESCE($3, refresh_token_enc),\n                access_token_enc = $4,\n                access_token_expires_at = $5,\n                updated_at = now()\n            WHERE id = $1\n              AND EXISTS (\n                SELECT 1 FROM calendar_sync_states st\n                WHERE st.source_id = $1 AND st.locked_by = $2\n              )\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "36da01091d918a208ee538e0d59a8a643153dea112b10bb4ea95c98f24df2841"
+}

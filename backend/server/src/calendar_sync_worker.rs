@@ -9,7 +9,11 @@
 //!
 //! A parked (`auth_required`) source and a run that loses its lease are
 //! neither success nor failure: the worker writes no status/watermark/cursor
-//! and publishes no imported.v1 event for them.
+//! and publishes no imported.v1 event for them. A parked run still releases
+//! its lease (bookkeeping-free) and reschedules the source, so the source does
+//! not sit locked until the stale takeover and disconnect/resync stay usable.
+//! A run that lost its lease leaves the lease entirely alone — the new holder
+//! owns it.
 
 use std::collections::HashSet;
 use std::panic::AssertUnwindSafe;
@@ -276,9 +280,22 @@ pub async fn run_sync(
     let plan = match outcome {
         // A parked (`auth_required`) source did no work: neither success nor
         // failure. Publish nothing, advance no watermark, write no status, and
-        // record no error, so the source stays parked without oscillating.
+        // record no error, so the source stays parked without oscillating. The
+        // lease is still released (bookkeeping-free) and the source
+        // rescheduled: leaving it locked would make it perpetually "in
+        // progress", so disconnect/resync would 409 for exactly the parked
+        // sources users most need to disconnect.
         SyncOutcome::Parked => {
             tracing::debug!(source_id = %source_id, "calendar source parked; no work this run");
+            let next_sync_at = now
+                + chrono::Duration::from_std(DEFAULT_SYNC_INTERVAL)
+                    .unwrap_or(chrono::Duration::seconds(900));
+            if let Err(e) = store
+                .release_calendar_source_lease(source_id, &worker_id, next_sync_at)
+                .await
+            {
+                tracing::error!(source_id = %source_id, "failed to release parked lease: {e}");
+            }
             return;
         }
         // The lease is no longer ours (stale takeover). Anything we write now
@@ -376,6 +393,10 @@ pub async fn run_sync(
             plan.cursor_kind,
             plan.cursor.as_deref(),
             plan.last_error.as_deref(),
+            // Status is written inside the lease-guarded finish transaction:
+            // a separate post-finish update could clobber a new lease holder
+            // after a stale takeover released ours.
+            plan.status,
             synced,
         )
         .await
@@ -403,13 +424,5 @@ pub async fn run_sync(
             serde_json::json!({ "upserted": upserted, "soft_deleted": soft_deleted }),
         )
         .await;
-    }
-    if let Some(status) = plan.status {
-        if let Err(e) = store
-            .update_calendar_source_status(source_id, status, plan.last_error.as_deref())
-            .await
-        {
-            tracing::error!(source_id = %source_id, "failed to update source status: {e}");
-        }
     }
 }

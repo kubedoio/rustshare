@@ -116,8 +116,6 @@ struct MockState {
     delta_requests: Mutex<Vec<String>>,
     /// `Prefer` header of each delta request, in arrival order.
     delta_prefer_headers: Mutex<Vec<String>>,
-    /// Number of calls to the (now unused) revoke endpoint.
-    revoke_hits: Mutex<u32>,
     /// Refresh-token values seen at the token endpoint (rotation tracking).
     refresh_tokens_seen: Mutex<Vec<String>>,
     token_requests: Mutex<u32>,
@@ -200,13 +198,6 @@ fn spawn_mock_microsoft() -> (String, Arc<MockState>) {
             get(|AxumState(state): AxumState<Arc<MockState>>| async move {
                 let email = state.me_email.lock().await.clone();
                 Json(json!({"mail": email, "userPrincipalName": "upn@example.test"}))
-            }),
-        )
-        .route(
-            "/me/revokeSignInSessions",
-            post(|AxumState(state): AxumState<Arc<MockState>>| async move {
-                *state.revoke_hits.lock().await += 1;
-                Json(json!({}))
             }),
         )
         .route(
@@ -964,6 +955,7 @@ async fn run_claimed_sync(
                     Some("ms_delta_token"),
                     next_sync_token.as_deref(),
                     None,
+                    None,
                     true,
                 )
                 .await
@@ -1534,6 +1526,9 @@ async fn revoked_grant_flips_auth_required_and_further_runs_noop() {
         .await;
     let client = mock_client(&base);
 
+    // A caller that refreshes tokens must hold the sync lease (only the lease
+    // holder may rotate OAuth tokens).
+    acquire_lease(&harness, source.id, WORKER_A).await;
     let outcome = rustshare_server::services::outlook_calendar::sync_source(
         &harness.store,
         &client,
@@ -1694,6 +1689,7 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
                         None,
                         None,
                         Some("swept aside by concurrent-claim test"),
+                        None,
                         false,
                     )
                     .await
@@ -1733,6 +1729,7 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
             Some("ms_delta_token"),
             Some("cursor-concurrent"),
             None,
+            Some("healthy"),
             true,
         )
         .await
@@ -2052,6 +2049,159 @@ async fn removed_tombstone_soft_deletes_mirror_without_bogus_row() {
     harness.cleanup().await;
 }
 
+/// R9: a run's `soft_deleted` must count explicit `@removed` tombstones even
+/// when the absent-entry sweep adds nothing (the swept tombstone here is
+/// outside the sweep window), not replace the tombstone count with the sweep
+/// count.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn full_run_counts_tombstone_outside_sweep_window() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_microsoft();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_o_tomb_count").await;
+    let source = harness.create_outlook_source(user.id).await;
+    let client = mock_client(&base);
+
+    // A mirrored row whose start is well outside the 90d-back / 365d-forward
+    // sweep window.
+    let old = CalendarEvent {
+        id: Uuid::new_v4(),
+        tenant_id: harness.tenant_id,
+        owner_id: user.id,
+        source_id: source.id,
+        external_uid: Some("evt-old-del".to_string()),
+        external_etag: None,
+        recurrence_id: None,
+        title: "Old doomed".to_string(),
+        description: None,
+        location: None,
+        starts_at: "2020-01-01T10:00:00Z".parse().unwrap(),
+        ends_at: "2020-01-01T11:00:00Z".parse().unwrap(),
+        all_day: false,
+        original_date: None,
+        timezone: "UTC".to_string(),
+        rrule: None,
+        status: "confirmed".to_string(),
+        read_only: true,
+        raw: None,
+        deleted_at: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    harness
+        .store
+        .upsert_calendar_synced_event(&old)
+        .await
+        .expect("seed old mirrored event");
+
+    // Full run (no cursor yet) carries only the tombstone.
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "value": [{"id": "evt-old-del", "@removed": {"reason": "deleted"}}],
+            "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-old-del"
+        })));
+    }
+    let outcome = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    let SyncOutcome::Completed { soft_deleted, .. } = outcome else {
+        panic!("expected Completed, got {outcome:?}");
+    };
+    assert_eq!(
+        soft_deleted, 1,
+        "a tombstone outside the sweep window must still be counted"
+    );
+
+    harness.cleanup().await;
+}
+
+/// R10: a master `@removed` tombstone must cascade to that master's recurrence
+/// overrides, which share the master's `external_uid` with a non-null
+/// `recurrence_id`; otherwise the overrides linger after the master is gone.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn master_tombstone_cascades_to_recurrence_overrides() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_microsoft();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_o_master_cascade").await;
+    let source = harness.create_outlook_source(user.id).await;
+    let client = mock_client(&base);
+
+    // Run 1: default mock response establishes an incremental delta cursor.
+    let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    assert!(matches!(first, SyncOutcome::Completed { .. }));
+
+    // Seed the master and one of its overrides, as an earlier sync would have.
+    let mut master = CalendarEvent {
+        id: Uuid::new_v4(),
+        tenant_id: harness.tenant_id,
+        owner_id: user.id,
+        source_id: source.id,
+        external_uid: Some("master-cas".to_string()),
+        external_etag: None,
+        recurrence_id: None,
+        title: "Series master".to_string(),
+        description: None,
+        location: None,
+        starts_at: "2026-10-05T14:00:00Z".parse().unwrap(),
+        ends_at: "2026-10-05T15:00:00Z".parse().unwrap(),
+        all_day: false,
+        original_date: None,
+        timezone: "UTC".to_string(),
+        rrule: Some("FREQ=DAILY".to_string()),
+        status: "confirmed".to_string(),
+        read_only: true,
+        raw: None,
+        deleted_at: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    harness
+        .store
+        .upsert_calendar_synced_event(&master)
+        .await
+        .expect("seed master");
+    master.id = Uuid::new_v4();
+    master.recurrence_id = Some("2026-10-12T14:00:00Z".to_string());
+    master.title = "Overridden occurrence".to_string();
+    harness
+        .store
+        .upsert_calendar_synced_event(&master)
+        .await
+        .expect("seed override");
+
+    // Run 2: an incremental delta carries the master's `@removed` tombstone.
+    {
+        let mut queue = mock.delta_queue.lock().await;
+        queue.push_back(MockResponse::ok(json!({
+            "value": [{"id": "master-cas", "@removed": {"reason": "deleted"}}],
+            "@odata.deltaLink": "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=cursor-cas"
+        })));
+    }
+    let reloaded = harness.reload_source(source.id).await;
+    let second = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
+    let SyncOutcome::Completed { soft_deleted, .. } = second else {
+        panic!("expected Completed, got {second:?}");
+    };
+    assert_eq!(
+        soft_deleted, 2,
+        "the master tombstone must cascade to the master and its override"
+    );
+
+    let (live,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM calendar_events
+         WHERE source_id = $1 AND external_uid = 'master-cas' AND deleted_at IS NULL",
+    )
+    .bind(source.id)
+    .fetch_one(&harness.pool)
+    .await
+    .expect("count live cascade rows");
+    assert_eq!(live, 0, "both master and override must be soft-deleted");
+
+    harness.cleanup().await;
+}
+
 /// O4: Graph HTTP 403 `ErrorAccessDenied` (consent withdrawn) must park the
 /// source as `auth_required`, not retry forever as a transient API failure.
 #[tokio::test]
@@ -2080,15 +2230,14 @@ async fn graph_403_access_denied_parks_auth_required() {
     harness.cleanup().await;
 }
 
-/// O5: disconnecting an Outlook source performs no provider-side
-/// `revokeSignInSessions` call (the least-privileged permission is not in
-/// scope, so it always 403s); the local token wipe is the effective
-/// revocation. The revoke endpoint must never be hit.
+/// O5: disconnecting an Outlook source performs no provider-side revocation
+/// call (Microsoft exposes no grant-scoped revoke endpoint within the
+/// `Calendars.Read` scope); the local token wipe is the effective revocation.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn disconnect_revocation_makes_no_provider_call() {
     let _guard = SERIAL.lock().await;
-    let (base, mock) = spawn_mock_microsoft();
+    let (base, _mock) = spawn_mock_microsoft();
     let harness = Harness::new().await;
     let user = harness.create_user("cal_o_disconnect").await;
     let source = harness.create_outlook_source(user.id).await;
@@ -2100,11 +2249,6 @@ async fn disconnect_revocation_makes_no_provider_call() {
         .await
         .expect("disconnect with no live lease must succeed");
 
-    assert_eq!(
-        *mock.revoke_hits.lock().await,
-        0,
-        "no revokeSignInSessions request may be made"
-    );
     let reloaded = harness.reload_source(source.id).await;
     assert_eq!(reloaded.status, "auth_required");
     assert!(reloaded.refresh_token_enc.is_none(), "tokens must be wiped");
