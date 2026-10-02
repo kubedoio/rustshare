@@ -6,6 +6,10 @@
 //! holder heartbeats during the run and releases the lease (recording the
 //! next due time, cursor, and last-error) on completion or failure — the
 //! same claim/stale-reset shape as the mail import worker.
+//!
+//! A parked (`auth_required`) source and a run that loses its lease are
+//! neither success nor failure: the worker writes no status/watermark/cursor
+//! and publishes no imported.v1 event for them.
 
 use std::collections::HashSet;
 use std::panic::AssertUnwindSafe;
@@ -232,14 +236,11 @@ pub async fn run_sync(
             }
             None => SyncOutcome::Failed("outlook OAuth is not configured".to_string()),
         },
-        // Claim only what we can run.
+        // Claim only what we can run; treat an unknown kind like a parked
+        // source so the run neither publishes nor advances bookkeeping.
         other => {
             tracing::debug!(source_id = %source_id, kind = %other, "no sync provider registered; skipping");
-            SyncOutcome::Completed {
-                upserted: 0,
-                soft_deleted: 0,
-                next_sync_token: None,
-            }
+            SyncOutcome::Parked
         }
     };
 
@@ -273,17 +274,25 @@ pub async fn run_sync(
         _ => (None, None),
     };
     let plan = match outcome {
+        // A parked (`auth_required`) source did no work: neither success nor
+        // failure. Publish nothing, advance no watermark, write no status, and
+        // record no error, so the source stays parked without oscillating.
+        SyncOutcome::Parked => {
+            tracing::debug!(source_id = %source_id, "calendar source parked; no work this run");
+            return;
+        }
+        // The lease is no longer ours (stale takeover). Anything we write now
+        // would clobber the new holder's bookkeeping, so abort silently.
+        SyncOutcome::LeaseLost => {
+            tracing::warn!(source_id = %source_id, "calendar sync lease lost; aborting run");
+            return;
+        }
         SyncOutcome::Completed {
             upserted,
             soft_deleted,
             next_sync_token,
         } => {
             tracing::info!(source_id = %source_id, upserted, soft_deleted, "calendar source synced");
-            // A source parked in `auth_required` reaches this arm as a
-            // deliberate no-op (sync_source early-returns); it must stay
-            // parked — writing `healthy` here would oscillate the status
-            // every poll cycle.
-            let parked = source.status == "auth_required";
             SyncPlan {
                 next_sync_at: now
                     + chrono::Duration::from_std(DEFAULT_SYNC_INTERVAL)
@@ -293,7 +302,7 @@ pub async fn run_sync(
                     None => None,
                 },
                 cursor_kind,
-                status: if parked { None } else { Some("healthy") },
+                status: Some("healthy"),
                 last_error: None,
             }
         }
@@ -342,10 +351,24 @@ pub async fn run_sync(
         }
     };
 
-    let _ = store
+    // Losing the lease between the provider run and here means another worker
+    // owns the source now; discard the run's bookkeeping rather than clobber
+    // theirs.
+    match store
         .heartbeat_calendar_source_lease(source_id, &worker_id)
-        .await;
-    let persisted = store
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::warn!(source_id = %source_id, "calendar sync lease lost before persist; run discarded");
+            return;
+        }
+        Err(e) => {
+            tracing::error!(source_id = %source_id, "failed to heartbeat calendar sync lease: {e}");
+            return;
+        }
+    }
+    let persisted = match store
         .finish_calendar_source_sync(
             source_id,
             &worker_id,
@@ -356,11 +379,18 @@ pub async fn run_sync(
             synced,
         )
         .await
-        .inspect_err(|e| {
+    {
+        Ok(persisted) => persisted,
+        Err(e) => {
             tracing::error!(source_id = %source_id, "failed to release calendar sync lease: {e}");
-        })
-        .is_ok();
-    if let Some((upserted, soft_deleted)) = completed_counts.filter(|_| persisted) {
+            false
+        }
+    };
+    if !persisted {
+        tracing::warn!(source_id = %source_id, "calendar sync lease lost at persist; run discarded");
+        return;
+    }
+    if let Some((upserted, soft_deleted)) = completed_counts {
         // One imported.v1 per completed run, counts + source ResourceRef
         // only. Published after the run state persisted so a failed persist
         // cannot leave a retried run double-publishing; best-effort — a

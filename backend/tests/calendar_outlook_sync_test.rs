@@ -1000,6 +1000,8 @@ async fn run_claimed_sync(
                 .await
                 .expect("mark failed");
         }
+        // Parked and lease-lost runs write nothing (the worker returns early).
+        SyncOutcome::Parked | SyncOutcome::LeaseLost => {}
     }
     outcome
 }
@@ -1562,16 +1564,10 @@ async fn revoked_grant_flips_auth_required_and_further_runs_noop() {
         WORKER_A,
     )
     .await;
-    assert!(
-        matches!(
-            second,
-            SyncOutcome::Completed {
-                upserted: 0,
-                soft_deleted: 0,
-                ..
-            }
-        ),
-        "auth_required sources must no-op, got {second:?}"
+    assert_eq!(
+        second,
+        SyncOutcome::Parked,
+        "auth_required sources must report Parked, got {second:?}"
     );
     assert_eq!(
         mock.token_hits().await,
@@ -1582,6 +1578,40 @@ async fn revoked_grant_flips_auth_required_and_further_runs_noop() {
         mock.delta_requests.lock().await.is_empty(),
         "no-op run must not call the delta API"
     );
+
+    // Worker path: a parked source must publish no imported event and must
+    // not advance the last-successful-sync watermark.
+    let parked_source = harness.reload_source(source.id).await;
+    let watermark_before = parked_source.last_synced_at;
+    rustshare_server::calendar_sync_worker::run_sync(
+        harness.store.clone(),
+        harness.secret_key.clone(),
+        None,
+        Some(Arc::new(mock_client(&base))),
+        harness.outbox.clone(),
+        parked_source,
+        sync_config(),
+        WORKER_A.to_string(),
+    )
+    .await;
+    let imported: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM integration_outbox
+         WHERE tenant_id = $1 AND event_type = 'io.elembra.calendar.event.imported.v1'",
+    )
+    .bind(harness.tenant_id)
+    .fetch_one(&harness.pool)
+    .await
+    .expect("count imported outbox rows");
+    assert_eq!(
+        imported, 0,
+        "a parked source must publish no imported event"
+    );
+    let after = harness.reload_source(source.id).await;
+    assert_eq!(
+        after.last_synced_at, watermark_before,
+        "a parked run must not advance the last-synced watermark"
+    );
+    assert_eq!(after.status, "auth_required", "status stays parked");
 
     harness.cleanup().await;
 }

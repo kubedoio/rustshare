@@ -35,6 +35,15 @@ pub struct MetadataStore {
     pool: PgPool,
 }
 
+/// Identity of a stored recurring-event override: the `external_uid` of the
+/// recurring master (or the row's own id) plus the `recurrence_id` of the
+/// overridden occurrence.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct CalendarEventOverrideKey {
+    pub external_uid: String,
+    pub recurrence_id: String,
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ObjectGcCandidate {
     pub id: Uuid,
@@ -6625,9 +6634,30 @@ impl MetadataStore {
         Ok(row)
     }
 
-    /// Whether an active calendar event row exists with this ID regardless of
-    /// owner. Used to distinguish foreign IDs (404) from already-deleted ones
-    /// (idempotent delete success) without leaking existence across owners.
+    /// Whether an active calendar event row exists with this ID **in the
+    /// caller's tenant**, regardless of owner. Used to distinguish a foreign
+    /// but same-tenant ID (404) from an already-deleted/never-existing one
+    /// (idempotent delete success). Scoping to the tenant is what keeps the
+    /// check from becoming a cross-tenant existence oracle.
+    pub async fn calendar_event_exists_in_tenant(&self, tenant_id: Uuid, id: Uuid) -> Result<bool> {
+        let exists = sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM calendar_events
+                             WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL)"#,
+            id,
+            tenant_id,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists.unwrap_or(false))
+    }
+
+    /// Whether an active calendar event row exists with this ID **regardless
+    /// of tenant or owner**.
+    ///
+    /// NOTE: this is an existence oracle across tenant boundaries — a caller
+    /// passing an arbitrary ID learns whether it exists anywhere. It is kept
+    /// only until its sole call site (`CalendarService::delete_event`) moves to
+    /// `calendar_event_exists_in_tenant`; new code must not use it.
     pub async fn calendar_event_exists_any_owner(&self, id: Uuid) -> Result<bool> {
         let exists = sqlx::query_scalar!(
             r#"SELECT EXISTS(SELECT 1 FROM calendar_events WHERE id = $1 AND deleted_at IS NULL)"#,
@@ -6648,12 +6678,17 @@ impl MetadataStore {
 
     /// Update the mutable columns of a calendar event inside an existing
     /// transaction (atomic outbox publish, issue #315).
+    ///
+    /// Returns `true` when a live row was updated. A `false` result means the
+    /// row was concurrently soft-deleted (or no longer belongs to the caller),
+    /// so callers must skip publishing an `updated.v1` envelope rather than
+    /// announce a change that did not happen.
     pub async fn update_calendar_event_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         event: &CalendarEvent,
-    ) -> Result<()> {
-        sqlx::query!(
+    ) -> Result<bool> {
+        let result = sqlx::query!(
             r#"
             UPDATE calendar_events
             SET title = $2, description = $3, location = $4, starts_at = $5,
@@ -6677,7 +6712,7 @@ impl MetadataStore {
         )
         .execute(&mut **tx)
         .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     /// Soft-delete a calendar event. Returns `true` when a row was deleted.
@@ -6763,6 +6798,47 @@ impl MetadataStore {
             to,
             include_cancelled,
             source_ids
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Every recurring-event override visible to the caller, independently of
+    /// the status/window filters applied by `list_calendar_events_in_range`.
+    ///
+    /// A cancelled or moved occurrence of a recurring master is stored as an
+    /// override row (`recurrence_id IS NOT NULL`) that may fall outside the
+    /// requested time window or carry `status = 'cancelled'`, so the range
+    /// listing can return the master without its overrides. Expansion then
+    /// renders a phantom occurrence for a cancelled/moved instance. This query
+    /// returns the full `(external_uid, recurrence_id)` key set for the
+    /// caller's own non-deleted mirrored rows (optionally restricted to
+    /// `source_ids`; an empty slice means all enabled-or-requested sources,
+    /// matching the range listing's own source filter), regardless of status
+    /// and regardless of time window, so the service can suppress those
+    /// occurrences.
+    pub async fn list_calendar_event_overrides(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        source_ids: &[Uuid],
+    ) -> Result<Vec<CalendarEventOverrideKey>> {
+        let rows = sqlx::query_as!(
+            CalendarEventOverrideKey,
+            r#"
+            SELECT
+                e.external_uid AS "external_uid!",
+                e.recurrence_id AS "recurrence_id!"
+            FROM calendar_events e
+            WHERE e.tenant_id = $1 AND e.owner_id = $2 AND e.deleted_at IS NULL
+              AND e.external_uid IS NOT NULL
+              AND e.recurrence_id IS NOT NULL
+              AND (cardinality($3::uuid[]) = 0 OR e.source_id = ANY($3))
+            "#,
+            tenant_id,
+            owner_id,
+            source_ids,
         )
         .fetch_all(&self.pool)
         .await?;
@@ -7258,14 +7334,16 @@ impl MetadataStore {
         Ok(source)
     }
 
-    /// Refresh the lease heartbeat for a claimed source. No-op when the
-    /// caller no longer holds the lease.
+    /// Refresh the lease heartbeat for a claimed source. Returns `true` while
+    /// the caller still holds the lease; `false` means the lease was lost
+    /// (stale takeover) and the run must abort without writing status,
+    /// watermark, or cursor, and without publishing.
     pub async fn heartbeat_calendar_source_lease(
         &self,
         source_id: Uuid,
         worker_id: &str,
-    ) -> Result<()> {
-        sqlx::query!(
+    ) -> Result<bool> {
+        let result = sqlx::query!(
             r#"
             UPDATE calendar_sync_states
             SET locked_at = NOW(), updated_at = NOW()
@@ -7276,13 +7354,21 @@ impl MetadataStore {
         )
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     /// Release the sync lease and record the outcome of a run: the next due
     /// time, the (possibly nulled) cursor, and last-sync bookkeeping.
     /// `mark_synced` gates the `calendar_sources.last_synced_at` watermark so
     /// failed runs do not advance it.
+    ///
+    /// The whole write is lease-guarded and transactional: when the caller no
+    /// longer owns the lease (`locked_by` no longer matches — a stale takeover
+    /// handed the source to another worker) nothing is written and `Ok(false)`
+    /// is returned. In particular the `calendar_sources` status/watermark
+    /// update is skipped, so a worker that lost its lease cannot clobber the
+    /// new lease holder's bookkeeping. The caller must not publish an imported
+    /// event when this returns `Ok(false)`.
     #[allow(clippy::too_many_arguments)]
     pub async fn finish_calendar_source_sync(
         &self,
@@ -7293,8 +7379,9 @@ impl MetadataStore {
         cursor_value: Option<&str>,
         last_error: Option<&str>,
         mark_synced: bool,
-    ) -> Result<()> {
-        sqlx::query!(
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let lease = sqlx::query!(
             r#"
             UPDATE calendar_sync_states
             SET locked_at = NULL, locked_by = NULL, next_sync_at = $3,
@@ -7309,8 +7396,14 @@ impl MetadataStore {
             cursor_value,
             last_error,
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        if lease.rows_affected() == 0 {
+            // Lost the lease: roll back and leave the source entirely to the
+            // current holder (no status/watermark write, no cursor write).
+            tx.rollback().await?;
+            return Ok(false);
+        }
         sqlx::query!(
             r#"
             UPDATE calendar_sources
@@ -7322,9 +7415,10 @@ impl MetadataStore {
             last_error,
             mark_synced,
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
-        Ok(())
+        tx.commit().await?;
+        Ok(true)
     }
 
     /// Delete expired single-use OAuth states (abandoned consents); returns
@@ -7472,6 +7566,12 @@ impl MetadataStore {
 
     /// Upsert one mirrored external event by
     /// `(source_id, external_uid, COALESCE(recurrence_id, ''))`.
+    ///
+    /// Returns `true` when a row was inserted or actually changed; `false` for
+    /// an unchanged re-sync (the conflict path is guarded by an
+    /// `IS DISTINCT FROM` comparison so `updated_at` is not bumped for a
+    /// no-op). Sync callers count a successful call as one materialized event
+    /// regardless of this flag (best-effort imported.v1 count).
     pub async fn upsert_calendar_synced_event(&self, event: &CalendarEvent) -> Result<bool> {
         let result = sqlx::query!(
             r#"
@@ -7498,6 +7598,20 @@ impl MetadataStore {
                 rrule = EXCLUDED.rrule,
                 status = EXCLUDED.status,
                 updated_at = NOW()
+            -- Update only on a real change so a no-op re-sync does not bump
+            -- updated_at (spec §Sync loop); the import upsert uses the same
+            -- IS DISTINCT FROM guard.
+            WHERE calendar_events.external_etag IS DISTINCT FROM EXCLUDED.external_etag
+               OR calendar_events.title IS DISTINCT FROM EXCLUDED.title
+               OR calendar_events.description IS DISTINCT FROM EXCLUDED.description
+               OR calendar_events.location IS DISTINCT FROM EXCLUDED.location
+               OR calendar_events.starts_at IS DISTINCT FROM EXCLUDED.starts_at
+               OR calendar_events.ends_at IS DISTINCT FROM EXCLUDED.ends_at
+               OR calendar_events.all_day IS DISTINCT FROM EXCLUDED.all_day
+               OR calendar_events.original_date IS DISTINCT FROM EXCLUDED.original_date
+               OR calendar_events.timezone IS DISTINCT FROM EXCLUDED.timezone
+               OR calendar_events.rrule IS DISTINCT FROM EXCLUDED.rrule
+               OR calendar_events.status IS DISTINCT FROM EXCLUDED.status
             "#,
             event.id,
             event.tenant_id,

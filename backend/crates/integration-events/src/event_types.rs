@@ -23,8 +23,12 @@ pub const CALENDAR_EVENT_UPDATED_V1: &str = "io.elembra.calendar.event.updated.v
 pub const CALENDAR_EVENT_DELETED_V1: &str = "io.elembra.calendar.event.deleted.v1";
 /// One calendar import or provider-sync run finished (counts + source
 /// ResourceRef only — never titles/descriptions, per minimum-safe-data).
-/// Counts are best-effort and may reflect a partial or parked no-op run;
-/// consumers deduplicate deliveries by envelope id.
+/// Counts are best-effort and may reflect a partial run; consumers
+/// deduplicate deliveries by envelope id.
+///
+/// A `Parked` run (source `auth_required`, grant revoked) and a lease-lost
+/// run publish no event at all — they are neither success nor failure, so a
+/// disconnected source does not emit a perpetual stream of empty imports.
 pub const CALENDAR_EVENT_IMPORTED_V1: &str = "io.elembra.calendar.event.imported.v1";
 
 #[cfg(test)]

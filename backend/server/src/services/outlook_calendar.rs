@@ -34,7 +34,9 @@ use rustshare_crypto::SecretEncryptionKey;
 use rustshare_storage::MetadataStore;
 use serde::Deserialize;
 
-use crate::services::google_calendar::{CalendarSyncConfig, SyncOutcome, TOKEN_EXPIRY_MARGIN};
+use crate::services::google_calendar::{
+    build_http_client, CalendarSyncConfig, SyncOutcome, TOKEN_EXPIRY_MARGIN,
+};
 
 const AUTH_BASE: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize";
 const TOKEN_URL: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
@@ -89,7 +91,7 @@ impl OutlookCalendarClient {
 
     pub fn new(client_id: String, client_secret: String, public_url: &str) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: build_http_client(),
             client_id,
             client_secret,
             redirect_url: format!("{public_url}/api/v1/calendar/oauth/outlook/callback"),
@@ -665,14 +667,12 @@ pub async fn sync_source(
     config: &CalendarSyncConfig,
     worker_id: &str,
 ) -> SyncOutcome {
-    // A source whose grant was revoked stays a no-op until reconnect.
+    // A source whose grant was revoked stays parked until reconnect: no work,
+    // no publish, no watermark/status write (the worker treats `Parked` as
+    // neither success nor failure).
     if source.status == "auth_required" {
         tracing::debug!(source_id = %source.id, "source auth_required; skipping sync");
-        return SyncOutcome::Completed {
-            upserted: 0,
-            soft_deleted: 0,
-            next_sync_token: None,
-        };
+        return SyncOutcome::Parked;
     }
     let Some(refresh_enc) = source.refresh_token_enc.as_deref() else {
         return SyncOutcome::Failed("source has no refresh token".to_string());
@@ -781,12 +781,16 @@ pub async fn sync_source(
                 Err(OutlookError::AuthRequired) => return SyncOutcome::AuthRequired,
                 Err(e) => return SyncOutcome::Failed(e.to_string()),
             };
-            if store
+            match store
                 .heartbeat_calendar_source_lease(source.id, worker_id)
                 .await
-                .is_err()
             {
-                return SyncOutcome::Failed("lease heartbeat failed".to_string());
+                Ok(true) => {}
+                Ok(false) => return SyncOutcome::LeaseLost,
+                Err(e) => {
+                    tracing::warn!(source_id = %source.id, "lease heartbeat failed: {e}");
+                    return SyncOutcome::LeaseLost;
+                }
             }
             let raw = match response.text().await {
                 Ok(text) => text,

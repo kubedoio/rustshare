@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                e.external_uid AS \"external_uid!\",\n                e.recurrence_id AS \"recurrence_id!\"\n            FROM calendar_events e\n            WHERE e.tenant_id = $1 AND e.owner_id = $2 AND e.deleted_at IS NULL\n              AND e.external_uid IS NOT NULL\n              AND e.recurrence_id IS NOT NULL\n              AND (cardinality($3::uuid[]) = 0 OR e.source_id = ANY($3))\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "external_uid!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "recurrence_id!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "57836d5a9c5274495fda053ce9b73bfeb46e95f642f5d88a91d16e54417689bd"
+}

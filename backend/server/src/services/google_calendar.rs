@@ -26,6 +26,22 @@ pub const DEFAULT_SYNC_INTERVAL: Duration = Duration::from_secs(900);
 /// Access tokens are refreshed this long before their advertised expiry.
 pub const TOKEN_EXPIRY_MARGIN: Duration = Duration::from_secs(60);
 const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(60);
+/// Provider HTTP bounds: a stalled connection must not hang a sync run (and
+/// thereby hold its lease) indefinitely. The generous total timeout covers a
+/// large multi-page events.list.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Build a provider HTTP client with connect and total timeouts. The `http`
+/// field of each provider client stays public so tests can swap in a client
+/// with different bounds against a slow mock.
+pub(crate) fn build_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
 
 /// OAuth client + Calendar API endpoints for one Google app registration.
 pub struct GoogleCalendarClient {
@@ -54,6 +70,11 @@ pub enum GoogleError {
     Gone,
     #[error("Rate limited by provider")]
     RateLimited { retry_after: Duration },
+    /// HTTP 401: the cached access token was rejected. Distinct from
+    /// `AuthRequired` so the sync can force one refresh + retry before
+    /// parking the source.
+    #[error("Access token rejected (401)")]
+    Unauthorized,
     #[error("Provider rejected the grant")]
     AuthRequired,
 }
@@ -98,7 +119,7 @@ impl GoogleCalendarClient {
 
     pub fn new(client_id: String, client_secret: String, public_url: &str) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: build_http_client(),
             client_id,
             client_secret,
             redirect_url: format!("{public_url}/api/v1/calendar/oauth/google/callback"),
@@ -273,6 +294,14 @@ pub enum SyncOutcome {
     /// The provider rejected the grant; the source is marked `auth_required`
     /// and later runs no-op until reconnect.
     AuthRequired,
+    /// The source is parked (`auth_required`): the run did no work and must
+    /// not be treated as a success or a failure. The worker publishes no
+    /// event, advances no watermark, writes no status, and records no error.
+    Parked,
+    /// The sync lease was lost mid-run (stale takeover by another worker).
+    /// Like `Parked`, the run must not publish or write status/watermark —
+    /// the new lease holder owns the source now.
+    LeaseLost,
     /// HTTP 429 / Retry-After; the caller backs off `next_sync_at`.
     RateLimited { retry_after: Duration },
     /// Transient failure; safe to retry on schedule.
@@ -330,23 +359,43 @@ impl GoogleTime {
     }
 }
 
+/// The mirrored-event identity `(external_uid, recurrence_id)` for a Google
+/// entry. Occurrences and overrides of a recurring master ride on the master's
+/// id with the original start as the recurrence id; the master and single
+/// instances use their own id with a null recurrence id.
+///
+/// `map_event` and the full-run `present_keys` sweep both derive identity
+/// through this one function so the upserted key and the sweep key can never
+/// diverge. A missing or unparseable `originalStartTime` yields a null
+/// recurrence id, which keeps the row on its own `id` instead of fabricating
+/// an unstable key (the previous `unwrap_or(now)` could soft-delete the live
+/// occurrence and insert a duplicate).
+fn event_identity(item: &GoogleEvent) -> (String, Option<String>) {
+    match (&item.recurring_event_id, &item.original_start_time) {
+        (Some(master_id), Some(original)) => (
+            master_id.clone(),
+            original
+                .starts_at()
+                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)),
+        ),
+        _ => (item.id.clone(), None),
+    }
+}
+
+/// The sweep/upsert key format `external_uid|recurrence_id`, matching the
+/// `(external_uid || '|' || COALESCE(recurrence_id, ''))` expression used by
+/// `soft_delete_calendar_events_absent`.
+fn identity_key(external_uid: &str, recurrence_id: Option<&str>) -> String {
+    format!("{external_uid}|{}", recurrence_id.unwrap_or_default())
+}
+
 fn map_event(source: &CalendarSource, item: GoogleEvent, now: DateTime<Utc>) -> CalendarEvent {
     // Instances of a recurring master (including cancelled ones) carry
     // `recurringEventId` + `originalStartTime`; they become override rows on
-    // the master's external id.
-    let (external_uid, recurrence_id) = match (&item.recurring_event_id, &item.original_start_time)
-    {
-        (Some(master_id), Some(original)) => (
-            master_id.clone(),
-            Some(
-                original
-                    .starts_at()
-                    .unwrap_or(now)
-                    .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true),
-            ),
-        ),
-        _ => (item.id.clone(), None),
-    };
+    // the master's external id. Identity is derived by the shared
+    // `event_identity` helper so it always matches the `present_keys` used by
+    // the absent-entry sweep.
+    let (external_uid, recurrence_id) = event_identity(&item);
     let fallback_start = item
         .original_start_time
         .as_ref()
@@ -456,9 +505,58 @@ async fn fetch_events_page(
         429 => Err(GoogleError::RateLimited {
             retry_after: parse_retry_after(response.headers()),
         }),
-        401 | 403 => Err(GoogleError::AuthRequired),
+        401 => Err(GoogleError::Unauthorized),
+        403 => {
+            // Google uses 403 both for genuine auth rejections and for quota
+            // throttling (`rateLimitExceeded`/`userRateLimitExceeded`). Only
+            // classify a 403 as auth when the error body names no rate-limit
+            // reason, so a throttle backs off instead of parking the source.
+            let retry_after = parse_retry_after(response.headers());
+            let body = response.text().await.unwrap_or_default();
+            if google_error_reasons(&body)
+                .iter()
+                .any(|reason| is_rate_limit_reason(reason))
+            {
+                Err(GoogleError::RateLimited { retry_after })
+            } else {
+                Err(GoogleError::AuthRequired)
+            }
+        }
         status => Err(GoogleError::Api(format!("HTTP {status}"))),
     }
+}
+
+/// The `error.errors[].reason` values from a Google API error body.
+fn google_error_reasons(body: &str) -> Vec<String> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .pointer("/error/errors")
+                .and_then(|e| e.as_array())
+                .cloned()
+        })
+        .map(|errors| {
+            errors
+                .iter()
+                .filter_map(|error| {
+                    error
+                        .get("reason")
+                        .and_then(|r| r.as_str())
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Google error reasons that mean "too many requests" rather than a rejected
+/// grant, mapped to a backoff instead of `auth_required`.
+fn is_rate_limit_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "rateLimitExceeded" | "userRateLimitExceeded" | "quotaExceeded" | "dailyLimitExceeded"
+    )
 }
 
 fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Duration {
@@ -468,6 +566,49 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Duration {
         .and_then(|value| value.parse::<u64>().ok())
         .map(Duration::from_secs)
         .unwrap_or(DEFAULT_RETRY_AFTER)
+}
+
+/// Refresh the access token and persist the (possibly rotated) token pair.
+/// Returns the new access token, or the `SyncOutcome` that should end the run
+/// (`AuthRequired` only when the refresh itself is rejected with
+/// `invalid_grant`).
+async fn refresh_and_persist_access_token(
+    store: &MetadataStore,
+    client: &GoogleCalendarClient,
+    secret_key: &SecretEncryptionKey,
+    source_id: uuid::Uuid,
+    refresh_token: &str,
+) -> Result<String, SyncOutcome> {
+    match client.refresh_access_token(refresh_token).await {
+        Ok(tokens) => {
+            let rotated = tokens
+                .rotated_refresh_token()
+                .and_then(|rotated| rustshare_crypto::encrypt_secret(rotated, secret_key).ok());
+            let access_enc =
+                match rustshare_crypto::encrypt_secret(tokens.access_token(), secret_key) {
+                    Ok(enc) => enc,
+                    Err(_) => {
+                        return Err(SyncOutcome::Failed("token encryption failed".to_string()))
+                    }
+                };
+            if let Err(e) = store
+                .update_calendar_source_tokens(
+                    source_id,
+                    rotated.as_deref(),
+                    &access_enc,
+                    tokens.expires_at(),
+                )
+                .await
+            {
+                return Err(SyncOutcome::Failed(format!(
+                    "failed to persist tokens: {e}"
+                )));
+            }
+            Ok(tokens.access_token().to_string())
+        }
+        Err(GoogleError::AuthRequired) => Err(SyncOutcome::AuthRequired),
+        Err(e) => Err(SyncOutcome::Failed(e.to_string())),
+    }
 }
 
 /// Run one sync pass for a Google source. Callers must hold the sync lease
@@ -481,14 +622,12 @@ pub async fn sync_source(
     config: &CalendarSyncConfig,
     worker_id: &str,
 ) -> SyncOutcome {
-    // A source whose grant was revoked stays a no-op until reconnect.
+    // A source whose grant was revoked stays parked until reconnect: no
+    // work, no publish, no watermark/status write (the worker treats `Parked`
+    // as neither success nor failure).
     if source.status == "auth_required" {
         tracing::debug!(source_id = %source.id, "source auth_required; skipping sync");
-        return SyncOutcome::Completed {
-            upserted: 0,
-            soft_deleted: 0,
-            next_sync_token: None,
-        };
+        return SyncOutcome::Parked;
     }
     let Some(refresh_enc) = source.refresh_token_enc.as_deref() else {
         return SyncOutcome::Failed("source has no refresh token".to_string());
@@ -508,40 +647,21 @@ pub async fn sync_source(
         .map(|expires_at| expires_at - TOKEN_EXPIRY_MARGIN <= Utc::now())
         .unwrap_or(true);
     if access_token.is_none() || token_expired {
-        match client.refresh_access_token(&refresh_token).await {
-            Ok(tokens) => {
-                let rotated = match tokens.rotated_refresh_token() {
-                    Some(rotated) => rustshare_crypto::encrypt_secret(rotated, secret_key).ok(),
-                    None => None,
-                };
-                let access_enc =
-                    match rustshare_crypto::encrypt_secret(tokens.access_token(), secret_key) {
-                        Ok(enc) => enc,
-                        Err(_) => {
-                            return SyncOutcome::Failed("token encryption failed".to_string())
-                        }
-                    };
-                if let Err(e) = store
-                    .update_calendar_source_tokens(
-                        source.id,
-                        rotated.as_deref(),
-                        &access_enc,
-                        tokens.expires_at(),
-                    )
-                    .await
-                {
-                    return SyncOutcome::Failed(format!("failed to persist tokens: {e}"));
-                }
-                access_token = Some(tokens.access_token().to_string());
-            }
-            Err(GoogleError::AuthRequired) => return SyncOutcome::AuthRequired,
-            Err(e) => return SyncOutcome::Failed(e.to_string()),
+        match refresh_and_persist_access_token(store, client, secret_key, source.id, &refresh_token)
+            .await
+        {
+            Ok(token) => access_token = Some(token),
+            Err(outcome) => return outcome,
         }
     }
-    let access_token = match access_token {
+    let mut access_token = match access_token {
         Some(token) => token,
         None => return SyncOutcome::Failed("no access token available".to_string()),
     };
+    // A 401 from an otherwise valid-looking token forces exactly one refresh
+    // and retry before parking: the cached token can be revoked or clock-skew
+    // expired even though `access_token_expires_at` said otherwise.
+    let mut refreshed_after_401 = false;
 
     let sync_state = match store.get_calendar_sync_state(source.id).await {
         Ok(state) => state,
@@ -593,15 +713,41 @@ pub async fn sync_source(
                 Err(GoogleError::RateLimited { retry_after }) => {
                     return SyncOutcome::RateLimited { retry_after };
                 }
-                Err(GoogleError::AuthRequired) => return SyncOutcome::AuthRequired,
+                Err(GoogleError::Unauthorized) if !refreshed_after_401 => {
+                    // Attempt exactly one forced refresh + retry before
+                    // parking the source.
+                    match refresh_and_persist_access_token(
+                        store,
+                        client,
+                        secret_key,
+                        source.id,
+                        &refresh_token,
+                    )
+                    .await
+                    {
+                        Ok(token) => {
+                            access_token = token;
+                            refreshed_after_401 = true;
+                            continue;
+                        }
+                        Err(outcome) => return outcome,
+                    }
+                }
+                Err(GoogleError::Unauthorized | GoogleError::AuthRequired) => {
+                    return SyncOutcome::AuthRequired
+                }
                 Err(e) => return SyncOutcome::Failed(e.to_string()),
             };
-            if store
+            match store
                 .heartbeat_calendar_source_lease(source.id, worker_id)
                 .await
-                .is_err()
             {
-                return SyncOutcome::Failed("lease heartbeat failed".to_string());
+                Ok(true) => {}
+                Ok(false) => return SyncOutcome::LeaseLost,
+                Err(e) => {
+                    tracing::warn!(source_id = %source.id, "lease heartbeat failed: {e}");
+                    return SyncOutcome::LeaseLost;
+                }
             }
             let raw = match response.text().await {
                 Ok(text) => text,
@@ -613,15 +759,8 @@ pub async fn sync_source(
             };
             let now = Utc::now();
             for item in page.items.unwrap_or_default() {
-                present_keys.push(format!(
-                    "{}|{}",
-                    item.recurring_event_id.as_deref().unwrap_or(&item.id),
-                    item.original_start_time
-                        .as_ref()
-                        .and_then(GoogleTime::starts_at)
-                        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true))
-                        .unwrap_or_default()
-                ));
+                let (external_uid, recurrence_id) = event_identity(&item);
+                present_keys.push(identity_key(&external_uid, recurrence_id.as_deref()));
                 let event = map_event(source, item, now);
                 match store.upsert_calendar_synced_event(&event).await {
                     Ok(_) => upserted += 1,
@@ -679,5 +818,70 @@ mod tests {
         let page: EventsListResponse = serde_json::from_value(body).unwrap();
         assert_eq!(page.next_sync_token.as_deref(), Some("cursor-after-full"));
         assert!(page.next_page_token.is_none());
+    }
+
+    #[test]
+    fn classifies_google_403_rate_limit_reasons() {
+        let body = serde_json::json!({
+            "error": {
+                "code": 403,
+                "message": "Quota exceeded",
+                "errors": [{"domain": "usageLimits", "reason": "rateLimitExceeded"}]
+            }
+        })
+        .to_string();
+        let reasons = google_error_reasons(&body);
+        assert_eq!(reasons, vec!["rateLimitExceeded".to_string()]);
+        assert!(reasons.iter().any(|reason| is_rate_limit_reason(reason)));
+
+        // A genuine auth 403 (no rate-limit reason) stays AuthRequired.
+        let auth_body = serde_json::json!({
+            "error": {"code": 403, "errors": [{"reason": "insufficientPermissions"}]}
+        })
+        .to_string();
+        assert!(!google_error_reasons(&auth_body)
+            .iter()
+            .any(|reason| is_rate_limit_reason(reason)));
+        assert!(google_error_reasons("not json").is_empty());
+    }
+
+    #[test]
+    fn google_identity_requires_a_parseable_original_start() {
+        // Occurrence with a parseable originalStartTime → master key + stamp.
+        let item: GoogleEvent = serde_json::from_value(serde_json::json!({
+            "id": "master_20261012T140000Z",
+            "recurringEventId": "master",
+            "originalStartTime": {"dateTime": "2026-10-12T14:00:00Z"}
+        }))
+        .unwrap();
+        assert_eq!(
+            event_identity(&item),
+            (
+                "master".to_string(),
+                Some("2026-10-12T14:00:00Z".to_string())
+            )
+        );
+
+        // Missing/unparseable originalStartTime must NOT fabricate an
+        // unstable `now`-based key (which diverged from the sweep key). The
+        // recurrence id stays null and the identity remains the master id,
+        // matching the sweep key produced by the same helper.
+        let broken: GoogleEvent = serde_json::from_value(serde_json::json!({
+            "id": "master_20261012T140000Z",
+            "recurringEventId": "master",
+            "originalStartTime": {"dateTime": "not-a-date"}
+        }))
+        .unwrap();
+        assert_eq!(event_identity(&broken), ("master".to_string(), None));
+        assert_eq!(
+            identity_key(&event_identity(&broken).0, None),
+            "master|",
+            "upsert and sweep keys must agree for an unparseable original start"
+        );
+        assert_eq!(
+            identity_key("external", None),
+            "external|",
+            "sweep key format must match the SQL COALESCE expression"
+        );
     }
 }

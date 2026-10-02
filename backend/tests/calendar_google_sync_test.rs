@@ -1041,6 +1041,8 @@ async fn run_claimed_sync(
                 .await
                 .expect("mark failed");
         }
+        // Parked and lease-lost runs write nothing (the worker returns early).
+        SyncOutcome::Parked | SyncOutcome::LeaseLost => {}
     }
     outcome
 }
@@ -1578,16 +1580,10 @@ async fn revoked_grant_flips_auth_required_and_further_runs_noop() {
         WORKER_A,
     )
     .await;
-    assert!(
-        matches!(
-            second,
-            SyncOutcome::Completed {
-                upserted: 0,
-                soft_deleted: 0,
-                ..
-            }
-        ),
-        "auth_required sources must no-op, got {second:?}"
+    assert_eq!(
+        second,
+        SyncOutcome::Parked,
+        "auth_required sources must report Parked, got {second:?}"
     );
     assert_eq!(
         mock.token_hits().await,
@@ -1598,6 +1594,40 @@ async fn revoked_grant_flips_auth_required_and_further_runs_noop() {
         mock.events_requests.lock().await.is_empty(),
         "no-op run must not call the events API"
     );
+
+    // Worker path: a parked source must publish no imported event and must
+    // not advance the last-successful-sync watermark.
+    let parked_source = harness.reload_source(source.id).await;
+    let watermark_before = parked_source.last_synced_at;
+    rustshare_server::calendar_sync_worker::run_sync(
+        harness.store.clone(),
+        harness.secret_key.clone(),
+        Some(Arc::new(client.clone_for_test())),
+        None,
+        harness.outbox.clone(),
+        parked_source,
+        sync_config(),
+        WORKER_A.to_string(),
+    )
+    .await;
+    let imported: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM integration_outbox
+         WHERE tenant_id = $1 AND event_type = 'io.elembra.calendar.event.imported.v1'",
+    )
+    .bind(harness.tenant_id)
+    .fetch_one(&harness.pool)
+    .await
+    .expect("count imported outbox rows");
+    assert_eq!(
+        imported, 0,
+        "a parked source must publish no imported event"
+    );
+    let after = harness.reload_source(source.id).await;
+    assert_eq!(
+        after.last_synced_at, watermark_before,
+        "a parked run must not advance the last-synced watermark"
+    );
+    assert_eq!(after.status, "auth_required", "status stays parked");
 
     harness.cleanup().await;
 }
@@ -1789,6 +1819,368 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
         .await
         .expect("resync after release");
     assert!(forced, "resync must succeed once the lease is free");
+
+    harness.cleanup().await;
+}
+
+/// W3: a Google 403 caused by quota throttling (`rateLimitExceeded`) must back
+/// off, not park the source as `auth_required`.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn google_403_quota_maps_to_rate_limited() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "quota-403@test.local".to_string();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_403_quota").await;
+    let source = harness.create_google_source(user.id, &mock).await;
+    let client = mock_client(&base);
+
+    mock.events_queue.lock().await.push_back(MockResponse {
+        status: axum::http::StatusCode::FORBIDDEN,
+        body: json!({
+            "error": {
+                "code": 403,
+                "message": "Quota exceeded",
+                "errors": [{"domain": "usageLimits", "reason": "rateLimitExceeded"}]
+            }
+        }),
+        retry_after: Some(17),
+    });
+    let outcome = rustshare_server::services::google_calendar::sync_source(
+        &harness.store,
+        &client,
+        &harness.secret_key,
+        &source,
+        &sync_config(),
+        WORKER_A,
+    )
+    .await;
+    assert!(
+        matches!(outcome, SyncOutcome::RateLimited { retry_after } if retry_after == std::time::Duration::from_secs(17)),
+        "a quota 403 must back off, got {outcome:?}"
+    );
+
+    harness.cleanup().await;
+}
+
+/// W3 (inverse): a 403 that names a genuine auth reason still parks.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn google_403_auth_reason_parks() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "auth-403@test.local".to_string();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_403_auth").await;
+    let source = harness.create_google_source(user.id, &mock).await;
+    let client = mock_client(&base);
+
+    mock.events_queue.lock().await.push_back(MockResponse {
+        status: axum::http::StatusCode::FORBIDDEN,
+        body: json!({
+            "error": {
+                "code": 403,
+                "message": "Insufficient permission",
+                "errors": [{"domain": "global", "reason": "insufficientPermissions"}]
+            }
+        }),
+        retry_after: None,
+    });
+    let outcome = rustshare_server::services::google_calendar::sync_source(
+        &harness.store,
+        &client,
+        &harness.secret_key,
+        &source,
+        &sync_config(),
+        WORKER_A,
+    )
+    .await;
+    assert_eq!(outcome, SyncOutcome::AuthRequired);
+
+    harness.cleanup().await;
+}
+
+/// W4: a 401 on `events.list` first forces one access-token refresh and
+/// retries the same page; the run only parks when the refresh itself fails.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn google_401_refreshes_once_and_retries() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "retry-401@test.local".to_string();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_401_retry").await;
+    // Fresh access token: the run must not refresh up front, so the only
+    // token call is the one forced by the 401.
+    let source = harness.create_google_source(user.id, &mock).await;
+    let client = mock_client(&base);
+
+    mock.events_queue.lock().await.push_back(MockResponse {
+        status: axum::http::StatusCode::UNAUTHORIZED,
+        body: json!({"error": {"code": 401, "message": "Invalid Credentials"}}),
+        retry_after: None,
+    });
+    let outcome = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    assert!(
+        matches!(outcome, SyncOutcome::Completed { .. }),
+        "a 401 must retry after refresh, got {outcome:?}"
+    );
+    assert_eq!(
+        mock.token_hits().await,
+        1,
+        "exactly one forced refresh expected"
+    );
+    assert_eq!(
+        mock.events_requests.lock().await.len(),
+        2,
+        "the events request must be retried once"
+    );
+
+    harness.cleanup().await;
+}
+
+/// W4 (inverse): when the forced refresh is rejected with `invalid_grant`,
+/// the source parks.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn google_401_parks_when_refresh_is_invalid_grant() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "retry-401-revoked@test.local".to_string();
+    *mock.revoke_grants.lock().await = true;
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_401_revoked").await;
+    let source = harness.create_google_source(user.id, &mock).await;
+    let client = mock_client(&base);
+
+    mock.events_queue.lock().await.push_back(MockResponse {
+        status: axum::http::StatusCode::UNAUTHORIZED,
+        body: json!({"error": {"code": 401, "message": "Invalid Credentials"}}),
+        retry_after: None,
+    });
+    let outcome = rustshare_server::services::google_calendar::sync_source(
+        &harness.store,
+        &client,
+        &harness.secret_key,
+        &source,
+        &sync_config(),
+        WORKER_A,
+    )
+    .await;
+    assert_eq!(outcome, SyncOutcome::AuthRequired);
+    assert_eq!(mock.token_hits().await, 1, "one refresh attempt expected");
+
+    harness.cleanup().await;
+}
+
+/// S3: re-syncing an unchanged event must not bump `updated_at`.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn unchanged_resync_does_not_bump_updated_at() {
+    let _guard = SERIAL.lock().await;
+    let (base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "no-bump@test.local".to_string();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_no_bump").await;
+    let source = harness.create_google_source(user.id, &mock).await;
+    let client = mock_client(&base);
+
+    let page = json!({
+        "items": [event_item("evt-bump", "Stable", "2026-10-05T14:00:00Z", "2026-10-05T15:00:00Z")],
+        "nextSyncToken": "cursor-bump-1"
+    });
+    mock.events_queue
+        .lock()
+        .await
+        .push_back(MockResponse::ok(page.clone()));
+    let first = run_claimed_sync(&harness, &client, &source, WORKER_A).await;
+    assert!(matches!(first, SyncOutcome::Completed { upserted: 1, .. }));
+    let updated_before: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "SELECT updated_at FROM calendar_events WHERE source_id = $1 AND external_uid = 'evt-bump'",
+    )
+    .bind(source.id)
+    .fetch_one(&harness.pool)
+    .await
+    .expect("updated_at before");
+
+    // Force a full resync (clear the cursor) and return the identical event.
+    sqlx::query(
+        "UPDATE calendar_sync_states SET cursor_value = NULL, cursor_kind = NULL WHERE source_id = $1",
+    )
+    .bind(source.id)
+    .execute(&harness.pool)
+    .await
+    .expect("clear cursor");
+    mock.events_queue
+        .lock()
+        .await
+        .push_back(MockResponse::ok(page));
+    let reloaded = harness.reload_source(source.id).await;
+    let second = run_claimed_sync(&harness, &client, &reloaded, WORKER_A).await;
+    assert!(matches!(second, SyncOutcome::Completed { .. }));
+
+    let updated_after: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "SELECT updated_at FROM calendar_events WHERE source_id = $1 AND external_uid = 'evt-bump'",
+    )
+    .bind(source.id)
+    .fetch_one(&harness.pool)
+    .await
+    .expect("updated_at after");
+    assert_eq!(
+        updated_before, updated_after,
+        "an unchanged re-sync must not bump updated_at"
+    );
+
+    harness.cleanup().await;
+}
+
+/// S1: a worker that lost its lease gets `false` from the heartbeat and the
+/// lease-guarded finish, which must not write the cursor or the source
+/// watermark.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn lease_guarded_writes_reject_a_stale_holder() {
+    let _guard = SERIAL.lock().await;
+    let (_base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "stale-lease@test.local".to_string();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_stale").await;
+    let source = harness.create_google_source(user.id, &mock).await;
+
+    // WORKER_A holds the lease; WORKER_B is a stale former holder.
+    sqlx::query(
+        "UPDATE calendar_sync_states SET locked_at = NOW(), locked_by = $2 WHERE source_id = $1",
+    )
+    .bind(source.id)
+    .bind(WORKER_A)
+    .execute(&harness.pool)
+    .await
+    .expect("acquire lease");
+
+    assert!(
+        harness
+            .store
+            .heartbeat_calendar_source_lease(source.id, WORKER_A)
+            .await
+            .expect("heartbeat as holder"),
+        "the holder must keep its lease"
+    );
+    assert!(
+        !harness
+            .store
+            .heartbeat_calendar_source_lease(source.id, "calendar-sync-test-stale")
+            .await
+            .expect("heartbeat as stale holder"),
+        "a stale holder must not refresh the lease"
+    );
+
+    let watermark_before = harness.reload_source(source.id).await.last_synced_at;
+    let finished = harness
+        .store
+        .finish_calendar_source_sync(
+            source.id,
+            "calendar-sync-test-stale",
+            chrono::Utc::now() + chrono::Duration::seconds(900),
+            Some("google_sync_token"),
+            Some("leaked-cursor"),
+            Some("leaked error"),
+            true,
+        )
+        .await
+        .expect("finish as stale holder");
+    assert!(!finished, "a stale holder's finish must report lease loss");
+
+    let state = harness
+        .store
+        .get_calendar_sync_state(source.id)
+        .await
+        .expect("sync state")
+        .expect("sync state row");
+    assert_eq!(
+        state.cursor_value, None,
+        "stale finish must not write a cursor"
+    );
+    assert_eq!(
+        state.locked_by.as_deref(),
+        Some(WORKER_A),
+        "the real holder keeps the lease"
+    );
+    let after = harness.reload_source(source.id).await;
+    assert_eq!(
+        after.last_synced_at, watermark_before,
+        "stale finish must not advance the watermark"
+    );
+    assert_eq!(
+        after.last_error, None,
+        "stale finish must not write last_error"
+    );
+
+    harness.cleanup().await;
+}
+
+/// S5: override rows are discoverable independently of status and window.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn overrides_are_listed_regardless_of_status_and_window() {
+    let _guard = SERIAL.lock().await;
+    let (_base, mock) = spawn_mock_google();
+    *mock.userinfo_email.lock().await = "overrides@test.local".to_string();
+    let harness = Harness::new().await;
+    let user = harness.create_user("cal_g_overrides").await;
+    let source = harness.create_google_source(user.id, &mock).await;
+
+    // Seed override rows directly; the identity they carry is the same
+    // `(external_uid, recurrence_id)` shape the provider path produces.
+    let mut event = CalendarEvent {
+        id: Uuid::new_v4(),
+        tenant_id: harness.tenant_id,
+        owner_id: user.id,
+        source_id: source.id,
+        external_uid: Some("master-override".to_string()),
+        external_etag: None,
+        recurrence_id: Some("2020-01-01T10:00:00Z".to_string()),
+        title: "Cancelled occurrence".to_string(),
+        description: None,
+        location: None,
+        starts_at: "2020-01-01T10:00:00Z".parse().unwrap(),
+        ends_at: "2020-01-01T11:00:00Z".parse().unwrap(),
+        all_day: false,
+        original_date: None,
+        timezone: "UTC".to_string(),
+        rrule: None,
+        status: "cancelled".to_string(),
+        read_only: true,
+        raw: None,
+        deleted_at: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    harness
+        .store
+        .upsert_calendar_synced_event(&event)
+        .await
+        .expect("seed override row");
+
+    // A live row without a recurrence id is not an override.
+    event.id = Uuid::new_v4();
+    event.recurrence_id = None;
+    event.external_uid = Some("plain-event".to_string());
+    event.status = "confirmed".to_string();
+    harness
+        .store
+        .upsert_calendar_synced_event(&event)
+        .await
+        .expect("seed plain row");
+
+    let overrides = harness
+        .store
+        .list_calendar_event_overrides(harness.tenant_id, user.id, &[])
+        .await
+        .expect("list overrides");
+    assert_eq!(overrides.len(), 1, "only the recurrence override is listed");
+    assert_eq!(overrides[0].external_uid, "master-override");
+    assert_eq!(overrides[0].recurrence_id, "2020-01-01T10:00:00Z");
 
     harness.cleanup().await;
 }
