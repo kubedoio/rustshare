@@ -1319,7 +1319,8 @@ mod tests {
         let from = utc("2026-01-01T00:00:00Z");
         assert!(validate_window(from, from).is_err());
         assert!(validate_window(from, utc("2026-01-01T00:00:01Z")).is_ok());
-        assert!(validate_window(from, utc("2027-01-01T00:00:00Z")).is_ok()); // exactly 366 days
-        assert!(validate_window(from, utc("2027-01-02T00:00:01Z")).is_err()); // beyond the cap
+        assert!(validate_window(from, utc("2027-01-01T00:00:00Z")).is_ok()); // 365 days
+        assert!(validate_window(from, utc("2027-01-02T00:00:00Z")).is_ok()); // exactly 366 days
+        assert!(validate_window(from, utc("2027-01-02T00:00:01Z")).is_err()); // 366 days + 1s
     }
 }
