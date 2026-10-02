@@ -618,6 +618,15 @@ impl AppConfig {
     pub fn from_env() -> Result<Self, Vec<String>> {
         match envy::from_env::<Self>() {
             Ok(mut config) => {
+                // An empty or whitespace-only `RUSTSHARE_PUBLIC_URL` behaves as
+                // unset. The compose passthrough injects an empty string when
+                // the operator's root `.env` omits the variable, and validating
+                // that literal would fail with a misleading `got ""` instead of
+                // the actionable "still the development default" guidance.
+                // Fall back to the compiled default, then normalize.
+                if config.public_url.trim().is_empty() {
+                    config.public_url = default_public_url();
+                }
                 // Normalize once here so every consumer (startup logging, both
                 // provider clients, and the provider-status endpoint) derives
                 // redirect URIs without a doubled slash.
@@ -1257,6 +1266,32 @@ mod tests {
         std::env::set_var("RUSTSHARE_PUBLIC_URL", "https://app.example.com");
         let config = AppConfig::from_env().expect("valid public URL must pass");
         assert_eq!(config.public_url, "https://app.example.com");
+    }
+
+    #[test]
+    fn from_env_treats_blank_public_url_as_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        // The compose passthrough injects an empty string when the operator's
+        // root `.env` omits RUSTSHARE_PUBLIC_URL. It must fall back to the
+        // compiled default rather than failing validation with `got ""`.
+        for blank in ["", "   "] {
+            std::env::set_var("RUSTSHARE_PUBLIC_URL", blank);
+            // Tests run in debug builds, where the compiled dev default is
+            // accepted; the resolved value is what matters here.
+            let config =
+                AppConfig::from_env().expect("blank public URL must fall back to the default");
+            assert_eq!(config.public_url, DEV_PUBLIC_URL);
+        }
+        // In a release build that same fallback is rejected with the
+        // actionable "still the development default" message, not `got ""`.
+        let errors = public_url_errors(&default_public_url(), false, true);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("development default")),
+            "errors: {errors:?}"
+        );
     }
 
     #[test]

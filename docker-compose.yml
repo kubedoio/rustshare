@@ -72,10 +72,12 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       RUST_LOG: info,rustshare=debug
       # Public origin the Calendar OAuth redirect URIs derive from. Release
-      # builds refuse the development default, so set RUSTSHARE_PUBLIC_URL in
-      # .env (see .env.example); RUSTSHARE_ALLOW_DEV_PUBLIC_URL=1 only opts a
-      # throwaway local environment out of that guard.
-      RUSTSHARE_PUBLIC_URL: ${RUSTSHARE_PUBLIC_URL}
+      # builds refuse the development default, and compose refuses to start
+      # when this is unset, so set RUSTSHARE_PUBLIC_URL in .env (the bundled
+      # quickstart's default is http://localhost; see .env.example).
+      # RUSTSHARE_ALLOW_DEV_PUBLIC_URL=1 only opts a throwaway local
+      # environment out of the release guard.
+      RUSTSHARE_PUBLIC_URL: ${RUSTSHARE_PUBLIC_URL:?RUSTSHARE_PUBLIC_URL must be set (e.g. https://calendar.example.com) in .env}
       RUSTSHARE_ALLOW_DEV_PUBLIC_URL: ${RUSTSHARE_ALLOW_DEV_PUBLIC_URL:-}
       RUSTFS_ENDPOINT: http://rustfs:9000
       RUSTFS_PUBLIC_ENDPOINT: ${RUSTFS_PUBLIC_ENDPOINT:-http://localhost:9000}
