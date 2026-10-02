@@ -27,12 +27,12 @@ pub struct AppConfig {
     pub public_url: String,
     #[serde(
         default = "default_storage_quota",
-        rename = "RUSTSHARE_DEFAULT_STORAGE_QUOTA_BYTES"
+        rename = "rustshare_default_storage_quota_bytes"
     )]
     pub default_storage_quota_bytes: i64,
-    #[serde(default = "default_ai_enabled", rename = "RUSTSHARE_AI_ENABLED")]
+    #[serde(default = "default_ai_enabled", rename = "rustshare_ai_enabled")]
     pub ai_enabled: bool,
-    #[serde(default = "default_log_format", rename = "RUSTSHARE_LOG_FORMAT")]
+    #[serde(default = "default_log_format", rename = "rustshare_log_format")]
     pub log_format: String,
     #[serde(default = "default_pool_max")]
     pub db_pool_max_connections: u32,
@@ -55,49 +55,49 @@ pub struct AppConfig {
     pub rustshare_chat_bootstrap_relay_url: Option<String>,
     #[serde(
         default = "default_bootstrap_password_file",
-        rename = "RUSTSHARE_BOOTSTRAP_PASSWORD_FILE"
+        rename = "rustshare_bootstrap_password_file"
     )]
     pub bootstrap_password_file: String,
     #[serde(default = "default_broadcast_capacity")]
     pub broadcast_capacity: usize,
     #[serde(
         default = "default_mail_import_worker_enabled",
-        rename = "RUSTSHARE_MAIL_IMPORT_WORKER_ENABLED"
+        rename = "rustshare_mail_import_worker_enabled"
     )]
     pub mail_import_worker_enabled: bool,
     #[serde(
         default = "default_mail_import_worker_poll_secs",
-        rename = "RUSTSHARE_MAIL_IMPORT_WORKER_POLL_SECS"
+        rename = "rustshare_mail_import_worker_poll_secs"
     )]
     pub mail_import_worker_poll_secs: u64,
     #[serde(
         default = "default_mail_import_worker_max_concurrent",
-        rename = "RUSTSHARE_MAIL_IMPORT_WORKER_MAX_CONCURRENT"
+        rename = "rustshare_mail_import_worker_max_concurrent"
     )]
     pub mail_import_worker_max_concurrent: usize,
     #[serde(
         default = "default_mail_import_worker_stale_secs",
-        rename = "RUSTSHARE_MAIL_IMPORT_WORKER_STALE_SECS"
+        rename = "rustshare_mail_import_worker_stale_secs"
     )]
     pub mail_import_worker_stale_secs: i64,
     #[serde(
         default = "default_calendar_import_worker_enabled",
-        rename = "RUSTSHARE_CALENDAR_IMPORT_WORKER_ENABLED"
+        rename = "rustshare_calendar_import_worker_enabled"
     )]
     pub calendar_import_worker_enabled: bool,
     #[serde(
         default = "default_calendar_import_worker_poll_secs",
-        rename = "RUSTSHARE_CALENDAR_IMPORT_WORKER_POLL_SECS"
+        rename = "rustshare_calendar_import_worker_poll_secs"
     )]
     pub calendar_import_worker_poll_secs: u64,
     #[serde(
         default = "default_calendar_import_worker_max_concurrent",
-        rename = "RUSTSHARE_CALENDAR_IMPORT_WORKER_MAX_CONCURRENT"
+        rename = "rustshare_calendar_import_worker_max_concurrent"
     )]
     pub calendar_import_worker_max_concurrent: usize,
     #[serde(
         default = "default_calendar_import_worker_stale_secs",
-        rename = "RUSTSHARE_CALENDAR_IMPORT_WORKER_STALE_SECS"
+        rename = "rustshare_calendar_import_worker_stale_secs"
     )]
     pub calendar_import_worker_stale_secs: i64,
     /// Google Calendar OAuth client credentials. Absent = provider
@@ -114,32 +114,32 @@ pub struct AppConfig {
     pub calendar_microsoft_client_secret: Option<String>,
     #[serde(
         default = "default_calendar_sync_worker_enabled",
-        rename = "RUSTSHARE_CALENDAR_SYNC_WORKER_ENABLED"
+        rename = "rustshare_calendar_sync_worker_enabled"
     )]
     pub calendar_sync_worker_enabled: bool,
     #[serde(
         default = "default_calendar_sync_worker_poll_secs",
-        rename = "RUSTSHARE_CALENDAR_SYNC_WORKER_POLL_SECS"
+        rename = "rustshare_calendar_sync_worker_poll_secs"
     )]
     pub calendar_sync_worker_poll_secs: u64,
     #[serde(
         default = "default_calendar_sync_worker_max_concurrent",
-        rename = "RUSTSHARE_CALENDAR_SYNC_WORKER_MAX_CONCURRENT"
+        rename = "rustshare_calendar_sync_worker_max_concurrent"
     )]
     pub calendar_sync_worker_max_concurrent: usize,
     #[serde(
         default = "default_calendar_sync_worker_stale_secs",
-        rename = "RUSTSHARE_CALENDAR_SYNC_WORKER_STALE_SECS"
+        rename = "rustshare_calendar_sync_worker_stale_secs"
     )]
     pub calendar_sync_worker_stale_secs: i64,
     #[serde(
         default = "default_calendar_sync_past_days",
-        rename = "RUSTSHARE_CALENDAR_SYNC_PAST_DAYS"
+        rename = "rustshare_calendar_sync_past_days"
     )]
     pub calendar_sync_past_days: i64,
     #[serde(
         default = "default_calendar_sync_future_days",
-        rename = "RUSTSHARE_CALENDAR_SYNC_FUTURE_DAYS"
+        rename = "rustshare_calendar_sync_future_days"
     )]
     pub calendar_sync_future_days: i64,
 }
@@ -702,6 +702,48 @@ mod tests {
             "RUSTSHARE_CALENDAR_GOOGLE_CLIENT_SECRET",
             "RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_ID",
             "RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_SECRET",
+        ] {
+            std::env::remove_var(name);
+        }
+    }
+
+    /// The 18 switches that used to carry uppercase `serde(rename = ...)`
+    /// values: `envy` lowercases env names, so those renames never matched and
+    /// the fields kept their defaults. A representative sample (log format, the
+    /// AI toggle, quota, a mail worker knob, a calendar import worker knob, and
+    /// the sync window bounds) must now be read from the environment.
+    #[test]
+    fn from_env_reads_previously_ignored_switches() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_LOG_FORMAT", "json");
+        std::env::set_var("RUSTSHARE_AI_ENABLED", "false");
+        std::env::set_var("RUSTSHARE_DEFAULT_STORAGE_QUOTA_BYTES", "123456789");
+        std::env::set_var("RUSTSHARE_MAIL_IMPORT_WORKER_POLL_SECS", "42");
+        std::env::set_var("RUSTSHARE_CALENDAR_IMPORT_WORKER_ENABLED", "false");
+        std::env::set_var("RUSTSHARE_CALENDAR_SYNC_PAST_DAYS", "7");
+        std::env::set_var("RUSTSHARE_CALENDAR_SYNC_FUTURE_DAYS", "30");
+
+        let config = AppConfig::from_env().expect("valid env must pass");
+        assert_eq!(config.log_format, "json");
+        assert!(!config.ai_enabled);
+        assert_eq!(config.default_storage_quota_bytes, 123_456_789);
+        assert_eq!(config.mail_import_worker_poll_secs, 42);
+        assert!(!config.calendar_import_worker_enabled);
+        assert_eq!(config.calendar_sync_past_days, 7);
+        assert_eq!(config.calendar_sync_future_days, 30);
+        // Untouched switches keep their documented defaults.
+        assert_eq!(config.calendar_sync_worker_stale_secs, 300);
+        assert_eq!(config.mail_import_worker_max_concurrent, 2);
+
+        for name in [
+            "RUSTSHARE_LOG_FORMAT",
+            "RUSTSHARE_AI_ENABLED",
+            "RUSTSHARE_DEFAULT_STORAGE_QUOTA_BYTES",
+            "RUSTSHARE_MAIL_IMPORT_WORKER_POLL_SECS",
+            "RUSTSHARE_CALENDAR_IMPORT_WORKER_ENABLED",
+            "RUSTSHARE_CALENDAR_SYNC_PAST_DAYS",
+            "RUSTSHARE_CALENDAR_SYNC_FUTURE_DAYS",
         ] {
             std::env::remove_var(name);
         }
