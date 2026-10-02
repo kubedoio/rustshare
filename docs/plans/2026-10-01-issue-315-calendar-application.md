@@ -6,7 +6,7 @@
 
 **Architecture:** Everything is modeled on the Mail application. Manifest registration in `first_party_manifests()` (`backend/crates/core/src/domain/application.rs:488`); per-tenant enablement gating via a `require_calendar_enabled()` guard cloned from `require_mail_enabled()` (`backend/server/src/handlers/mail.rs:25-43`); five new tables (`calendar_events`, `calendar_sources`, `calendar_sync_states`, `calendar_import_jobs`, `calendar_oauth_states`); per-user OAuth tokens encrypted with the existing AES-256-GCM `SecretEncryptionKey` (`mail_accounts.password_enc` pattern); background import/sync workers cloned from `mail_import_worker.rs` (DB queue, claim/stale-reset/watermark); integration events through the generic `OutboxStore::insert_in_tx` path (`backend/crates/storage/src/outbox_store.rs:359`). No bidirectional sync, per the connector contract warning.
 
-**Tech Stack:** Rust 1.97.1 / Axum / SQLx (offline metadata) / PostgreSQL 16; `icalendar` crate for RFC 5545 parsing (new dependency); `rrule` crate (~0.13) for recurrence expansion at read time (new dependency); `reqwest` (already a workspace dependency) for OAuth + provider APIs; Svelte 5 runes + TanStack Query (`$lib/query-compat`) frontend with a hand-rolled month/week/agenda grid (no calendar component library).
+**Tech Stack:** Rust 1.97.1 / Axum / SQLx (offline metadata) / PostgreSQL 16; `icalendar` crate for RFC 5545 parsing (new dependency); `rrule` crate (~0.13) for recurrence expansion at read time (new dependency); `reqwest` (already a workspace dependency) for OAuth + provider APIs; Svelte 5 runes + TanStack Query (`$lib/query-compat`) frontend with a hand-rolled day/work-week/month/agenda grid (no calendar component library). (The view set was extended to include a Day view and a Monday–Friday work week after QA; see the 2026-10-02 Amendment.)
 
 **Companion documents (read first):**
 
@@ -65,7 +65,7 @@ No calendar tables, routes, frontend components, or crates exist today (`rg -i c
 | Change detection | Provider cursors: Google `syncToken`, Microsoft `deltaToken`, stored in `calendar_sync_states`; bounded full resync on `410 GONE` | Webhooks/push channels; full scan every run | Connector contract's preferred order (delta API → cursor polling); webhooks need a public endpoint + verification channel — deferred |
 | Events table name | `calendar_events` | `events` | Taken by the append-only domain event store |
 | Recurrence | Store RRULE verbatim; expand server-side within the requested range, capped window (≤ 366 days) | Pre-materialize instances | Unbounded storage growth; expansion-at-read is exact and cheap for UI windows |
-| Frontend calendar UI | Hand-rolled month/week/agenda grid in `CalendarApplicationView.svelte` | FullCalendar or similar component library | No heavy dependency; Svelte 5 runes + existing TanStack Query idiom suffice for v1 views; keeps bundle small |
+| Frontend calendar UI | Hand-rolled day/work-week/month/agenda grid in `CalendarApplicationView.svelte` (Day view + Monday–Friday work week added in the 2026-10-02 Amendment) | FullCalendar or similar component library | No heavy dependency; Svelte 5 runes + existing TanStack Query idiom suffice for v1 views; keeps bundle small |
 | Visibility / sharing | Owner-only rows (`tenant_id` + `owner_id` on every query, 404 for foreign); read-only per-user ICS feed as stretch | Map calendar onto Files share links | No permission model exists for per-user mirrored external data; safety boundary requires design + review first (`0031-tenant-isolation-share-links-and-rls.md` tenant isolation file, sharing rules) |
 | Deletion propagation | Mirror follows provider: remote deletion soft-deletes the Elembra row | Retain local copy after provider deletion | Mirror-mode semantics from the connector contract; the provider is authoritative |
 | Import identity | Upsert key `(source_id, external_uid, COALESCE(recurrence_id,''))` | Row-per-import with dedupe heuristic | Re-importable by construction; retries never duplicate |
@@ -395,8 +395,8 @@ Expected: new tests fail before implementation (import error), pass after.
 
 Hand-rolled grid, no component library (decision table row 8). Svelte 5 runes + TanStack Query via `$lib/query-compat` (see `MailApplicationView.svelte` for the idiom):
 
-- view switcher: month / week / agenda (`$state`);
-- month grid: 7×6 day cells computed from the visible month; week: 7 columns; agenda: grouped list;
+- view switcher: day / work week / month / agenda (`$state`) — Day view and Monday–Friday work week added in the 2026-10-02 Amendment;
+- month grid: 7×6 day cells computed from the visible month; work week: 5 columns (Mon–Fri); day: single-day hour grid with an all-day lane; agenda: grouped list;
 - events query keyed `['calendar-events', from, to]` with `from`/`to` derived from the visible window; sources query `['calendar-sources']`;
 - source filter chips (color per source kind: internal / ical_import / google / outlook) and per-source toggle using the `source_id` param;
 - create/edit modal for internal events; read-only detail popover for `read_only` events showing source attribution ("from Google — user@example.com");
@@ -428,7 +428,7 @@ Expected: all green.
 git add frontend/src
 git commit -s -m "feat(calendar): calendar application view, API client, renderer registration
 
-Hand-rolled month/week/agenda grid (no component library), per-source
+Hand-rolled day/work-week/month/agenda grid (no component library), per-source
 filtering and attribution, internal event create/edit modal, settings
 panel with source list and .ics import upload (issue #315)."
 ```
@@ -591,3 +591,68 @@ This plan touches three listed safety boundaries; the PR must carry this note an
 - **Provider webhooks/push channels** (polling cursors only).
 - **Free/busy, attendee management, iTIP scheduling.**
 - **Memory/Search indexing of events** (the manifest declares no memory policy — `memory: None` — until permission-aware indexing is designed for owner-only data).
+
+## Amendment (2026-10-02)
+
+Manual QA of the shipped Calendar application against the live deployment
+surfaced three defects. This amendment records what changed and why; the
+task-by-task remediation plan is
+`docs/plans/2026-10-02-issue-315-calendar-followups.md`.
+
+### 1. View set: Day view and Monday–Friday work week
+
+The original plan (see the Tech Stack and Design-decisions rows, and Task 3)
+described a "month/week/agenda" grid with a Sunday-anchored, 7-column week.
+QA asked for a Day view and for the week to be Monday–Friday. This is a
+presentation-only change: the range API was already window-agnostic (any
+window ≤ 366 days, `handlers/calendar.rs` / `calendar_service.rs`), so no
+backend API change was required. The week view now requests Monday 00:00 →
+Saturday 00:00 local (five columns, weekends excluded), and a new Day view
+renders a single day as an hour grid with an all-day lane. Month stays
+Sunday-anchored 7×6; Agenda stays 30 days. The range math is extracted into a
+unit-tested `frontend/src/lib/calendar/view-range.ts`.
+
+### 2. Create-event "Invalid JSON payload"
+
+Root cause: a **stale frontend bundle** sent `timezone: null` for new events,
+while the backend `CreateCalendarEventRequest.timezone` is a non-null
+`String`. Serde rejected the body and `ValidatedJson` mapped every
+deserialization error to `400 {"error":"Invalid JSON payload"}` (32 bytes),
+which the nginx access log confirmed. The code fix landed in **78100d68**
+(`timezone: editingEvent?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone`);
+the user's browser was still running the earlier bundle, so a hard reload
+resolves the visible symptom.
+
+Residual hardening added: a `UTC` fallback when the browser reports no
+timezone, backend logging of the discarded serde reason behind the unchanged
+public error body, and contract tests locking the exact UI payload shape plus
+the null-timezone `400`.
+
+### 3. Google/Outlook connection failure
+
+Diagnosis: the deployment had **no OAuth client credentials** configured
+(`RUSTSHARE_CALENDAR_GOOGLE_*` / `_MICROSOFT_*` absent), and
+`RUSTSHARE_PUBLIC_URL` was **unset**, so it defaulted to the dev value
+`http://localhost:5173` while the app is served at `https://app.rustshare.io`.
+Connect therefore returned `503` by design and the derived redirect URI pointed
+at a dead dev port — so even with credentials the flow would fail with
+`redirect_uri_mismatch`. There was no startup validation or warning.
+
+Follow-up work (Stage 1) validates `RUSTSHARE_PUBLIC_URL` at startup (refuses
+the dev default in release builds, requires `https` off localhost), logs the
+effective redirect URIs to register, and adds the read-only
+`GET /api/v1/calendar/providers` status endpoint (effective public URL,
+per-provider `configured`, derived redirect URIs; never secrets). See the
+follow-up plan for the connect-reason and test work.
+
+### 4. Deployment hygiene (operator action, not a migration)
+
+The dev/QA database contains leftover `@test.local` Google sources written by
+earlier integration-test runs (integration tests had been pointed at a
+deployment database). The fix is two-part: the follow-up test harness now
+refuses remote `DATABASE_URL` hosts by default, and an operator must
+**soft-delete** the leftover rows (preserving the audit trail) by inspecting
+first and then setting `is_enabled = false, deleted_at = now()` on
+`calendar_sources` rows whose `display_name` matches the `@test.local` /
+test-source pattern. This is a one-off operator step, deliberately **not**
+shipped as a migration; the exact SQL and intent are in the follow-up plan.

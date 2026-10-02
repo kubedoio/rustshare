@@ -27,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and parks the source at `auth_required` without a Microsoft session
   revoke (Google's best-effort token revocation is unchanged); the settings
   panel gains provider connect/disconnect/resync with import-job status.
+- Calendar views (issue #315 QA follow-up): a **Day** view (single-day hour
+  grid with an all-day lane) and a **Monday–Friday work week** view, alongside
+  the existing Sunday-anchored Month grid and the 30-day Agenda. All four
+  request their window through the same window-agnostic range endpoint (≤ 366
+  days) with local-midnight boundaries.
+- Calendar provider-status endpoint: read-only
+  `GET /api/v1/calendar/providers` reports the effective public URL and, per
+  provider, whether it is configured and the exact redirect URI to register.
+  It never returns client ids or secrets (issue #315 QA follow-up).
+- Calendar public-URL validation: `RUSTSHARE_PUBLIC_URL` is now a hard
+  prerequisite for provider connections. Startup refuses a dev/non-public
+  value (the `localhost:5173` default is rejected outside local development)
+  and logs the effective OAuth redirect URIs so operators can register them
+  verbatim (issue #315 QA follow-up).
 
 ### Changed
 
@@ -55,6 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Calendar event creation from the UI: a stale frontend bundle sent
+  `timezone: null` to the non-null create DTO, which surfaced as a generic
+  `400 Invalid JSON payload`. The client now always sends a concrete timezone
+  (falling back to `UTC` when the browser reports none), the backend logs the
+  discarded serde reason behind the unchanged public error body, and contract
+  tests lock the UI payload shape and the null-timezone rejection (issue #315
+  QA follow-up).
 - Fixed: the mail application page (/apps/mail) renders the actual mailbox UI
   again — the first-party io.elembra.mail manifest registers its page renderer
   as "mail", which fell through to the generic application shell ("No mail

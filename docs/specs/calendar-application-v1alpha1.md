@@ -308,6 +308,22 @@ authoritative; Elembra stores a read-only cache.
   `RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_ID` /
   `RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_SECRET`) and
   `RUSTSHARE_PUBLIC_URL`; the frontend only redirects to it.
+- `RUSTSHARE_PUBLIC_URL` is a **hard prerequisite** for provider connections.
+  OAuth redirect URIs are derived from it and must be registered verbatim in
+  the provider console, so a value that does not match the externally reachable
+  deployment fails the flow even when client credentials are present. The URL
+  must be an absolute `http`/`https` URL; the `http://localhost:5173` dev
+  default is rejected at startup unless explicitly allowed for local
+  development, and non-localhost hosts must use `https`. Startup validation
+  refuses to boot with a clear message naming the variable, and logs the
+  effective redirect URIs at `info` so operators can register them exactly.
+- Redirect URI pattern (must match the provider console registration
+  byte-for-byte):
+  `{RUSTSHARE_PUBLIC_URL}/api/v1/calendar/oauth/{google|outlook}/callback`.
+- `GET /api/v1/calendar/providers` (authenticated, tenant-enablement gated,
+  read-only) reports the effective `public_url` and, per provider, whether it
+  is `configured` and the `redirect_uri` derived from the public URL. It never
+  returns client ids or secrets. See the API contract for the response shape.
 - `state` is a single-use, short-lived, server-side value bound to the
   initiating user; the callback rejects unknown/expired/mismatched state.
 - Granted scopes are read-only: Google
@@ -398,6 +414,9 @@ Normative request/response definitions live in
   returned).
 - `GET /api/v1/calendar/sources/{kind}/connect`,
   `GET /api/v1/calendar/oauth/{kind}/callback` — OAuth flow.
+- `GET /api/v1/calendar/providers` — read-only provider configuration status
+  (effective public URL, per-provider `configured` flag, derived redirect
+  URIs); never returns secrets.
 - `POST /api/v1/calendar/import` (multipart), `GET
   /api/v1/calendar/import-jobs[/{id}]` — import.
 - `POST /api/v1/calendar/sources/{id}/resync` — manual full resync; `409`
@@ -418,6 +437,26 @@ Every JSON API route requires an authenticated principal and an enabled
 `require_mail_enabled`. The OAuth callback is authenticated by its single-use
 `state` instead of a session, and the stretch ICS feed by its feed token, so
 both are exempt from the session/enablement gate.
+
+## UI views
+
+The Application view (`CalendarApplicationView.svelte`) exposes four views.
+All four are **presentations of the same window-agnostic range API**: each
+requests a `from`/`to` window from `GET /api/v1/calendar/events`, which accepts
+any window of at most 366 days, and each window is anchored to **local
+midnight** boundaries (the view computes local dates; the API receives RFC 3339
+instants).
+
+| View | Range requested |
+|---|---|
+| Day (single day, hour grid 0–23 with an all-day lane at the top) | `[local midnight, next local midnight)` |
+| Work week (Monday–Friday) | `[Monday 00:00, Saturday 00:00)` local — five day columns; the range is **Monday 00:00 → Saturday 00:00 local**, so the Saturday boundary is exclusive and weekends are not requested or shown |
+| Month (Sunday-anchored 7×6 grid) | the 42-day grid: the Sunday on or before the first of the month through 42 days later |
+| Agenda (30 days) | `[local midnight, +30 days)` |
+
+Server-side recurrence expansion runs within whichever window the view
+requests, so a view is purely a choice of range plus layout; the API has no
+view-specific parameters.
 
 ## Failure and health
 

@@ -46,6 +46,11 @@ and master expansion omits occurrences suppressed by an override row (the
 suppression set spans all of the caller's override rows, not only those in
 the requested window).
 
+The UI requests its Day, work-week (Monday–Friday), Month, and Agenda windows
+through this same endpoint — each view is a `from`/`to` window (local-midnight
+boundaries) of at most 366 days, and the API is window-agnostic; there are no
+view-specific parameters.
+
 Query parameters:
 
 | Param | Type | Notes |
@@ -218,6 +223,39 @@ header construction); the callback never renders or returns token data.
 
 Failure codes in the redirect: `oauth_state`, `oauth_exchange`,
 `oauth_denied`, `oauth_unconfigured`.
+
+### `GET /api/v1/calendar/providers`
+
+Read-only provider configuration status for the deployment, for operator
+diagnosis of connection problems. Requires an authenticated session and an
+enabled Calendar Application for the tenant (same gate as the rest of the JSON
+API). `200`:
+
+```json
+{
+  "public_url": "https://app.rustshare.io",
+  "providers": [
+    {
+      "kind": "google",
+      "configured": false,
+      "redirect_uri": "https://app.rustshare.io/api/v1/calendar/oauth/google/callback"
+    },
+    {
+      "kind": "outlook",
+      "configured": false,
+      "redirect_uri": "https://app.rustshare.io/api/v1/calendar/oauth/outlook/callback"
+    }
+  ]
+}
+```
+
+`public_url` is the effective `RUSTSHARE_PUBLIC_URL`; `configured` is `true`
+only when both the client id and client secret are present for that provider
+(a partial configuration reports `false`); `redirect_uri` is derived as
+`{public_url}/api/v1/calendar/oauth/{kind}/callback` and is the exact value an
+operator must register in the provider console. The response **never** contains
+client ids, client secrets, or any token material. This endpoint reports
+configuration only — it is not a connect surface and does not start a flow.
 
 ### `POST /api/v1/calendar/sources/{id}/disconnect`
 

@@ -146,11 +146,13 @@ Additional rulings:
   Workspace-shared calendars and public share links are deferred until a
   permission design exists (see "Out of scope"); we do not map Files share
   semantics onto per-user external data by default.
-- **Frontend**: a hand-rolled month/week/agenda grid
-  (`CalendarApplicationView.svelte`) registered in the existing renderer map
-  (`frontend/src/routes/(app)/apps/[key]/ApplicationPageRenderer.svelte`),
+- **Frontend**: a hand-rolled Day / Monday–Friday work-week / month / agenda
+  grid (`CalendarApplicationView.svelte`) registered in the existing renderer
+  map (`frontend/src/routes/(app)/apps/[key]/ApplicationPageRenderer.svelte`),
   with `frontend/src/lib/api/calendar.ts` and a settings panel following
-  `MailSettingsPanel.svelte`. No heavy third-party calendar component library.
+  `MailSettingsPanel.svelte`. The Day view is a single-day hour grid with an
+  all-day lane; the work week covers Monday–Friday only. No heavy third-party
+  calendar component library.
 
 ## Consequences
 
@@ -183,6 +185,14 @@ Additional rulings:
 - OAuth app registrations (Google Cloud Console, Microsoft Entra) are
   per-deployment operator work; self-hosters must configure client credentials
   before the sync features function.
+- A correct `RUSTSHARE_PUBLIC_URL` is a prerequisite alongside the client
+  credentials: the provider redirect URI is derived from it and must match the
+  console registration exactly. A missing or non-public value is now a
+  **startup error** rather than a silent misconfiguration (the `localhost:5173`
+  dev default is rejected outside local development), and the read-only
+  `GET /api/v1/calendar/providers` endpoint surfaces the effective URL, the
+  per-provider `configured` flag, and the derived redirect URIs for operator
+  diagnosis.
 - v1 syncs only each provider's primary calendar (`primary` / default
   calendar); multi-calendar discovery (`calendarList`) is deferred to a
   follow-up.
@@ -281,9 +291,9 @@ tests plus human review before merge:
       (`io.elembra.calendar.*.v1`); internal created/updated/deleted publish
       atomically with their mutation, and per-run imported events are
       best-effort after the run commits.
-- [ ] Frontend month/week/agenda views render internal + imported + synced
-      events with source attribution; settings panel connects/disconnects
-      sources without exposing tokens.
+- [ ] Frontend Day / work-week / month / agenda views render internal +
+      imported + synced events with source attribution; settings panel
+      connects/disconnects sources without exposing tokens.
 - [ ] Security note in the PR; human review obtained per AGENTS.md safety
       boundaries.
 
