@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { createQuery } from '$lib/query-compat';
-	import { calendarApi, type CalendarSourceKind } from '$lib/api/calendar';
+	import { calendarApi, type CalendarSource, type CalendarSourceKind } from '$lib/api/calendar';
+	import { ApiError } from '$lib/api/types';
 	import { queryClient } from '$lib/query-client';
 	import { toastStore } from '$lib/stores/toast';
-	import { Upload } from 'lucide-svelte';
+	import { RefreshCw, Upload } from 'lucide-svelte';
 
 	const sourcesQuery = createQuery({
 		queryKey: ['calendar-sources'],
@@ -21,6 +22,10 @@
 
 	let importInput: HTMLInputElement | null = $state(null);
 	let uploading = $state(false);
+	let connecting: CalendarSourceKind | null = $state(null);
+	let unconfigured: CalendarSourceKind[] = $state([]);
+	let confirmDisconnectId: string | null = $state(null);
+	let resyncingId: string | null = $state(null);
 
 	const KIND_LABELS: Record<CalendarSourceKind, string> = {
 		internal: 'Internal',
@@ -38,9 +43,49 @@
 		failed: 'Failed'
 	};
 
+	const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+		oauth_denied: 'Provider access was denied.',
+		oauth_state: 'The connect session expired or is invalid. Try again.',
+		oauth_exchange: 'The provider rejected the authorization. Try again.',
+		oauth_unconfigured: 'This provider is not configured on this deployment.'
+	};
+
+	// OAuth callback redirect params: show a toast once, then strip them from
+	// the URL so a refresh does not re-trigger the toast.
+	function consumeOauthRedirectParams() {
+		if (typeof window === 'undefined') return;
+		const params = new URLSearchParams(window.location.search);
+		const connected = params.get('connected');
+		const error = params.get('error');
+		if (connected) {
+			toastStore.show(
+				`Connected ${KIND_LABELS[connected as CalendarSourceKind] ?? connected} Calendar`,
+				'success'
+			);
+		} else if (error?.startsWith('oauth_')) {
+			toastStore.show(
+				OAUTH_ERROR_MESSAGES[error] ?? 'Connecting the calendar provider failed.',
+				'error'
+			);
+		} else {
+			return;
+		}
+		params.delete('connected');
+		params.delete('error');
+		const query = params.toString();
+		const url = window.location.pathname + (query ? `?${query}` : '') + window.location.hash;
+		window.history.replaceState(null, '', url);
+	}
+
+	consumeOauthRedirectParams();
+
 	const sources = $derived($sourcesQuery.data ?? []);
 	const importJobs = $derived(($importJobsQuery.data ?? []).slice(0, 10));
 	const internalSource = $derived(sources.find((source) => source.kind === 'internal') ?? null);
+
+	function isOauthKind(kind: CalendarSourceKind): boolean {
+		return kind === 'google' || kind === 'outlook';
+	}
 
 	function statusBadgeClass(status: string): string {
 		switch (status) {
@@ -54,6 +99,70 @@
 				return 'badge-error';
 			default:
 				return 'badge-ghost';
+		}
+	}
+
+	async function connectProvider(kind: 'google' | 'outlook') {
+		connecting = kind;
+		try {
+			const { authorize_url } = await calendarApi.connectSource(kind);
+			window.location.assign(authorize_url);
+		} catch (error) {
+			if (error instanceof ApiError && error.status === 503) {
+				if (!unconfigured.includes(kind)) unconfigured = [...unconfigured, kind];
+				toastStore.show(
+					`${KIND_LABELS[kind]} Calendar is not configured on this deployment.`,
+					'info'
+				);
+			} else {
+				toastStore.show(
+					`Could not start ${KIND_LABELS[kind]} connect: ${error instanceof Error ? error.message : 'unknown error'}`,
+					'error'
+				);
+			}
+		} finally {
+			connecting = null;
+		}
+	}
+
+	function connectDisabledReason(kind: 'google' | 'outlook'): string | null {
+		if (unconfigured.includes(kind)) {
+			return `${KIND_LABELS[kind]} Calendar is not configured on this deployment.`;
+		}
+		return null;
+	}
+
+	async function disconnectSource(source: CalendarSource) {
+		confirmDisconnectId = null;
+		try {
+			await calendarApi.disconnectSource(source.id);
+			toastStore.show(`Disconnected ${source.display_name}`, 'success');
+		} catch (error) {
+			toastStore.show(
+				`Disconnect failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+				'error'
+			);
+		} finally {
+			await queryClient.invalidateQueries({ queryKey: ['calendar-sources'] });
+		}
+	}
+
+	async function resyncSource(source: CalendarSource) {
+		resyncingId = source.id;
+		try {
+			await calendarApi.resyncSource(source.id);
+			toastStore.show(`Resync requested for ${source.display_name}`, 'success');
+		} catch (error) {
+			const message =
+				error instanceof ApiError && error.status === 409
+					? 'A sync is already running for this source.'
+					: `Resync failed: ${error instanceof Error ? error.message : 'unknown error'}`;
+			toastStore.show(
+				message,
+				error instanceof ApiError && error.status === 409 ? 'info' : 'error'
+			);
+		} finally {
+			resyncingId = null;
 		}
 	}
 
@@ -140,6 +249,58 @@
 									</p>
 								{/if}
 							</div>
+							{#if isOauthKind(source.kind)}
+								<div class="flex items-center gap-1.5">
+									{#if source.status === 'auth_required'}
+										<button
+											type="button"
+											class="btn btn-outline btn-xs"
+											onclick={() => connectProvider(source.kind as 'google' | 'outlook')}
+											disabled={connecting !== null}
+										>
+											{connecting === source.kind ? 'Connecting…' : 'Reconnect'}
+										</button>
+									{:else}
+										<button
+											type="button"
+											class="btn btn-outline btn-xs"
+											disabled={resyncingId === source.id}
+											onclick={() => resyncSource(source)}
+										>
+											{#if resyncingId === source.id}
+												<span class="loading loading-xs loading-spinner"></span>
+											{:else}
+												<RefreshCw size={12} />
+											{/if}
+											Resync
+										</button>
+									{/if}
+									{#if confirmDisconnectId === source.id}
+										<button
+											type="button"
+											class="btn btn-error btn-xs"
+											onclick={() => disconnectSource(source)}
+										>
+											Confirm disconnect
+										</button>
+										<button
+											type="button"
+											class="btn btn-ghost btn-xs"
+											onclick={() => (confirmDisconnectId = null)}
+										>
+											Cancel
+										</button>
+									{:else}
+										<button
+											type="button"
+											class="btn btn-ghost btn-xs"
+											onclick={() => (confirmDisconnectId = source.id)}
+										>
+											Disconnect
+										</button>
+									{/if}
+								</div>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -199,22 +360,19 @@
 				</p>
 			</div>
 			<div class="flex flex-wrap gap-2 p-4">
-				<button
-					type="button"
-					class="btn btn-outline btn-sm"
-					disabled
-					title="Google Calendar sync is available after server support lands"
-				>
-					Connect Google Calendar
-				</button>
-				<button
-					type="button"
-					class="btn btn-outline btn-sm"
-					disabled
-					title="Outlook Calendar sync is available after server support lands"
-				>
-					Connect Outlook Calendar
-				</button>
+				{#each ['google', 'outlook'] as kind}
+					<button
+						type="button"
+						class="btn btn-outline btn-sm"
+						disabled={connecting !== null || unconfigured.includes(kind as CalendarSourceKind)}
+						title={connectDisabledReason(kind as 'google' | 'outlook') ??
+							`Connect your ${KIND_LABELS[kind as CalendarSourceKind]} account`}
+						onclick={() => connectProvider(kind as 'google' | 'outlook')}
+					>
+						{#if connecting === kind}<span class="loading loading-xs loading-spinner"></span>{/if}
+						Connect {KIND_LABELS[kind as CalendarSourceKind]} Calendar
+					</button>
+				{/each}
 			</div>
 			{#if internalSource}
 				<p class="border-t border-[var(--rs-border)] px-4 py-2 text-2xs text-base-content/50">

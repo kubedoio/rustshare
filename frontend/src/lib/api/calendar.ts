@@ -146,5 +146,17 @@ export const calendarApi = {
 
 	getImportJob: async (jobId: string): Promise<CalendarImportJob> => {
 		return apiClient.get<CalendarImportJob>(`/calendar/import-jobs/${jobId}`);
+	},
+
+	connectSource: async (kind: 'google' | 'outlook'): Promise<{ authorize_url: string }> => {
+		return apiClient.get<{ authorize_url: string }>(`/calendar/sources/${kind}/connect`);
+	},
+
+	disconnectSource: async (sourceId: string): Promise<void> => {
+		await apiClient.post(`/calendar/sources/${sourceId}/disconnect`);
+	},
+
+	resyncSource: async (sourceId: string): Promise<void> => {
+		await apiClient.post(`/calendar/sources/${sourceId}/resync`);
 	}
 };

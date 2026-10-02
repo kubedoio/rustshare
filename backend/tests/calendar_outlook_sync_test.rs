@@ -278,6 +278,7 @@ struct Harness {
     pool: PgPool,
     store: Arc<MetadataStore>,
     secret_key: Arc<SecretEncryptionKey>,
+    outbox: Arc<rustshare_storage::OutboxStore>,
     tenant_id: Uuid,
 }
 
@@ -291,6 +292,10 @@ impl Harness {
             .await
             .expect("Failed to connect to database");
         let store = Arc::new(MetadataStore::new(pool.clone()));
+        let outbox = Arc::new(rustshare_storage::OutboxStore::new(
+            pool.clone(),
+            Arc::new(rustshare_core::domain::ApplicationRegistry::first_party().unwrap()),
+        ));
         let tenant_id = Uuid::new_v4();
         sqlx::query(
             "INSERT INTO tenants (id, name, created_at, updated_at) VALUES ($1, $2, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
@@ -312,6 +317,7 @@ impl Harness {
             pool,
             store,
             secret_key: Arc::new(SecretEncryptionKey::from_bytes([7u8; 32])),
+            outbox,
             tenant_id,
         }
     }
@@ -413,6 +419,16 @@ impl Harness {
             .execute(&self.pool)
             .await
             .expect("cleanup calendar_oauth_states");
+        sqlx::query("DELETE FROM integration_deliveries WHERE tenant_id = $1")
+            .bind(tenant_id)
+            .execute(&self.pool)
+            .await
+            .expect("cleanup integration_deliveries");
+        sqlx::query("DELETE FROM integration_outbox WHERE tenant_id = $1")
+            .bind(tenant_id)
+            .execute(&self.pool)
+            .await
+            .expect("cleanup integration_outbox");
         for table in [
             "calendar_import_jobs",
             "calendar_events",
@@ -705,6 +721,7 @@ async fn worker_run_keeps_auth_required_parked_without_http() {
         harness.secret_key.clone(),
         None,
         Some(client.clone()),
+        harness.outbox.clone(),
         source,
         sync_config(),
         worker.to_string(),
@@ -722,6 +739,7 @@ async fn worker_run_keeps_auth_required_parked_without_http() {
         harness.secret_key.clone(),
         None,
         Some(client),
+        harness.outbox.clone(),
         harness.reload_source(source_id).await,
         sync_config(),
         worker.to_string(),
@@ -774,6 +792,7 @@ async fn worker_failed_run_preserves_incremental_cursor() {
         harness.secret_key.clone(),
         None,
         Some(client.clone()),
+        harness.outbox.clone(),
         source,
         sync_config(),
         worker.to_string(),
@@ -800,6 +819,7 @@ async fn worker_failed_run_preserves_incremental_cursor() {
         harness.secret_key.clone(),
         None,
         Some(client),
+        harness.outbox.clone(),
         harness.reload_source(source_id).await,
         sync_config(),
         worker.to_string(),

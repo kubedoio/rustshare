@@ -6,13 +6,27 @@ use rand::Rng as _;
 
 use chrono::{DateTime, Duration, Timelike, Utc};
 use rustshare_core::domain::{
-    CalendarEvent, CalendarEventStatus, CalendarSource, CalendarSourceKind, UserId,
+    CalendarEvent, CalendarEventStatus, CalendarSource, CalendarSourceKind, PrincipalId, TenantId,
+    UserId, WorkspaceId,
 };
 use rustshare_crypto::SecretEncryptionKey;
-use rustshare_storage::MetadataStore;
+use rustshare_integration_events::event::{ActorRef, IntegrationEvent};
+use rustshare_integration_events::event_types::{
+    CALENDAR_EVENT_CREATED_V1, CALENDAR_EVENT_DELETED_V1, CALENDAR_EVENT_IMPORTED_V1,
+    CALENDAR_EVENT_UPDATED_V1,
+};
+use rustshare_resource_auth::resource_ref::ResourceRef;
+use rustshare_storage::{MetadataStore, OutboxStore};
 use uuid::Uuid;
 
+const CALENDAR_APPLICATION_ID: &str = "io.elembra.calendar";
+const CALENDAR_EVENT_SOURCE_URI: &str = "elembra://io.elembra.calendar";
+
 fn db_error(err: anyhow::Error) -> CalendarError {
+    CalendarError::Database(err.to_string())
+}
+
+fn tx_error(err: sqlx::Error) -> CalendarError {
     CalendarError::Database(err.to_string())
 }
 
@@ -59,6 +73,7 @@ pub struct CalendarService {
     secret_key: Arc<SecretEncryptionKey>,
     google: Option<Arc<crate::services::google_calendar::GoogleCalendarClient>>,
     outlook: Option<Arc<crate::services::outlook_calendar::OutlookCalendarClient>>,
+    outbox: Option<Arc<OutboxStore>>,
 }
 
 /// One event as returned by range queries: the stored row (or its recurring
@@ -145,6 +160,92 @@ fn validate_rrule(rrule: &str) -> Result<(), CalendarError> {
     Ok(())
 }
 
+/// Build the durable integration envelope for an internal calendar-event
+/// mutation. Minimum-safe-data: identifiers and timing only — never
+/// title/description/location.
+pub fn build_event_envelope(
+    tenant_id: Uuid,
+    owner_id: UserId,
+    event: &CalendarEvent,
+    event_type: &str,
+) -> Result<IntegrationEvent, CalendarError> {
+    let resource = ResourceRef::new(
+        rustshare_core::domain::ApplicationId::new(CALENDAR_APPLICATION_ID),
+        "event",
+        event.id.to_string(),
+    );
+    let data = serde_json::json!({
+        "event_id": event.id,
+        "source_id": event.source_id,
+        "starts_at": event.starts_at,
+        "ends_at": event.ends_at,
+        "all_day": event.all_day,
+        "status": event.status,
+    });
+    IntegrationEvent::builder()
+        .source(CALENDAR_EVENT_SOURCE_URI)
+        .r#type(event_type)
+        .subject(resource.to_uri())
+        .tenant_id(TenantId(tenant_id))
+        .workspace_id(WorkspaceId(tenant_id))
+        .actor(ActorRef::Principal(PrincipalId(owner_id)))
+        .resource(resource)
+        .data(data)
+        .build()
+        .map_err(|e| CalendarError::Storage(format!("envelope validation failed: {e}")))
+}
+
+/// Publish one `io.elembra.calendar.event.imported.v1` for a completed
+/// import/sync run. `counts` carries counters only (plus the source
+/// ResourceRef on the envelope) — never event titles/descriptions.
+///
+/// Best-effort by design: the run's effects are already committed; a failed
+/// publication is logged and must not fail or retry the run.
+pub async fn publish_imported_event(
+    outbox: &OutboxStore,
+    tenant_id: Uuid,
+    owner_id: UserId,
+    source_id: Uuid,
+    counts: serde_json::Value,
+) {
+    let resource = ResourceRef::new(
+        rustshare_core::domain::ApplicationId::new(CALENDAR_APPLICATION_ID),
+        "source",
+        source_id.to_string(),
+    );
+    let envelope = match IntegrationEvent::builder()
+        .source(CALENDAR_EVENT_SOURCE_URI)
+        .r#type(CALENDAR_EVENT_IMPORTED_V1)
+        .subject(resource.to_uri())
+        .tenant_id(TenantId(tenant_id))
+        .workspace_id(WorkspaceId(tenant_id))
+        .actor(ActorRef::Principal(PrincipalId(owner_id)))
+        .resource(resource)
+        .data(counts)
+        .build()
+    {
+        Ok(envelope) => envelope,
+        Err(e) => {
+            tracing::warn!(source_id = %source_id, "calendar imported-event envelope invalid: {e}");
+            return;
+        }
+    };
+    let mut tx = match outbox.pool().begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            tracing::warn!(source_id = %source_id, "calendar imported-event publish failed to begin tx: {e}");
+            return;
+        }
+    };
+    if let Err(e) = outbox.insert_in_tx(&mut tx, &envelope).await {
+        tracing::warn!(source_id = %source_id, "calendar imported-event publish failed: {e}");
+        return;
+    }
+    if let Err(e) = tx.commit().await {
+        tracing::warn!(source_id = %source_id, "calendar imported-event publish commit failed: {e}");
+    }
+}
+
 /// Expand a recurring master within the window. Returns occurrence starts
 /// (UTC) overlapping `[from, to)`; occurrences overridden by a stored
 /// `recurrence_id` row are omitted (the override row is returned as stored).
@@ -208,7 +309,15 @@ impl CalendarService {
             secret_key,
             google: None,
             outlook: None,
+            outbox: None,
         }
+    }
+
+    /// Attach the transactional integration outbox. When configured, internal
+    /// event create/update/delete publish `io.elembra.calendar.event.*.v1`
+    /// envelopes atomically with the mutation (issue #315).
+    pub fn configure_outbox(&mut self, outbox: Arc<OutboxStore>) {
+        self.outbox = Some(outbox);
     }
 
     /// Attach the Google OAuth client; absent when the deployment has no
@@ -700,10 +809,27 @@ impl CalendarService {
             created_at: now,
             updated_at: now,
         };
-        self.metadata_store
-            .create_calendar_event(&event)
-            .await
-            .map_err(db_error)?;
+        if let Some(outbox) = &self.outbox {
+            // One transaction: the mutation and the durable envelope commit
+            // or roll back together (integration-event-v1alpha1 contract).
+            let mut tx = self.metadata_store.pool().begin().await.map_err(tx_error)?;
+            self.metadata_store
+                .create_calendar_event_in_tx(&mut tx, &event)
+                .await
+                .map_err(db_error)?;
+            let envelope =
+                build_event_envelope(tenant_id, owner_id, &event, CALENDAR_EVENT_CREATED_V1)?;
+            outbox
+                .insert_in_tx(&mut tx, &envelope)
+                .await
+                .map_err(|e| CalendarError::Storage(e.to_string()))?;
+            tx.commit().await.map_err(tx_error)?;
+        } else {
+            self.metadata_store
+                .create_calendar_event(&event)
+                .await
+                .map_err(db_error)?;
+        }
         Ok(event)
     }
 
@@ -764,10 +890,25 @@ impl CalendarService {
         }
         validate_event_times(event.starts_at, event.ends_at, event.all_day)?;
         event.original_date = event.all_day.then(|| event.starts_at.date_naive());
-        self.metadata_store
-            .update_calendar_event(&event)
-            .await
-            .map_err(db_error)?;
+        if let Some(outbox) = &self.outbox {
+            let mut tx = self.metadata_store.pool().begin().await.map_err(tx_error)?;
+            self.metadata_store
+                .update_calendar_event_in_tx(&mut tx, &event)
+                .await
+                .map_err(db_error)?;
+            let envelope =
+                build_event_envelope(tenant_id, owner_id, &event, CALENDAR_EVENT_UPDATED_V1)?;
+            outbox
+                .insert_in_tx(&mut tx, &envelope)
+                .await
+                .map_err(|e| CalendarError::Storage(e.to_string()))?;
+            tx.commit().await.map_err(tx_error)?;
+        } else {
+            self.metadata_store
+                .update_calendar_event(&event)
+                .await
+                .map_err(db_error)?;
+        }
         Ok(event)
     }
 
@@ -790,10 +931,32 @@ impl CalendarService {
                 if event.read_only {
                     return Err(CalendarError::ReadOnlyMirror);
                 }
-                self.metadata_store
-                    .soft_delete_calendar_event(tenant_id, owner_id, event_id)
-                    .await
-                    .map_err(db_error)?;
+                if let Some(outbox) = &self.outbox {
+                    let mut tx = self.metadata_store.pool().begin().await.map_err(tx_error)?;
+                    let deleted = self
+                        .metadata_store
+                        .soft_delete_calendar_event_in_tx(&mut tx, tenant_id, owner_id, event_id)
+                        .await
+                        .map_err(db_error)?;
+                    if deleted {
+                        let envelope = build_event_envelope(
+                            tenant_id,
+                            owner_id,
+                            &event,
+                            CALENDAR_EVENT_DELETED_V1,
+                        )?;
+                        outbox
+                            .insert_in_tx(&mut tx, &envelope)
+                            .await
+                            .map_err(|e| CalendarError::Storage(e.to_string()))?;
+                    }
+                    tx.commit().await.map_err(tx_error)?;
+                } else {
+                    self.metadata_store
+                        .soft_delete_calendar_event(tenant_id, owner_id, event_id)
+                        .await
+                        .map_err(db_error)?;
+                }
                 Ok(())
             }
             None => {

@@ -1025,6 +1025,23 @@ impl ApplicationService {
                     Some(json!({ "count": count })),
                 ))
             }
+            "io.elembra.calendar" => {
+                let row = sqlx::query!(
+                    "SELECT COUNT(*) as count FROM calendar_events \
+                     WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL \
+                       AND starts_at >= NOW() AND starts_at < NOW() + interval '7 days'",
+                    tenant_id,
+                    user_id
+                )
+                .fetch_one(self.metadata_store.pool())
+                .await?;
+                let count = row.count.unwrap_or(0);
+                Ok((
+                    "calendar-summary".to_string(),
+                    vec![],
+                    Some(json!({ "count": count })),
+                ))
+            }
             _ => {
                 let items = self
                     .recent_mixed_items(path_prefix, max_items, tenant_id, user_id)

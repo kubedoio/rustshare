@@ -6546,6 +6546,19 @@ impl MetadataStore {
 
     /// Insert a calendar event.
     pub async fn create_calendar_event(&self, event: &CalendarEvent) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_calendar_event_in_tx(&mut tx, event).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Insert a calendar event inside an existing transaction (so the caller
+    /// can atomically publish an integration-outbox event, issue #315).
+    pub async fn create_calendar_event_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        event: &CalendarEvent,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO calendar_events (
@@ -6580,7 +6593,7 @@ impl MetadataStore {
             event.created_at,
             event.updated_at,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
         Ok(())
     }
@@ -6627,6 +6640,19 @@ impl MetadataStore {
 
     /// Update the mutable columns of a calendar event.
     pub async fn update_calendar_event(&self, event: &CalendarEvent) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.update_calendar_event_in_tx(&mut tx, event).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Update the mutable columns of a calendar event inside an existing
+    /// transaction (atomic outbox publish, issue #315).
+    pub async fn update_calendar_event_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        event: &CalendarEvent,
+    ) -> Result<()> {
         sqlx::query!(
             r#"
             UPDATE calendar_events
@@ -6649,7 +6675,7 @@ impl MetadataStore {
             event.tenant_id,
             event.owner_id,
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
         Ok(())
     }
@@ -6657,6 +6683,23 @@ impl MetadataStore {
     /// Soft-delete a calendar event. Returns `true` when a row was deleted.
     pub async fn soft_delete_calendar_event(
         &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        id: Uuid,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let deleted = self
+            .soft_delete_calendar_event_in_tx(&mut tx, tenant_id, owner_id, id)
+            .await?;
+        tx.commit().await?;
+        Ok(deleted)
+    }
+
+    /// Soft-delete a calendar event inside an existing transaction (atomic
+    /// outbox publish, issue #315).
+    pub async fn soft_delete_calendar_event_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         tenant_id: Uuid,
         owner_id: UserId,
         id: Uuid,
@@ -6671,7 +6714,7 @@ impl MetadataStore {
             tenant_id,
             owner_id
         )
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
         Ok(result.rows_affected() > 0)
     }

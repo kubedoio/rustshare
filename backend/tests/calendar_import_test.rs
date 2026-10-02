@@ -537,6 +537,7 @@ async fn upload_ics(
 async fn spawn_import_worker(state: &AppState) {
     rustshare_server::calendar_import_worker::spawn_calendar_import_worker(
         Arc::clone(&state.metadata_store),
+        Arc::clone(&state.outbox_store),
         state.shutdown_tx.subscribe(),
         rustshare_server::calendar_import_worker::CalendarImportWorkerConfig {
             poll_interval: std::time::Duration::from_millis(250),
@@ -611,6 +612,30 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
     assert_eq!(job["failed_events"], 0);
     assert_eq!(job["total_events"], 5);
     assert_eq!(job["processed_events"], 5);
+
+    // The completed run published one imported.v1 envelope with counts and
+    // the source ResourceRef — identifiers/counts only, never titles.
+    let envelope = sqlx::query_scalar::<_, Value>(
+        "SELECT event_json FROM integration_outbox \
+         WHERE tenant_id = $1 AND event_type = 'io.elembra.calendar.event.imported.v1' \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(tenant_id)
+    .fetch_optional(&state.db_pool)
+    .await
+    .expect("query integration_outbox")
+    .expect("imported envelope published");
+    assert_eq!(envelope["data"]["processed_events"], 5);
+    assert_eq!(envelope["data"]["total_events"], 5);
+    assert_eq!(envelope["elembraResource"]["resourceType"], "source");
+    assert_eq!(
+        envelope["elembraResource"]["resourceId"],
+        source_id.to_string()
+    );
+    assert!(
+        envelope["data"].get("title").is_none(),
+        "import events must not carry titles"
+    );
 
     // Range query returns the imported events with converted times.
     let response = app
@@ -697,7 +722,21 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["jobs"].as_array().unwrap().len(), 2);
 
+    cleanup_outbox(&state.db_pool, tenant_id).await;
     cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+async fn cleanup_outbox(pool: &PgPool, tenant_id: Uuid) {
+    sqlx::query("DELETE FROM integration_deliveries WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .expect("clean up integration_deliveries");
+    sqlx::query("DELETE FROM integration_outbox WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .expect("clean up integration_outbox");
 }
 
 #[tokio::test]
@@ -794,5 +833,6 @@ END:VCALENDAR
     assert_eq!(events.len(), 1);
     assert_eq!(events[0]["title"], "Good event");
 
+    cleanup_outbox(&state.db_pool, tenant_id).await;
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }

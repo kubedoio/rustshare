@@ -238,17 +238,18 @@ async fn setup_test_env() -> AppState {
         Arc::new(secret_key.clone()),
     ));
 
-    let calendar_service = Arc::new(
-        rustshare_server::services::calendar_service::CalendarService::new(
-            metadata_store.clone(),
-            Arc::new(secret_key.clone()),
-        ),
-    );
-
     let outbox_store = Arc::new(rustshare_storage::OutboxStore::new(
         pool.clone(),
         Arc::new(rustshare_core::domain::ApplicationRegistry::first_party().unwrap()),
     ));
+    let calendar_service = Arc::new({
+        let mut service = rustshare_server::services::calendar_service::CalendarService::new(
+            metadata_store.clone(),
+            Arc::new(secret_key.clone()),
+        );
+        service.configure_outbox(outbox_store.clone());
+        service
+    });
     let chat_observation_store =
         Arc::new(rustshare_storage::ChatObservationStore::new(pool.clone()));
     let memory_catalog_store = Arc::new(rustshare_storage::MemoryCatalogStore::new(pool.clone()));
@@ -907,6 +908,207 @@ async fn patch_on_read_only_mirror_event_returns_409() {
         .unwrap();
     let (status, _) = response_json(response).await;
     assert_eq!(status, StatusCode::CONFLICT);
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+/// Latest outbox envelope of a calendar event type for the tenant.
+async fn latest_calendar_outbox_event(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    event_type: &str,
+) -> Option<Value> {
+    sqlx::query_scalar::<_, Value>(
+        "SELECT event_json FROM integration_outbox \
+         WHERE tenant_id = $1 AND event_type = $2 \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(tenant_id)
+    .bind(event_type)
+    .fetch_optional(pool)
+    .await
+    .expect("query integration_outbox")
+}
+
+async fn cleanup_outbox(pool: &PgPool, tenant_id: Uuid) {
+    sqlx::query("DELETE FROM integration_deliveries WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .expect("clean up integration_deliveries");
+    sqlx::query("DELETE FROM integration_outbox WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .expect("clean up integration_outbox");
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn internal_event_mutations_publish_minimal_outbox_envelopes() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_outbox", tenant_id).await;
+
+    let created = state
+        .calendar_service
+        .create_event(
+            tenant_id,
+            user.id,
+            rustshare_server::services::calendar_service::NewCalendarEvent {
+                title: "Secret standup".to_string(),
+                description: Some("classified agenda".to_string()),
+                location: Some("Room 42".to_string()),
+                starts_at: "2026-10-05T14:00:00Z".parse().unwrap(),
+                ends_at: "2026-10-05T15:00:00Z".parse().unwrap(),
+                all_day: false,
+                timezone: "Europe/Berlin".to_string(),
+                rrule: None,
+            },
+        )
+        .await
+        .expect("create event");
+
+    let envelope = latest_calendar_outbox_event(
+        &state.db_pool,
+        tenant_id,
+        "io.elembra.calendar.event.created.v1",
+    )
+    .await
+    .expect("created envelope published");
+    assert_eq!(envelope["source"], "elembra://io.elembra.calendar");
+    assert_eq!(envelope["elembraTenant"], tenant_id.to_string());
+    assert_eq!(envelope["data"]["event_id"], created.id.to_string());
+    assert_eq!(envelope["elembraResource"]["resourceType"], "event");
+    // Minimum-safe-data: titles/descriptions/locations never leak into events.
+    for forbidden in ["title", "description", "location"] {
+        assert!(
+            envelope["data"].get(forbidden).is_none(),
+            "data must not carry `{forbidden}`"
+        );
+    }
+
+    let updated = state
+        .calendar_service
+        .update_event(
+            tenant_id,
+            user.id,
+            created.id,
+            rustshare_server::services::calendar_service::CalendarEventPatch {
+                title: Some("Renamed secret".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update event");
+    let envelope = latest_calendar_outbox_event(
+        &state.db_pool,
+        tenant_id,
+        "io.elembra.calendar.event.updated.v1",
+    )
+    .await
+    .expect("updated envelope published");
+    assert_eq!(envelope["data"]["event_id"], updated.id.to_string());
+    assert!(envelope["data"].get("title").is_none());
+
+    state
+        .calendar_service
+        .delete_event(tenant_id, user.id, created.id)
+        .await
+        .expect("delete event");
+    let envelope = latest_calendar_outbox_event(
+        &state.db_pool,
+        tenant_id,
+        "io.elembra.calendar.event.deleted.v1",
+    )
+    .await
+    .expect("deleted envelope published");
+    assert_eq!(envelope["data"]["event_id"], created.id.to_string());
+
+    cleanup_outbox(&state.db_pool, tenant_id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn outbox_publish_rolls_back_with_source_transaction() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_outbox_rollback", tenant_id).await;
+
+    let source = state
+        .calendar_service
+        .ensure_internal_source(tenant_id, user.id)
+        .await
+        .expect("internal source");
+    let now = chrono::Utc::now();
+    let event = rustshare_core::domain::CalendarEvent {
+        id: Uuid::new_v4(),
+        tenant_id,
+        owner_id: user.id,
+        source_id: source.id,
+        external_uid: None,
+        external_etag: None,
+        recurrence_id: None,
+        title: "Rollback probe".to_string(),
+        description: None,
+        location: None,
+        starts_at: now + chrono::Duration::days(1),
+        ends_at: now + chrono::Duration::days(1) + chrono::Duration::hours(1),
+        all_day: false,
+        original_date: None,
+        timezone: "UTC".to_string(),
+        rrule: None,
+        status: "confirmed".to_string(),
+        read_only: false,
+        raw: None,
+        deleted_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+    let envelope = rustshare_server::services::calendar_service::build_event_envelope(
+        tenant_id,
+        user.id,
+        &event,
+        "io.elembra.calendar.event.created.v1",
+    )
+    .expect("envelope builds");
+
+    // The mutation and the outbox insert commit or vanish together.
+    let mut tx = state.db_pool.begin().await.expect("begin tx");
+    state
+        .metadata_store
+        .create_calendar_event_in_tx(&mut tx, &event)
+        .await
+        .expect("insert event in tx");
+    state
+        .outbox_store
+        .insert_in_tx(&mut tx, &envelope)
+        .await
+        .expect("insert outbox in tx");
+    tx.rollback().await.expect("rollback");
+
+    let event_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calendar_events WHERE id = $1")
+        .bind(event.id)
+        .fetch_one(&state.db_pool)
+        .await
+        .expect("count events");
+    assert_eq!(
+        event_rows, 0,
+        "rolled-back mutation must leave no event row"
+    );
+    let outbox_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM integration_outbox WHERE event_id = $1")
+            .bind(envelope.id)
+            .fetch_one(&state.db_pool)
+            .await
+            .expect("count outbox rows");
+    assert_eq!(
+        outbox_rows, 0,
+        "rolled-back mutation must leave no outbox row"
+    );
 
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::FutureExt;
-use rustshare_storage::MetadataStore;
+use rustshare_storage::{MetadataStore, OutboxStore};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -30,6 +30,7 @@ impl CalendarImportWorkerConfig {
 
 pub fn spawn_calendar_import_worker(
     metadata_store: Arc<MetadataStore>,
+    outbox: Arc<OutboxStore>,
     mut shutdown: broadcast::Receiver<()>,
     config: CalendarImportWorkerConfig,
 ) {
@@ -74,13 +75,15 @@ pub fn spawn_calendar_import_worker(
                 let job_id = job.id;
                 in_flight_ids.insert(job_id);
                 let store = Arc::clone(&metadata_store);
+                let outbox = Arc::clone(&outbox);
                 join_set.spawn(async move {
                     // Catch panics inside the task so the job_id is always
                     // returned and the in-flight set is cleaned up.
                     let result = AssertUnwindSafe(async move {
                         tracing::info!("Processing calendar import job {}", job.id);
                         let result =
-                            crate::services::ical_import::process_import_job(&store, &job).await;
+                            crate::services::ical_import::process_import_job(&store, &outbox, &job)
+                                .await;
                         if let Err(e) = result {
                             tracing::error!("Calendar import job {} failed: {e}", job.id);
                         }

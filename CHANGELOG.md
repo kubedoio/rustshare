@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Calendar application (issue #315): internal events with recurrence
+  expansion, `.ics` import, and read-only Google/Outlook OAuth sync. Internal
+  create/update/delete and import/sync runs publish
+  `io.elembra.calendar.event.*.v1` through the transactional integration
+  outbox (counts and identifiers only, per minimum-safe-data); the settings
+  panel gains provider connect/disconnect/resync with import-job status.
+
 ### Changed
 
 - Bundled Buzz Chat now targets the stable upstream `relay-v0.2.1` baseline

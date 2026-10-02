@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use futures_util::FutureExt;
-use rustshare_storage::MetadataStore;
+use rustshare_storage::{MetadataStore, OutboxStore};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -65,6 +65,7 @@ pub fn spawn_calendar_sync_worker(
     secret_key: Arc<rustshare_crypto::SecretEncryptionKey>,
     google: Option<Arc<GoogleCalendarClient>>,
     outlook: Option<Arc<OutlookCalendarClient>>,
+    outbox: Arc<OutboxStore>,
     mut shutdown: broadcast::Receiver<()>,
     config: CalendarSyncWorkerConfig,
 ) {
@@ -107,6 +108,7 @@ pub fn spawn_calendar_sync_worker(
                 let key = Arc::clone(&secret_key);
                 let client = google.clone();
                 let outlook_client = outlook.clone();
+                let outbox = Arc::clone(&outbox);
                 let sync_config = CalendarSyncConfig {
                     past_days: config.sync.past_days,
                     future_days: config.sync.future_days,
@@ -118,6 +120,7 @@ pub fn spawn_calendar_sync_worker(
                         key,
                         client,
                         outlook_client,
+                        outbox,
                         source,
                         sync_config,
                         holder,
@@ -184,6 +187,7 @@ pub async fn run_sync(
     secret_key: Arc<rustshare_crypto::SecretEncryptionKey>,
     google: Option<Arc<GoogleCalendarClient>>,
     outlook: Option<Arc<OutlookCalendarClient>>,
+    outbox: Arc<OutboxStore>,
     source: rustshare_core::domain::CalendarSource,
     sync_config: CalendarSyncConfig,
     worker_id: String,
@@ -251,6 +255,23 @@ pub async fn run_sync(
     // failures keep the previous watermark so dashboards do not report a
     // "sync" that changed nothing.
     let synced = matches!(outcome, SyncOutcome::Completed { .. });
+    if let SyncOutcome::Completed {
+        upserted,
+        soft_deleted,
+        ..
+    } = &outcome
+    {
+        // One imported.v1 per completed run, counts + source ResourceRef
+        // only (best-effort; failures are logged inside the helper).
+        crate::services::calendar_service::publish_imported_event(
+            &outbox,
+            source.tenant_id,
+            source.owner_id,
+            source_id,
+            serde_json::json!({ "upserted": upserted, "soft_deleted": soft_deleted }),
+        )
+        .await;
+    }
     let now = Utc::now();
     // Pair the preserved cursor with its kind; an unknown kind writes no
     // cursor at all rather than persisting it under the wrong kind.

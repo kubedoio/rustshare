@@ -370,6 +370,7 @@ async fn init_services(
         Arc::clone(&metadata_store),
         Arc::clone(&secret_key),
     );
+    calendar_service.configure_outbox(Arc::clone(&outbox_store));
     calendar_service.configure_google(
         crate::services::google_calendar::GoogleCalendarClient::from_config(
             config.calendar_google_client_id.clone(),
@@ -800,6 +801,7 @@ pub async fn init_app() -> Result<AppState> {
     if config.calendar_import_worker_enabled {
         crate::calendar_import_worker::spawn_calendar_import_worker(
             Arc::clone(&metadata_store),
+            Arc::clone(&services.outbox_store),
             shutdown_tx.subscribe(),
             crate::calendar_import_worker::CalendarImportWorkerConfig::from_config(&config),
         );
@@ -813,6 +815,7 @@ pub async fn init_app() -> Result<AppState> {
             Arc::clone(&secret_key),
             services.calendar_service.google_client(),
             services.calendar_service.outlook_client(),
+            Arc::clone(&services.outbox_store),
             shutdown_tx.subscribe(),
             crate::calendar_sync_worker::CalendarSyncWorkerConfig::from_config(&config),
         );

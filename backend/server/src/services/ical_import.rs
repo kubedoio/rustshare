@@ -12,7 +12,7 @@
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use icalendar::parser::{read_calendar, Component, Property};
 use rustshare_core::domain::{CalendarEvent, CalendarImportJob};
-use rustshare_storage::MetadataStore;
+use rustshare_storage::{MetadataStore, OutboxStore};
 use uuid::Uuid;
 
 /// Cap on the `last_error` sample persisted on the job row.
@@ -369,9 +369,12 @@ async fn flush_progress(
 }
 
 /// Worker entry point for one claimed job: read the spooled bytes, parse and
-/// upsert, then move the job to `completed` (or `failed`).
+/// upsert, then move the job to `completed` (or `failed`). A completed run
+/// publishes one `io.elembra.calendar.event.imported.v1` with counts and the
+/// source ResourceRef (identifiers/counts only, never titles/descriptions).
 pub async fn process_import_job(
     metadata_store: &MetadataStore,
+    outbox: &OutboxStore,
     job: &CalendarImportJob,
 ) -> Result<ImportOutcome, IcalImportError> {
     if !matches!(job.status.as_str(), "pending" | "running") {
@@ -386,7 +389,7 @@ pub async fn process_import_job(
 
     let result = parse_and_upsert(metadata_store, job, &bytes).await;
     match &result {
-        Ok(_) => {
+        Ok(outcome) => {
             if !metadata_store
                 .mark_calendar_import_job_completed(job.id)
                 .await
@@ -397,6 +400,19 @@ pub async fn process_import_job(
                     "Calendar import job finished but is no longer running; leaving status untouched"
                 );
             }
+            crate::services::calendar_service::publish_imported_event(
+                outbox,
+                job.tenant_id,
+                job.owner_id,
+                job.source_id,
+                serde_json::json!({
+                    "total_events": outcome.total_events,
+                    "processed_events": outcome.processed_events,
+                    "failed_events": outcome.failed_events,
+                    "skipped_components": outcome.skipped_components,
+                }),
+            )
+            .await;
         }
         Err(error) => {
             let marked = metadata_store

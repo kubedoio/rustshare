@@ -956,6 +956,8 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
         assert!(registry.owns_event_type(&calendar, "io.elembra.calendar.event.created.v1"));
         assert!(registry.owns_event_type(&calendar, "io.elembra.calendar.event.imported.v1"));
         assert!(!registry.owns_event_type(&calendar, "io.elembra.files.file.created.v1"));
+        // Undeclared event types in the calendar namespace are rejected too.
+        assert!(!registry.owns_event_type(&calendar, "io.elembra.calendar.event.merged.v1"));
     }
 
     #[test]
