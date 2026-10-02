@@ -122,8 +122,17 @@ Additional rulings:
   `backend/server/src/bootstrap.rs`.
 - **Integration events**: Calendar publishes namespaced outbox events
   (`io.elembra.calendar.event.imported.v1`, `.created.v1`, `.updated.v1`,
-  `.deleted.v1`) atomically with state mutations, per
-  `0031-durable-integration-events.md`. Calendar becomes a third outbox
+  `.deleted.v1`) through the durable outbox. The three internal-event
+  mutations (`.created/.updated/.deleted.v1`) are inserted in the same
+  transaction as the state change, so the mutation and its envelope commit or
+  roll back together. The per-run `.imported.v1` is published best-effort
+  *after* the import/sync run commits; a failed publication is logged and the
+  run is not retried, so an event that never reaches the outbox is not
+  redelivered. The per-run guarantee is therefore at-most-once at publish
+  time — the outbox provides at-least-once only once a row is persisted.
+  Consumers must deduplicate by envelope id, per
+  `0031-durable-integration-events.md`.
+  Calendar becomes a third outbox
   publisher (after Files and Chat) through the
   generic `OutboxStore::insert_in_tx` path, which already validates
   event-type ownership against the manifest registry
@@ -137,11 +146,13 @@ Additional rulings:
   Workspace-shared calendars and public share links are deferred until a
   permission design exists (see "Out of scope"); we do not map Files share
   semantics onto per-user external data by default.
-- **Frontend**: a hand-rolled month/week/agenda grid
-  (`CalendarApplicationView.svelte`) registered in the existing renderer map
-  (`frontend/src/routes/(app)/apps/[key]/ApplicationPageRenderer.svelte`),
+- **Frontend**: a hand-rolled Day / Monday–Friday work-week / month / agenda
+  grid (`CalendarApplicationView.svelte`) registered in the existing renderer
+  map (`frontend/src/routes/(app)/apps/[key]/ApplicationPageRenderer.svelte`),
   with `frontend/src/lib/api/calendar.ts` and a settings panel following
-  `MailSettingsPanel.svelte`. No heavy third-party calendar component library.
+  `MailSettingsPanel.svelte`. The Day view is a single-day hour grid with an
+  all-day lane; the work week covers Monday–Friday only. No heavy third-party
+  calendar component library.
 
 ## Consequences
 
@@ -174,6 +185,18 @@ Additional rulings:
 - OAuth app registrations (Google Cloud Console, Microsoft Entra) are
   per-deployment operator work; self-hosters must configure client credentials
   before the sync features function.
+- A correct `RUSTSHARE_PUBLIC_URL` is a prerequisite alongside the client
+  credentials: the provider redirect URI is derived from it and must match the
+  console registration exactly. A missing or non-public value is now a
+  **startup error** rather than a silent misconfiguration (the `localhost:5173`
+  dev default is rejected outside local development), and the read-only
+  `GET /api/v1/calendar/providers` endpoint surfaces the effective URL, the
+  per-provider `configured` flag, and the derived redirect URIs for operator
+  diagnosis. Cleartext `http` is accepted only for loopback hosts (`localhost`,
+  `localhost.`, the whole `127.0.0.0/8` range, `::1`), so a LAN self-host on
+  `http://192.168.x.x` cannot start; `RUSTSHARE_ALLOW_DEV_PUBLIC_URL=1` only
+  exempts the built-in dev default and does not permit plain `http` on a
+  non-loopback host.
 - v1 syncs only each provider's primary calendar (`primary` / default
   calendar); multi-calendar discovery (`calendarList`) is deferred to a
   follow-up.
@@ -240,6 +263,13 @@ tests plus human review before merge:
 - Outbound fetches to Google/Microsoft follow existing SSRF posture: fixed
   provider base URLs, no user-controlled fetch URLs (`.ics` import is an
   upload, not a URL fetch).
+- Disconnecting an Outlook source is a local operation: it wipes the encrypted
+  access/refresh tokens and parks the source at `auth_required`. No
+  provider-side revoke is attempted — Microsoft Graph's
+  `POST /me/revokeSignInSessions` requires `User.RevokeSessions.All`, which
+  this app registration neither requests nor can obtain, so the call always
+  failed 403 while the UI promised a Microsoft-wide sign-out. The user removes
+  the Elembra grant in their Microsoft account to invalidate it upstream.
 - All `/api/v1/calendar/...` JSON API routes are gated on tenant application
   enablement; unauthenticated and cross-tenant access fail closed. The OAuth
   callback (authenticated by its single-use `state`) and the stretch ICS feed
@@ -261,11 +291,13 @@ tests plus human review before merge:
       duplicates; malformed files fail the job with a safe `last_error`.
 - [ ] Google and Microsoft sync honor cursors (`syncToken`/`deltaToken`),
       reset on `410 GONE`, and surface `auth_required` when tokens are revoked.
-- [ ] Calendar outbox events publish atomically with mutations and pass the
-      envelope validator (`io.elembra.calendar.*.v1`).
-- [ ] Frontend month/week/agenda views render internal + imported + synced
-      events with source attribution; settings panel connects/disconnects
-      sources without exposing tokens.
+- [ ] Calendar outbox events pass the envelope validator
+      (`io.elembra.calendar.*.v1`); internal created/updated/deleted publish
+      atomically with their mutation, and per-run imported events are
+      best-effort after the run commits.
+- [ ] Frontend Day / work-week / month / agenda views render internal +
+      imported + synced events with source attribution; settings panel
+      connects/disconnects sources without exposing tokens.
 - [ ] Security note in the PR; human review obtained per AGENTS.md safety
       boundaries.
 

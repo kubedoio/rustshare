@@ -1,0 +1,125 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id, tenant_id, owner_id, kind, display_name, external_account,\n                external_calendar_id, refresh_token_enc, access_token_enc,\n                access_token_expires_at, scopes, is_enabled, last_synced_at,\n                last_error, status, deleted_at, created_at, updated_at\n            FROM calendar_sources\n            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL\n            ORDER BY (kind = 'internal') DESC, created_at ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "owner_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "kind",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "external_account",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "external_calendar_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "refresh_token_enc",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "access_token_enc",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "access_token_expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "scopes",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "is_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "last_synced_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "last_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 15,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "3e9995c593fd3a78d0608ff4fce39e7538ea0ec31aa6beeff477251db739a117"
+}

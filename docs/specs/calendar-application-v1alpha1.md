@@ -153,7 +153,7 @@ external kinds.
 | `source_id` | UUID | `REFERENCES calendar_sources(id)` |
 | `external_uid` | TEXT | iCalendar UID / provider event id; NULL only for unsynced internal drafts |
 | `external_etag` | TEXT | provider ETag/change key for cheap change detection; nullable |
-| `recurrence_id` | TEXT | RECURRENCE-ID for overridden instances; NULL for the master. Override rows are returned as stored (own `id`); master expansion omits occurrences covered by an override row in the window |
+| `recurrence_id` | TEXT | RECURRENCE-ID for overridden instances; NULL for the master. Override rows are returned as stored (own `id`); master expansion omits occurrences suppressed by an override row regardless of window (the suppression set is not restricted to the requested range) |
 | `title` | TEXT | |
 | `description` | TEXT | nullable |
 | `location` | TEXT | nullable |
@@ -267,16 +267,24 @@ Rows are deleted on consume (single use); expired rows are ignored/swept.
   idempotent upsert: unchanged events are untouched, changed events update,
   and duplicates are never created.
 - Time handling: `DTSTART;TZID=...` is converted to UTC using the embedded
-  VTIMEZONE or the system tz database; floating times are interpreted as UTC
-  and marked `timezone = 'UTC'`. All-day `DATE` values become UTC-midnight
-  spans with `all_day = true` and `original_date` preserved.
+  VTIMEZONE definition — including non-IANA Windows zone names such as
+  `W. Europe Standard Time`, whose STANDARD/DAYLIGHT transition rules are
+  resolved — or the system IANA tz database; floating times are interpreted
+  as UTC and marked `timezone = 'UTC'`. All-day `DATE` values become
+  UTC-midnight spans with `all_day = true` and `original_date` preserved.
+- Timezone limitation for recurrence: an event imported with a non-IANA
+  `TZID` stores that raw TZID string, which the read-time expander cannot
+  resolve, so a recurring master with such a timezone expands on UTC
+  wall-clock (the stored master `starts_at` instant and non-recurring events
+  remain correct). Recurrence expansion is exact for IANA `TZID` values and
+  for floating/UTC times.
 - RRULE strings are stored verbatim; v1 does not validate every RRULE form
   and never expands more than the requested range window at read time.
 - Expansion semantics (normative): iteration is wall-clock in the event's
   IANA `TZID` (not UTC-instant); DST gaps push forward and overlaps keep the
   first occurrence; `UNTIL`/`COUNT` expansion is capped at 1000 instances per
-  master; floating times (no `TZID`) are interpreted in the viewer's
-  configured timezone.
+  master; floating times (no `TZID`) are interpreted as UTC, matching
+  import-time storage.
 - VEVENT `STATUS` maps verbatim to `status` (`CONFIRMED`/`TENTATIVE`/
   `CANCELLED`); a missing `STATUS` defaults to `confirmed`.
 - Change detection: the importer compares a normalized column set (or
@@ -300,6 +308,34 @@ authoritative; Elembra stores a read-only cache.
   `RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_ID` /
   `RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_SECRET`) and
   `RUSTSHARE_PUBLIC_URL`; the frontend only redirects to it.
+- `RUSTSHARE_PUBLIC_URL` is a **hard prerequisite** for provider connections.
+  OAuth redirect URIs are derived from it and must be registered verbatim in
+  the provider console, so a value that does not match the externally reachable
+  deployment fails the flow even when client credentials are present. The URL
+  must be an absolute `http`/`https` URL; the `http://localhost:5173` dev
+  default is rejected at startup unless explicitly allowed for local
+  development, and non-localhost hosts must use `https`. Trailing `/`
+  characters are stripped at startup so the derived redirect URI never
+  contains a doubled slash. Startup validation refuses to boot with a clear
+  message naming the variable, and logs the effective redirect URIs at `info`
+  so operators can register them exactly.
+- **Cleartext `http` is accepted only for loopback hosts.** A host counts as
+  loopback when it is `localhost` (with or without a trailing dot), any address
+  in the whole `127.0.0.0/8` range, or the IPv6 loopback `::1`. A LAN
+  self-host on `http://192.168.x.x` therefore **cannot start**; to run such a
+  deployment it must be reachable over `https` (terminate TLS at a reverse
+  proxy and set `RUSTSHARE_PUBLIC_URL` to that public origin). The only
+  opt-out is `RUSTSHARE_ALLOW_DEV_PUBLIC_URL=1`, and it exempts only the
+  built-in `http://localhost:5173` development default — it does **not** permit
+  plain `http` on a non-loopback host. This is deliberate: Calendar OAuth
+  redirect URIs carry authorization codes that must not travel in cleartext.
+- Redirect URI pattern (must match the provider console registration
+  byte-for-byte):
+  `{RUSTSHARE_PUBLIC_URL}/api/v1/calendar/oauth/{google|outlook}/callback`.
+- `GET /api/v1/calendar/providers` (authenticated, tenant-enablement gated,
+  read-only) reports the effective `public_url` and, per provider, whether it
+  is `configured` and the `redirect_uri` derived from the public URL. It never
+  returns client ids or secrets. See the API contract for the response shape.
 - `state` is a single-use, short-lived, server-side value bound to the
   initiating user; the callback rejects unknown/expired/mismatched state.
 - Granted scopes are read-only: Google
@@ -309,8 +345,10 @@ authoritative; Elembra stores a read-only cache.
   calendar); multi-calendar discovery (`calendarList`) is deferred.
 - Token refresh is serialized per source: only the sync lease holder
   (see `calendar_sync_states` scheduling) may refresh OAuth tokens. If the
-  provider returns a rotated refresh token it is written unconditionally
-  (newer token wins).
+  provider returns a rotated refresh token it is written by the current lease
+  holder; the write is lease-guarded (`calendar_sync_states.locked_by` must
+  still match), so a stale former holder's write is rejected rather than
+  clobbering the new holder's rotation.
 - Refresh tokens (and cached access tokens) are encrypted with
   `SecretEncryptionKey` before storage. Responses, logs, and events never
   contain token material.
@@ -326,8 +364,15 @@ authoritative; Elembra stores a read-only cache.
   90 days back, 365 days forward).
 - Microsoft: `calendarView/delta` with `deltaToken`; an expired/invalid delta
   token triggers the same full-resync fallback.
-- Provider deletions propagate: removed remote events soft-delete the mirror
-  rows. Cancelled instances map to `status = 'cancelled'` tombstones.
+- Provider deletions propagate two ways: cancelled instances arrive as
+  `status = 'cancelled'` tombstone entries in delta payloads, and on FULL
+  runs the absent-entry sweep soft-deletes mirror rows missing from the
+  complete window payload. The sweep covers single events whose start falls
+  in the window *and* recurring masters regardless of window (a master is
+  exempt from the start-time restriction so a series predating the window is
+  still swept), cascading to that master's recurrence overrides. Incremental
+  deltas carry only changed entries, so the sweep never runs there — an
+  unchanged event absent from a delta is untouched.
 - Change detection: the worker compares a normalized column set (or
   `external_etag` when present) and updates the row only on actual change.
 - Rate limits (429 / `Retry-After`) pause the source (`status =
@@ -338,15 +383,21 @@ authoritative; Elembra stores a read-only cache.
 
 ## Integration events
 
-Published transactionally with the mutation (outbox row in the same commit),
-envelope per `integration-event-v1alpha1.md`:
+The three internal-mutation events are published transactionally with the
+mutation (outbox row in the same commit). The per-run `imported.v1` is
+published best-effort *after* the import/sync run commits — a failed
+publication is logged and does not fail or retry the run, so an event that
+never reaches the outbox is not redelivered: the per-run guarantee is
+at-most-once at publish time, and the outbox provides at-least-once only once
+a row is persisted. Consumers must deduplicate by envelope id. Envelope
+per `integration-event-v1alpha1.md`:
 
 - `io.elembra.calendar.event.created.v1` — internal event created.
 - `io.elembra.calendar.event.updated.v1` — internal event updated.
 - `io.elembra.calendar.event.deleted.v1` — internal event deleted.
 - `io.elembra.calendar.event.imported.v1` — an import or sync run
   materialized events; `data` carries counts and the source ResourceRef, not
-  event bodies.
+  event bodies. Best-effort after the run commits (see above).
 
 Event payloads contain identifiers and provenance only (`ResourceRef`,
 counts, source kind). Sensitive content (titles, descriptions, attendees) is
@@ -375,11 +426,17 @@ Normative request/response definitions live in
   returned).
 - `GET /api/v1/calendar/sources/{kind}/connect`,
   `GET /api/v1/calendar/oauth/{kind}/callback` — OAuth flow.
+- `GET /api/v1/calendar/providers` — read-only provider configuration status
+  (effective public URL, per-provider `configured` flag, derived redirect
+  URIs); never returns secrets.
 - `POST /api/v1/calendar/import` (multipart), `GET
   /api/v1/calendar/import-jobs[/{id}]` — import.
-- `POST /api/v1/calendar/sources/{id}/resync` — manual full resync.
-- `POST /api/v1/calendar/sources/{id}/disconnect` — revoke the provider grant
-  and clear stored tokens.
+- `POST /api/v1/calendar/sources/{id}/resync` — manual full resync; `409`
+  while a live sync lease holds the source.
+- `POST /api/v1/calendar/sources/{id}/disconnect` — wipe the stored tokens and
+  park the source at `auth_required`; `409` while a live sync lease holds the
+  source. No Microsoft session revoke is attempted; Google's best-effort token
+  revocation is unchanged.
 - Stretch: `GET /api/v1/calendar/feed/{token}` — read-only per-user ICS export
   feed; feed tokens are created/revoked via session-authenticated `POST`/`DELETE
   /api/v1/calendar/feed-token`. (axum 0.8 matches the whole final segment, so a
@@ -392,6 +449,26 @@ Every JSON API route requires an authenticated principal and an enabled
 `require_mail_enabled`. The OAuth callback is authenticated by its single-use
 `state` instead of a session, and the stretch ICS feed by its feed token, so
 both are exempt from the session/enablement gate.
+
+## UI views
+
+The Application view (`CalendarApplicationView.svelte`) exposes four views.
+All four are **presentations of the same window-agnostic range API**: each
+requests a `from`/`to` window from `GET /api/v1/calendar/events`, which accepts
+any window of at most 366 days, and each window is anchored to **local
+midnight** boundaries (the view computes local dates; the API receives RFC 3339
+instants).
+
+| View | Range requested |
+|---|---|
+| Day (single day, hour grid 0–23 with an all-day lane at the top) | `[local midnight, next local midnight)` |
+| Work week (Monday–Friday) | `[Monday 00:00, Saturday 00:00)` local — five day columns; the range is **Monday 00:00 → Saturday 00:00 local**, so the Saturday boundary is exclusive and weekends are not requested or shown |
+| Month (Sunday-anchored 7×6 grid) | the 42-day grid: the Sunday on or before the first of the month through 42 days later |
+| Agenda (30 days) | `[local midnight, +30 days)` |
+
+Server-side recurrence expansion runs within whichever window the view
+requests, so a view is purely a choice of range plus layout; the API has no
+view-specific parameters.
 
 ## Failure and health
 

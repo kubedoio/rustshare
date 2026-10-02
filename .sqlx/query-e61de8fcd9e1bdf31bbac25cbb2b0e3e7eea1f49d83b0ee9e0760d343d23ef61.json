@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE calendar_sources\n            SET status = $2, last_error = $3, updated_at = now()\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e61de8fcd9e1bdf31bbac25cbb2b0e3e7eea1f49d83b0ee9e0760d343d23ef61"
+}

@@ -8,6 +8,7 @@
 	import SharesApplicationView from '$lib/components/apps/SharesApplicationView.svelte';
 	import BrainstormingApplicationView from '$lib/components/apps/BrainstormingApplicationView.svelte';
 	import MailApplicationView from '$lib/components/apps/MailApplicationView.svelte';
+	import CalendarApplicationView from '$lib/components/apps/CalendarApplicationView.svelte';
 	import ChatApplicationView from '$lib/components/chat/ChatApplicationView.svelte';
 	import GenericApplicationView from '$lib/components/apps/GenericApplicationView.svelte';
 
@@ -26,7 +27,8 @@
 		// The first-party io.elembra.mail manifest registers the renderer as
 		// "mail" (persisted tenant configs seed from it), so alias it here.
 		mail: MailApplicationView,
-		chat: ChatApplicationView
+		chat: ChatApplicationView,
+		calendar: CalendarApplicationView
 	};
 
 	let Renderer = $derived(rendererMap[module.ui.page.renderer] || GenericApplicationView);

@@ -1,0 +1,110 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH target AS (\n                SELECT j.id\n                FROM calendar_import_jobs j\n                JOIN calendar_sources s ON s.id = j.source_id\n                JOIN application_enablements e\n                  ON e.tenant_id = j.tenant_id\n                 AND e.workspace_id = j.tenant_id\n                 AND e.application_id = 'io.elembra.calendar'\n                WHERE j.status = 'pending'\n                  AND j.deleted_at IS NULL\n                  AND s.deleted_at IS NULL\n                  AND s.is_enabled = true\n                  AND e.enabled = true\n                ORDER BY j.created_at ASC\n                FOR UPDATE OF j SKIP LOCKED\n                LIMIT 1\n            ),\n            updated AS (\n                UPDATE calendar_import_jobs\n                SET status = 'running', started_at = NOW(), updated_at = NOW()\n                FROM target\n                WHERE calendar_import_jobs.id = target.id\n                RETURNING calendar_import_jobs.*\n            )\n            SELECT\n                id, tenant_id, owner_id, source_id, status, filename, size_bytes,\n                total_events, processed_events, failed_events, last_error,\n                started_at, completed_at, deleted_at, created_at, updated_at\n            FROM updated\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "owner_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "source_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "filename",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "size_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "total_events",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 8,
+        "name": "processed_events",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "failed_events",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "last_error",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "completed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "08e722b4d4334fd610c02b28dcc19a44c38dc63b95665018e37d2dc4d0d5b1dd"
+}

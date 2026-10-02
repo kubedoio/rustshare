@@ -42,8 +42,14 @@ instances are filtered by the same overlap predicate. Each expanded instance
 carries the master's `id` plus `recurrence_id`/`instance_start` (the expanded
 occurrence's `DTSTART`, RFC 3339; null on stored non-expanded rows). Stored
 override rows (`recurrence_id` NOT NULL) are returned as stored (own `id`),
-and master expansion omits occurrences covered by an override row in the
-window.
+and master expansion omits occurrences suppressed by an override row (the
+suppression set spans all of the caller's override rows, not only those in
+the requested window).
+
+The UI requests its Day, work-week (Monday–Friday), Month, and Agenda windows
+through this same endpoint — each view is a `from`/`to` window (local-midnight
+boundaries) of at most 366 days, and the API is window-agnostic; there are no
+view-specific parameters.
 
 Query parameters:
 
@@ -118,11 +124,19 @@ Partial update of internal events (same fields as create, all optional).
 `200` with the updated event; `404` unknown; `409` if the event belongs to a
 non-internal source. Publishes `io.elembra.calendar.event.updated.v1`.
 
+For the nullable string fields `description`, `location`, and `rrule`, an
+absent or `null` value leaves the stored value unchanged, while an empty
+string clears it (for `rrule`, this stops the recurrence). `title` cannot be
+cleared (empty is a `400`).
+
 ### `DELETE /api/v1/calendar/events/{id}`
 
-Soft-delete an internal event. `200 { "ok": true }` (idempotent; deleting
-twice returns `200`), `404` unknown, `409` read-only mirror. Publishes
-`io.elembra.calendar.event.deleted.v1`.
+Soft-delete an internal event. `200 { "ok": true }`. Deletion is idempotent:
+an already-deleted, never-existing, or foreign-tenant ID is a successful no-op
+(`200`), so a cross-tenant ID is indistinguishable from a random one. A live
+row in the caller's tenant that is owned by someone else is a `404`; a
+read-only mirror is a `409`. Publishes `io.elembra.calendar.event.deleted.v1`
+only when a row was actually deleted.
 
 ## Sources
 
@@ -210,11 +224,46 @@ header construction); the callback never renders or returns token data.
 Failure codes in the redirect: `oauth_state`, `oauth_exchange`,
 `oauth_denied`, `oauth_unconfigured`.
 
+### `GET /api/v1/calendar/providers`
+
+Read-only provider configuration status for the deployment, for operator
+diagnosis of connection problems. Requires an authenticated session and an
+enabled Calendar Application for the tenant (same gate as the rest of the JSON
+API). `200`:
+
+```json
+{
+  "public_url": "https://app.rustshare.io",
+  "providers": [
+    {
+      "kind": "google",
+      "configured": false,
+      "redirect_uri": "https://app.rustshare.io/api/v1/calendar/oauth/google/callback"
+    },
+    {
+      "kind": "outlook",
+      "configured": false,
+      "redirect_uri": "https://app.rustshare.io/api/v1/calendar/oauth/outlook/callback"
+    }
+  ]
+}
+```
+
+`public_url` is the effective `RUSTSHARE_PUBLIC_URL`; `configured` is `true`
+only when both the client id and client secret are present for that provider
+(a partial configuration reports `false`); `redirect_uri` is derived as
+`{public_url}/api/v1/calendar/oauth/{kind}/callback` and is the exact value an
+operator must register in the provider console. The response **never** contains
+client ids, client secrets, or any token material. This endpoint reports
+configuration only — it is not a connect surface and does not start a flow.
+
 ### `POST /api/v1/calendar/sources/{id}/disconnect`
 
-Revokes the grant at the provider best-effort, deletes stored tokens, and sets
-`status: "auth_required"` (events remain until the source is deleted).
-`200 { "ok": true }` / `404` / `400` for non-OAuth sources.
+Deletes the stored tokens and sets `status: "auth_required"` (events remain
+until the source is deleted). No Microsoft session revoke is attempted;
+Google's best-effort token revocation is unchanged.
+`409` while a live sync lease holds the source; `200 { "ok": true }` / `404` /
+`400` for non-OAuth sources.
 
 ### `POST /api/v1/calendar/sources/{id}/resync`
 

@@ -447,6 +447,64 @@ pub fn mail_routes() -> Router<AppState> {
         )
 }
 
+pub fn calendar_routes() -> Router<AppState> {
+    use axum::routing::{get, patch, post};
+    Router::new()
+        .route(
+            "/api/v1/calendar/events",
+            get(crate::handlers::calendar::list_calendar_events)
+                .post(crate::handlers::calendar::create_calendar_event),
+        )
+        .route(
+            "/api/v1/calendar/events/{id}",
+            get(crate::handlers::calendar::get_calendar_event)
+                .patch(crate::handlers::calendar::update_calendar_event)
+                .delete(crate::handlers::calendar::delete_calendar_event),
+        )
+        .route(
+            "/api/v1/calendar/sources",
+            get(crate::handlers::calendar::list_calendar_sources)
+                .post(crate::handlers::calendar::create_calendar_source),
+        )
+        .route(
+            "/api/v1/calendar/sources/{id}",
+            patch(crate::handlers::calendar::update_calendar_source)
+                .delete(crate::handlers::calendar::delete_calendar_source),
+        )
+        .route(
+            "/api/v1/calendar/sources/{kind}/connect",
+            get(crate::handlers::calendar::connect_calendar_source),
+        )
+        .route(
+            "/api/v1/calendar/providers",
+            get(crate::handlers::calendar::get_calendar_providers),
+        )
+        .route(
+            "/api/v1/calendar/oauth/{kind}/callback",
+            get(crate::handlers::calendar::calendar_oauth_callback),
+        )
+        .route(
+            "/api/v1/calendar/sources/{id}/disconnect",
+            post(crate::handlers::calendar::disconnect_calendar_source),
+        )
+        .route(
+            "/api/v1/calendar/sources/{id}/resync",
+            post(crate::handlers::calendar::resync_calendar_source),
+        )
+        .route(
+            "/api/v1/calendar/import",
+            post(crate::handlers::calendar::import_calendar_file),
+        )
+        .route(
+            "/api/v1/calendar/import-jobs",
+            get(crate::handlers::calendar::list_calendar_import_jobs),
+        )
+        .route(
+            "/api/v1/calendar/import-jobs/{id}",
+            get(crate::handlers::calendar::get_calendar_import_job),
+        )
+}
+
 pub fn kanban_routes() -> Router<AppState> {
     use axum::routing::{delete, get, patch, post, put};
     Router::new()

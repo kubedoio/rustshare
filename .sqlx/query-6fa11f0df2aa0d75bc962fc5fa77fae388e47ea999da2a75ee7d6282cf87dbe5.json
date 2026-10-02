@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE calendar_sync_states\n            SET cursor_kind = NULL, cursor_value = NULL, next_sync_at = NOW(),\n                updated_at = NOW()\n            WHERE source_id = $1\n              AND (locked_at IS NULL OR locked_at < NOW() - interval '1 second' * $2)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6fa11f0df2aa0d75bc962fc5fa77fae388e47ea999da2a75ee7d6282cf87dbe5"
+}

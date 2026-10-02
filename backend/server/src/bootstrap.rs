@@ -70,6 +70,7 @@ struct Services {
     vault_sync_service: Arc<VaultSyncService<MetadataStore, ObjectStore>>,
     chat_integration_service: Arc<crate::state::AppChatIntegrationService>,
     mail_service: Arc<crate::services::mail_service::MailService>,
+    calendar_service: Arc<crate::services::calendar_service::CalendarService>,
     secret_key: Arc<SecretEncryptionKey>,
     application_registry: Arc<ApplicationRegistry>,
     outbox_store: Arc<OutboxStore>,
@@ -365,6 +366,40 @@ async fn init_services(
         Arc::clone(&secret_key),
     ));
 
+    let mut calendar_service = crate::services::calendar_service::CalendarService::new(
+        Arc::clone(&metadata_store),
+        Arc::clone(&secret_key),
+    );
+    calendar_service.configure_outbox(Arc::clone(&outbox_store));
+    calendar_service.configure_public_url(config.public_url.clone());
+    calendar_service.configure_google(
+        crate::services::google_calendar::GoogleCalendarClient::from_config(
+            config.calendar_google_client_id.clone(),
+            config.calendar_google_client_secret.clone(),
+            &config.public_url,
+        ),
+    );
+    calendar_service.configure_outlook(
+        crate::services::outlook_calendar::OutlookCalendarClient::from_config(
+            config.calendar_microsoft_client_id.clone(),
+            config.calendar_microsoft_client_secret.clone(),
+            &config.public_url,
+        ),
+    );
+    let calendar_service = Arc::new(calendar_service);
+
+    // The redirect URIs must match the provider console registrations
+    // byte-for-byte; log them so an operator can copy them verbatim.
+    info!(
+        google = %format!("{}{}", config.public_url, crate::config::CALENDAR_GOOGLE_CALLBACK_PATH),
+        microsoft = %format!("{}{}", config.public_url, crate::config::CALENDAR_OUTLOOK_CALLBACK_PATH),
+        google_configured = config.calendar_google_client_id.is_some()
+            && config.calendar_google_client_secret.is_some(),
+        microsoft_configured = config.calendar_microsoft_client_id.is_some()
+            && config.calendar_microsoft_client_secret.is_some(),
+        "calendar OAuth redirect URIs (register these verbatim in the provider console)"
+    );
+
     // Shared content indexer used both by the AI service and by the note
     // service's indexing callback sink. Kept outside the tokio::join! so both
     // services can be wired to the same in-memory index.
@@ -575,6 +610,7 @@ async fn init_services(
         vault_sync_service,
         chat_integration_service,
         mail_service,
+        calendar_service,
         secret_key,
         application_registry,
         outbox_store,
@@ -773,6 +809,31 @@ pub async fn init_app() -> Result<AppState> {
         );
     } else {
         info!("Mail import worker disabled");
+    }
+
+    if config.calendar_import_worker_enabled {
+        crate::calendar_import_worker::spawn_calendar_import_worker(
+            Arc::clone(&metadata_store),
+            Arc::clone(&services.outbox_store),
+            shutdown_tx.subscribe(),
+            crate::calendar_import_worker::CalendarImportWorkerConfig::from_config(&config),
+        );
+    } else {
+        info!("Calendar import worker disabled");
+    }
+
+    if config.calendar_sync_worker_enabled {
+        crate::calendar_sync_worker::spawn_calendar_sync_worker(
+            Arc::clone(&metadata_store),
+            Arc::clone(&secret_key),
+            services.calendar_service.google_client(),
+            services.calendar_service.outlook_client(),
+            Arc::clone(&services.outbox_store),
+            shutdown_tx.subscribe(),
+            crate::calendar_sync_worker::CalendarSyncWorkerConfig::from_config(&config),
+        );
+    } else {
+        info!("Calendar sync worker disabled");
     }
 
     if !metadata_store.has_users().await? {
@@ -975,6 +1036,7 @@ pub async fn init_app() -> Result<AppState> {
         vault_sync_service: services.vault_sync_service,
         chat_integration_service: services.chat_integration_service,
         mail_service: services.mail_service,
+        calendar_service: services.calendar_service,
         outbox_store: services.outbox_store,
         chat_observation_store,
         memory_catalog_store,

@@ -1,0 +1,428 @@
+//! Background worker claiming due external calendar sources and running
+//! their read-only sync under a DB lease (issue #315).
+//!
+//! Lease model: `calendar_sync_states.locked_by/locked_at`. A source is
+//! claimable when due (`next_sync_at <= now`) and unclaimed or stale. The
+//! holder heartbeats during the run and releases the lease (recording the
+//! next due time, cursor, and last-error) on completion or failure — the
+//! same claim/stale-reset shape as the mail import worker.
+//!
+//! A parked (`auth_required`) source and a run that loses its lease are
+//! neither success nor failure: the worker writes no status/watermark/cursor
+//! and publishes no imported.v1 event for them. A parked run still releases
+//! its lease (bookkeeping-free) and reschedules the source, so the source does
+//! not sit locked until the stale takeover and disconnect/resync stay usable.
+//! A run that lost its lease leaves the lease entirely alone — the new holder
+//! owns it.
+
+use std::collections::HashSet;
+use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+use futures_util::FutureExt;
+use rustshare_storage::{MetadataStore, OutboxStore};
+use tokio::sync::broadcast;
+use uuid::Uuid;
+
+use crate::config::AppConfig;
+use crate::services::google_calendar;
+use crate::services::google_calendar::{
+    CalendarSyncConfig, GoogleCalendarClient, SyncOutcome, DEFAULT_SYNC_INTERVAL,
+};
+use crate::services::outlook_calendar::OutlookCalendarClient;
+
+/// `calendar_sync_states.cursor_kind` for the provider cursor a kind stores.
+/// `None` for unknown kinds so a future provider cannot silently persist its
+/// cursor under the wrong kind (the run keeps its prior cursor instead).
+fn cursor_kind_for(source_kind: &str) -> Option<&'static str> {
+    match source_kind {
+        "google" => Some("google_sync_token"),
+        "outlook" => Some("ms_delta_token"),
+        other => {
+            tracing::warn!(kind = %other, "no cursor kind registered for calendar source kind");
+            None
+        }
+    }
+}
+
+pub struct CalendarSyncWorkerConfig {
+    pub poll_interval: Duration,
+    pub max_concurrent_jobs: usize,
+    pub stale_threshold: Duration,
+    pub sync: CalendarSyncConfig,
+}
+
+impl CalendarSyncWorkerConfig {
+    pub fn from_config(config: &AppConfig) -> Self {
+        Self {
+            poll_interval: Duration::from_secs(config.calendar_sync_worker_poll_secs),
+            max_concurrent_jobs: config.calendar_sync_worker_max_concurrent,
+            stale_threshold: Duration::from_secs(
+                config.calendar_sync_worker_stale_secs.max(0) as u64
+            ),
+            sync: CalendarSyncConfig::from_config(config),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_calendar_sync_worker(
+    metadata_store: Arc<MetadataStore>,
+    secret_key: Arc<rustshare_crypto::SecretEncryptionKey>,
+    google: Option<Arc<GoogleCalendarClient>>,
+    outlook: Option<Arc<OutlookCalendarClient>>,
+    outbox: Arc<OutboxStore>,
+    mut shutdown: broadcast::Receiver<()>,
+    config: CalendarSyncWorkerConfig,
+) {
+    let worker_id = format!("calendar-sync-{}", Uuid::new_v4());
+    tokio::spawn(async move {
+        let mut join_set = tokio::task::JoinSet::new();
+        let mut in_flight_ids: HashSet<Uuid> = HashSet::new();
+
+        loop {
+            // Best-effort reaping of expired single-use OAuth states; the
+            // connect flow deletes rows on consume, so only abandoned
+            // (never-completed) consents accumulate here.
+            match metadata_store.delete_expired_calendar_oauth_states().await {
+                Ok(count) => {
+                    if count > 0 {
+                        tracing::info!("Reaped {count} expired calendar OAuth states");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to reap expired calendar OAuth states: {e}");
+                }
+            }
+
+            while in_flight_ids.len() < config.max_concurrent_jobs {
+                let source = match metadata_store
+                    .claim_due_calendar_source(&worker_id, config.stale_threshold)
+                    .await
+                {
+                    Ok(Some(source)) => source,
+                    Ok(None) => break,
+                    Err(e) => {
+                        tracing::error!("Failed to claim due calendar source: {e}");
+                        break;
+                    }
+                };
+
+                let source_id = source.id;
+                in_flight_ids.insert(source_id);
+                let store = Arc::clone(&metadata_store);
+                let key = Arc::clone(&secret_key);
+                let client = google.clone();
+                let outlook_client = outlook.clone();
+                let outbox = Arc::clone(&outbox);
+                let sync_config = CalendarSyncConfig {
+                    past_days: config.sync.past_days,
+                    future_days: config.sync.future_days,
+                };
+                let holder = worker_id.clone();
+                join_set.spawn(async move {
+                    let result = AssertUnwindSafe(run_sync(
+                        store,
+                        key,
+                        client,
+                        outlook_client,
+                        outbox,
+                        source,
+                        sync_config,
+                        holder,
+                    ))
+                    .catch_unwind()
+                    .await;
+                    match result {
+                        Ok(()) => source_id,
+                        Err(e) => {
+                            tracing::error!("Calendar sync task {source_id} panicked: {e:?}");
+                            source_id
+                        }
+                    }
+                });
+            }
+
+            tokio::select! {
+                _ = shutdown.recv() => {
+                    tracing::info!("Calendar sync worker shutting down");
+                    break;
+                }
+                _ = tokio::time::sleep(config.poll_interval) => {}
+                res = join_set.join_next(), if !join_set.is_empty() => {
+                    match res {
+                        Some(Ok(source_id)) => {
+                            in_flight_ids.remove(&source_id);
+                        }
+                        Some(Err(e)) => {
+                            tracing::error!("Calendar sync task panicked or was aborted: {e}");
+                        }
+                        None => {}
+                    }
+                }
+            }
+        }
+
+        if !join_set.is_empty() {
+            tracing::info!(
+                "Waiting for {} calendar sync tasks to finish",
+                in_flight_ids.len()
+            );
+            let shutdown_timeout = Duration::from_secs(30);
+            let _ = tokio::time::timeout(shutdown_timeout, async {
+                while let Some(res) = join_set.join_next().await {
+                    if let Err(e) = res {
+                        tracing::error!("Calendar sync task panicked or was aborted: {e}");
+                    }
+                }
+            })
+            .await;
+        }
+
+        tracing::info!("Calendar sync worker stopped");
+    });
+}
+
+/// Run one sync pass for a claimed source and release its lease, mapping the
+/// outcome onto scheduling, cursor, and health bookkeeping. Public so the
+/// integration suite can exercise the full worker path (claim → sync →
+/// lease release) without spawning the polling loop.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_sync(
+    store: Arc<MetadataStore>,
+    secret_key: Arc<rustshare_crypto::SecretEncryptionKey>,
+    google: Option<Arc<GoogleCalendarClient>>,
+    outlook: Option<Arc<OutlookCalendarClient>>,
+    outbox: Arc<OutboxStore>,
+    source: rustshare_core::domain::CalendarSource,
+    sync_config: CalendarSyncConfig,
+    worker_id: String,
+) {
+    // The pre-run cursor, preserved across a rate-limit backoff so the next
+    // run stays incremental.
+    let source_id = source.id;
+    let prior_cursor = store
+        .get_calendar_sync_state(source_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|state| state.cursor_value);
+    let cursor_kind = cursor_kind_for(&source.kind);
+    tracing::info!(source_id = %source_id, kind = %source.kind, "Syncing calendar source");
+    let outcome = match source.kind.as_str() {
+        "google" => match google {
+            Some(client) => {
+                google_calendar::sync_source(
+                    &store,
+                    &client,
+                    &secret_key,
+                    &source,
+                    &sync_config,
+                    &worker_id,
+                )
+                .await
+            }
+            None => SyncOutcome::Failed("google OAuth is not configured".to_string()),
+        },
+        "outlook" => match outlook {
+            Some(client) => {
+                crate::services::outlook_calendar::sync_source(
+                    &store,
+                    &client,
+                    &secret_key,
+                    &source,
+                    &sync_config,
+                    &worker_id,
+                )
+                .await
+            }
+            None => SyncOutcome::Failed("outlook OAuth is not configured".to_string()),
+        },
+        // Claim only what we can run; treat an unknown kind like a parked
+        // source so the run neither publishes nor advances bookkeeping.
+        other => {
+            tracing::debug!(source_id = %source_id, kind = %other, "no sync provider registered; skipping");
+            SyncOutcome::Parked
+        }
+    };
+
+    struct SyncPlan {
+        next_sync_at: DateTime<Utc>,
+        cursor: Option<String>,
+        cursor_kind: Option<&'static str>,
+        status: Option<&'static str>,
+        last_error: Option<String>,
+    }
+
+    // Only successful runs advance `calendar_sources.last_synced_at`;
+    // failures keep the previous watermark so dashboards do not report a
+    // "sync" that changed nothing.
+    let synced = matches!(outcome, SyncOutcome::Completed { .. });
+    // Captured before the plan match consumes `outcome`; published only after
+    // the run state (cursor, watermark, lease) persisted successfully below.
+    let completed_counts = match &outcome {
+        SyncOutcome::Completed {
+            upserted,
+            soft_deleted,
+            ..
+        } => Some((*upserted, *soft_deleted)),
+        _ => None,
+    };
+    let now = Utc::now();
+    // Pair the preserved cursor with its kind; an unknown kind writes no
+    // cursor at all rather than persisting it under the wrong kind.
+    let prior = |kind: Option<&'static str>| match (&prior_cursor, kind) {
+        (Some(cursor), Some(kind)) => (Some(cursor.clone()), Some(kind)),
+        _ => (None, None),
+    };
+    let plan = match outcome {
+        // A parked (`auth_required`) source did no work: neither success nor
+        // failure. Publish nothing, advance no watermark, write no status, and
+        // record no error, so the source stays parked without oscillating. The
+        // lease is still released (bookkeeping-free) and the source
+        // rescheduled: leaving it locked would make it perpetually "in
+        // progress", so disconnect/resync would 409 for exactly the parked
+        // sources users most need to disconnect.
+        SyncOutcome::Parked => {
+            tracing::debug!(source_id = %source_id, "calendar source parked; no work this run");
+            let next_sync_at = now
+                + chrono::Duration::from_std(DEFAULT_SYNC_INTERVAL)
+                    .unwrap_or(chrono::Duration::seconds(900));
+            if let Err(e) = store
+                .release_calendar_source_lease(source_id, &worker_id, next_sync_at)
+                .await
+            {
+                tracing::error!(source_id = %source_id, "failed to release parked lease: {e}");
+            }
+            return;
+        }
+        // The lease is no longer ours (stale takeover). Anything we write now
+        // would clobber the new holder's bookkeeping, so abort silently.
+        SyncOutcome::LeaseLost => {
+            tracing::warn!(source_id = %source_id, "calendar sync lease lost; aborting run");
+            return;
+        }
+        SyncOutcome::Completed {
+            upserted,
+            soft_deleted,
+            next_sync_token,
+        } => {
+            tracing::info!(source_id = %source_id, upserted, soft_deleted, "calendar source synced");
+            SyncPlan {
+                next_sync_at: now
+                    + chrono::Duration::from_std(DEFAULT_SYNC_INTERVAL)
+                        .unwrap_or(chrono::Duration::seconds(900)),
+                cursor: match cursor_kind {
+                    Some(_) => next_sync_token,
+                    None => None,
+                },
+                cursor_kind,
+                status: Some("healthy"),
+                last_error: None,
+            }
+        }
+        SyncOutcome::RateLimited { retry_after } => {
+            let backoff =
+                chrono::Duration::from_std(retry_after).unwrap_or(chrono::Duration::seconds(60));
+            tracing::warn!(source_id = %source_id, "calendar sync rate limited; backing off");
+            let (cursor, cursor_kind) = prior(cursor_kind);
+            SyncPlan {
+                next_sync_at: now + backoff,
+                cursor,
+                cursor_kind,
+                status: Some("rate_limited"),
+                last_error: Some("rate limited by provider".to_string()),
+            }
+        }
+        SyncOutcome::AuthRequired => {
+            tracing::warn!(source_id = %source_id, "calendar sync grant revoked; auth_required");
+            SyncPlan {
+                next_sync_at: now
+                    + chrono::Duration::from_std(DEFAULT_SYNC_INTERVAL)
+                        .unwrap_or(chrono::Duration::seconds(900)),
+                cursor: None,
+                cursor_kind: None,
+                status: Some("auth_required"),
+                last_error: Some("provider rejected the grant; reconnect required".to_string()),
+            }
+        }
+        SyncOutcome::Failed(message) => {
+            tracing::warn!(source_id = %source_id, "calendar sync failed: {message}");
+            // Keep the pre-run cursor: a transient failure must not force
+            // the next run into a full window resync (the absent-entry sweep
+            // only covers the synced window, so out-of-window deletions
+            // would still be missed and cheap incremental deltas are
+            // preferable).
+            let (cursor, cursor_kind) = prior(cursor_kind);
+            SyncPlan {
+                next_sync_at: now
+                    + chrono::Duration::from_std(DEFAULT_SYNC_INTERVAL)
+                        .unwrap_or(chrono::Duration::seconds(900)),
+                cursor,
+                cursor_kind,
+                status: Some("failed"),
+                last_error: Some(message.chars().take(500).collect()),
+            }
+        }
+    };
+
+    // Losing the lease between the provider run and here means another worker
+    // owns the source now; discard the run's bookkeeping rather than clobber
+    // theirs.
+    match store
+        .heartbeat_calendar_source_lease(source_id, &worker_id)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::warn!(source_id = %source_id, "calendar sync lease lost before persist; run discarded");
+            return;
+        }
+        Err(e) => {
+            tracing::error!(source_id = %source_id, "failed to heartbeat calendar sync lease: {e}");
+            return;
+        }
+    }
+    let persisted = match store
+        .finish_calendar_source_sync(
+            source_id,
+            &worker_id,
+            plan.next_sync_at,
+            plan.cursor_kind,
+            plan.cursor.as_deref(),
+            plan.last_error.as_deref(),
+            // Status is written inside the lease-guarded finish transaction:
+            // a separate post-finish update could clobber a new lease holder
+            // after a stale takeover released ours.
+            plan.status,
+            synced,
+        )
+        .await
+    {
+        Ok(persisted) => persisted,
+        Err(e) => {
+            tracing::error!(source_id = %source_id, "failed to release calendar sync lease: {e}");
+            false
+        }
+    };
+    if !persisted {
+        tracing::warn!(source_id = %source_id, "calendar sync lease lost at persist; run discarded");
+        return;
+    }
+    if let Some((upserted, soft_deleted)) = completed_counts {
+        // One imported.v1 per completed run, counts + source ResourceRef
+        // only. Published after the run state persisted so a failed persist
+        // cannot leave a retried run double-publishing; best-effort — a
+        // publish failure is logged inside the helper and never fails the run.
+        crate::services::calendar_service::publish_imported_event(
+            &outbox,
+            source.tenant_id,
+            source.owner_id,
+            source_id,
+            serde_json::json!({ "upserted": upserted, "soft_deleted": soft_deleted }),
+        )
+        .await;
+    }
+}

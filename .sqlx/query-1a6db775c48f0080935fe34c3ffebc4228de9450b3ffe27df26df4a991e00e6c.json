@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH swept_masters AS (\n                UPDATE calendar_events\n                SET deleted_at = now(), updated_at = now()\n                WHERE source_id = $1\n                  AND deleted_at IS NULL\n                  AND external_uid IS NOT NULL\n                  AND (rrule IS NOT NULL OR (starts_at >= $3 AND starts_at < $4))\n                  AND (external_uid || '|' || COALESCE(recurrence_id, '')) != ALL($2)\n                RETURNING external_uid, rrule\n            ),\n            swept_overrides AS (\n                UPDATE calendar_events\n                SET deleted_at = now(), updated_at = now()\n                WHERE source_id = $1\n                  AND deleted_at IS NULL\n                  AND recurrence_id IS NOT NULL\n                  AND rrule IS NULL\n                  AND NOT (starts_at >= $3 AND starts_at < $4)\n                  AND (external_uid || '|' || recurrence_id) != ALL($2)\n                  AND external_uid IN (\n                      SELECT external_uid FROM swept_masters WHERE rrule IS NOT NULL\n                  )\n                RETURNING id\n            )\n            SELECT\n                (SELECT count(*) FROM swept_masters)\n                    + (SELECT count(*) FROM swept_overrides) AS \"count!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "1a6db775c48f0080935fe34c3ffebc4228de9450b3ffe27df26df4a991e00e6c"
+}

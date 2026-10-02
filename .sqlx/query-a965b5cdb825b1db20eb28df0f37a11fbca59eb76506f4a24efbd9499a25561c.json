@@ -1,0 +1,150 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                id, tenant_id, owner_id, source_id, external_uid, external_etag,\n                recurrence_id, title, description, location, starts_at, ends_at,\n                all_day, original_date, timezone, rrule, status, read_only, raw,\n                deleted_at, created_at, updated_at\n            FROM calendar_events\n            WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "owner_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "source_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "external_uid",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "external_etag",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "recurrence_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "location",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "starts_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "ends_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "all_day",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 13,
+        "name": "original_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 14,
+        "name": "timezone",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "rrule",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "status",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 17,
+        "name": "read_only",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 18,
+        "name": "raw",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 19,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 20,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 21,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "a965b5cdb825b1db20eb28df0f37a11fbca59eb76506f4a24efbd9499a25561c"
+}

@@ -116,6 +116,7 @@ pub struct ServiceState {
     pub vault_sync_service:
         Arc<rustshare_core::services::VaultSyncService<MetadataStore, ObjectStore>>,
     pub mail_service: Arc<services::mail_service::MailService>,
+    pub calendar_service: Arc<services::calendar_service::CalendarService>,
 }
 
 /// Typed dependencies for the Application boundary. New Application handlers
@@ -216,6 +217,7 @@ pub struct AppState {
         Arc<rustshare_core::services::VaultSyncService<MetadataStore, ObjectStore>>,
     pub chat_integration_service: Arc<AppChatIntegrationService>,
     pub mail_service: Arc<services::mail_service::MailService>,
+    pub calendar_service: Arc<services::calendar_service::CalendarService>,
     /// Durable integration-event outbox (ADR-0031): publishing is always
     /// active; the dispatcher loop is gated by `outbox_worker_enabled`.
     pub outbox_store: Arc<OutboxStore>,
@@ -296,6 +298,7 @@ impl FromRef<AppState> for ServiceState {
             user_repository: state.user_repository.clone(),
             vault_sync_service: state.vault_sync_service.clone(),
             mail_service: state.mail_service.clone(),
+            calendar_service: state.calendar_service.clone(),
         }
     }
 }

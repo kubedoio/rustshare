@@ -7,12 +7,16 @@ pub use imap_client::{
 };
 pub mod application_service;
 pub mod ask_workspace;
+pub mod calendar_service;
 pub mod chat_bootstrap;
+pub mod google_calendar;
+pub mod ical_import;
 pub mod kanban_service;
 pub mod mail_service;
 pub mod meeting_service;
 pub mod note_index_sink;
 pub mod note_service;
+pub mod outlook_calendar;
 pub mod standup_service;
 pub mod template_service;
 pub mod unified_search;

@@ -490,6 +490,7 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
         ("files", "Files", "folder", "files", 10),
         ("notes", "Notes", "sticky-note", "okf-note", 20),
         ("mail", "Mail", "mail", "mail", 30),
+        ("calendar", "Calendar", "calendar-days", "calendar", 40),
         ("chat", "Chat", "message-circle", "chat", 60),
         ("meetings", "Meeting Notes", "calendar-days", "meetings", 70),
         ("standups", "Standups", "activity", "standups", 80),
@@ -554,6 +555,24 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
                 resource_type: "message".into(),
                 actions: vec![ActionCapability::new("chat.read")],
             }]
+        } else if slug == "calendar" {
+            vec![
+                ApplicationResource {
+                    resource_type: "calendar.event".into(),
+                    actions: vec![
+                        ActionCapability::new("calendar.read"),
+                        ActionCapability::new("calendar.write"),
+                        ActionCapability::new("calendar.delete"),
+                    ],
+                },
+                ApplicationResource {
+                    resource_type: "calendar.source".into(),
+                    actions: vec![
+                        ActionCapability::new("calendar.read"),
+                        ActionCapability::new("calendar.write"),
+                    ],
+                },
+            ]
         } else {
             vec![ApplicationResource {
                 resource_type: format!("{slug}.resource"),
@@ -575,6 +594,15 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
             },
             "chat" => IntegrationEvents {
                 publishes: vec!["io.elembra.chat.buzz.event.observed.v1".into()],
+                subscribes: Vec::new(),
+            },
+            "calendar" => IntegrationEvents {
+                publishes: vec![
+                    "io.elembra.calendar.event.created.v1".into(),
+                    "io.elembra.calendar.event.updated.v1".into(),
+                    "io.elembra.calendar.event.deleted.v1".into(),
+                    "io.elembra.calendar.event.imported.v1".into(),
+                ],
                 subscribes: Vec::new(),
             },
             _ => IntegrationEvents::default(),
@@ -905,6 +933,31 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
             chat.contributions.navigation[0].route.as_deref(),
             Some("/apps/chat")
         );
+    }
+
+    #[test]
+    fn first_party_catalogue_includes_calendar_with_event_contracts() {
+        let registry = ApplicationRegistry::first_party().unwrap();
+        let calendar = ApplicationId::new("io.elembra.calendar");
+        let manifest = registry.manifest(&calendar).unwrap();
+        assert_eq!(manifest.runtime.kind, ApplicationRuntimeKind::Embedded);
+        assert_eq!(
+            manifest.contributions.navigation[0].route.as_deref(),
+            Some("/apps/calendar")
+        );
+        assert_eq!(
+            manifest.contributions.navigation[0].icon.as_deref(),
+            Some("calendar-days")
+        );
+        assert_eq!(
+            manifest.contributions.routes[0].renderer.as_deref(),
+            Some("calendar")
+        );
+        assert!(registry.owns_event_type(&calendar, "io.elembra.calendar.event.created.v1"));
+        assert!(registry.owns_event_type(&calendar, "io.elembra.calendar.event.imported.v1"));
+        assert!(!registry.owns_event_type(&calendar, "io.elembra.files.file.created.v1"));
+        // Undeclared event types in the calendar namespace are rejected too.
+        assert!(!registry.owns_event_type(&calendar, "io.elembra.calendar.event.merged.v1"));
     }
 
     #[test]

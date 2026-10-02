@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE calendar_sync_states\n            SET locked_at = NULL, locked_by = NULL, next_sync_at = $3,\n                cursor_kind = $4, cursor_value = $5, last_error = $6,\n                last_synced_at = NOW(), updated_at = NOW()\n            WHERE source_id = $1 AND locked_by = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Varchar",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "322a6d486005722c05cda40648d80e7255a95d9a8c68045eecaedb252501e48e"
+}

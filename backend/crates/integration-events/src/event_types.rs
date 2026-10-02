@@ -15,6 +15,21 @@ pub const FILES_FILE_UPDATED_V1: &str = "io.elembra.files.file.updated.v1";
 /// (Buzz → Elembra Memory projection, ADR-0033/ADR-0034). Published by the
 /// Chat Application; consumed by Memory.
 pub const CHAT_BUZZ_EVENT_OBSERVED_V1: &str = "io.elembra.chat.buzz.event.observed.v1";
+/// An internal Calendar Application event was created.
+pub const CALENDAR_EVENT_CREATED_V1: &str = "io.elembra.calendar.event.created.v1";
+/// An internal Calendar Application event was updated.
+pub const CALENDAR_EVENT_UPDATED_V1: &str = "io.elembra.calendar.event.updated.v1";
+/// An internal Calendar Application event was soft-deleted.
+pub const CALENDAR_EVENT_DELETED_V1: &str = "io.elembra.calendar.event.deleted.v1";
+/// One calendar import or provider-sync run finished (counts + source
+/// ResourceRef only — never titles/descriptions, per minimum-safe-data).
+/// Counts are best-effort and may reflect a partial run; consumers
+/// deduplicate deliveries by envelope id.
+///
+/// A `Parked` run (source `auth_required`, grant revoked) and a lease-lost
+/// run publish no event at all — they are neither success nor failure, so a
+/// disconnected source does not emit a perpetual stream of empty imports.
+pub const CALENDAR_EVENT_IMPORTED_V1: &str = "io.elembra.calendar.event.imported.v1";
 
 #[cfg(test)]
 mod tests {
@@ -28,5 +43,25 @@ mod tests {
             "io.elembra.chat.buzz.event.observed.v1"
         );
         assert!(validate_event_type(CHAT_BUZZ_EVENT_OBSERVED_V1).is_ok());
+    }
+
+    #[test]
+    fn calendar_event_types_are_canonical() {
+        for event_type in [
+            CALENDAR_EVENT_CREATED_V1,
+            CALENDAR_EVENT_UPDATED_V1,
+            CALENDAR_EVENT_DELETED_V1,
+            CALENDAR_EVENT_IMPORTED_V1,
+        ] {
+            assert!(validate_event_type(event_type).is_ok(), "{event_type}");
+        }
+        assert_eq!(
+            CALENDAR_EVENT_CREATED_V1,
+            "io.elembra.calendar.event.created.v1"
+        );
+        assert_eq!(
+            CALENDAR_EVENT_IMPORTED_V1,
+            "io.elembra.calendar.event.imported.v1"
+        );
     }
 }

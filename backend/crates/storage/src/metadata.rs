@@ -6,7 +6,8 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
-    File, FileVersion, Folder, MailAccount, MailAccountId, MailAttachment, MailImportJob,
+    CalendarEvent, CalendarImportJob, CalendarOauthState, CalendarSource, CalendarSyncState, File,
+    FileVersion, Folder, MailAccount, MailAccountId, MailAttachment, MailImportJob,
     MailImportJobId, MailLink, MailLinkId, MailMessage, MailMessageId, MailMessagePart,
     MailSmtpSettings, MailSortOrder, OidcLoginState, ReplicationJob, ReplicationJobStatus,
     ReplicationState, ReplicationTarget, Share, SharePermissions, User, UserId, UserSession, Vault,
@@ -32,6 +33,18 @@ pub(crate) enum VaultFileStoreError {
 #[derive(Clone)]
 pub struct MetadataStore {
     pool: PgPool,
+}
+
+/// Identity of a stored recurring-event override: the `source_id` the mirrored
+/// row belongs to, the `external_uid` of the recurring master (or the row's own
+/// id), and the `recurrence_id` of the overridden occurrence. The source is
+/// part of the key: two sources may expose the same `external_uid`, so keying
+/// suppression by uid alone would suppress the other source's occurrence.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct CalendarEventOverrideKey {
+    pub source_id: Uuid,
+    pub external_uid: String,
+    pub recurrence_id: String,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -65,6 +78,10 @@ impl BlobReferenceSummary {
             + self.replication_jobs
     }
 }
+
+/// Maximum rows returned by `list_calendar_import_jobs_by_owner` (the import
+/// endpoint returns the newest jobs only).
+const CALENDAR_IMPORT_JOBS_LIST_LIMIT: i64 = 100;
 
 impl MetadataStore {
     /// Get access to the underlying database pool
@@ -6339,6 +6356,1404 @@ impl MetadataStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Lazily materialize the implicit `internal` calendar source for a user.
+    ///
+    /// Idempotent via the partial unique index on `(tenant_id, owner_id)`.
+    pub async fn ensure_internal_calendar_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+    ) -> Result<CalendarSource> {
+        let row = sqlx::query_as!(
+            CalendarSource,
+            r#"
+            INSERT INTO calendar_sources (tenant_id, owner_id, kind, display_name)
+            VALUES ($1, $2, 'internal', 'Calendar')
+            ON CONFLICT (tenant_id, owner_id)
+                WHERE kind = 'internal' AND deleted_at IS NULL
+            DO NOTHING
+            RETURNING
+                id, tenant_id, owner_id, kind, display_name, external_account,
+                external_calendar_id, refresh_token_enc, access_token_enc,
+                access_token_expires_at, scopes, is_enabled, last_synced_at,
+                last_error, status, deleted_at, created_at, updated_at
+            "#,
+            tenant_id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        match row {
+            Some(source) => Ok(source),
+            None => self.get_internal_calendar_source(tenant_id, owner_id).await,
+        }
+    }
+    async fn get_internal_calendar_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+    ) -> Result<CalendarSource> {
+        let row = sqlx::query_as!(
+            CalendarSource,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, kind, display_name, external_account,
+                external_calendar_id, refresh_token_enc, access_token_enc,
+                access_token_expires_at, scopes, is_enabled, last_synced_at,
+                last_error, status, deleted_at, created_at, updated_at
+            FROM calendar_sources
+            WHERE tenant_id = $1 AND owner_id = $2 AND kind = 'internal'
+              AND deleted_at IS NULL
+            "#,
+            tenant_id,
+            owner_id
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// List all active calendar sources for a user, internal source first.
+    pub async fn list_calendar_sources(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+    ) -> Result<Vec<CalendarSource>> {
+        let rows = sqlx::query_as!(
+            CalendarSource,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, kind, display_name, external_account,
+                external_calendar_id, refresh_token_enc, access_token_enc,
+                access_token_expires_at, scopes, is_enabled, last_synced_at,
+                last_error, status, deleted_at, created_at, updated_at
+            FROM calendar_sources
+            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            ORDER BY (kind = 'internal') DESC, created_at ASC
+            "#,
+            tenant_id,
+            owner_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Find a calendar source by ID, scoped to the owning user.
+    pub async fn get_calendar_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        id: Uuid,
+    ) -> Result<Option<CalendarSource>> {
+        let row = sqlx::query_as!(
+            CalendarSource,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, kind, display_name, external_account,
+                external_calendar_id, refresh_token_enc, access_token_enc,
+                access_token_expires_at, scopes, is_enabled, last_synced_at,
+                last_error, status, deleted_at, created_at, updated_at
+            FROM calendar_sources
+            WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL
+            "#,
+            id,
+            tenant_id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Create an `ical_import` source. Duplicate active rows are the caller's
+    /// concern (the service returns 409 before calling this).
+    pub async fn create_ical_import_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        display_name: &str,
+    ) -> Result<CalendarSource> {
+        let row = sqlx::query_as!(
+            CalendarSource,
+            r#"
+            INSERT INTO calendar_sources (tenant_id, owner_id, kind, display_name)
+            VALUES ($1, $2, 'ical_import', $3)
+            RETURNING
+                id, tenant_id, owner_id, kind, display_name, external_account,
+                external_calendar_id, refresh_token_enc, access_token_enc,
+                access_token_expires_at, scopes, is_enabled, last_synced_at,
+                last_error, status, deleted_at, created_at, updated_at
+            "#,
+            tenant_id,
+            owner_id,
+            display_name
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Update a calendar source's display name and enabled state.
+    pub async fn update_calendar_source(&self, source: &CalendarSource) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE calendar_sources
+            SET display_name = $2, is_enabled = $3, updated_at = now()
+            WHERE id = $1 AND tenant_id = $4 AND owner_id = $5 AND deleted_at IS NULL
+            "#,
+            source.id,
+            source.display_name,
+            source.is_enabled,
+            source.tenant_id,
+            source.owner_id,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Soft-delete a calendar source, clear its stored tokens, and soft-delete
+    /// every event mirrored from it. Returns `true` when a row was deleted.
+    pub async fn soft_delete_calendar_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        id: Uuid,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_sources
+            SET deleted_at = now(),
+                refresh_token_enc = NULL,
+                access_token_enc = NULL,
+                access_token_expires_at = NULL,
+                scopes = NULL,
+                updated_at = now()
+            WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL
+            "#,
+            id,
+            tenant_id,
+            owner_id
+        )
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Ok(false);
+        }
+        sqlx::query!(
+            r#"
+            UPDATE calendar_events
+            SET deleted_at = now(), updated_at = now()
+            WHERE source_id = $1 AND deleted_at IS NULL
+            "#,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(true)
+    }
+
+    /// Insert a calendar event.
+    pub async fn create_calendar_event(&self, event: &CalendarEvent) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.create_calendar_event_in_tx(&mut tx, event).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Insert a calendar event inside an existing transaction (so the caller
+    /// can atomically publish an integration-outbox event, issue #315).
+    pub async fn create_calendar_event_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        event: &CalendarEvent,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO calendar_events (
+                id, tenant_id, owner_id, source_id, external_uid, external_etag,
+                recurrence_id, title, description, location, starts_at, ends_at,
+                all_day, original_date, timezone, rrule, status, read_only, raw,
+                deleted_at, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                    $15, $16, $17, $18, $19, $20, $21, $22)
+            "#,
+            event.id,
+            event.tenant_id,
+            event.owner_id,
+            event.source_id,
+            event.external_uid,
+            event.external_etag,
+            event.recurrence_id,
+            event.title,
+            event.description,
+            event.location,
+            event.starts_at,
+            event.ends_at,
+            event.all_day,
+            event.original_date,
+            event.timezone,
+            event.rrule,
+            event.status,
+            event.read_only,
+            event.raw,
+            event.deleted_at,
+            event.created_at,
+            event.updated_at,
+        )
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+
+    /// Find a calendar event by ID, scoped to the owning user.
+    pub async fn get_calendar_event(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        id: Uuid,
+    ) -> Result<Option<CalendarEvent>> {
+        let row = sqlx::query_as!(
+            CalendarEvent,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, source_id, external_uid, external_etag,
+                recurrence_id, title, description, location, starts_at, ends_at,
+                all_day, original_date, timezone, rrule, status, read_only, raw,
+                deleted_at, created_at, updated_at
+            FROM calendar_events
+            WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL
+            "#,
+            id,
+            tenant_id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Whether an active calendar event row exists with this ID **in the
+    /// caller's tenant**, regardless of owner. Used to distinguish a foreign
+    /// but same-tenant ID (404) from an already-deleted/never-existing one
+    /// (idempotent delete success). Scoping to the tenant is what keeps the
+    /// check from becoming a cross-tenant existence oracle.
+    pub async fn calendar_event_exists_in_tenant(&self, tenant_id: Uuid, id: Uuid) -> Result<bool> {
+        let exists = sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM calendar_events
+                             WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL)"#,
+            id,
+            tenant_id,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists.unwrap_or(false))
+    }
+
+    /// Update the mutable columns of a calendar event inside an existing
+    /// transaction (atomic outbox publish, issue #315).
+    ///
+    /// Returns `true` when a live row was updated. A `false` result means the
+    /// row was concurrently soft-deleted (or no longer belongs to the caller),
+    /// so callers must skip publishing an `updated.v1` envelope rather than
+    /// announce a change that did not happen.
+    pub async fn update_calendar_event_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        event: &CalendarEvent,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_events
+            SET title = $2, description = $3, location = $4, starts_at = $5,
+                ends_at = $6, all_day = $7, original_date = $8, timezone = $9,
+                rrule = $10, status = $11, updated_at = now()
+            WHERE id = $1 AND tenant_id = $12 AND owner_id = $13 AND deleted_at IS NULL
+            "#,
+            event.id,
+            event.title,
+            event.description,
+            event.location,
+            event.starts_at,
+            event.ends_at,
+            event.all_day,
+            event.original_date,
+            event.timezone,
+            event.rrule,
+            event.status,
+            event.tenant_id,
+            event.owner_id,
+        )
+        .execute(&mut **tx)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Soft-delete a calendar event. Returns `true` when a row was deleted.
+    pub async fn soft_delete_calendar_event(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        id: Uuid,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let deleted = self
+            .soft_delete_calendar_event_in_tx(&mut tx, tenant_id, owner_id, id)
+            .await?;
+        tx.commit().await?;
+        Ok(deleted)
+    }
+
+    /// Soft-delete a calendar event inside an existing transaction (atomic
+    /// outbox publish, issue #315).
+    pub async fn soft_delete_calendar_event_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        id: Uuid,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_events
+            SET deleted_at = now(), updated_at = now()
+            WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL
+            "#,
+            id,
+            tenant_id,
+            owner_id
+        )
+        .execute(&mut **tx)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// List events for the range query: non-recurring events overlapping
+    /// `[from, to)` plus every recurring master (for service-side expansion).
+    /// Cancelled events are excluded unless requested, and events of disabled
+    /// sources are excluded unless their source is explicitly requested.
+    pub async fn list_calendar_events_in_range(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        source_ids: &[Uuid],
+        include_cancelled: bool,
+    ) -> Result<Vec<CalendarEvent>> {
+        let rows = sqlx::query_as!(
+            CalendarEvent,
+            r#"
+            SELECT
+                e.id, e.tenant_id, e.owner_id, e.source_id, e.external_uid,
+                e.external_etag, e.recurrence_id, e.title, e.description,
+                e.location, e.starts_at, e.ends_at, e.all_day, e.original_date,
+                e.timezone, e.rrule, e.status, e.read_only, e.raw, e.deleted_at,
+                e.created_at, e.updated_at
+            FROM calendar_events e
+            WHERE e.tenant_id = $1 AND e.owner_id = $2 AND e.deleted_at IS NULL
+              AND ($5::bool OR e.status <> 'cancelled')
+              AND (cardinality($6::uuid[]) = 0 OR e.source_id = ANY($6))
+              AND (
+                e.source_id = ANY($6)
+                OR e.source_id IN (
+                  SELECT s.id FROM calendar_sources s
+                  WHERE s.owner_id = $2 AND s.is_enabled AND s.deleted_at IS NULL
+                )
+              )
+              AND (
+                e.rrule IS NOT NULL
+                OR (e.starts_at < $4 AND e.ends_at > $3)
+              )
+            "#,
+            tenant_id,
+            owner_id,
+            from,
+            to,
+            include_cancelled,
+            source_ids
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Every recurring-event override visible to the caller, independently of
+    /// the status/window filters applied by `list_calendar_events_in_range`.
+    ///
+    /// A cancelled or moved occurrence of a recurring master is stored as an
+    /// override row (`recurrence_id IS NOT NULL`) that may fall outside the
+    /// requested time window or carry `status = 'cancelled'`, so the range
+    /// listing can return the master without its overrides. Expansion then
+    /// renders a phantom occurrence for a cancelled/moved instance. This query
+    /// returns the full `(source_id, external_uid, recurrence_id)` key set for
+    /// the caller's own non-deleted mirrored rows (optionally restricted to
+    /// `source_ids`; an empty slice means all enabled-or-requested sources,
+    /// matching `list_calendar_events_in_range`'s own source disjunction),
+    /// regardless of status and regardless of time window, so the service can
+    /// suppress those occurrences.
+    pub async fn list_calendar_event_overrides(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        source_ids: &[Uuid],
+    ) -> Result<Vec<CalendarEventOverrideKey>> {
+        let rows = sqlx::query_as!(
+            CalendarEventOverrideKey,
+            r#"
+            SELECT
+                e.source_id,
+                e.external_uid AS "external_uid!",
+                e.recurrence_id AS "recurrence_id!"
+            FROM calendar_events e
+            WHERE e.tenant_id = $1 AND e.owner_id = $2 AND e.deleted_at IS NULL
+              AND e.external_uid IS NOT NULL
+              AND e.recurrence_id IS NOT NULL
+              AND (cardinality($3::uuid[]) = 0 OR e.source_id = ANY($3))
+              AND (
+                e.source_id = ANY($3)
+                OR e.source_id IN (
+                  SELECT s.id FROM calendar_sources s
+                  WHERE s.owner_id = $2 AND s.is_enabled AND s.deleted_at IS NULL
+                )
+              )
+            "#,
+            tenant_id,
+            owner_id,
+            source_ids,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Insert a calendar import job with the uploaded file bytes so the
+    /// worker can re-read them on every attempt.
+    pub async fn create_calendar_import_job(
+        &self,
+        job: &CalendarImportJob,
+        content: &[u8],
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO calendar_import_jobs (
+                id, tenant_id, owner_id, source_id, status, filename,
+                size_bytes, content, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
+            job.id,
+            job.tenant_id,
+            job.owner_id,
+            job.source_id,
+            job.status,
+            job.filename,
+            job.size_bytes,
+            content,
+            job.created_at,
+            job.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Fetch the uploaded .ics bytes for an import job.
+    pub async fn get_calendar_import_job_content(&self, id: Uuid) -> Result<Option<Vec<u8>>> {
+        let content = sqlx::query_scalar!(
+            r#"SELECT content FROM calendar_import_jobs WHERE id = $1 AND deleted_at IS NULL"#,
+            id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(content)
+    }
+
+    /// List the most recent active import jobs for a user (bounded).
+    pub async fn list_calendar_import_jobs_by_owner(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+    ) -> Result<Vec<CalendarImportJob>> {
+        let rows = sqlx::query_as!(
+            CalendarImportJob,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, source_id, status, filename, size_bytes,
+                total_events, processed_events, failed_events, last_error,
+                started_at, completed_at, deleted_at, created_at, updated_at
+            FROM calendar_import_jobs
+            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT $3
+            "#,
+            tenant_id,
+            owner_id,
+            CALENDAR_IMPORT_JOBS_LIST_LIMIT
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Find an import job by ID, scoped to the owning user.
+    pub async fn get_calendar_import_job(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        id: Uuid,
+    ) -> Result<Option<CalendarImportJob>> {
+        let row = sqlx::query_as!(
+            CalendarImportJob,
+            r#"
+            SELECT
+                id, tenant_id, owner_id, source_id, status, filename, size_bytes,
+                total_events, processed_events, failed_events, last_error,
+                started_at, completed_at, deleted_at, created_at, updated_at
+            FROM calendar_import_jobs
+            WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL
+            "#,
+            id,
+            tenant_id,
+            owner_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Atomically claim the oldest pending calendar import job for
+    /// processing. Only claims jobs whose source is enabled, whose tenant has
+    /// the calendar module enabled, and whose job has not been soft-deleted.
+    pub async fn claim_next_pending_calendar_import_job(
+        &self,
+    ) -> Result<Option<CalendarImportJob>> {
+        let job = sqlx::query_as!(
+            CalendarImportJob,
+            r#"
+            WITH target AS (
+                SELECT j.id
+                FROM calendar_import_jobs j
+                JOIN calendar_sources s ON s.id = j.source_id
+                JOIN application_enablements e
+                  ON e.tenant_id = j.tenant_id
+                 AND e.workspace_id = j.tenant_id
+                 AND e.application_id = 'io.elembra.calendar'
+                WHERE j.status = 'pending'
+                  AND j.deleted_at IS NULL
+                  AND s.deleted_at IS NULL
+                  AND s.is_enabled = true
+                  AND e.enabled = true
+                ORDER BY j.created_at ASC
+                FOR UPDATE OF j SKIP LOCKED
+                LIMIT 1
+            ),
+            updated AS (
+                UPDATE calendar_import_jobs
+                SET status = 'running', started_at = NOW(), updated_at = NOW()
+                FROM target
+                WHERE calendar_import_jobs.id = target.id
+                RETURNING calendar_import_jobs.*
+            )
+            SELECT
+                id, tenant_id, owner_id, source_id, status, filename, size_bytes,
+                total_events, processed_events, failed_events, last_error,
+                started_at, completed_at, deleted_at, created_at, updated_at
+            FROM updated
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(job)
+    }
+
+    /// Reset running jobs whose heartbeat (`updated_at`) has gone stale,
+    /// excluding jobs this worker is actively processing.
+    pub async fn reset_stale_running_calendar_import_jobs(
+        &self,
+        stale_threshold: Duration,
+        exclude_ids: &[Uuid],
+    ) -> Result<u64> {
+        let seconds = stale_threshold.as_secs_f64();
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_import_jobs
+            SET status = 'pending', started_at = NULL, last_error = 'stale running job reset by worker', updated_at = NOW()
+            WHERE status = 'running'
+              AND deleted_at IS NULL
+              AND updated_at < NOW() - interval '1 second' * $1
+              AND id != ALL($2)
+            "#,
+            seconds,
+            exclude_ids,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Update the progress counters (and heartbeat) for an import job.
+    pub async fn update_calendar_import_job_progress(
+        &self,
+        id: Uuid,
+        total: i32,
+        processed: i32,
+        failed: i32,
+        last_error: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE calendar_import_jobs
+            SET
+                total_events = $2,
+                processed_events = $3,
+                failed_events = $4,
+                last_error = $5,
+                updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL
+            "#,
+            id,
+            total,
+            processed,
+            failed,
+            last_error
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Mark a running calendar import job as completed. Returns `true` only
+    /// when the job was still running (a concurrent cancel wins).
+    pub async fn mark_calendar_import_job_completed(&self, id: Uuid) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_import_jobs
+            SET status = 'completed', completed_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL AND status = 'running'
+            "#,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Mark a calendar import job as failed with a bounded error sample.
+    pub async fn mark_calendar_import_job_failed(&self, id: Uuid, error: &str) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_import_jobs
+            SET status = 'failed', last_error = $2, completed_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND deleted_at IS NULL AND status IN ('pending', 'running')
+            "#,
+            id,
+            error
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Insert an imported event or update the existing row with the same
+    /// `(source_id, external_uid, recurrence_id)` key. The update is skipped
+    /// when the normalized columns are unchanged, so re-imports never bump
+    /// `updated_at`. Returns `true` when a row was inserted or changed.
+    pub async fn upsert_calendar_imported_event(&self, event: &CalendarEvent) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO calendar_events (
+                id, tenant_id, owner_id, source_id, external_uid, external_etag,
+                recurrence_id, title, description, location, starts_at, ends_at,
+                all_day, original_date, timezone, rrule, status, read_only, raw,
+                deleted_at, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                    $15, $16, $17, $18, $19, $20, $21, $22)
+            ON CONFLICT (source_id, external_uid, COALESCE(recurrence_id, ''))
+                WHERE deleted_at IS NULL
+            DO UPDATE SET
+                title = EXCLUDED.title,
+                description = EXCLUDED.description,
+                location = EXCLUDED.location,
+                starts_at = EXCLUDED.starts_at,
+                ends_at = EXCLUDED.ends_at,
+                all_day = EXCLUDED.all_day,
+                original_date = EXCLUDED.original_date,
+                timezone = EXCLUDED.timezone,
+                rrule = EXCLUDED.rrule,
+                status = EXCLUDED.status,
+                updated_at = NOW()
+            WHERE
+                calendar_events.title IS DISTINCT FROM EXCLUDED.title
+                OR calendar_events.description IS DISTINCT FROM EXCLUDED.description
+                OR calendar_events.location IS DISTINCT FROM EXCLUDED.location
+                OR calendar_events.starts_at IS DISTINCT FROM EXCLUDED.starts_at
+                OR calendar_events.ends_at IS DISTINCT FROM EXCLUDED.ends_at
+                OR calendar_events.all_day IS DISTINCT FROM EXCLUDED.all_day
+                OR calendar_events.original_date IS DISTINCT FROM EXCLUDED.original_date
+                OR calendar_events.timezone IS DISTINCT FROM EXCLUDED.timezone
+                OR calendar_events.rrule IS DISTINCT FROM EXCLUDED.rrule
+                OR calendar_events.status IS DISTINCT FROM EXCLUDED.status
+            "#,
+            event.id,
+            event.tenant_id,
+            event.owner_id,
+            event.source_id,
+            event.external_uid,
+            event.external_etag,
+            event.recurrence_id,
+            event.title,
+            event.description,
+            event.location,
+            event.starts_at,
+            event.ends_at,
+            event.all_day,
+            event.original_date,
+            event.timezone,
+            event.rrule,
+            event.status,
+            event.read_only,
+            event.raw,
+            event.deleted_at,
+            event.created_at,
+            event.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Persist a single-use, user-bound OAuth state for the connect flow.
+    pub async fn insert_calendar_oauth_state(
+        &self,
+        state: &str,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        kind: &str,
+        expires_at: DateTime<Utc>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO calendar_oauth_states (state, tenant_id, owner_id, kind, expires_at)
+            VALUES ($1, $2, $3, $4, $5)
+            "#,
+            state,
+            tenant_id,
+            owner_id,
+            kind,
+            expires_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Validate-and-consume an OAuth state: deletes the row and returns it
+    /// only when it exists and has not expired. Single-use by construction.
+    pub async fn consume_calendar_oauth_state(
+        &self,
+        state: &str,
+    ) -> Result<Option<CalendarOauthState>> {
+        let row = sqlx::query_as!(
+            CalendarOauthState,
+            r#"
+            DELETE FROM calendar_oauth_states
+            WHERE state = $1 AND expires_at > NOW()
+            RETURNING state, tenant_id, owner_id, kind, expires_at, created_at
+            "#,
+            state,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Create (or token-refresh on reconnect of) an OAuth-backed external
+    /// calendar source, and ensure its sync-state row exists with the source
+    /// due immediately. The token columns carry AES-256-GCM ciphertext
+    /// produced by the caller.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_oauth_calendar_source(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        kind: &str,
+        display_name: &str,
+        external_account: &str,
+        external_calendar_id: &str,
+        refresh_token_enc: &str,
+        access_token_enc: &str,
+        access_token_expires_at: DateTime<Utc>,
+        scopes: &str,
+    ) -> Result<CalendarSource> {
+        let source = sqlx::query_as!(
+            CalendarSource,
+            r#"
+            INSERT INTO calendar_sources (
+                tenant_id, owner_id, kind, display_name, external_account,
+                external_calendar_id, refresh_token_enc, access_token_enc,
+                access_token_expires_at, scopes
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (owner_id, kind, external_account, external_calendar_id)
+                WHERE kind <> 'internal' AND deleted_at IS NULL
+            DO UPDATE SET
+                refresh_token_enc = EXCLUDED.refresh_token_enc,
+                access_token_enc = EXCLUDED.access_token_enc,
+                access_token_expires_at = EXCLUDED.access_token_expires_at,
+                scopes = EXCLUDED.scopes,
+                is_enabled = true,
+                status = 'healthy',
+                last_error = NULL,
+                updated_at = now()
+            RETURNING
+                id, tenant_id, owner_id, kind, display_name, external_account,
+                external_calendar_id, refresh_token_enc, access_token_enc,
+                access_token_expires_at, scopes, is_enabled, last_synced_at,
+                last_error, status, deleted_at, created_at, updated_at
+            "#,
+            tenant_id,
+            owner_id,
+            kind,
+            display_name,
+            external_account,
+            external_calendar_id,
+            refresh_token_enc,
+            access_token_enc,
+            access_token_expires_at,
+            scopes,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        sqlx::query!(
+            r#"
+            INSERT INTO calendar_sync_states (source_id, next_sync_at)
+            VALUES ($1, NOW())
+            ON CONFLICT (source_id) DO UPDATE SET next_sync_at = NOW(), updated_at = now()
+            "#,
+            source.id,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(source)
+    }
+
+    /// Fetch the sync state row for a source, if any.
+    pub async fn get_calendar_sync_state(
+        &self,
+        source_id: Uuid,
+    ) -> Result<Option<CalendarSyncState>> {
+        let row = sqlx::query_as!(
+            CalendarSyncState,
+            r#"
+            SELECT
+                source_id, next_sync_at, locked_at, locked_by, cursor_kind,
+                cursor_value, cursor_expires_at, last_synced_at, last_error,
+                created_at, updated_at
+            FROM calendar_sync_states
+            WHERE source_id = $1
+            "#,
+            source_id,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Atomically claim the next due external source, acquiring the sync
+    /// lease. `stale` bounds how recently another worker must have heartbeat
+    /// a still-locked source before it becomes claimable again.
+    pub async fn claim_due_calendar_source(
+        &self,
+        worker_id: &str,
+        stale: Duration,
+    ) -> Result<Option<CalendarSource>> {
+        let stale_secs = stale.as_secs_f64();
+        let source = sqlx::query_as!(
+            CalendarSource,
+            r#"
+            WITH target AS (
+                SELECT s.id
+                FROM calendar_sources s
+                JOIN calendar_sync_states st ON st.source_id = s.id
+                JOIN application_enablements e
+                  ON e.tenant_id = s.tenant_id
+                 AND e.workspace_id = s.tenant_id
+                 AND e.application_id = 'io.elembra.calendar'
+                WHERE s.is_enabled
+                  AND s.deleted_at IS NULL
+                  AND s.kind IN ('google', 'outlook')
+                  AND e.enabled = true
+                  AND st.next_sync_at <= NOW()
+                  AND (st.locked_at IS NULL OR st.locked_at < NOW() - interval '1 second' * $1)
+                ORDER BY st.next_sync_at ASC
+                FOR UPDATE OF st SKIP LOCKED
+                LIMIT 1
+            ),
+            updated AS (
+                UPDATE calendar_sync_states
+                SET locked_at = NOW(), locked_by = $2, updated_at = NOW()
+                FROM target
+                WHERE calendar_sync_states.source_id = target.id
+                RETURNING calendar_sync_states.source_id
+            )
+            SELECT
+                s.id, s.tenant_id, s.owner_id, s.kind, s.display_name,
+                s.external_account, s.external_calendar_id, s.refresh_token_enc,
+                s.access_token_enc, s.access_token_expires_at, s.scopes,
+                s.is_enabled, s.last_synced_at, s.last_error, s.status,
+                s.deleted_at, s.created_at, s.updated_at
+            FROM calendar_sources s
+            JOIN updated u ON u.source_id = s.id
+            "#,
+            stale_secs,
+            worker_id,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(source)
+    }
+
+    /// Refresh the lease heartbeat for a claimed source. Returns `true` while
+    /// the caller still holds the lease; `false` means the lease was lost
+    /// (stale takeover) and the run must abort without writing status,
+    /// watermark, or cursor, and without publishing.
+    pub async fn heartbeat_calendar_source_lease(
+        &self,
+        source_id: Uuid,
+        worker_id: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_sync_states
+            SET locked_at = NOW(), updated_at = NOW()
+            WHERE source_id = $1 AND locked_by = $2
+            "#,
+            source_id,
+            worker_id,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Release the sync lease and record the outcome of a run: the next due
+    /// time, the (possibly nulled) cursor, the health status, and last-sync
+    /// bookkeeping. `mark_synced` gates the `calendar_sources.last_synced_at`
+    /// watermark so failed runs do not advance it; `status` is written in the
+    /// same `calendar_sources` update (`None` leaves the current status alone).
+    ///
+    /// The whole write is lease-guarded and transactional: when the caller no
+    /// longer owns the lease (`locked_by` no longer matches — a stale takeover
+    /// handed the source to another worker) nothing is written and `Ok(false)`
+    /// is returned. In particular the `calendar_sources` status/watermark
+    /// update is skipped, so a worker that lost its lease cannot clobber the
+    /// new lease holder's bookkeeping. The caller must not publish an imported
+    /// event when this returns `Ok(false)`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn finish_calendar_source_sync(
+        &self,
+        source_id: Uuid,
+        worker_id: &str,
+        next_sync_at: DateTime<Utc>,
+        cursor_kind: Option<&str>,
+        cursor_value: Option<&str>,
+        last_error: Option<&str>,
+        status: Option<&str>,
+        mark_synced: bool,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let lease = sqlx::query!(
+            r#"
+            UPDATE calendar_sync_states
+            SET locked_at = NULL, locked_by = NULL, next_sync_at = $3,
+                cursor_kind = $4, cursor_value = $5, last_error = $6,
+                last_synced_at = NOW(), updated_at = NOW()
+            WHERE source_id = $1 AND locked_by = $2
+            "#,
+            source_id,
+            worker_id,
+            next_sync_at,
+            cursor_kind,
+            cursor_value,
+            last_error,
+        )
+        .execute(&mut *tx)
+        .await?;
+        if lease.rows_affected() == 0 {
+            // Lost the lease: roll back and leave the source entirely to the
+            // current holder (no status/watermark write, no cursor write).
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        sqlx::query!(
+            r#"
+            UPDATE calendar_sources
+            SET last_synced_at = CASE WHEN $4 THEN NOW() ELSE last_synced_at END,
+                last_error = $2,
+                status = COALESCE($3, status),
+                updated_at = now()
+            WHERE id = $1
+            "#,
+            source_id,
+            last_error,
+            status,
+            mark_synced,
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Release the sync lease for a run that did no work (a parked
+    /// `auth_required` source) without recording any bookkeeping: it clears
+    /// `locked_at`/`locked_by` and reschedules the source on the normal
+    /// interval, but leaves the cursor, watermark, status, and last-error
+    /// untouched. Lease-guarded, so a stale former holder cannot release the
+    /// current holder's lease. Returns `false` when the lease was lost.
+    pub async fn release_calendar_source_lease(
+        &self,
+        source_id: Uuid,
+        worker_id: &str,
+        next_sync_at: DateTime<Utc>,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_sync_states
+            SET locked_at = NULL, locked_by = NULL, next_sync_at = $3, updated_at = NOW()
+            WHERE source_id = $1 AND locked_by = $2
+            "#,
+            source_id,
+            worker_id,
+            next_sync_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Delete expired single-use OAuth states (abandoned consents); returns
+    /// the number of rows reaped. Called periodically by the sync worker.
+    pub async fn delete_expired_calendar_oauth_states(&self) -> Result<u64> {
+        let result =
+            sqlx::query!(r#"DELETE FROM calendar_oauth_states WHERE expires_at <= NOW()"#,)
+                .execute(&self.pool)
+                .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Ensure a sync-state row exists for a source (resync of a source whose
+    /// row is missing, e.g. pre-worker data).
+    pub async fn ensure_calendar_sync_state(&self, source_id: Uuid) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO calendar_sync_states (source_id, next_sync_at)
+            VALUES ($1, NOW())
+            ON CONFLICT (source_id) DO NOTHING
+            "#,
+            source_id,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Whether a source currently holds a live (non-stale) sync lease.
+    pub async fn calendar_source_is_locked(
+        &self,
+        source_id: Uuid,
+        stale: Duration,
+    ) -> Result<bool> {
+        let stale_secs = stale.as_secs_f64();
+        let locked = sqlx::query_scalar!(
+            r#"
+            SELECT EXISTS(
+                SELECT 1 FROM calendar_sync_states
+                WHERE source_id = $1
+                  AND locked_at IS NOT NULL
+                  AND locked_at >= NOW() - interval '1 second' * $2
+            )
+            "#,
+            source_id,
+            stale_secs,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(locked.unwrap_or(false))
+    }
+
+    /// Clear the stored cursor and force the source due now. Returns false
+    /// when the source is lease-locked (the caller maps that to a 409).
+    pub async fn force_calendar_source_resync(
+        &self,
+        source_id: Uuid,
+        stale: Duration,
+    ) -> Result<bool> {
+        let stale_secs = stale.as_secs_f64();
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_sync_states
+            SET cursor_kind = NULL, cursor_value = NULL, next_sync_at = NOW(),
+                updated_at = NOW()
+            WHERE source_id = $1
+              AND (locked_at IS NULL OR locked_at < NOW() - interval '1 second' * $2)
+            "#,
+            source_id,
+            stale_secs,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Persist a refreshed token pair (newer wins) after a refresh. A rotated
+    /// refresh token overwrites the stored one; a provider that omits it keeps
+    /// the existing ciphertext.
+    ///
+    /// Lease-guarded: the write only applies while `worker_id` still holds the
+    /// source's sync lease (`calendar_sync_states.locked_by`). A stale former
+    /// holder that lost its lease to a takeover must not overwrite the new
+    /// holder's rotated refresh token with its own (older) rotation. Returns
+    /// `false` when the lease was lost and nothing was written.
+    pub async fn update_calendar_source_tokens(
+        &self,
+        source_id: Uuid,
+        worker_id: &str,
+        refresh_token_enc: Option<&str>,
+        access_token_enc: &str,
+        access_token_expires_at: DateTime<Utc>,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_sources
+            SET refresh_token_enc = COALESCE($3, refresh_token_enc),
+                access_token_enc = $4,
+                access_token_expires_at = $5,
+                updated_at = now()
+            WHERE id = $1
+              AND EXISTS (
+                SELECT 1 FROM calendar_sync_states st
+                WHERE st.source_id = $1 AND st.locked_by = $2
+              )
+            "#,
+            source_id,
+            worker_id,
+            refresh_token_enc,
+            access_token_enc,
+            access_token_expires_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Wipe stored tokens and set `auth_required` (disconnect).
+    ///
+    /// Lease-guarded: the wipe applies only while the source holds no live
+    /// (non-stale) sync lease, using the same staleness threshold the worker
+    /// uses. Folding the liveness check into the write makes check-and-wipe
+    /// atomic — a worker that claimed the source between the caller's
+    /// pre-check and this update wins, so an in-flight run's terminal status
+    /// write cannot resurrect a source whose tokens were just wiped. Returns
+    /// `false` when nothing was written (a live lease, or the row was
+    /// concurrently soft-deleted); the caller maps that to a 409.
+    pub async fn wipe_calendar_source_tokens(
+        &self,
+        source_id: Uuid,
+        stale: Duration,
+    ) -> Result<bool> {
+        let stale_secs = stale.as_secs_f64();
+        let result = sqlx::query!(
+            r#"
+            UPDATE calendar_sources
+            SET refresh_token_enc = NULL, access_token_enc = NULL,
+                access_token_expires_at = NULL, scopes = NULL,
+                status = 'auth_required', updated_at = now()
+            WHERE id = $1 AND deleted_at IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM calendar_sync_states st
+                  WHERE st.source_id = $1
+                    AND st.locked_at IS NOT NULL
+                    AND st.locked_at >= NOW() - interval '1 second' * $2
+              )
+            "#,
+            source_id,
+            stale_secs,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Set the health status column on a source.
+    pub async fn update_calendar_source_status(
+        &self,
+        source_id: Uuid,
+        status: &str,
+        last_error: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE calendar_sources
+            SET status = $2, last_error = $3, updated_at = now()
+            WHERE id = $1
+            "#,
+            source_id,
+            status,
+            last_error,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Upsert one mirrored external event by
+    /// `(source_id, external_uid, COALESCE(recurrence_id, ''))`.
+    ///
+    /// Returns `true` when a row was inserted or actually changed; `false` for
+    /// an unchanged re-sync (the conflict path is guarded by an
+    /// `IS DISTINCT FROM` comparison so `updated_at` is not bumped for a
+    /// no-op). Sync callers count a successful call as one materialized event
+    /// regardless of this flag (best-effort imported.v1 count).
+    pub async fn upsert_calendar_synced_event(&self, event: &CalendarEvent) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO calendar_events (
+                id, tenant_id, owner_id, source_id, external_uid, external_etag,
+                recurrence_id, title, description, location, starts_at, ends_at,
+                all_day, original_date, timezone, rrule, status, read_only, raw,
+                deleted_at, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                    $15, $16, $17, $18, $19, $20, $21, $22)
+            ON CONFLICT (source_id, external_uid, COALESCE(recurrence_id, ''))
+                WHERE deleted_at IS NULL
+            DO UPDATE SET
+                external_etag = EXCLUDED.external_etag,
+                title = EXCLUDED.title,
+                description = EXCLUDED.description,
+                location = EXCLUDED.location,
+                starts_at = EXCLUDED.starts_at,
+                ends_at = EXCLUDED.ends_at,
+                all_day = EXCLUDED.all_day,
+                original_date = EXCLUDED.original_date,
+                timezone = EXCLUDED.timezone,
+                rrule = EXCLUDED.rrule,
+                status = EXCLUDED.status,
+                updated_at = NOW()
+            -- Update only on a real change so a no-op re-sync does not bump
+            -- updated_at (spec §Sync loop); the import upsert uses the same
+            -- IS DISTINCT FROM guard.
+            WHERE calendar_events.external_etag IS DISTINCT FROM EXCLUDED.external_etag
+               OR calendar_events.title IS DISTINCT FROM EXCLUDED.title
+               OR calendar_events.description IS DISTINCT FROM EXCLUDED.description
+               OR calendar_events.location IS DISTINCT FROM EXCLUDED.location
+               OR calendar_events.starts_at IS DISTINCT FROM EXCLUDED.starts_at
+               OR calendar_events.ends_at IS DISTINCT FROM EXCLUDED.ends_at
+               OR calendar_events.all_day IS DISTINCT FROM EXCLUDED.all_day
+               OR calendar_events.original_date IS DISTINCT FROM EXCLUDED.original_date
+               OR calendar_events.timezone IS DISTINCT FROM EXCLUDED.timezone
+               OR calendar_events.rrule IS DISTINCT FROM EXCLUDED.rrule
+               OR calendar_events.status IS DISTINCT FROM EXCLUDED.status
+            "#,
+            event.id,
+            event.tenant_id,
+            event.owner_id,
+            event.source_id,
+            event.external_uid,
+            event.external_etag,
+            event.recurrence_id,
+            event.title,
+            event.description,
+            event.location,
+            event.starts_at,
+            event.ends_at,
+            event.all_day,
+            event.original_date,
+            event.timezone,
+            event.rrule,
+            event.status,
+            event.read_only,
+            event.raw,
+            event.deleted_at,
+            event.created_at,
+            event.updated_at,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Soft-delete every mirrored event of the source whose
+    /// `external_uid|recurrence_id` key is absent from a FULL window sync
+    /// payload (provider deletion propagation). Callers must only run this on
+    /// full runs: incremental deltas contain only changed entries, so an
+    /// absent-key sweep there would delete every unchanged mirrored event.
+    ///
+    /// The start-time window restriction applies to single events only.
+    /// Recurring masters are exempt: a provider returns the master with its
+    /// original DTSTART even when only its in-window instances are relevant,
+    /// so a master predating the window would otherwise never be swept and a
+    /// series deleted upstream would expand phantom occurrences forever.
+    ///
+    /// Once a master is swept, its override rows (`recurrence_id IS NOT NULL`)
+    /// are swept with it even when their stored `starts_at` falls outside the
+    /// window: an orphaned override would otherwise still be listed as a
+    /// standalone event and returned as a stale suppression key. Overrides are
+    /// *not* blanket-exempt from the window — only those sharing the swept
+    /// master's `external_uid` are removed.
+    pub async fn soft_delete_calendar_events_absent(
+        &self,
+        source_id: Uuid,
+        present_keys: &[String],
+        window_start: DateTime<Utc>,
+        window_end: DateTime<Utc>,
+    ) -> Result<u64> {
+        let row = sqlx::query!(
+            r#"
+            WITH swept_masters AS (
+                UPDATE calendar_events
+                SET deleted_at = now(), updated_at = now()
+                WHERE source_id = $1
+                  AND deleted_at IS NULL
+                  AND external_uid IS NOT NULL
+                  AND (rrule IS NOT NULL OR (starts_at >= $3 AND starts_at < $4))
+                  AND (external_uid || '|' || COALESCE(recurrence_id, '')) != ALL($2)
+                RETURNING external_uid, rrule
+            ),
+            swept_overrides AS (
+                UPDATE calendar_events
+                SET deleted_at = now(), updated_at = now()
+                WHERE source_id = $1
+                  AND deleted_at IS NULL
+                  AND recurrence_id IS NOT NULL
+                  AND rrule IS NULL
+                  AND NOT (starts_at >= $3 AND starts_at < $4)
+                  AND (external_uid || '|' || recurrence_id) != ALL($2)
+                  AND external_uid IN (
+                      SELECT external_uid FROM swept_masters WHERE rrule IS NOT NULL
+                  )
+                RETURNING id
+            )
+            SELECT
+                (SELECT count(*) FROM swept_masters)
+                    + (SELECT count(*) FROM swept_overrides) AS "count!"
+            "#,
+            source_id,
+            present_keys,
+            window_start,
+            window_end,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.count as u64)
     }
 }
 
