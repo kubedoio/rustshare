@@ -1768,7 +1768,7 @@ async fn malformed_provider_payload_fails_run_without_corruption() {
     configure_calendar(&state, tenant_id, user.id, true).await;
 
     let base = spawn_non_json_google().await;
-    let secret_key = rustshare_crypto::SecretEncryptionKey::from_bytes([0u8; 32]);
+    let secret_key = state.secret_key.clone();
     let refresh_enc = rustshare_crypto::encrypt_secret("refresh", &secret_key).unwrap();
     let access_enc = rustshare_crypto::encrypt_secret("access", &secret_key).unwrap();
     let source = state
