@@ -135,9 +135,18 @@ fn parse_utc_offset(raw: &str) -> Result<i32, String> {
         Some(rest) => (-1i32, rest),
         None => (1i32, raw.strip_prefix('+').unwrap_or(raw)),
     };
-    let (hours, minutes, seconds) = match rest.len() {
-        4 => (&rest[0..2], &rest[2..4], "00"),
-        6 => (&rest[0..2], &rest[2..4], &rest[4..6]),
+    // `rest` is sliced by byte offset below; a multi-byte code point would make
+    // that slice panic ("byte index N is not a char boundary"), so reject
+    // non-ASCII input before any indexing. ASCII guarantees the checked byte
+    // lengths also align with character boundaries.
+    if !rest.is_ascii() {
+        return Err(format!("invalid UTC offset '{raw}'"));
+    }
+    // Tolerate the `HH:MM[:SS]` separator form some exporters emit.
+    let digits: String = rest.chars().filter(|c| *c != ':').collect();
+    let (hours, minutes, seconds) = match digits.len() {
+        4 => (&digits[0..2], &digits[2..4], "00"),
+        6 => (&digits[0..2], &digits[2..4], &digits[4..6]),
         _ => return Err(format!("invalid UTC offset '{raw}'")),
     };
     let hours: i32 = hours
@@ -1264,6 +1273,54 @@ SUMMARY:Unknown zone
 END:VEVENT
 END:VCALENDAR
 ";
+        let parsed = parse_file(ics.as_bytes()).expect("parses");
+        let error = parsed.events[0].as_ref().unwrap_err();
+        assert!(error.contains("unknown TZID"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn parse_utc_offset_accepts_standard_forms() {
+        assert_eq!(parse_utc_offset("+0200").unwrap(), 7_200);
+        assert_eq!(parse_utc_offset("-0530").unwrap(), -19_800);
+        assert_eq!(parse_utc_offset("+053000").unwrap(), 19_800);
+        assert_eq!(parse_utc_offset("+02:00").unwrap(), 7_200);
+        assert_eq!(parse_utc_offset("-05:30:00").unwrap(), -19_800);
+        assert!(parse_utc_offset("+02").is_err());
+        assert!(parse_utc_offset("").is_err());
+    }
+
+    #[test]
+    fn parse_utc_offset_rejects_non_ascii_without_panicking() {
+        // Byte-length checks used to accept these and then panic slicing a
+        // multi-byte code point ("byte index N is not a char boundary").
+        assert!(parse_utc_offset("€a").is_err());
+        assert!(parse_utc_offset("+€a").is_err());
+        assert!(parse_utc_offset("-€ab").is_err());
+    }
+
+    #[test]
+    fn non_ascii_offset_is_a_component_failure_not_a_panic() {
+        let ics = "\
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VTIMEZONE
+TZID:Broken Zone
+BEGIN:STANDARD
+DTSTART:16011028T030000
+TZOFFSETFROM:+0200
+TZOFFSETTO:€a
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:nonascii-offset-1
+DTSTART;TZID=Broken Zone:20261005T140000
+DTEND;TZID=Broken Zone:20261005T150000
+SUMMARY:Broken offset
+END:VEVENT
+END:VCALENDAR
+";
+        // The malformed VTIMEZONE is dropped and the event fails as an unknown
+        // TZID — the component path returns an error instead of unwinding.
         let parsed = parse_file(ics.as_bytes()).expect("parses");
         let error = parsed.events[0].as_ref().unwrap_err();
         assert!(error.contains("unknown TZID"), "unexpected error: {error}");

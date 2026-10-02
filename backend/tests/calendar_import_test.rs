@@ -611,6 +611,32 @@ async fn wait_for_job(app: &axum::Router<()>, token: &str, job_id: Uuid) -> Valu
     }
 }
 
+/// Poll the outbox until the worker's best-effort `imported.v1` envelope shows
+/// up. The worker commits the job status before publishing, so the envelope may
+/// lag the terminal status; assert only once it lands (or the deadline passes).
+async fn wait_for_imported_envelope(pool: &PgPool, tenant_id: Uuid) -> Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let envelope = sqlx::query_scalar::<_, Value>(
+            "SELECT event_json FROM integration_outbox \
+             WHERE tenant_id = $1 AND event_type = 'io.elembra.calendar.event.imported.v1' \
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(tenant_id)
+        .fetch_optional(pool)
+        .await
+        .expect("query integration_outbox");
+        if let Some(envelope) = envelope {
+            return envelope;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "imported.v1 envelope was not published in time"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
 async fn count_imported_events(state: &AppState, tenant_id: Uuid) -> i64 {
     sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM calendar_events WHERE tenant_id = $1 AND external_uid IS NOT NULL",
@@ -648,17 +674,9 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
     assert_eq!(job["processed_events"], 5);
 
     // The completed run published one imported.v1 envelope with counts and
-    // the source ResourceRef — identifiers/counts only, never titles.
-    let envelope = sqlx::query_scalar::<_, Value>(
-        "SELECT event_json FROM integration_outbox \
-         WHERE tenant_id = $1 AND event_type = 'io.elembra.calendar.event.imported.v1' \
-         ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(tenant_id)
-    .fetch_optional(&state.db_pool)
-    .await
-    .expect("query integration_outbox")
-    .expect("imported envelope published");
+    // the source ResourceRef — identifiers/counts only, never titles. The
+    // worker commits the status before the best-effort publish, so poll.
+    let envelope = wait_for_imported_envelope(&state.db_pool, tenant_id).await;
     assert_eq!(envelope["data"]["processed_events"], 5);
     assert_eq!(envelope["data"]["total_events"], 5);
     assert_eq!(envelope["elembraResource"]["resourceType"], "source");
