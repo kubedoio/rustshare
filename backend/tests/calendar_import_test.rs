@@ -497,15 +497,49 @@ END:VCALENDAR
 ";
 
 fn multipart_file_body(boundary: &str, filename: &str, content: &str) -> Vec<u8> {
+    multipart_file_body_with_type(boundary, filename, "text/calendar", content)
+}
+
+fn multipart_file_body_with_type(
+    boundary: &str,
+    filename: &str,
+    content_type: &str,
+    content: &str,
+) -> Vec<u8> {
     format!(
         "--{boundary}\r\n\
          Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n\
-         Content-Type: text/calendar\r\n\
+         Content-Type: {content_type}\r\n\
          \r\n\
          {content}\r\n\
          --{boundary}--\r\n"
     )
     .into_bytes()
+}
+
+/// POST an arbitrary multipart body to the import endpoint.
+async fn upload_multipart(
+    app: &axum::Router<()>,
+    token: &str,
+    body: Vec<u8>,
+) -> (StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/import")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header(
+                    "Content-Type",
+                    "multipart/form-data; boundary=calendar-import-boundary",
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    response_json(response).await
 }
 
 async fn upload_ics(
@@ -832,6 +866,212 @@ END:VCALENDAR
     let events = body["events"].as_array().unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0]["title"], "Good event");
+
+    cleanup_outbox(&state.db_pool, tenant_id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn non_ics_upload_is_rejected() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_import_type", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let body = multipart_file_body_with_type(
+        "calendar-import-boundary",
+        "notes.txt",
+        "text/plain",
+        "not a calendar",
+    );
+    let (status, _) = upload_multipart(&app, &token, body).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn duplicate_multipart_fields_are_rejected() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_import_dup", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    let boundary = "calendar-import-boundary";
+
+    let two_files = format!(
+        "--{boundary}\r\n\
+         Content-Disposition: form-data; name=\"file\"; filename=\"a.ics\"\r\n\
+         Content-Type: text/calendar\r\n\
+         \r\n\
+         {ICS_FIXTURE}\r\n\
+         --{boundary}\r\n\
+         Content-Disposition: form-data; name=\"file\"; filename=\"b.ics\"\r\n\
+         Content-Type: text/calendar\r\n\
+         \r\n\
+         {ICS_FIXTURE}\r\n\
+         --{boundary}--\r\n"
+    );
+    let (status, _) = upload_multipart(&app, &token, two_files.into_bytes()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "duplicate file field");
+
+    let source_id = Uuid::new_v4();
+    let two_sources = format!(
+        "--{boundary}\r\n\
+         Content-Disposition: form-data; name=\"file\"; filename=\"c.ics\"\r\n\
+         Content-Type: text/calendar\r\n\
+         \r\n\
+         {ICS_FIXTURE}\r\n\
+         --{boundary}\r\n\
+         Content-Disposition: form-data; name=\"source_id\"\r\n\
+         \r\n\
+         {source_id}\r\n\
+         --{boundary}\r\n\
+         Content-Disposition: form-data; name=\"source_id\"\r\n\
+         \r\n\
+         {source_id}\r\n\
+         --{boundary}--\r\n"
+    );
+    let (status, _) = upload_multipart(&app, &token, two_sources.into_bytes()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "duplicate source_id field");
+
+    cleanup_outbox(&state.db_pool, tenant_id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn source_id_must_belong_to_the_caller_and_be_ical_import() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "calendar_import_owner", tenant_id).await;
+    let other = create_test_user(&state, "calendar_import_other", tenant_id).await;
+    configure_calendar(&state, tenant_id, owner.id, true).await;
+    let owner_token = create_auth_token(&state, owner.id, tenant_id);
+    let other_token = create_auth_token(&state, other.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let source_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO calendar_sources (tenant_id, owner_id, kind, display_name, created_at, updated_at) \
+         VALUES ($1, $2, 'ical_import', 'Owner import', NOW(), NOW()) RETURNING id",
+    )
+    .bind(tenant_id)
+    .bind(owner.id)
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("create ical_import source");
+
+    // Another user in the same tenant cannot target that source: not found.
+    let body = format!(
+        "--calendar-import-boundary\r\n\
+         Content-Disposition: form-data; name=\"file\"; filename=\"d.ics\"\r\n\
+         Content-Type: text/calendar\r\n\
+         \r\n\
+         {ICS_FIXTURE}\r\n\
+         --calendar-import-boundary\r\n\
+         Content-Disposition: form-data; name=\"source_id\"\r\n\
+         \r\n\
+         {}\r\n\
+         --calendar-import-boundary--\r\n",
+        source_id
+    );
+    let (status, _) = upload_multipart(&app, &other_token, body.into_bytes()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // An `internal` source is not a valid import target: bad request.
+    let internal = state
+        .calendar_service
+        .ensure_internal_source(tenant_id, owner.id)
+        .await
+        .expect("internal source");
+    let body = format!(
+        "--calendar-import-boundary\r\n\
+         Content-Disposition: form-data; name=\"file\"; filename=\"e.ics\"\r\n\
+         Content-Type: text/calendar\r\n\
+         \r\n\
+         {ICS_FIXTURE}\r\n\
+         --calendar-import-boundary\r\n\
+         Content-Disposition: form-data; name=\"source_id\"\r\n\
+         \r\n\
+         {}\r\n\
+         --calendar-import-boundary--\r\n",
+        internal.id
+    );
+    let (status, _) = upload_multipart(&app, &owner_token, body.into_bytes()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    cleanup_outbox(&state.db_pool, tenant_id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn cancelled_import_job_does_not_publish_completion_event() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_import_cancel", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    // No worker runs, so the job stays pending; cancel it while a worker would
+    // have been processing it.
+    let (status, body) = upload_ics(&app, &token, "cancel.ics", ICS_FIXTURE).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let job_id = Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap();
+
+    let mut job = state
+        .metadata_store
+        .get_calendar_import_job(tenant_id, user.id, job_id)
+        .await
+        .expect("load job")
+        .expect("job exists");
+    sqlx::query("UPDATE calendar_import_jobs SET status = 'cancelled' WHERE id = $1")
+        .bind(job_id)
+        .execute(&state.db_pool)
+        .await
+        .expect("cancel job");
+    // The worker still holds the job as running in memory.
+    job.status = "running".to_string();
+
+    let outcome = rustshare_server::services::ical_import::process_import_job(
+        &state.metadata_store,
+        &state.outbox_store,
+        &job,
+    )
+    .await
+    .expect("processing succeeds");
+    assert!(outcome.processed_events > 0);
+
+    let published = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM integration_outbox \
+         WHERE tenant_id = $1 AND event_type = 'io.elembra.calendar.event.imported.v1'",
+    )
+    .bind(tenant_id)
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("count outbox rows");
+    assert_eq!(
+        published, 0,
+        "a job that lost the running race must not publish a success event"
+    );
+
+    let stored_status =
+        sqlx::query_scalar::<_, String>("SELECT status FROM calendar_import_jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&state.db_pool)
+            .await
+            .expect("load job status");
+    assert_eq!(stored_status, "cancelled");
 
     cleanup_outbox(&state.db_pool, tenant_id).await;
     cleanup_tenant(&state.db_pool, tenant_id).await;
