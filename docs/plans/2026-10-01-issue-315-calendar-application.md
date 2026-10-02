@@ -465,7 +465,7 @@ Tests: state mismatch/expired/reuse rejected; token exchange against a `wiremock
 
 - [ ] **Step 4: Tests**
 
-`backend/tests/calendar_google_sync_test.rs`: full-sync pages materialize events; delta applies updates+deletions; `status: cancelled` entries become `status = 'cancelled'` tombstones (visible with `include_cancelled`), entries absent from the delta result set are soft-deleted; 410 triggers exactly one full resync; revoked grant flips `auth_required` and further runs are no-ops; concurrent same-source runs are safe (only the lease holder refreshes tokens; a rotated refresh token is written by the current lease holder, and a stale former holder's write is rejected); token plaintext appears in no response/log/assertable surface.
+`backend/tests/calendar_google_sync_test.rs`: full-sync pages materialize events; delta applies updates+deletions; `status: cancelled` entries become `status = 'cancelled'` tombstones (visible with `include_cancelled`), events absent from a delta are left untouched (the sweep runs on full runs only); 410 triggers exactly one full resync; revoked grant flips `auth_required` and further runs are no-ops; concurrent same-source runs are safe (only the lease holder refreshes tokens; a rotated refresh token is written by the current lease holder, and a stale former holder's write is rejected); token plaintext appears in no response/log/assertable surface.
 
 ```bash
 SQLX_OFFLINE=true cargo test -p rustshare-server --lib

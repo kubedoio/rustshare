@@ -1629,12 +1629,12 @@ async fn update_on_soft_deleted_event_returns_404_and_publishes_nothing() {
 // `update_calendar_event_in_tx` reports false). The existing test above
 // soft-deletes before the read, so it exits at the read; a true
 // read-then-delete race cannot be forced deterministically here. This test
-// therefore covers both halves: the storage helper reports `false` for a
-// soft-deleted row, and a service built WITHOUT `configure_outbox` returns
-// NotFound instead of a stale 200.
+// therefore covers both halves it can: the storage helper reports `false` for a
+// soft-deleted row, and the service's read path returns NotFound (not a stale
+// 200) when built WITHOUT `configure_outbox`.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
-async fn update_without_outbox_on_soft_deleted_event_returns_404() {
+async fn update_on_soft_deleted_event_returns_not_found_without_outbox() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;

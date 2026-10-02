@@ -638,7 +638,8 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Duration {
 
 /// Run one delta sync pass for an Outlook source. Callers must hold the sync
 /// lease (`worker_id`) — only the lease holder refreshes access tokens here,
-/// and a rotated refresh token is written unconditionally (newer wins).
+/// and a rotated refresh token is written by the current lease holder; a stale
+/// former holder's write is rejected.
 pub async fn sync_source(
     store: &MetadataStore,
     client: &OutlookCalendarClient,

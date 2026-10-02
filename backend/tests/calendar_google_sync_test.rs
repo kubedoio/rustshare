@@ -4,12 +4,14 @@
 //! Covers: the single-use user-bound OAuth state lifecycle (mismatch, expiry,
 //! reuse), token exchange against a local mock Google server, multi-page full
 //! sync materializing events, incremental delta applying updates + cancelled
-//! tombstones + soft-deleting absent entries, a forced `410 GONE` triggering
-//! exactly one full resync, a revoked grant flipping `auth_required` with
-//! further runs no-oping, lease safety for concurrent same-source claims
-//! (only the lease holder refreshes tokens; a rotated refresh token is
-//! written unconditionally), and the absence of token plaintext from every
-//! response/assertable surface.
+//! tombstones (a delta never sweeps: an absent entry is an unchanged event, and
+//! the absent-entry sweep runs on full runs only, covering recurring masters
+//! regardless of window and cascading to their overrides), a forced `410 GONE`
+//! triggering exactly one full resync, a revoked grant flipping `auth_required`
+//! with further runs no-oping, lease safety for concurrent same-source claims
+//! (only the lease holder refreshes tokens; a rotated refresh token is written
+//! by the current lease holder, and a stale former holder's write is rejected),
+//! and the absence of token plaintext from every response/assertable surface.
 //!
 //! DB-backed and `#[ignore]`d; run against the dev database (migrations
 //! applied) with `--test-threads=1`:
@@ -1895,8 +1897,8 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
     *mock.rotate_refresh.lock().await = true;
     let harness = Harness::new().await;
     let user = harness.create_user("cal_g_concurrent").await;
-    // Access token expired → the sync run refreshes and must persist the
-    // rotated refresh token unconditionally.
+    // Access token expired → the sync run refreshes and, still holding the
+    // lease, must persist the rotated refresh token.
     let source = harness
         .create_google_source_with_access_expiry(user.id, &mock, -60)
         .await;
@@ -1989,7 +1991,7 @@ async fn concurrent_same_source_claims_are_safe_and_only_holder_refreshes() {
     );
     drop(seen);
 
-    // The rotated refresh token was written unconditionally (newer wins).
+    // The rotated refresh token was written by the current lease holder.
     let stored = harness.reload_source(source.id).await;
     let decrypted = rustshare_crypto::decrypt_secret(
         stored

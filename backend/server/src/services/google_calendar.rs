@@ -642,7 +642,8 @@ async fn refresh_and_persist_access_token(
 
 /// Run one sync pass for a Google source. Callers must hold the sync lease
 /// (`worker_id`) — only the lease holder refreshes access tokens here, and a
-/// rotated refresh token is written unconditionally (newer wins).
+/// rotated refresh token is written by the current lease holder; a stale
+/// former holder's write is rejected.
 pub async fn sync_source(
     store: &MetadataStore,
     client: &GoogleCalendarClient,
