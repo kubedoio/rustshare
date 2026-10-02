@@ -286,66 +286,77 @@ pub struct CalendarImportJob {
 mod tests {
     use super::*;
 
+    /// Exercise `as_str()`, `FromStr`, and serde against the concrete wire
+    /// strings, so a variant rename or `rename_all` change that leaves
+    /// `as_str()`/`FromStr` mutually consistent still fails the test.
+    macro_rules! assert_wire_round_trip {
+        ($ty:ty, $unknown:literal, [$(($variant:expr, $literal:literal)),+ $(,)?]) => {{
+            $(
+                let value: $ty = $variant;
+                assert_eq!(value.as_str(), $literal);
+                assert_eq!($literal.parse::<$ty>().unwrap(), value);
+                assert_eq!(value.as_str().parse::<$ty>().unwrap(), value);
+                assert_eq!(serde_json::to_value(value).unwrap(), serde_json::json!($literal));
+            )+
+            assert!($unknown.parse::<$ty>().is_err());
+        }};
+    }
+
     #[test]
     fn source_kind_round_trips_and_rejects_unknown() {
-        for kind in [
-            CalendarSourceKind::Internal,
-            CalendarSourceKind::IcalImport,
-            CalendarSourceKind::Google,
-            CalendarSourceKind::Outlook,
-        ] {
-            assert_eq!(kind.as_str().parse::<CalendarSourceKind>().unwrap(), kind);
-        }
-        assert!("caldav".parse::<CalendarSourceKind>().is_err());
+        assert_wire_round_trip!(
+            CalendarSourceKind,
+            "caldav",
+            [
+                (CalendarSourceKind::Internal, "internal"),
+                (CalendarSourceKind::IcalImport, "ical_import"),
+                (CalendarSourceKind::Google, "google"),
+                (CalendarSourceKind::Outlook, "outlook"),
+            ]
+        );
     }
 
     #[test]
     fn source_status_round_trips_and_rejects_unknown() {
-        for status in [
-            CalendarSourceStatus::Healthy,
-            CalendarSourceStatus::Degraded,
-            CalendarSourceStatus::AuthRequired,
-            CalendarSourceStatus::RateLimited,
-            CalendarSourceStatus::Paused,
-            CalendarSourceStatus::Failed,
-        ] {
-            assert_eq!(
-                status.as_str().parse::<CalendarSourceStatus>().unwrap(),
-                status
-            );
-        }
-        assert!("unknown".parse::<CalendarSourceStatus>().is_err());
+        assert_wire_round_trip!(
+            CalendarSourceStatus,
+            "unknown",
+            [
+                (CalendarSourceStatus::Healthy, "healthy"),
+                (CalendarSourceStatus::Degraded, "degraded"),
+                (CalendarSourceStatus::AuthRequired, "auth_required"),
+                (CalendarSourceStatus::RateLimited, "rate_limited"),
+                (CalendarSourceStatus::Paused, "paused"),
+                (CalendarSourceStatus::Failed, "failed"),
+            ]
+        );
     }
 
     #[test]
     fn event_status_round_trips_and_rejects_unknown() {
-        for status in [
-            CalendarEventStatus::Confirmed,
-            CalendarEventStatus::Tentative,
-            CalendarEventStatus::Cancelled,
-        ] {
-            assert_eq!(
-                status.as_str().parse::<CalendarEventStatus>().unwrap(),
-                status
-            );
-        }
-        assert!("maybe".parse::<CalendarEventStatus>().is_err());
+        assert_wire_round_trip!(
+            CalendarEventStatus,
+            "maybe",
+            [
+                (CalendarEventStatus::Confirmed, "confirmed"),
+                (CalendarEventStatus::Tentative, "tentative"),
+                (CalendarEventStatus::Cancelled, "cancelled"),
+            ]
+        );
     }
 
     #[test]
     fn import_job_status_round_trips_and_rejects_unknown() {
-        for status in [
-            CalendarImportJobStatus::Pending,
-            CalendarImportJobStatus::Running,
-            CalendarImportJobStatus::Completed,
-            CalendarImportJobStatus::Failed,
-            CalendarImportJobStatus::Cancelled,
-        ] {
-            assert_eq!(
-                status.as_str().parse::<CalendarImportJobStatus>().unwrap(),
-                status
-            );
-        }
-        assert!("queued".parse::<CalendarImportJobStatus>().is_err());
+        assert_wire_round_trip!(
+            CalendarImportJobStatus,
+            "queued",
+            [
+                (CalendarImportJobStatus::Pending, "pending"),
+                (CalendarImportJobStatus::Running, "running"),
+                (CalendarImportJobStatus::Completed, "completed"),
+                (CalendarImportJobStatus::Failed, "failed"),
+                (CalendarImportJobStatus::Cancelled, "cancelled"),
+            ]
+        );
     }
 }

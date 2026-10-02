@@ -130,7 +130,7 @@ pub struct CalendarEventPatch {
     pub rrule: Option<String>,
 }
 
-pub(crate) fn validate_timezone(timezone: &str) -> Result<(), CalendarError> {
+fn validate_timezone(timezone: &str) -> Result<(), CalendarError> {
     if timezone.parse::<chrono_tz::Tz>().is_err() {
         return Err(CalendarError::InvalidInput(format!(
             "Unknown IANA timezone: {timezone}"
@@ -139,7 +139,7 @@ pub(crate) fn validate_timezone(timezone: &str) -> Result<(), CalendarError> {
     Ok(())
 }
 
-pub(crate) fn validate_event_times(
+fn validate_event_times(
     starts_at: DateTime<Utc>,
     ends_at: DateTime<Utc>,
     all_day: bool,
@@ -165,7 +165,7 @@ pub(crate) fn validate_event_times(
 /// Validate a stored-verbatim RRULE string the same way expansion parses it,
 /// so a bad RRULE is rejected with a 400 at write time instead of silently
 /// producing no instances at read time.
-pub(crate) fn validate_rrule(rrule: &str) -> Result<(), CalendarError> {
+fn validate_rrule(rrule: &str) -> Result<(), CalendarError> {
     // Expansion always prefixes the stored value with a DTSTART line; parse
     // with a fixed DTSTART here so validation and expansion agree.
     const VALIDATION_DTSTART: &str = "DTSTART:20261001T000000Z";
@@ -181,13 +181,14 @@ pub(crate) fn validate_rrule(rrule: &str) -> Result<(), CalendarError> {
 }
 
 /// Validate a listing window: `from` must precede `to`, and the span may not
-/// exceed [`MAX_RANGE_WINDOW_DAYS`]. The cap is exclusive: a span of exactly
-/// `MAX_RANGE_WINDOW_DAYS` days is accepted.
-pub(crate) fn validate_window(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<(), CalendarError> {
+/// exceed [`MAX_RANGE_WINDOW_DAYS`]. The cap is inclusive at the boundary: a
+/// span of exactly `MAX_RANGE_WINDOW_DAYS` days is accepted; only strictly
+/// longer spans are rejected.
+fn validate_window(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<(), CalendarError> {
     if from >= to {
-        return Err(CalendarError::InvalidInput(
-            "from must be before to".to_string(),
-        ));
+        return Err(CalendarError::InvalidInput(format!(
+            "from ({from}) must be before to ({to})"
+        )));
     }
     if to - from > Duration::days(MAX_RANGE_WINDOW_DAYS) {
         return Err(CalendarError::InvalidInput(format!(
@@ -1317,10 +1318,20 @@ mod tests {
     #[test]
     fn validate_window_enforces_order_and_the_366_day_cap() {
         let from = utc("2026-01-01T00:00:00Z");
-        assert!(validate_window(from, from).is_err());
+        assert_eq!(
+            validate_window(from, from).unwrap_err().to_string(),
+            "Invalid calendar input: from (2026-01-01 00:00:00 UTC) \
+             must be before to (2026-01-01 00:00:00 UTC)"
+        );
         assert!(validate_window(from, utc("2026-01-01T00:00:01Z")).is_ok());
         assert!(validate_window(from, utc("2027-01-01T00:00:00Z")).is_ok()); // 365 days
         assert!(validate_window(from, utc("2027-01-02T00:00:00Z")).is_ok()); // exactly 366 days
-        assert!(validate_window(from, utc("2027-01-02T00:00:01Z")).is_err()); // 366 days + 1s
+                                                                             // 366 days + 1s is strictly longer than the cap.
+        assert_eq!(
+            validate_window(from, utc("2027-01-02T00:00:01Z"))
+                .unwrap_err()
+                .to_string(),
+            "Invalid calendar input: Range window must be at most 366 days"
+        );
     }
 }
