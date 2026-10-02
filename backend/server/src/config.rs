@@ -210,10 +210,10 @@ fn validate_public_url(url: &str, allow_dev: bool, is_release: bool, errors: &mu
         ));
         return;
     }
-    let host = parsed.host_str().unwrap_or_default();
-    let is_loopback = matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]");
-    let is_dev_default =
-        host == "localhost" && parsed.port() == Some(5173) && matches!(parsed.path(), "" | "/");
+    let is_loopback = is_loopback_host(&parsed);
+    let is_dev_default = is_localhost_name(&parsed)
+        && parsed.port() == Some(5173)
+        && matches!(parsed.path(), "" | "/");
     if is_release && !allow_dev && is_dev_default {
         errors.push(format!(
             "RUSTSHARE_PUBLIC_URL is still the development default {DEV_PUBLIC_URL}; set it to this \
@@ -228,6 +228,39 @@ fn validate_public_url(url: &str, allow_dev: bool, is_release: bool, errors: &mu
              redirect URIs carry authorization codes and may not travel in cleartext"
         ));
     }
+}
+
+/// Whether the parsed URL's host is a loopback address: the name `localhost`
+/// (with or without a trailing dot), the IPv6 loopback `::1`, or any IPv4
+/// address in the whole `127.0.0.0/8` range — not only the literal
+/// `127.0.0.1`. Used to decide whether cleartext `http` is acceptable.
+fn is_loopback_host(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        Some(url::Host::Domain(domain)) => domain
+            .trim_end_matches('.')
+            .eq_ignore_ascii_case("localhost"),
+        None => false,
+    }
+}
+
+/// Whether the parsed URL's host is the name `localhost` (a trailing dot
+/// denotes the same name).
+fn is_localhost_name(url: &url::Url) -> bool {
+    matches!(
+        url.host(),
+        Some(url::Host::Domain(domain))
+            if domain.trim_end_matches('.').eq_ignore_ascii_case("localhost")
+    )
+}
+
+/// Normalize `RUSTSHARE_PUBLIC_URL` at startup: trailing `/` characters are
+/// stripped so the derived OAuth redirect URIs (`{public_url}{callback_path}`)
+/// never contain a doubled slash (`https://app.example.com//api/v1/...`). The
+/// stored value therefore never carries a trailing slash.
+fn normalize_public_url(url: &str) -> String {
+    url.trim_end_matches('/').to_string()
 }
 
 fn default_storage_quota() -> i64 {
@@ -584,7 +617,11 @@ fn validate_chat_provisioning(config: &AppConfig, errors: &mut Vec<String>) {
 impl AppConfig {
     pub fn from_env() -> Result<Self, Vec<String>> {
         match envy::from_env::<Self>() {
-            Ok(config) => {
+            Ok(mut config) => {
+                // Normalize once here so every consumer (startup logging, both
+                // provider clients, and the provider-status endpoint) derives
+                // redirect URIs without a doubled slash.
+                config.public_url = normalize_public_url(&config.public_url);
                 let mut errors = Vec::new();
                 if config.database_url.is_empty() {
                     errors.push("DATABASE_URL is required".to_string());
@@ -1267,5 +1304,40 @@ mod tests {
             errors.iter().any(|e| e.contains("must use https")),
             "errors: {errors:?}"
         );
+    }
+
+    #[test]
+    fn from_env_normalizes_trailing_slash_in_public_url() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        // A trailing slash must not survive into the derived redirect URIs
+        // (`{public_url}{path}` would otherwise double the slash).
+        std::env::set_var("RUSTSHARE_PUBLIC_URL", "https://app.example.com/");
+        let config = AppConfig::from_env().expect("valid public URL must pass");
+        assert_eq!(config.public_url, "https://app.example.com");
+        assert_eq!(
+            format!("{}{}", config.public_url, CALENDAR_GOOGLE_CALLBACK_PATH),
+            "https://app.example.com/api/v1/calendar/oauth/google/callback"
+        );
+        // Multiple trailing slashes and a path prefix are normalized too.
+        std::env::set_var("RUSTSHARE_PUBLIC_URL", "https://app.example.com/app///");
+        let config = AppConfig::from_env().expect("valid public URL must pass");
+        assert_eq!(config.public_url, "https://app.example.com/app");
+    }
+
+    #[test]
+    fn public_url_treats_loopback_variants_as_local() {
+        // The whole 127.0.0.0/8 range is loopback, not just the literal
+        // 127.0.0.1, so cleartext http stays acceptable for a local host.
+        assert!(public_url_errors("http://127.0.0.2:8080", false, true).is_empty());
+        assert!(public_url_errors("http://127.255.255.254:8080", false, true).is_empty());
+        // `localhost` with a trailing dot is the same name.
+        assert!(public_url_errors("http://localhost.:8080", false, true).is_empty());
+        // ...including when it would otherwise be the rejected dev default.
+        assert!(!public_url_errors("http://localhost.:5173", false, true).is_empty());
+        // A non-loopback host still requires https.
+        assert!(public_url_errors("http://192.168.1.10:8080", false, true)
+            .iter()
+            .any(|e| e.contains("must use https")));
     }
 }

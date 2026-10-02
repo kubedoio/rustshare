@@ -229,12 +229,13 @@ async fn callback_branch_matrix_redirects_with_reasons() {
     assert!(body.is_empty(), "redirect body must be empty");
 
     // b) provider-side denial (user clicked "deny").
-    let (_, location, _) = get_raw(
+    let (_, location, body) = get_raw(
         &app,
         &format!("{GOOGLE_CALLBACK}?error=access_denied&state=any-state"),
     )
     .await;
     assert_redirects_with(location.as_deref().unwrap(), "oauth_denied", "denied");
+    assert!(body.is_empty(), "redirect body must be empty");
 
     // c) kind mismatch: a google state presented to the outlook callback.
     insert_oauth_state(
@@ -251,7 +252,7 @@ async fn callback_branch_matrix_redirects_with_reasons() {
     )
     .await;
     assert_redirects_with(location.as_deref().unwrap(), "oauth_state", "state");
-    assert!(body.is_empty());
+    assert!(body.is_empty(), "redirect body must be empty");
 
     // d) exchange failure: the token endpoint rejects the grant.
     mock.set_revoke_grants(true).await;
@@ -263,12 +264,13 @@ async fn callback_branch_matrix_redirects_with_reasons() {
         "google",
     )
     .await;
-    let (_, location, _) = get_raw(
+    let (_, location, body) = get_raw(
         &app,
         &format!("{GOOGLE_CALLBACK}?state=google-state-exchange&code=bad-code"),
     )
     .await;
     assert_redirects_with(location.as_deref().unwrap(), "oauth_exchange", "exchange");
+    assert!(body.is_empty(), "redirect body must be empty");
 
     // e) success: tokens returned, identity resolved, source created.
     mock.set_revoke_grants(false).await;
@@ -286,6 +288,66 @@ async fn callback_branch_matrix_redirects_with_reasons() {
         Some("google")
     );
     assert!(body.is_empty());
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn callback_redirect_uri_mismatch_redirects_with_reason() {
+    let _guard = SERIAL.lock().await;
+    let mock = MockProvider::google();
+    let providers = TestProviders {
+        public_url: TEST_PUBLIC_URL.to_string(),
+        google: Some(mock_google_client(&mock, TEST_PUBLIC_URL)),
+        outlook: None,
+    };
+    let (state, app, tenant_id, user_id, _token) = connect_harness(providers).await;
+
+    // The token endpoint rejects the exchange as a redirect-URI mismatch.
+    mock.set_redirect_uri_mismatch(true).await;
+    insert_oauth_state(
+        &state,
+        "google-state-redirect-uri",
+        tenant_id,
+        user_id,
+        "google",
+    )
+    .await;
+    let code = "code-that-must-not-leak";
+    let (status, location, body) = get_raw(
+        &app,
+        &format!("{GOOGLE_CALLBACK}?state=google-state-redirect-uri&code={code}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FOUND);
+    let location = location.expect("Location header");
+    assert_redirects_with(&location, "oauth_exchange", "redirect_uri");
+    assert!(body.is_empty(), "redirect body must be empty");
+    for forbidden in [code, "test-refresh-token-value", "test-access-token-value"] {
+        assert!(
+            !location.contains(forbidden),
+            "Location leaked {forbidden:?}: {location}"
+        );
+    }
+
+    // `invalid_grant` keeps precedence over the redirect-URI reason: a revoked
+    // grant must stay `exchange`, not be misclassified as a configuration bug.
+    mock.set_revoke_grants(true).await;
+    insert_oauth_state(
+        &state,
+        "google-state-precedence",
+        tenant_id,
+        user_id,
+        "google",
+    )
+    .await;
+    let (_, location, _) = get_raw(
+        &app,
+        &format!("{GOOGLE_CALLBACK}?state=google-state-precedence&code=bad-code"),
+    )
+    .await;
+    assert_redirects_with(location.as_deref().unwrap(), "oauth_exchange", "exchange");
 
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
@@ -388,6 +450,20 @@ async fn provider_status_reports_configuration_and_redirect_uris() {
         .await
         .unwrap();
     assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
+
+    // The endpoint is also gated on the tenant's Calendar enablement.
+    let disabled_tenant = create_test_tenant(&state.db_pool).await;
+    let disabled_user = create_test_user(&state, "calendar_disabled", disabled_tenant).await;
+    configure_calendar(&state, disabled_tenant, disabled_user.id, false).await;
+    let disabled_token = create_auth_token(&state, disabled_user.id, disabled_tenant);
+    let (disabled_status, disabled_body) =
+        get_authed(&app, "/api/v1/calendar/providers", &disabled_token).await;
+    assert_eq!(
+        disabled_status,
+        StatusCode::FORBIDDEN,
+        "provider status must be gated on Calendar enablement: {disabled_body}"
+    );
+    cleanup_tenant(&state.db_pool, disabled_tenant).await;
 
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }

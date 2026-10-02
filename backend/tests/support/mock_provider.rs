@@ -122,6 +122,11 @@ struct MockInner {
     /// When true, the token endpoint answers token requests with
     /// `invalid_grant` (revoked grant).
     revoke_grants: Mutex<bool>,
+    /// When true, the token endpoint rejects the token request as a
+    /// redirect-URI / client-registration mismatch (Google
+    /// `redirect_uri_mismatch`, Microsoft `AADSTS50011`). Takes effect only
+    /// when `revoke_grants` is off, so `invalid_grant` keeps precedence.
+    redirect_uri_mismatch: Mutex<bool>,
     /// When true, refresh responses carry a rotated refresh token.
     rotate_refresh: Mutex<bool>,
     /// When true, the authorization-code exchange omits the refresh token
@@ -197,6 +202,7 @@ impl MockProvider {
             token_hits: Mutex::new(0),
             revoke_hits: Mutex::new(0),
             revoke_grants: Mutex::new(false),
+            redirect_uri_mismatch: Mutex::new(false),
             rotate_refresh: Mutex::new(false),
             omit_refresh_token: Mutex::new(false),
             identity_email: Mutex::new(String::new()),
@@ -282,6 +288,12 @@ impl MockProvider {
         *self.inner.revoke_grants.lock().await = revoke;
     }
 
+    /// Make the token endpoint reject the request as a redirect-URI/client
+    /// registration mismatch. `invalid_grant` (revoke) keeps precedence.
+    pub async fn set_redirect_uri_mismatch(&self, mismatch: bool) {
+        *self.inner.redirect_uri_mismatch.lock().await = mismatch;
+    }
+
     pub async fn set_rotate_refresh(&self, rotate: bool) {
         *self.inner.rotate_refresh.lock().await = rotate;
     }
@@ -305,6 +317,16 @@ async fn token_endpoint(
             MockProviderKind::Microsoft => {
                 json!({"error": "invalid_grant", "error_description": "revoked"})
             }
+        };
+        return (axum::http::StatusCode::BAD_REQUEST, Json(body));
+    }
+    if *inner.redirect_uri_mismatch.lock().await {
+        let body = match inner.kind {
+            MockProviderKind::Google => json!({"error": "redirect_uri_mismatch"}),
+            MockProviderKind::Microsoft => json!({
+                "error": "invalid_client",
+                "error_description": "AADSTS50011: the redirect URI specified in the request does not match"
+            }),
         };
         return (axum::http::StatusCode::BAD_REQUEST, Json(body));
     }
