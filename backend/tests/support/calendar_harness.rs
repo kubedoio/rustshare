@@ -93,18 +93,60 @@ pub async fn connect_pool() -> PgPool {
         .expect("Failed to connect to database")
 }
 
+/// Provider wiring for `setup_test_env_with_providers`.
+///
+/// Provider clients must be attached before the `CalendarService` is
+/// `Arc`-wrapped, which is why this is a setup-time input rather than a
+/// post-hoc mutation on `AppState`. `public_url` mirrors
+/// `RUSTSHARE_PUBLIC_URL` and is the origin the redirect URIs derive from.
+#[derive(Default)]
+pub struct TestProviders {
+    pub public_url: String,
+    pub google: Option<rustshare_server::services::google_calendar::GoogleCalendarClient>,
+    pub outlook: Option<rustshare_server::services::outlook_calendar::OutlookCalendarClient>,
+}
+
 /// Full `AppState` wired with the calendar service's outbox publishing enabled.
 pub async fn setup_test_env() -> AppState {
-    setup_test_env_inner(true).await
+    setup_test_env_inner(true, TestProviders::default()).await
 }
 
 /// Full `AppState` with the calendar service's outbox publishing left off
 /// (the import suite's historical wiring).
 pub async fn setup_test_env_without_calendar_outbox() -> AppState {
-    setup_test_env_inner(false).await
+    setup_test_env_inner(false, TestProviders::default()).await
 }
 
-async fn setup_test_env_inner(calendar_outbox: bool) -> AppState {
+/// Full `AppState` with explicit calendar provider clients and public origin.
+/// The Task 5 reviewer flagged the missing setup-time provider injection: the
+/// connect suite needs clients configured before the service is wrapped in an
+/// `Arc`, so no `Arc::get_mut` dance is possible afterwards.
+pub async fn setup_test_env_with_providers(providers: TestProviders) -> AppState {
+    setup_test_env_inner(true, providers).await
+}
+
+/// Persist a single-use OAuth state for the connect-flow callback tests.
+pub async fn insert_oauth_state(
+    state: &AppState,
+    oauth_state: &str,
+    tenant_id: Uuid,
+    user_id: Uuid,
+    kind: &str,
+) {
+    state
+        .metadata_store
+        .insert_calendar_oauth_state(
+            oauth_state,
+            tenant_id,
+            user_id,
+            kind,
+            chrono::Utc::now() + chrono::Duration::minutes(10),
+        )
+        .await
+        .expect("insert calendar oauth state");
+}
+
+async fn setup_test_env_inner(calendar_outbox: bool, providers: TestProviders) -> AppState {
     dotenvy::dotenv().ok();
 
     let pool = connect_pool().await;
@@ -317,6 +359,9 @@ async fn setup_test_env_inner(calendar_outbox: bool) -> AppState {
         if calendar_outbox {
             service.configure_outbox(outbox_store.clone());
         }
+        service.configure_public_url(providers.public_url.clone());
+        service.configure_google(providers.google);
+        service.configure_outlook(providers.outlook);
         service
     });
     let chat_observation_store =
@@ -487,6 +532,11 @@ pub async fn cleanup_tenant(pool: &PgPool, tenant_id: Uuid) {
     .execute(pool)
     .await
     .expect("failed to clean up calendar_sync_states");
+    sqlx::query("DELETE FROM calendar_oauth_states WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .expect("failed to clean up calendar_oauth_states");
     for table in [
         "calendar_import_jobs",
         "calendar_events",

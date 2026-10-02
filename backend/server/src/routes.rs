@@ -476,6 +476,10 @@ pub fn calendar_routes() -> Router<AppState> {
             get(crate::handlers::calendar::connect_calendar_source),
         )
         .route(
+            "/api/v1/calendar/providers",
+            get(crate::handlers::calendar::get_calendar_providers),
+        )
+        .route(
             "/api/v1/calendar/oauth/{kind}/callback",
             get(crate::handlers::calendar::calendar_oauth_callback),
         )

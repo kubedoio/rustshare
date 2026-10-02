@@ -19,7 +19,11 @@ pub struct AppConfig {
         rename = "rustshare_object_store_auto_create_bucket"
     )]
     pub object_store_auto_create_bucket: bool,
-    #[serde(default = "default_public_url", rename = "RUSTSHARE_PUBLIC_URL")]
+    /// NOTE: `envy` lowercases every environment variable name before matching,
+    /// so a `rename` must be the *lowercase* form of the env var
+    /// (`RUSTSHARE_PUBLIC_URL` → `rustshare_public_url`). An uppercase rename
+    /// silently never matches and the field keeps its default.
+    #[serde(default = "default_public_url", rename = "rustshare_public_url")]
     pub public_url: String,
     #[serde(
         default = "default_storage_quota",
@@ -98,15 +102,15 @@ pub struct AppConfig {
     pub calendar_import_worker_stale_secs: i64,
     /// Google Calendar OAuth client credentials. Absent = provider
     /// unconfigured (connect returns 503, not a startup error).
-    #[serde(default, rename = "RUSTSHARE_CALENDAR_GOOGLE_CLIENT_ID")]
+    #[serde(default, rename = "rustshare_calendar_google_client_id")]
     pub calendar_google_client_id: Option<String>,
-    #[serde(default, rename = "RUSTSHARE_CALENDAR_GOOGLE_CLIENT_SECRET")]
+    #[serde(default, rename = "rustshare_calendar_google_client_secret")]
     pub calendar_google_client_secret: Option<String>,
     /// Microsoft/Outlook OAuth client credentials. Absent = provider
     /// unconfigured (connect returns 503, not a startup error).
-    #[serde(default, rename = "RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_ID")]
+    #[serde(default, rename = "rustshare_calendar_microsoft_client_id")]
     pub calendar_microsoft_client_id: Option<String>,
-    #[serde(default, rename = "RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_SECRET")]
+    #[serde(default, rename = "rustshare_calendar_microsoft_client_secret")]
     pub calendar_microsoft_client_secret: Option<String>,
     #[serde(
         default = "default_calendar_sync_worker_enabled",
@@ -154,6 +158,76 @@ fn default_jwt_expiry_hours() -> i64 {
 
 fn default_public_url() -> String {
     "http://localhost:5173".to_string()
+}
+
+/// Path suffixes of the two Calendar OAuth callback endpoints. The redirect
+/// URI an operator must register verbatim in each provider console is
+/// `{RUSTSHARE_PUBLIC_URL}{path}`.
+pub const CALENDAR_GOOGLE_CALLBACK_PATH: &str = "/api/v1/calendar/oauth/google/callback";
+pub const CALENDAR_OUTLOOK_CALLBACK_PATH: &str = "/api/v1/calendar/oauth/outlook/callback";
+
+/// The debug/dev frontend-origin default. A release build must not derive
+/// OAuth redirect URIs (or share/device links) from this unless the operator
+/// explicitly opts in with `RUSTSHARE_ALLOW_DEV_PUBLIC_URL=1`.
+const DEV_PUBLIC_URL: &str = "http://localhost:5173";
+
+/// Whether `RUSTSHARE_ALLOW_DEV_PUBLIC_URL` permits the dev default. Unlike a
+/// plain `envy` bool this also accepts `1`/`yes`, matching how operators
+/// commonly write env toggles.
+fn dev_public_url_allowed() -> bool {
+    matches!(
+        std::env::var("RUSTSHARE_ALLOW_DEV_PUBLIC_URL")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+/// Validate `RUSTSHARE_PUBLIC_URL` (one error string appended to `errors`).
+///
+/// Rules, in order:
+///   * absolute `http`/`https` URL with a host (no relative/other schemes);
+///   * in release builds the `http://localhost:5173` dev default is rejected
+///     unless `allow_dev` is set — silently advertising a dead dev port is
+///     how the Calendar connect flow broke (issue #315);
+///   * non-loopback hosts must use `https` (redirect URIs carrying OAuth
+///     authorization codes must not travel in cleartext).
+fn validate_public_url(url: &str, allow_dev: bool, is_release: bool, errors: &mut Vec<String>) {
+    let parsed = match url::Url::parse(url) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            errors.push(format!(
+                "RUSTSHARE_PUBLIC_URL must be an absolute http:// or https:// URL, got {url:?}: {error}"
+            ));
+            return;
+        }
+    };
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        errors.push(format!(
+            "RUSTSHARE_PUBLIC_URL must be an absolute http:// or https:// URL with a host, got {url:?}"
+        ));
+        return;
+    }
+    let host = parsed.host_str().unwrap_or_default();
+    let is_loopback = matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]");
+    let is_dev_default =
+        host == "localhost" && parsed.port() == Some(5173) && matches!(parsed.path(), "" | "/");
+    if is_release && !allow_dev && is_dev_default {
+        errors.push(format!(
+            "RUSTSHARE_PUBLIC_URL is still the development default {DEV_PUBLIC_URL}; set it to this \
+             deployment's public origin (for example https://app.example.com) or set \
+             RUSTSHARE_ALLOW_DEV_PUBLIC_URL=1 for a throwaway local environment"
+        ));
+        return;
+    }
+    if !is_loopback && parsed.scheme() != "https" {
+        errors.push(format!(
+            "RUSTSHARE_PUBLIC_URL must use https for non-local hosts (got {url:?}); Calendar OAuth \
+             redirect URIs carry authorization codes and may not travel in cleartext"
+        ));
+    }
 }
 
 fn default_storage_quota() -> i64 {
@@ -540,6 +614,12 @@ impl AppConfig {
                 if config.rustshare_chat_webhook_secret.is_empty() {
                     errors.push("RUSTSHARE_CHAT_WEBHOOK_SECRET is required".to_string());
                 }
+                validate_public_url(
+                    &config.public_url,
+                    dev_public_url_allowed(),
+                    !cfg!(debug_assertions),
+                    &mut errors,
+                );
                 validate_chat_authority(&config, &mut errors);
                 validate_chat_provisioning(&config, &mut errors);
                 if errors.is_empty() {
@@ -607,10 +687,22 @@ mod tests {
         std::env::set_var("RUSTFS_REGION", "us-east-1");
         std::env::set_var("RUSTFS_BUCKET", "test-bucket");
         std::env::set_var("RUSTSHARE_CHAT_WEBHOOK_SECRET", "test-webhook-secret");
+        // A valid, non-dev public URL: localhost keeps the http-vs-https rule
+        // permissive and is not the rejected dev default.
+        std::env::set_var("RUSTSHARE_PUBLIC_URL", "http://localhost:8080");
+        std::env::remove_var("RUSTSHARE_ALLOW_DEV_PUBLIC_URL");
         for name in CHAT_AUTHORITY_ENV_VARS
             .into_iter()
             .chain(CHAT_PROVISIONING_ENV_VARS)
         {
+            std::env::remove_var(name);
+        }
+        for name in [
+            "RUSTSHARE_CALENDAR_GOOGLE_CLIENT_ID",
+            "RUSTSHARE_CALENDAR_GOOGLE_CLIENT_SECRET",
+            "RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_ID",
+            "RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_SECRET",
+        ] {
             std::env::remove_var(name);
         }
     }
@@ -1022,5 +1114,116 @@ mod tests {
         let config = OutboxWorkerConfig::from_env();
         assert_eq!(config.max_attempts, 5, "unparseable falls back to default");
         assert_eq!(config.retention_hours, 0);
+    }
+
+    fn public_url_errors(url: &str, allow_dev: bool, is_release: bool) -> Vec<String> {
+        let mut errors = Vec::new();
+        validate_public_url(url, allow_dev, is_release, &mut errors);
+        errors
+    }
+
+    #[test]
+    fn public_url_accepts_absolute_http_and_https() {
+        assert!(public_url_errors("https://app.example.com", false, true).is_empty());
+        assert!(public_url_errors("http://localhost:8080", false, true).is_empty());
+        assert!(public_url_errors("http://127.0.0.1:5173", false, true).is_empty());
+        assert!(public_url_errors("https://app.example.com:8443", false, true).is_empty());
+    }
+
+    #[test]
+    fn public_url_rejects_relative_and_non_http_schemes() {
+        for url in [
+            "",
+            "/relative",
+            "ftp://host",
+            "javascript:alert(1)",
+            "host:8080",
+        ] {
+            let errors = public_url_errors(url, false, true);
+            assert!(
+                errors.iter().any(|e| e.contains("RUSTSHARE_PUBLIC_URL")),
+                "{url:?} must be rejected: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn public_url_rejects_plain_http_for_non_local_hosts() {
+        let errors = public_url_errors("http://app.example.com", false, true);
+        assert!(
+            errors.iter().any(|e| e.contains("must use https")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn public_url_rejects_dev_default_in_release_unless_allowed() {
+        let errors = public_url_errors("http://localhost:5173", false, true);
+        assert!(
+            errors.iter().any(|e| e.contains("development default")),
+            "errors: {errors:?}"
+        );
+        // Trailing slash and an explicit port variant are the same origin.
+        assert!(!public_url_errors("http://localhost:5173/", false, true).is_empty());
+        // Debug builds keep the convenience default.
+        assert!(public_url_errors("http://localhost:5173", false, false).is_empty());
+        // Explicit opt-in is honoured.
+        assert!(public_url_errors("http://localhost:5173", true, true).is_empty());
+    }
+
+    #[test]
+    fn from_env_accepts_non_dev_public_url() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_PUBLIC_URL", "https://app.example.com");
+        let config = AppConfig::from_env().expect("valid public URL must pass");
+        assert_eq!(config.public_url, "https://app.example.com");
+    }
+
+    #[test]
+    fn from_env_reads_calendar_provider_credentials() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_CALENDAR_GOOGLE_CLIENT_ID", "google-id");
+        std::env::set_var("RUSTSHARE_CALENDAR_GOOGLE_CLIENT_SECRET", "google-secret");
+        std::env::set_var("RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_ID", "ms-id");
+        std::env::set_var("RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_SECRET", "ms-secret");
+        let config = AppConfig::from_env().expect("valid env must pass");
+        assert_eq!(
+            config.calendar_google_client_id.as_deref(),
+            Some("google-id")
+        );
+        assert_eq!(
+            config.calendar_google_client_secret.as_deref(),
+            Some("google-secret")
+        );
+        assert_eq!(
+            config.calendar_microsoft_client_id.as_deref(),
+            Some("ms-id")
+        );
+        assert_eq!(
+            config.calendar_microsoft_client_secret.as_deref(),
+            Some("ms-secret")
+        );
+        for name in [
+            "RUSTSHARE_CALENDAR_GOOGLE_CLIENT_ID",
+            "RUSTSHARE_CALENDAR_GOOGLE_CLIENT_SECRET",
+            "RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_ID",
+            "RUSTSHARE_CALENDAR_MICROSOFT_CLIENT_SECRET",
+        ] {
+            std::env::remove_var(name);
+        }
+    }
+
+    #[test]
+    fn from_env_rejects_plain_http_public_url_for_non_local_host() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("RUSTSHARE_PUBLIC_URL", "http://app.example.com");
+        let errors = AppConfig::from_env().expect_err("http on a public host must fail");
+        assert!(
+            errors.iter().any(|e| e.contains("must use https")),
+            "errors: {errors:?}"
+        );
     }
 }

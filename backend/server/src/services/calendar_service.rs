@@ -59,6 +59,8 @@ pub enum CalendarError {
     OAuthStateInvalid,
     #[error("OAuth flow failed: {0}")]
     OAuthFailed(String),
+    #[error("OAuth provider rejected the redirect URI: {0}")]
+    OAuthRedirectUri(String),
     #[error("A sync is already running for this source")]
     SyncInProgress,
 }
@@ -94,6 +96,21 @@ pub struct CalendarService {
     outlook: Option<Arc<crate::services::outlook_calendar::OutlookCalendarClient>>,
     outbox: Option<Arc<OutboxStore>>,
     sync_lease_stale: Duration,
+    /// Deployment public origin (`RUSTSHARE_PUBLIC_URL`), used to report the
+    /// OAuth redirect URIs an operator must register. Empty until
+    /// `configure_public_url` is called; the configured clients carry their
+    /// own copy of the derived redirect URL.
+    public_url: String,
+}
+
+/// Read-only view of one external calendar provider for
+/// `GET /api/v1/calendar/providers`: whether the deployment has credentials
+/// and the exact redirect URI to register. Never carries the client id/secret.
+#[derive(Debug, Clone)]
+pub struct CalendarProviderStatus {
+    pub kind: &'static str,
+    pub configured: bool,
+    pub redirect_uri: String,
 }
 
 /// One event as returned by range queries: the stored row (or its recurring
@@ -349,7 +366,61 @@ impl CalendarService {
             outlook: None,
             outbox: None,
             sync_lease_stale: configured_sync_lease_stale(),
+            public_url: String::new(),
         }
+    }
+
+    /// Record the deployment public origin so the provider-status endpoint can
+    /// report the redirect URIs an operator must register.
+    pub fn configure_public_url(&mut self, public_url: impl Into<String>) {
+        self.public_url = public_url.into();
+    }
+
+    /// The deployment public origin as configured (may be empty in unit tests
+    /// that never call `configure_public_url`).
+    pub fn public_url(&self) -> &str {
+        &self.public_url
+    }
+
+    /// Provider status for the read-only `/calendar/providers` endpoint. The
+    /// redirect URI comes from the configured client when present (so it can
+    /// never drift from the authorize URL), else is derived from the public
+    /// origin. Client ids/secrets are deliberately never included.
+    pub fn provider_status(&self) -> Vec<CalendarProviderStatus> {
+        let google = self
+            .google
+            .as_ref()
+            .map(|client| client.redirect_url.clone())
+            .unwrap_or_else(|| {
+                format!(
+                    "{}{}",
+                    self.public_url,
+                    crate::config::CALENDAR_GOOGLE_CALLBACK_PATH
+                )
+            });
+        let outlook = self
+            .outlook
+            .as_ref()
+            .map(|client| client.redirect_url.clone())
+            .unwrap_or_else(|| {
+                format!(
+                    "{}{}",
+                    self.public_url,
+                    crate::config::CALENDAR_OUTLOOK_CALLBACK_PATH
+                )
+            });
+        vec![
+            CalendarProviderStatus {
+                kind: CalendarSourceKind::Google.as_str(),
+                configured: self.google.is_some(),
+                redirect_uri: google,
+            },
+            CalendarProviderStatus {
+                kind: CalendarSourceKind::Outlook.as_str(),
+                configured: self.outlook.is_some(),
+                redirect_uri: outlook,
+            },
+        ]
     }
 
     /// The sync-lease staleness window this service applies to resync/
@@ -464,6 +535,9 @@ impl CalendarService {
             GoogleError::AuthRequired => {
                 CalendarError::OAuthFailed("provider rejected the grant".to_string())
             }
+            GoogleError::RedirectUriMismatch => CalendarError::OAuthRedirectUri(
+                "provider rejected the configured redirect URI".to_string(),
+            ),
             other => CalendarError::OAuthFailed(other.to_string()),
         })?;
         // Without a refresh token the sync worker could never renew the
@@ -527,6 +601,9 @@ impl CalendarService {
             OutlookError::AuthRequired => {
                 CalendarError::OAuthFailed("provider rejected the grant".to_string())
             }
+            OutlookError::RedirectUriMismatch => CalendarError::OAuthRedirectUri(
+                "provider rejected the configured redirect URI".to_string(),
+            ),
             other => CalendarError::OAuthFailed(other.to_string()),
         })?;
         let Some(refresh_token) = tokens.rotated_refresh_token() else {

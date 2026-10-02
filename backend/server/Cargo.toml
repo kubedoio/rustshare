@@ -320,6 +320,10 @@ name = "calendar_outlook_sync_test"
 path = "../tests/calendar_outlook_sync_test.rs"
 
 [[test]]
+name = "calendar_connect_test"
+path = "../tests/calendar_connect_test.rs"
+
+[[test]]
 name = "vault_webui_content_test"
 path = "../tests/vault_webui_content_test.rs"
 

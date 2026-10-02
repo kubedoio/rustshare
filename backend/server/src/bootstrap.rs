@@ -371,6 +371,7 @@ async fn init_services(
         Arc::clone(&secret_key),
     );
     calendar_service.configure_outbox(Arc::clone(&outbox_store));
+    calendar_service.configure_public_url(config.public_url.clone());
     calendar_service.configure_google(
         crate::services::google_calendar::GoogleCalendarClient::from_config(
             config.calendar_google_client_id.clone(),
@@ -386,6 +387,18 @@ async fn init_services(
         ),
     );
     let calendar_service = Arc::new(calendar_service);
+
+    // The redirect URIs must match the provider console registrations
+    // byte-for-byte; log them so an operator can copy them verbatim.
+    info!(
+        google = %format!("{}{}", config.public_url, crate::config::CALENDAR_GOOGLE_CALLBACK_PATH),
+        microsoft = %format!("{}{}", config.public_url, crate::config::CALENDAR_OUTLOOK_CALLBACK_PATH),
+        google_configured = config.calendar_google_client_id.is_some()
+            && config.calendar_google_client_secret.is_some(),
+        microsoft_configured = config.calendar_microsoft_client_id.is_some()
+            && config.calendar_microsoft_client_secret.is_some(),
+        "calendar OAuth redirect URIs (register these verbatim in the provider console)"
+    );
 
     // Shared content indexer used both by the AI service and by the note
     // service's indexing callback sink. Kept outside the tokio::join! so both

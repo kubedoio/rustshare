@@ -75,6 +75,11 @@ pub enum OutlookError {
     RateLimited { retry_after: Duration },
     #[error("Provider rejected the grant")]
     AuthRequired,
+    /// The token endpoint rejected the redirect URI / client registration
+    /// (AADSTS50011 or `invalid_client`); the actionable `redirect_uri`
+    /// failure an operator must fix.
+    #[error("Provider rejected the OAuth redirect URI or client configuration")]
+    RedirectUriMismatch,
 }
 
 impl OutlookCalendarClient {
@@ -94,7 +99,10 @@ impl OutlookCalendarClient {
             http: build_http_client(),
             client_id,
             client_secret,
-            redirect_url: format!("{public_url}/api/v1/calendar/oauth/outlook/callback"),
+            redirect_url: format!(
+                "{public_url}{}",
+                crate::config::CALENDAR_OUTLOOK_CALLBACK_PATH
+            ),
             auth_base: AUTH_BASE.to_string(),
             token_url: TOKEN_URL.to_string(),
             api_base: API_BASE.to_string(),
@@ -110,6 +118,11 @@ impl OutlookCalendarClient {
                 ("redirect_uri", self.redirect_url.as_str()),
                 ("response_type", "code"),
                 ("scope", READONLY_SCOPE),
+                // Force the consent screen on every connect so Microsoft
+                // reliably issues a refresh token; without it a previously
+                // consented user gets no `refresh_token`, and the connect
+                // flow fails closed.
+                ("prompt", "consent"),
                 ("state", state),
             ])
             .finish();
@@ -140,6 +153,9 @@ impl OutlookCalendarClient {
             // `invalid_grant` marks a revoked/expired refresh token.
             if body.contains("invalid_grant") {
                 return Err(OutlookError::AuthRequired);
+            }
+            if crate::services::google_calendar::is_redirect_uri_rejection(&body) {
+                return Err(OutlookError::RedirectUriMismatch);
             }
             return Err(if context == "refresh" {
                 OutlookError::TokenRefresh(format!("HTTP {status}"))

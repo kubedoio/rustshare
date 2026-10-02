@@ -77,6 +77,23 @@ pub enum GoogleError {
     Unauthorized,
     #[error("Provider rejected the grant")]
     AuthRequired,
+    /// The token endpoint rejected the request because the redirect URI (or
+    /// client registration) does not match the provider console configuration
+    /// — the actionable `redirect_uri` failure an operator must fix.
+    #[error("Provider rejected the OAuth redirect URI or client configuration")]
+    RedirectUriMismatch,
+}
+
+/// Whether a token-endpoint error body names a redirect-URI / client
+/// registration rejection. Google returns `redirect_uri_mismatch` or
+/// `invalid_client`; Microsoft Entra returns `AADSTS50011` or
+/// `invalid_client`/`unauthorized_client`.
+pub(crate) fn is_redirect_uri_rejection(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("redirect_uri")
+        || lower.contains("invalid_client")
+        || lower.contains("unauthorized_client")
+        || lower.contains("aadsts50011")
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,7 +139,10 @@ impl GoogleCalendarClient {
             http: build_http_client(),
             client_id,
             client_secret,
-            redirect_url: format!("{public_url}/api/v1/calendar/oauth/google/callback"),
+            redirect_url: format!(
+                "{public_url}{}",
+                crate::config::CALENDAR_GOOGLE_CALLBACK_PATH
+            ),
             auth_base: AUTH_BASE.to_string(),
             token_url: TOKEN_URL.to_string(),
             api_base: API_BASE.to_string(),
@@ -171,6 +191,9 @@ impl GoogleCalendarClient {
             // `invalid_grant` marks a revoked/expired refresh token.
             if body.contains("invalid_grant") {
                 return Err(GoogleError::AuthRequired);
+            }
+            if is_redirect_uri_rejection(&body) {
+                return Err(GoogleError::RedirectUriMismatch);
             }
             return Err(if context == "refresh" {
                 GoogleError::TokenRefresh(format!("HTTP {status}"))
@@ -856,6 +879,24 @@ mod tests {
         let page: EventsListResponse = serde_json::from_value(body).unwrap();
         assert_eq!(page.next_sync_token.as_deref(), Some("cursor-after-full"));
         assert!(page.next_page_token.is_none());
+    }
+
+    #[test]
+    fn classifies_redirect_uri_and_client_registration_rejections() {
+        for body in [
+            r#"{"error":"redirect_uri_mismatch"}"#,
+            r#"{"error":"invalid_client","error_description":"Unauthorized"}"#,
+            r#"{"error":"unauthorized_client"}"#,
+            r#"{"error":"invalid_request","error_description":"AADSTS50011: redirect URI mismatch"}"#,
+        ] {
+            assert!(is_redirect_uri_rejection(body), "must classify {body}");
+        }
+        for body in [
+            r#"{"error":"invalid_grant"}"#,
+            r#"{"error":"server_error"}"#,
+        ] {
+            assert!(!is_redirect_uri_rejection(body), "must not classify {body}");
+        }
     }
 
     #[test]

@@ -622,6 +622,49 @@ pub async fn connect_calendar_source(
     Ok(Json(CalendarConnectResponse { authorize_url }))
 }
 
+/// `200` body for `GET /api/v1/calendar/providers`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarProviderStatusResponse {
+    /// Deployment public origin the redirect URIs derive from.
+    pub public_url: String,
+    pub providers: Vec<CalendarProviderResponse>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarProviderResponse {
+    pub kind: String,
+    /// Whether this deployment has client credentials for the provider.
+    pub configured: bool,
+    /// The exact redirect URI to register in the provider console.
+    pub redirect_uri: String,
+}
+
+/// `GET /api/v1/calendar/providers` — read-only provider diagnostics for
+/// operators: which external providers are configured and the exact redirect
+/// URI to register. Authenticated and gated on the tenant's Calendar
+/// enablement; never returns client ids or secrets.
+pub async fn get_calendar_providers(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Json<CalendarProviderStatusResponse>, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    let providers = state
+        .calendar_service
+        .provider_status()
+        .into_iter()
+        .map(|provider| CalendarProviderResponse {
+            kind: provider.kind.to_string(),
+            configured: provider.configured,
+            redirect_uri: provider.redirect_uri,
+        })
+        .collect();
+
+    Ok(Json(CalendarProviderStatusResponse {
+        public_url: state.calendar_service.public_url().to_string(),
+        providers,
+    }))
+}
+
 /// Query parameters of the provider redirect target.
 #[derive(Debug, Deserialize)]
 pub struct CalendarOauthCallbackQuery {
@@ -641,31 +684,37 @@ fn oauth_redirect(target: &str) -> axum::response::Response {
         .expect("redirect response is always buildable")
 }
 
+/// A failure redirect carrying both the coarse `?error=oauth_*` the settings
+/// panel already maps and a finer `?reason=` code the panel can use for an
+/// actionable message. Never includes token material.
+fn oauth_error_redirect(error: &str, reason: &str) -> axum::response::Response {
+    oauth_redirect(&format!(
+        "/settings/apps/calendar?error={error}&reason={reason}"
+    ))
+}
+
 /// `GET /api/v1/calendar/oauth/{kind}/callback` — provider redirect target,
 /// authenticated by the single-use `state` rather than a session. Exchanges
 /// the code, stores encrypted tokens, enqueues the initial sync, and always
 /// answers with a browser redirect: `?connected={kind}` on success,
-/// `?error=oauth_*` on failure.
+/// `?error=oauth_*&reason=*` on failure.
 pub async fn calendar_oauth_callback(
     State(state): State<AppState>,
     Path(kind): Path<CalendarSourceKind>,
     Query(query): Query<CalendarOauthCallbackQuery>,
 ) -> axum::response::Response {
-    let base = "/settings/apps/calendar";
-    let redirect = |reason: &str| oauth_redirect(&format!("{base}?error={reason}"));
-
     if !matches!(
         kind,
         CalendarSourceKind::Google | CalendarSourceKind::Outlook
     ) {
-        return redirect("oauth_unconfigured");
+        return oauth_error_redirect("oauth_unconfigured", "not_configured");
     }
     // Provider-side denial (user declined consent).
     if query.error.is_some() {
-        return redirect("oauth_denied");
+        return oauth_error_redirect("oauth_denied", "denied");
     }
     let (Some(state_param), Some(code)) = (query.state.as_deref(), query.code.as_deref()) else {
-        return redirect("oauth_state");
+        return oauth_error_redirect("oauth_state", "state");
     };
 
     let result = if kind == CalendarSourceKind::Google {
@@ -680,16 +729,28 @@ pub async fn calendar_oauth_callback(
             .await
     };
     match result {
-        Ok(_) => oauth_redirect(&format!("{base}?connected={}", kind.as_str())),
-        Err(CalendarError::OAuthNotConfigured(_)) => redirect("oauth_unconfigured"),
-        Err(CalendarError::OAuthStateInvalid) => redirect("oauth_state"),
+        Ok(_) => oauth_redirect(&format!(
+            "/settings/apps/calendar?connected={}",
+            kind.as_str()
+        )),
+        Err(CalendarError::OAuthNotConfigured(_)) => {
+            oauth_error_redirect("oauth_unconfigured", "not_configured")
+        }
+        Err(CalendarError::OAuthRedirectUri(message)) => {
+            tracing::warn!(
+                "{} calendar connect redirect URI rejected: {message}",
+                kind.as_str()
+            );
+            oauth_error_redirect("oauth_exchange", "redirect_uri")
+        }
+        Err(CalendarError::OAuthStateInvalid) => oauth_error_redirect("oauth_state", "state"),
         Err(CalendarError::OAuthFailed(message)) => {
             tracing::warn!("{} calendar connect failed: {message}", kind.as_str());
-            redirect("oauth_exchange")
+            oauth_error_redirect("oauth_exchange", "exchange")
         }
         // Storage/database errors likewise redirect rather than render
         // anything sensitive.
-        Err(_) => redirect("oauth_state"),
+        Err(_) => oauth_error_redirect("oauth_state", "state"),
     }
 }
 
@@ -822,9 +883,9 @@ impl From<CalendarError> for AppError {
             | CalendarError::SyncInProgress => AppError::Conflict(err.to_string()),
             CalendarError::InvalidInput(_) => AppError::BadRequest(err.to_string()),
             CalendarError::OAuthNotConfigured(_) => AppError::service_unavailable(err.to_string()),
-            CalendarError::OAuthStateInvalid | CalendarError::OAuthFailed(_) => {
-                AppError::bad_request(err.to_string())
-            }
+            CalendarError::OAuthStateInvalid
+            | CalendarError::OAuthFailed(_)
+            | CalendarError::OAuthRedirectUri(_) => AppError::bad_request(err.to_string()),
             CalendarError::Storage(_) | CalendarError::Database(_) => {
                 AppError::Internal("Internal server error".to_string())
             }
