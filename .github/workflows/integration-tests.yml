@@ -202,8 +202,13 @@ jobs:
       - name: Start clean bundled Chat deployment
         timeout-minutes: 30
         run: |
-          ./scripts/elembra.sh init --with-chat
-          ./scripts/elembra.sh up
+          # Keep image build/pull and Compose startup failures bounded inside
+          # the step so the diagnostic and cleanup steps always get a chance
+          # to run when a registry or dependency stalls.
+          timeout --foreground --signal=TERM --kill-after=30s 12m \
+            ./scripts/elembra.sh init --with-chat
+          timeout --foreground --signal=TERM --kill-after=30s 17m \
+            ./scripts/elembra.sh up
 
       - name: Run live Chat product acceptance
         run: ./scripts/run-alpha-dogfood.sh
