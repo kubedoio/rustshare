@@ -14,7 +14,7 @@ jobs:
 
   pilot-compose-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 80
+    timeout-minutes: 180
     permissions:
       contents: read
     steps:
@@ -22,7 +22,11 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Build pilot backend image
-        run: docker build -f docker/backend.Dockerfile -t rustshare-backend:pilot .
+        run: |
+          docker build -f docker/backend.Dockerfile \
+            --build-arg VERSION="pilot-${GITHUB_SHA:0:12}" \
+            --build-arg REVISION="${GITHUB_SHA}" \
+            -t rustshare-backend:pilot .
 
       - name: Generate pilot secrets
         id: pilot-secrets
@@ -56,7 +60,40 @@ jobs:
         env:
           RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
           RUSTSHARE_BACKEND_PULL_POLICY: never
+          JWT_SECRET: ${{ secrets.CI_JWT_SECRET != '' && secrets.CI_JWT_SECRET || steps.pilot-secrets.outputs.jwt_secret }}
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY != '' && secrets.CI_ENCRYPTION_KEY || steps.pilot-secrets.outputs.encryption_key }}
+          POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
+          DATABASE_URL: postgres://rustshare:${{ steps.pilot-secrets.outputs.pg_password }}@postgres:5432/rustshare
+          RUSTFS_ROOT_USER: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          AWS_ACCESS_KEY_ID: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: "true"
+          RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
+          RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml config >/tmp/pilot-compose.yaml
+
+      - name: Record pilot identity
+        run: |
+          mkdir -p /tmp/rustshare-pilot-evidence
+          CONFIG_ID="$(sha256sum /tmp/pilot-compose.yaml | cut -d' ' -f1)"
+          IMAGE_VERSION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels \"org.opencontainers.image.version\"}}')"
+          IMAGE_REVISION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels \"org.opencontainers.image.revision\"}}')"
+          cat > /tmp/rustshare-pilot-evidence/pilot-identity.env <<EOF
+          SOURCE_SHA=${GITHUB_SHA}
+          SOURCE_STATUS=$(git status --porcelain)
+          WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
+          WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
+          DEPLOYMENT_ID=github-actions-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
+          IMAGE_VERSION=${IMAGE_VERSION}
+          IMAGE_REVISION=${IMAGE_REVISION}
+          CONFIG_ID=${CONFIG_ID}
+          STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
+          echo "PILOT_CONFIG_ID=${CONFIG_ID}" >> "$GITHUB_ENV"
+          echo "PILOT_BUILD_VERSION=${IMAGE_VERSION}" >> "$GITHUB_ENV"
+          echo "PILOT_DEPLOYMENT_ID=github-actions-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
 
       - name: Boot pilot stack
         env:
@@ -98,6 +135,349 @@ jobs:
           echo "Pilot backend did not become ready in time" >&2
           exit 1
 
+      - name: Run canonical pilot journey
+        env:
+          BASE_URL: http://127.0.0.1
+          ADMIN_EMAIL: admin@localhost
+          ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          VIEWER_EMAIL: viewer@localhost
+          VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+          REPORT_DIR: /tmp/rustshare-pilot-evidence
+          PILOT_REPORT_PATH: /tmp/rustshare-pilot-evidence/canonical-smoke.env
+          PILOT_MODE: canonical
+          PILOT_PRESERVE_DATA: "1"
+          PILOT_SOURCE_SHA: ${{ github.sha }}
+          REQUIRE_CHAT: "0"
+        run: ./scripts/run-beta-smoke.sh
+
+      - name: Verify RustShare UI is reachable
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error http://127.0.0.1/ \
+            > /tmp/rustshare-pilot-evidence/ui-index.html
+          grep -Eiq '<!doctype html|<html[[:space:]>]' \
+            /tmp/rustshare-pilot-evidence/ui-index.html
+          printf 'UI_STATUS=passed\nUI_URL=http://127.0.0.1/\n' \
+            > /tmp/rustshare-pilot-evidence/ui.env
+
+      - name: Restart application and verify readiness
+        env:
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.pilot.yml restart backend nginx
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1/health/ready >/tmp/rustshare-pilot-evidence/health-after-restart.json; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Readiness did not recover after application restart" >&2
+          exit 1
+
+      - name: Verify persistence after restart
+        env:
+          BASE_URL: http://127.0.0.1
+          ADMIN_EMAIL: admin@localhost
+          ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          VIEWER_EMAIL: viewer@localhost
+          VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+          REPORT_DIR: /tmp/rustshare-pilot-evidence
+          PILOT_REPORT_PATH: /tmp/rustshare-pilot-evidence/persistence.env
+          PILOT_VERIFY_STATE_FILE: /tmp/rustshare-pilot-evidence/canonical-smoke.env
+          PILOT_MODE: restart-persistence
+          PILOT_SOURCE_SHA: ${{ github.sha }}
+        run: ./scripts/run-beta-smoke.sh
+
+      - name: Exercise bounded dependency failure and recovery
+        env:
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
+        run: |
+          set -euo pipefail
+          compose=(docker compose -f docker-compose.yml -f docker-compose.pilot.yml)
+          failure_report=/tmp/rustshare-pilot-evidence/failure-drills.env
+
+          echo "Stopping PostgreSQL; readiness must fail."
+          "${compose[@]}" stop postgres
+          set +e
+          curl --fail --silent --show-error --max-time 10 \
+            http://127.0.0.1/health/ready \
+            >/tmp/rustshare-pilot-evidence/health-database-down.json
+          database_status=$?
+          set -e
+          [[ "${database_status}" -ne 0 ]] || {
+            echo "Readiness falsely remained healthy while PostgreSQL was stopped" >&2
+            exit 1
+          }
+          "${compose[@]}" up -d postgres
+
+          echo "Stopping RustFS; readiness must fail."
+          "${compose[@]}" stop rustfs
+          set +e
+          curl --fail --silent --show-error --max-time 10 \
+            http://127.0.0.1/health/ready \
+            >/tmp/rustshare-pilot-evidence/health-storage-down.json
+          storage_status=$?
+          set -e
+          [[ "${storage_status}" -ne 0 ]] || {
+            echo "Readiness falsely remained healthy while RustFS was stopped" >&2
+            exit 1
+          }
+          "${compose[@]}" up -d rustfs
+
+          recovered=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1/health/ready \
+              >/tmp/rustshare-pilot-evidence/health-after-dependency-recovery.json; then
+              recovered=1
+              break
+            fi
+            sleep 2
+          done
+          [[ "${recovered}" -eq 1 ]] || {
+            echo "Readiness did not recover after dependency restoration" >&2
+            exit 1
+          }
+
+          echo "Invalid password login must be rejected without a server error."
+          auth_status="$(curl --silent --show-error -o \
+            /tmp/rustshare-pilot-evidence/authentication-failure.json \
+            -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' \
+            --data '{"email":"invalid-pilot-user@localhost","password":"invalid-pilot-password"}' \
+            http://127.0.0.1/api/v1/auth/login)"
+          [[ "${auth_status}" == "401" || "${auth_status}" == "403" ]] || {
+            echo "Invalid login returned unexpected HTTP ${auth_status}" >&2
+            exit 1
+          }
+          printf 'DATABASE_FAILURE_STATUS=passed\nSTORAGE_FAILURE_STATUS=passed\n' \
+            > "${failure_report}"
+          printf 'AUTHENTICATION_FAILURE_STATUS=passed\n' \
+            >> "${failure_report}"
+
+      - name: Validate invalid configuration fails closed
+        env:
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+        run: |
+          set +e
+          docker run --rm \
+            -e JWT_SECRET=weak \
+            -e RUSTSHARE_SECRET_ENCRYPTION_KEY=weak \
+            -e DATABASE_URL=postgres://invalid \
+            rustshare-backend:pilot \
+            >/tmp/rustshare-pilot-evidence/invalid-config.log 2>&1
+          invalid_status=$?
+          set -e
+          [[ "${invalid_status}" -ne 0 ]] || {
+            echo "Invalid configuration unexpectedly started successfully" >&2
+            exit 1
+          }
+          grep -q 'SESSION_COOKIE_SECURE: "true"' docker-compose.prod.yml || {
+            echo "Production Compose profile does not enable secure session cookies" >&2
+            exit 1
+          }
+          printf 'INVALID_CONFIGURATION_STATUS=passed\n' \
+            > /tmp/rustshare-pilot-evidence/security-sanity.env
+          printf 'PRODUCTION_COOKIE_SECURITY=passed\n' \
+            >> /tmp/rustshare-pilot-evidence/security-sanity.env
+
+      - name: Create and verify backup bundle
+        env:
+          POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
+          DATABASE_URL: postgres://rustshare:${{ steps.pilot-secrets.outputs.pg_password }}@postgres:5432/rustshare
+          RUSTFS_ROOT_USER: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          AWS_ACCESS_KEY_ID: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
+        run: |
+          set -euo pipefail
+          backup_root=/tmp/rustshare-pilot-evidence/backups
+          scripts/backup-stack.sh "${backup_root}" | tee /tmp/rustshare-pilot-evidence/backup.log
+          backup_dir="$(find "${backup_root}" -mindepth 1 -maxdepth 1 -type d -print | sort | tail -n 1)"
+          [[ -n "${backup_dir}" ]] || { echo "Backup directory was not created" >&2; exit 1; }
+          scripts/verify-backup-bundle.sh "${backup_dir}" | tee /tmp/rustshare-pilot-evidence/backup-verify.log
+          echo "PILOT_BACKUP_DIR=${backup_dir}" >> "$GITHUB_ENV"
+          printf 'BACKUP_STATUS=passed\nBACKUP_DIR=%s\n' "${backup_dir}" \
+            > /tmp/rustshare-pilot-evidence/backup.env
+
+      - name: Restore backup in isolated drill and re-run journey verification
+        env:
+          ADMIN_EMAIL: admin@localhost
+          ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          VIEWER_EMAIL: viewer@localhost
+          VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+          POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
+          DATABASE_URL: postgres://rustshare:${{ steps.pilot-secrets.outputs.pg_password }}@postgres:5432/rustshare
+          RUSTFS_ROOT_USER: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          AWS_ACCESS_KEY_ID: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          JWT_SECRET: ${{ steps.pilot-secrets.outputs.jwt_secret }}
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ steps.pilot-secrets.outputs.encryption_key }}
+          RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
+          RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          RUSTSHARE_PUBLIC_URL: http://localhost
+          DRILL_REPORT_DIR: /tmp/rustshare-pilot-evidence
+          RESTORE_DRILL_STATE_FILE: /tmp/rustshare-pilot-evidence/canonical-smoke.env
+          RESTORE_DRILL_PILOT_REPORT_PATH: /tmp/rustshare-pilot-evidence/restore-persistence.env
+          PILOT_SOURCE_SHA: ${{ github.sha }}
+        run: scripts/run-restore-drill.sh "${PILOT_BACKUP_DIR}"
+
+      - name: Validate previous release to candidate upgrade
+        env:
+          ADMIN_EMAIL: admin@localhost
+          ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          VIEWER_EMAIL: viewer@localhost
+          VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+          POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
+          DATABASE_URL: postgres://rustshare:${{ steps.pilot-secrets.outputs.pg_password }}@postgres:5432/rustshare
+          RUSTFS_ROOT_USER: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          AWS_ACCESS_KEY_ID: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          JWT_SECRET: ${{ steps.pilot-secrets.outputs.jwt_secret }}
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ steps.pilot-secrets.outputs.encryption_key }}
+          RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
+          RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+          RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: "true"
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
+        run: |
+          set -euo pipefail
+          previous_tag=v0.8.0-alpha.5
+          git fetch --no-tags --depth=1 origin \
+            "refs/tags/${previous_tag}:refs/tags/${previous_tag}"
+          previous_sha="$(git rev-list -n 1 "${previous_tag}")"
+          mkdir -p /tmp/rustshare-previous
+          git archive "${previous_tag}" | tar -x -C /tmp/rustshare-previous
+          docker build -f /tmp/rustshare-previous/docker/backend.Dockerfile \
+            --build-arg VERSION="${previous_tag}" \
+            --build-arg REVISION="${previous_sha}" \
+            -t rustshare-backend:pilot-previous /tmp/rustshare-previous
+
+          cat > /tmp/rustshare-upgrade-ports.yml <<'EOF'
+          services:
+            postgres:
+              ports:
+                - "25432:5432"
+            rustfs:
+              ports:
+                - "29000:9000"
+                - "29001:9001"
+            backend:
+              ports:
+                - "28082:8080"
+            nginx:
+              ports:
+                - "28080:80"
+          EOF
+
+          compose=(
+            docker compose
+            --project-name rustshare-pilot-upgrade
+            -f docker-compose.yml
+            -f /tmp/rustshare-upgrade-ports.yml
+            -f docker-compose.pilot.yml
+          )
+          RUSTSHARE_BACKEND_IMAGE=rustshare-backend:pilot-previous \
+            "${compose[@]}" up -d postgres rustfs backend nginx
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:28080/health/ready; then
+              break
+            fi
+            [[ "${attempt}" -lt 30 ]] || {
+              echo "Previous release did not become ready" >&2
+              exit 1
+            }
+            sleep 5
+          done
+
+          BASE_URL=http://127.0.0.1:28080 \
+            ADMIN_EMAIL="${ADMIN_EMAIL}" \
+            ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
+            VIEWER_EMAIL="${VIEWER_EMAIL}" \
+            VIEWER_PASSWORD="${VIEWER_PASSWORD}" \
+            REPORT_DIR=/tmp/rustshare-pilot-evidence \
+            PILOT_REPORT_PATH=/tmp/rustshare-pilot-evidence/upgrade-previous.env \
+            PILOT_MODE=upgrade-previous \
+            PILOT_PRESERVE_DATA=1 \
+            PILOT_SOURCE_SHA="${previous_sha}" \
+            PILOT_BUILD_VERSION="${previous_tag}" \
+            PILOT_DEPLOYMENT_ID=rustshare-pilot-upgrade \
+            PILOT_CONFIG_ID=upgrade-isolated \
+            ./scripts/run-beta-smoke.sh
+
+          RUSTSHARE_BACKEND_IMAGE=rustshare-backend:pilot \
+            "${compose[@]}" up -d backend nginx
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:28080/health/ready \
+              >/tmp/rustshare-pilot-evidence/health-after-upgrade.json; then
+              break
+            fi
+            [[ "${attempt}" -lt 30 ]] || {
+              echo "Candidate did not become ready after upgrade" >&2
+              exit 1
+            }
+            sleep 5
+          done
+
+          BASE_URL=http://127.0.0.1:28080 \
+            ADMIN_EMAIL="${ADMIN_EMAIL}" \
+            ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
+            VIEWER_EMAIL="${VIEWER_EMAIL}" \
+            VIEWER_PASSWORD="${VIEWER_PASSWORD}" \
+            REPORT_DIR=/tmp/rustshare-pilot-evidence \
+            PILOT_REPORT_PATH=/tmp/rustshare-pilot-evidence/upgrade-candidate.env \
+            PILOT_VERIFY_STATE_FILE=/tmp/rustshare-pilot-evidence/upgrade-previous.env \
+            PILOT_MODE=upgrade-candidate \
+            PILOT_SOURCE_SHA="${GITHUB_SHA}" \
+            PILOT_BUILD_VERSION="${PILOT_BUILD_VERSION}" \
+            PILOT_DEPLOYMENT_ID=rustshare-pilot-upgrade \
+            PILOT_CONFIG_ID=upgrade-isolated \
+            ./scripts/run-beta-smoke.sh
+          "${compose[@]}" logs --no-color --tail=300 backend \
+            > /tmp/rustshare-pilot-evidence/upgrade-backend.log
+          printf 'UPGRADE_STATUS=passed\nPREVIOUS_TAG=%s\nPREVIOUS_SHA=%s\n' \
+            "${previous_tag}" "${previous_sha}" \
+            > /tmp/rustshare-pilot-evidence/upgrade.env
+
+      - name: Clean up isolated upgrade stack
+        if: always()
+        env:
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
+        run: |
+          set -euo pipefail
+          docker compose \
+            --project-name rustshare-pilot-upgrade \
+            -f docker-compose.yml \
+            -f /tmp/rustshare-upgrade-ports.yml \
+            -f docker-compose.pilot.yml \
+            down -v --remove-orphans
+
+      - name: Validate representative upgrade migrations
+        env:
+          POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
+          DATABASE_URL: postgres://rustshare:${{ steps.pilot-secrets.outputs.pg_password }}@localhost:5432/rustshare
+        run: |
+          set -euo pipefail
+          if ! command -v sqlx >/dev/null 2>&1; then
+            cargo install sqlx-cli --locked --no-default-features --features postgres,rustls
+          fi
+          if scripts/test-application-migration.sh \
+            >/tmp/rustshare-pilot-evidence/migration.log 2>&1; then
+            printf 'MIGRATION_STATUS=passed\n' > /tmp/rustshare-pilot-evidence/migration.env
+          else
+            printf 'MIGRATION_STATUS=failed\n' > /tmp/rustshare-pilot-evidence/migration.env
+            cat /tmp/rustshare-pilot-evidence/migration.log
+            exit 1
+          fi
+
       - name: Show service status on failure
         if: failure()
         env:
@@ -107,12 +487,142 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.pilot.yml ps
           docker compose -f docker-compose.yml -f docker-compose.pilot.yml logs --tail=200
 
+      - name: Collect pilot evidence and diagnostics
+        if: always()
+        env:
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
+          JWT_SECRET: ${{ steps.pilot-secrets.outputs.jwt_secret }}
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ steps.pilot-secrets.outputs.encryption_key }}
+          RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
+          RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+          POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
+          RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+        run: |
+          set +e
+          collection_status=0
+          mkdir -p /tmp/rustshare-pilot-evidence
+          git rev-parse HEAD > /tmp/rustshare-pilot-evidence/source-sha.txt || collection_status=1
+          git status --short > /tmp/rustshare-pilot-evidence/source-status.txt || collection_status=1
+          docker compose -f docker-compose.yml -f docker-compose.pilot.yml ps \
+            > /tmp/rustshare-pilot-evidence/compose-ps.txt 2>&1 || collection_status=1
+          docker compose -f docker-compose.yml -f docker-compose.pilot.yml logs \
+            --no-color --tail=400 \
+            > /tmp/rustshare-pilot-evidence/compose-logs.raw.txt 2>&1 || collection_status=1
+          cp /tmp/rustshare-pilot-evidence/compose-logs.raw.txt \
+            /tmp/rustshare-pilot-evidence/compose-logs.txt || collection_status=1
+          for secret in "${JWT_SECRET}" "${RUSTSHARE_SECRET_ENCRYPTION_KEY}" \
+            "${RUSTSHARE_CHAT_WEBHOOK_SECRET}" "${RUSTSHARE_ADMIN_PASSWORD}" \
+            "${RUSTSHARE_DEMO_VIEWER_PASSWORD}" "${POSTGRES_PASSWORD}" \
+            "${RUSTFS_ROOT_PASSWORD}"; do
+            sed -i "s|${secret}|[REDACTED]|g" \
+              /tmp/rustshare-pilot-evidence/compose-logs.txt
+          done
+          curl --silent --show-error http://127.0.0.1/health \
+            > /tmp/rustshare-pilot-evidence/health-live.json 2>&1 || collection_status=1
+          curl --silent --show-error http://127.0.0.1/health/ready \
+            > /tmp/rustshare-pilot-evidence/health-ready-final.json 2>&1 || collection_status=1
+          sha256sum /tmp/pilot-compose.yaml \
+            > /tmp/rustshare-pilot-evidence/compose-config.sha256 || collection_status=1
+          printf 'EVIDENCE_COLLECTED_AT=%s\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > /tmp/rustshare-pilot-evidence/evidence-collection.env
+          secret_log_leak=0
+          if [[ ! -s /tmp/rustshare-pilot-evidence/compose-logs.raw.txt ]]; then
+            collection_status=1
+          else
+            for secret in "${JWT_SECRET}" "${RUSTSHARE_SECRET_ENCRYPTION_KEY}" \
+              "${RUSTSHARE_CHAT_WEBHOOK_SECRET}" "${RUSTSHARE_ADMIN_PASSWORD}" \
+              "${RUSTSHARE_DEMO_VIEWER_PASSWORD}" "${POSTGRES_PASSWORD}" \
+              "${RUSTFS_ROOT_PASSWORD}"; do
+              [[ -n "${secret}" ]] || continue
+              grep -F -q "${secret}" \
+                /tmp/rustshare-pilot-evidence/compose-logs.raw.txt
+              scan_status=$?
+              if [[ "${scan_status}" -eq 0 ]]; then
+                secret_log_leak=1
+              elif [[ "${scan_status}" -gt 1 ]]; then
+                collection_status=1
+              fi
+            done
+          fi
+          if [[ "${secret_log_leak}" -ne 0 ]]; then
+            printf 'SECRET_LOG_SCAN=failed\n' >> /tmp/rustshare-pilot-evidence/security-sanity.env
+          else
+            printf 'SECRET_LOG_SCAN=passed\n' >> /tmp/rustshare-pilot-evidence/security-sanity.env
+          fi
+          rm -f /tmp/rustshare-pilot-evidence/compose-logs.raw.txt
+          if [[ "${secret_log_leak}" -ne 0 || "${collection_status}" -ne 0 ]]; then
+            printf 'EVIDENCE_COLLECTION_STATUS=failed\n' \
+              > /tmp/rustshare-pilot-evidence/evidence-collection-status.env
+            exit 1
+          fi
+          printf 'EVIDENCE_COLLECTION_STATUS=passed\n' \
+            > /tmp/rustshare-pilot-evidence/evidence-collection-status.env
+
       - name: Tear down pilot stack
         if: always()
         env:
           RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
           RUSTSHARE_BACKEND_PULL_POLICY: never
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml down -v
+
+      - name: Write pilot workflow summary
+        if: always()
+        env:
+          PILOT_JOB_STATUS: ${{ job.status }}
+        run: |
+          if [[ "${PILOT_JOB_STATUS}" == "success" ]]; then
+            for evidence in \
+              pilot-identity.env \
+              canonical-smoke.env \
+              ui.env \
+              failure-drills.env \
+              persistence.env \
+              backup.env \
+              restore-persistence.env \
+              upgrade.env \
+              upgrade-previous.env \
+              upgrade-candidate.env \
+              migration.env \
+              security-sanity.env; do
+              [[ -s "/tmp/rustshare-pilot-evidence/${evidence}" ]] || {
+                echo "Missing mandatory pilot evidence: ${evidence}" >&2
+                exit 1
+              }
+            done
+            [[ -s "/tmp/rustshare-pilot-evidence/evidence-collection-status.env" ]] || {
+              echo "Missing evidence collection status" >&2
+              exit 1
+            }
+            shopt -s nullglob
+            restore_reports=(/tmp/rustshare-pilot-evidence/*-restore-drill.env)
+            (( ${#restore_reports[@]} > 0 )) || {
+              echo "Missing mandatory restore-drill evidence" >&2
+              exit 1
+            }
+            workflow_result=passed
+          else
+            workflow_result=failed
+          fi
+          cat > /tmp/rustshare-pilot-evidence/pilot-workflow-summary.env <<EOF
+          SOURCE_SHA=${GITHUB_SHA}
+          WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
+          WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
+          WORKFLOW_RESULT=${workflow_result}
+          READINESS_DECISION=NOT_READY_UNTIL_TARGET_ENVIRONMENT_ACCEPTANCE
+          FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
+
+      - name: Upload pilot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustshare-pilot-evidence-${{ github.sha }}
+          path: /tmp/rustshare-pilot-evidence
+          if-no-files-found: error
+          retention-days: 90
 
   publish-pilot-image:
     if: github.event_name == 'push'
@@ -154,7 +664,10 @@ jobs:
           for tag in $TAGS; do
             TAG_ARGS="$TAG_ARGS -t $IMAGE_NAME:$tag"
           done
-          docker build -f docker/backend.Dockerfile $TAG_ARGS .
+          docker build -f docker/backend.Dockerfile \
+            --build-arg VERSION="pilot-${GITHUB_SHA:0:12}" \
+            --build-arg REVISION="${GITHUB_SHA}" \
+            $TAG_ARGS .
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0

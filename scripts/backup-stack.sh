@@ -23,6 +23,7 @@ the dedicated Buzz PostgreSQL and RustFS state. Deployment secrets and
 in the encrypted secrets backup described by the Alpha runbook.
 
 Environment overrides:
+- COMPOSE_FILE (optional explicit Compose file list, separated by `:`)
 - POSTGRES_SERVICE (default: postgres)
 - POSTGRES_DB (default: rustshare)
 - POSTGRES_USER (default: rustshare)
@@ -105,7 +106,7 @@ fi
 
 cd "${PROJECT_ROOT}"
 
-if [[ -f .env ]]; then
+if [[ -f .env && -z "${DATABASE_URL:-}" && -z "${POSTGRES_PASSWORD:-}" ]]; then
 	# shellcheck disable=SC1091
 	set -a
 	. ./.env
@@ -125,9 +126,20 @@ if [[ -f .elembra/chat.env ]]; then
 fi
 
 compose() {
-	local files=(-f docker-compose.yml)
-	if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
-		files+=(-f docker-compose.pilot.yml)
+	local files=()
+	if [[ -n "${COMPOSE_FILE:-}" ]]; then
+		local compose_file
+		local separator="${COMPOSE_PATH_SEPARATOR:-:}"
+		local -a compose_files=()
+		IFS="${separator}" read -r -a compose_files <<<"${COMPOSE_FILE}"
+		for compose_file in "${compose_files[@]}"; do
+			files+=(-f "${compose_file}")
+		done
+	else
+		files=(-f docker-compose.yml)
+		if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
+			files+=(-f docker-compose.pilot.yml)
+		fi
 	fi
 	if [[ "${WITH_CHAT}" == true ]]; then
 		files+=(-f docker-compose.alpha.yml -f docker-compose.dogfood.yml)
