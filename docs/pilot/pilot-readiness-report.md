@@ -15,15 +15,16 @@ substitute for validation on the eventual FWS host.
 
 ## Revision and run identity
 
-- Assessment source SHA: `748b2fcb517c87331ba3c6491b2afffcfcd618cc`
-- Tested candidate revision: `b4b711a4c07bfb66b71b1b3279731008a0055d41`
-- Hosted workflow: [Pilot Release run 37148082023](https://github.com/kubedoio/rustshare/actions/runs/37148082023)
-- Hosted artifact: `rustshare-pilot-evidence-b4b711a4c07bfb66b71b1b3279731008a0055d41`
-- Hosted deployment identity: `github-actions-37148082023-1`
-- Image identity: `pilot-b4b711a4c07b`, OCI revision
-  `b4b711a4c07bfb66b71b1b3279731008a0055d41`
+- Assessment source SHA: `c3648fdb918ac2b7ff59952bc91e26cce66d5e70`
+- Tested candidate revision: `c3648fdb918ac2b7ff59952bc91e26cce66d5e70`
+- Hosted workflow: [Pilot Release run 37156360337](https://github.com/kubedoio/rustshare/actions/runs/37156360337)
+- Integration workflow: [Integration Tests run 37154953625](https://github.com/kubedoio/rustshare/actions/runs/37154953625)
+- Hosted artifact: `rustshare-pilot-evidence-c3648fdb918ac2b7ff59952bc91e26cce66d5e70`
+- Hosted deployment identity: `github-actions-37156360337-1`
+- Image identity: `pilot-c3648fdb918a`, OCI revision
+  `c3648fdb918ac2b7ff59952bc91e26cce66d5e70`
 - Configuration identity: Compose SHA-256
-  `22261f873bce35e00712c86167a51f096712fbb1c6f835b527f4e4a40ddaf25e`
+  `4f0abf3761db1a4e13ac7d72700d31be97a7f34b32131cf9dc6685d0f27228fb`
 - Target environment: isolated GitHub Actions Docker Compose runner; the
   FWS/Erasmus pilot environment remains unverified.
 
@@ -57,13 +58,17 @@ substitute for validation on the eventual FWS host.
   `d28816cbedaa877026cdd8bcb57274c54694e40a` to the candidate, including
   representative migration checks and post-upgrade persistence verification;
   evidence: `/tmp/rustshare-final-candidate-upgrade-evidence/`.
-- Hosted exact-candidate Pilot Release run 37148082023 — passed. The retained
+- Hosted exact-candidate Pilot Release run 37156360337 — passed. The retained
   artifact contains `pilot-identity.env`, canonical and restart persistence
   results, health/readiness responses, dependency failure drills, backup
   verification, restore verification, previous-release and candidate upgrade
   results, migration status, security sanity status, redacted logs and the
   machine-generated workflow summary.
-- Hosted evidence values: `WORKFLOW_RESULT=passed`,
+- Exact-candidate Integration Tests run 37154953625 — passed. Chat Product
+  Acceptance, clean deployment, canonical acceptance and data-preserving
+  stop/start passed; the run also passed Buzz conformance and the integration
+  suite.
+- Hosted evidence values from run 37156360337: `WORKFLOW_RESULT=passed`,
   `BETA_SMOKE_STATUS=passed`, `DATABASE_FAILURE_STATUS=passed`,
   `STORAGE_FAILURE_STATUS=passed`, `BACKUP_STATUS=passed`,
   `UPGRADE_STATUS=passed`, `MIGRATION_STATUS=passed`,
@@ -76,7 +81,7 @@ substitute for validation on the eventual FWS host.
 
 | Gate | Status | Evidence / gap |
 | --- | --- | --- |
-| Deploy/configure | HOSTED EXACT-CANDIDATE VERIFIED; FWS NOT VERIFIED | Run 37148082023 bound the image and Compose configuration to the tested SHA; clean FWS installation is not evidenced. |
+| Deploy/configure | HOSTED EXACT-CANDIDATE VERIFIED; FWS NOT VERIFIED | Run 37156360337 bound the image and Compose configuration to the tested SHA; clean FWS installation is not evidenced. |
 | Authenticate/authorize | HOSTED EXACT-CANDIDATE VERIFIED; FWS NOT VERIFIED | The smoke journey covers password login, protected resources, sharing and negative permission-aware search; target identity configuration remains unverified. |
 | Canonical product journey | HOSTED EXACT-CANDIDATE VERIFIED; FWS NOT VERIFIED | Files, Notes, search, authorization negative checks, sharing, audit, chat status and logout passed in the retained artifact. |
 | Restart/persistence | HOSTED EXACT-CANDIDATE VERIFIED; FWS NOT VERIFIED | Real Postgres/RustFS data survived application restart and re-authentication in the hosted run. |
