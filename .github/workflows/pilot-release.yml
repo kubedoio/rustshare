@@ -78,8 +78,8 @@ jobs:
         run: |
           mkdir -p /tmp/rustshare-pilot-evidence
           CONFIG_ID="$(sha256sum /tmp/pilot-compose.yaml | cut -d' ' -f1)"
-          IMAGE_VERSION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels \"org.opencontainers.image.version\"}}')"
-          IMAGE_REVISION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels \"org.opencontainers.image.revision\"}}')"
+          IMAGE_VERSION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+          IMAGE_REVISION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
           cat > /tmp/rustshare-pilot-evidence/pilot-identity.env <<EOF
           SOURCE_SHA=${GITHUB_SHA}
           SOURCE_STATUS=$(git status --porcelain)
@@ -453,12 +453,16 @@ jobs:
           RUSTSHARE_BACKEND_PULL_POLICY: never
         run: |
           set -euo pipefail
-          docker compose \
-            --project-name rustshare-pilot-upgrade \
-            -f docker-compose.yml \
-            -f /tmp/rustshare-upgrade-ports.yml \
-            -f docker-compose.pilot.yml \
-            down -v --remove-orphans
+          if [[ -f /tmp/rustshare-upgrade-ports.yml ]]; then
+            docker compose \
+              --project-name rustshare-pilot-upgrade \
+              -f docker-compose.yml \
+              -f /tmp/rustshare-upgrade-ports.yml \
+              -f docker-compose.pilot.yml \
+              down -v --remove-orphans
+          else
+            echo "No isolated upgrade stack was created; cleanup not required."
+          fi
 
       - name: Validate representative upgrade migrations
         env:
