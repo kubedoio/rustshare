@@ -8,6 +8,11 @@ restart/persistence, dependency failure and recovery, backup/restore, and a
 previous-release upgrade. The FWS/Erasmus target environment has not yet been
 clean-installed and accepted, so this evidence does not authorize real users.
 
+The deferred FWS configuration and acceptance work is tracked in
+[#335](https://github.com/kubedoio/rustshare/issues/335). The repository-level
+gate remains useful and authoritative for the tested revision, but it cannot
+substitute for validation on the eventual FWS host.
+
 ## Revision and run identity
 
 - Assessment source SHA: `748b2fcb517c87331ba3c6491b2afffcfcd618cc`
@@ -81,7 +86,8 @@ clean-installed and accepted, so this evidence does not authorize real users.
 
 ## Unresolved risks
 
-1. **High — FWS clean install and recovery unverified.** Repository scripts are
+1. **High — FWS clean install and recovery unverified.** Tracked by
+   [#335](https://github.com/kubedoio/rustshare/issues/335). Repository scripts are
    not evidence of the target host’s Docker, TLS, secret-store and volume
    behavior. Workaround: execute the runbook on an isolated FWS host before
    inviting users.
