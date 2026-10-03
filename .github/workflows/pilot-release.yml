@@ -374,17 +374,17 @@ jobs:
           cat > /tmp/rustshare-upgrade-ports.yml <<'EOF'
           services:
             postgres:
-              ports:
+              ports: !override
                 - "25432:5432"
             rustfs:
-              ports:
+              ports: !override
                 - "29000:9000"
                 - "29001:9001"
             backend:
-              ports:
+              ports: !override
                 - "28082:8080"
             nginx:
-              ports:
+              ports: !override
                 - "28080:80"
           EOF
 
