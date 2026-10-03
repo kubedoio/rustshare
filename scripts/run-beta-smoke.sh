@@ -24,6 +24,11 @@ set -euo pipefail
 # - REQUIRE_CHAT (default: unset — chat status must respond but may be
 #   unconfigured; set to 1 to fail when chat is not fully configured)
 # - REPORT_DIR (default: ./beta-smoke-reports)
+# - PILOT_REPORT_PATH (optional exact report path)
+# - PILOT_SOURCE_SHA, PILOT_BUILD_VERSION, PILOT_DEPLOYMENT_ID and
+#   PILOT_CONFIG_ID (evidence identity fields)
+# - PILOT_PRESERVE_DATA=1 (leave the representative data for restart/restore)
+# - PILOT_VERIFY_STATE_FILE (verify data identified by a prior report)
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -97,6 +102,12 @@ elif isinstance(value, (dict, list)):
 else:
     print(value)
 PY
+}
+
+state_get() {
+	local key="$1"
+	awk -F= -v key="${key}" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' \
+		"${PILOT_VERIFY_STATE_FILE}"
 }
 
 run_json_request() {
@@ -181,7 +192,8 @@ csrf_json_request() {
 	local body="${3:-}"
 	local cookie_jar="$4"
 	local output_file="$5"
-	run_json_request "$method" "$url" "$body" "${cookie_jar}" "${output_file}" "X-Rustshare-Csrf: $(csrf_token_from_jar "${cookie_jar}")"
+	local expect_2xx="${6:-1}"
+	run_json_request "$method" "$url" "$body" "${cookie_jar}" "${output_file}" "X-Rustshare-Csrf: $(csrf_token_from_jar "${cookie_jar}")" "${expect_2xx}"
 }
 
 # Retrieve the one-time bootstrap admin password from the backend container,
@@ -213,14 +225,22 @@ write_report() {
 	mkdir -p "${REPORT_DIR}"
 	cat >"${REPORT_PATH}" <<EOF
 BETA_SMOKE_STATUS=${status}
+BETA_SMOKE_MODE=${PILOT_MODE}
 BETA_SMOKE_STARTED_AT=${STARTED_AT}
 BETA_SMOKE_FINISHED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 BETA_SMOKE_BASE_URL=${BASE_URL}
+BETA_SMOKE_SOURCE_SHA=${PILOT_SOURCE_SHA}
+BETA_SMOKE_BUILD_VERSION=${PILOT_BUILD_VERSION}
+BETA_SMOKE_DEPLOYMENT_ID=${PILOT_DEPLOYMENT_ID}
+BETA_SMOKE_CONFIG_ID=${PILOT_CONFIG_ID}
+BETA_SMOKE_FAILURE_PHASE=${CURRENT_PHASE}
+BETA_SMOKE_PRESERVE_DATA=${PILOT_PRESERVE_DATA}
 ADMIN_EMAIL=${ADMIN_EMAIL}
 VIEWER_EMAIL=${VIEWER_EMAIL}
 SMOKE_FOLDER_ID=${SMOKE_FOLDER_ID:-}
 SMOKE_FILE_ID=${SMOKE_FILE_ID:-}
 SMOKE_NOTE_ID=${SMOKE_NOTE_ID:-}
+SMOKE_NOTE_TITLE=${SMOKE_NOTE_TITLE:-}
 SEARCH_NEEDLE=${SEARCH_NEEDLE:-}
 CHAT_STATUS_HTTP=${CHAT_STATUS_HTTP:-}
 REPORT_DETAILS=${details}
@@ -231,13 +251,50 @@ require_command curl
 require_command python3
 require_command cmp
 
+PILOT_MODE="${PILOT_MODE:-canonical}"
+PILOT_SOURCE_SHA="${PILOT_SOURCE_SHA:-unknown}"
+PILOT_BUILD_VERSION="${PILOT_BUILD_VERSION:-unknown}"
+PILOT_DEPLOYMENT_ID="${PILOT_DEPLOYMENT_ID:-unknown}"
+PILOT_CONFIG_ID="${PILOT_CONFIG_ID:-unknown}"
+PILOT_PRESERVE_DATA="${PILOT_PRESERVE_DATA:-0}"
+PILOT_VERIFY_STATE_FILE="${PILOT_VERIFY_STATE_FILE:-}"
+CURRENT_PHASE="bootstrap"
+
 BASE_URL="${BASE_URL:-http://localhost}"
 API_BASE_URL="${API_BASE_URL:-${BASE_URL%/}/api/v1}"
-ADMIN_EMAIL="${ADMIN_EMAIL:-admin@localhost}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-${RUSTSHARE_ADMIN_EMAIL:-admin@localhost}}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-${RUSTSHARE_ADMIN_PASSWORD:-}}"
-VIEWER_EMAIL="${VIEWER_EMAIL:-viewer@localhost}"
+VIEWER_EMAIL="${VIEWER_EMAIL:-${RUSTSHARE_DEMO_VIEWER_EMAIL:-viewer@localhost}}"
 VIEWER_PASSWORD="${VIEWER_PASSWORD:-${RUSTSHARE_DEMO_VIEWER_PASSWORD:-}}"
 REPORT_DIR="${REPORT_DIR:-$(pwd)/beta-smoke-reports}"
+STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+REPORT_PATH="${REPORT_DIR%/}/$(date -u +%Y%m%dT%H%M%SZ)-$$-beta-smoke.env"
+if [[ -n "${PILOT_REPORT_PATH:-}" ]]; then
+	REPORT_PATH="${PILOT_REPORT_PATH}"
+fi
+
+TMP_DIR=""
+cleanup() {
+	if [[ -n "${TMP_DIR}" ]]; then
+		rm -rf "${TMP_DIR}"
+	fi
+}
+# Failure reporting keys off the exit code, not the ERR trap: bash does not
+# fire ERR for explicit `exit 1` branches, which this script uses for every
+# assertion failure. On success the passed report is written by the main
+# flow before exit 0.
+on_exit() {
+	local code=$?
+	if [[ "${code}" -ne 0 ]]; then
+		write_report "failed" "Beta smoke failed during phase ${CURRENT_PHASE}."
+	fi
+	if ! cleanup; then
+		code=1
+		write_report "failed" "Beta smoke cleanup failed after phase ${CURRENT_PHASE}."
+	fi
+	return "${code}"
+}
+trap on_exit EXIT
 
 if [[ -z "${ADMIN_PASSWORD}" ]]; then
 	if ADMIN_PASSWORD="$(read_bootstrap_admin_password)"; then
@@ -253,27 +310,9 @@ if [[ -z "${VIEWER_PASSWORD}" ]]; then
 	exit 1
 fi
 
-STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-REPORT_PATH="${REPORT_DIR%/}/$(date -u +%Y%m%dT%H%M%SZ)-$$-beta-smoke.env"
-
 TMP_DIR="$(mktemp -d)"
 ADMIN_COOKIES="${TMP_DIR}/admin.cookies"
 VIEWER_COOKIES="${TMP_DIR}/viewer.cookies"
-cleanup() {
-	rm -rf "${TMP_DIR}"
-}
-# Failure reporting keys off the exit code, not the ERR trap: bash does not
-# fire ERR for explicit `exit 1` branches, which this script uses for every
-# assertion failure. On success the passed report is written by the main
-# flow before exit 0.
-on_exit() {
-	local code=$?
-	if [[ "${code}" -ne 0 ]]; then
-		write_report "failed" "Beta smoke failed with exit code ${code}. Inspect the command output and server logs."
-	fi
-	cleanup
-}
-trap on_exit EXIT
 
 LOGIN_ADMIN="${TMP_DIR}/login-admin.json"
 LOGIN_VIEWER="${TMP_DIR}/login-viewer.json"
@@ -285,6 +324,7 @@ DOWNLOAD_RESPONSE="${TMP_DIR}/download.bin"
 CREATE_NOTE_RESPONSE="${TMP_DIR}/create-note.json"
 GET_NOTE_RESPONSE="${TMP_DIR}/get-note.json"
 SAVE_NOTE_RESPONSE="${TMP_DIR}/save-note.json"
+RENAME_NOTE_RESPONSE="${TMP_DIR}/rename-note.json"
 LIST_NOTES_RESPONSE="${TMP_DIR}/list-notes.json"
 SEARCH_RESPONSE="${TMP_DIR}/search.json"
 VIEWER_SEARCH_RESPONSE="${TMP_DIR}/viewer-search.json"
@@ -301,8 +341,10 @@ POST_LOGOUT_ME_RESPONSE="${TMP_DIR}/post-logout-me.json"
 PRIVATE_FILE_PATH="${TMP_DIR}/beta-private.txt"
 printf 'beta-private-%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >"${PRIVATE_FILE_PATH}"
 SEARCH_NEEDLE="betasearch-$(date -u +%s)"
+PRIVATE_FILE_NAME="beta-private-${SEARCH_NEEDLE}.txt"
 
 echo "0. Verifying backend readiness..."
+CURRENT_PHASE="readiness"
 READY_ATTEMPTS=0
 until curl -fsS "${BASE_URL}/health/ready" >"${HEALTH_READY_RESPONSE}" 2>/dev/null; do
 	READY_ATTEMPTS=$((READY_ATTEMPTS + 1))
@@ -314,6 +356,7 @@ until curl -fsS "${BASE_URL}/health/ready" >"${HEALTH_READY_RESPONSE}" 2>/dev/nu
 done
 
 echo "1. Logging in as admin and viewer..."
+CURRENT_PHASE="authentication"
 login_with_password "${ADMIN_EMAIL}" "${ADMIN_PASSWORD}" "${ADMIN_COOKIES}" "${LOGIN_ADMIN}"
 [[ "$(json_get "${LOGIN_ADMIN}" "user.email")" == "${ADMIN_EMAIL}" ]] || {
 	echo "Admin login returned the wrong user" >&2
@@ -325,12 +368,67 @@ login_with_password "${VIEWER_EMAIL}" "${VIEWER_PASSWORD}" "${VIEWER_COOKIES}" "
 	exit 1
 }
 
+if [[ -n "${PILOT_VERIFY_STATE_FILE}" ]]; then
+	CURRENT_PHASE="persistence"
+	[[ -f "${PILOT_VERIFY_STATE_FILE}" ]] || {
+		echo "Persistence state file not found: ${PILOT_VERIFY_STATE_FILE}" >&2
+		exit 1
+	}
+	VERIFY_NOTE_ID="$(state_get SMOKE_NOTE_ID)"
+	VERIFY_FILE_ID="$(state_get SMOKE_FILE_ID)"
+	VERIFY_NOTE_TITLE="$(state_get SMOKE_NOTE_TITLE)"
+	VERIFY_SEARCH_NEEDLE="$(state_get SEARCH_NEEDLE)"
+	[[ -n "${VERIFY_NOTE_ID}" && -n "${VERIFY_FILE_ID}" && -n "${VERIFY_NOTE_TITLE}" && -n "${VERIFY_SEARCH_NEEDLE}" ]] || {
+		echo "Persistence state file is missing smoke identifiers" >&2
+		exit 1
+	}
+
+	echo "2p. Verifying the persisted Note after restart/restore..."
+	run_json_request "GET" "${API_BASE_URL}/notes/${VERIFY_NOTE_ID}" "" "${ADMIN_COOKIES}" "${GET_NOTE_RESPONSE}"
+	python3 - "${GET_NOTE_RESPONSE}" "${VERIFY_SEARCH_NEEDLE}" "${VERIFY_NOTE_TITLE}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+needle = "updated needle " + sys.argv[2]
+if needle not in payload.get("content", ""):
+    raise SystemExit("persisted note content marker was not found")
+if "# Beta Smoke H1" not in payload.get("content", ""):
+    raise SystemExit("persisted note H1 was not preserved")
+if payload.get("metadata", {}).get("title") != sys.argv[3]:
+    raise SystemExit("persisted note title was not preserved")
+PY
+
+	echo "3p. Verifying the persisted File after restart/restore..."
+	PERSISTED_DOWNLOAD="${TMP_DIR}/persisted-download.bin"
+	PERSISTED_DOWNLOAD_STATUS="$(
+		curl -sS -X GET -o "${PERSISTED_DOWNLOAD}" -w "%{http_code}" \
+			-b "${ADMIN_COOKIES}" -c "${ADMIN_COOKIES}" \
+			"${API_BASE_URL}/files/${VERIFY_FILE_ID}/download"
+	)"
+	[[ "${PERSISTED_DOWNLOAD_STATUS}" == 2* && -s "${PERSISTED_DOWNLOAD}" ]] || {
+		echo "Persisted file download failed with status ${PERSISTED_DOWNLOAD_STATUS}" >&2
+		exit 1
+	}
+
+	SMOKE_NOTE_TITLE="${VERIFY_NOTE_TITLE}"
+	CURRENT_PHASE="complete"
+	write_report "passed" "Persistence verification completed successfully."
+	echo "Persistence verification passed."
+	echo "Report written to ${REPORT_PATH}"
+	exit 0
+fi
+
 echo "2. Verifying root listing..."
+CURRENT_PHASE="files"
 run_json_request "GET" "${API_BASE_URL}/folders/root/contents" "" "${ADMIN_COOKIES}" "${ROOT_RESPONSE}"
 json_get "${ROOT_RESPONSE}" "files" >/dev/null
 json_get "${ROOT_RESPONSE}" "folders" >/dev/null
 
 echo "3. Creating a smoke folder and uploading a private file..."
+CURRENT_PHASE="files"
 FOLDER_PAYLOAD="$(python3 - <<'PY'
 import json
 print(json.dumps({"name": "Beta Smoke", "parent_folder_id": None}))
@@ -345,7 +443,7 @@ UPLOAD_STATUS="$(
 		-b "${ADMIN_COOKIES}" -c "${ADMIN_COOKIES}" \
 		-H "X-Rustshare-Csrf: ${CSRF_TOKEN}" \
 		-F "file=@${PRIVATE_FILE_PATH}" \
-		-F "name=beta-private.txt" \
+		-F "name=${PRIVATE_FILE_NAME}" \
 		-F "parent_folder_id=${SMOKE_FOLDER_ID}" \
 		"${API_BASE_URL}/files/upload"
 )"
@@ -357,6 +455,7 @@ UPLOAD_STATUS="$(
 SMOKE_FILE_ID="$(json_get "${UPLOAD_RESPONSE}" "id")"
 
 echo "4. Validating private streamed download..."
+CURRENT_PHASE="files"
 DOWNLOAD_STATUS="$(
 	curl -sS -X GET -o "${DOWNLOAD_RESPONSE}" -w "%{http_code}" \
 		-b "${ADMIN_COOKIES}" -c "${ADMIN_COOKIES}" \
@@ -372,28 +471,73 @@ cmp -s "${PRIVATE_FILE_PATH}" "${DOWNLOAD_RESPONSE}" || {
 }
 
 echo "5. Creating a note, reading and updating it..."
-NOTE_PAYLOAD="$(python3 - <<PY
+CURRENT_PHASE="notes"
+NOTE_TITLE="Beta Smoke ${SEARCH_NEEDLE}"
+NOTE_PAYLOAD="$(python3 - "${NOTE_TITLE}" "${SEARCH_NEEDLE}" "${SMOKE_FOLDER_ID}" <<'PY'
 import json
-print(json.dumps({"title": "Beta Smoke Note", "content": "needle ${SEARCH_NEEDLE}", "parent_folder_id": "${SMOKE_FOLDER_ID}"}))
+import sys
+print(json.dumps({
+    "title": sys.argv[1],
+    "content": "needle " + sys.argv[2],
+    "parent_folder_id": sys.argv[3],
+}))
 PY
 )"
 csrf_json_request "POST" "${API_BASE_URL}/notes" "${NOTE_PAYLOAD}" "${ADMIN_COOKIES}" "${CREATE_NOTE_RESPONSE}"
 SMOKE_NOTE_ID="$(json_get "${CREATE_NOTE_RESPONSE}" "id")"
+SMOKE_NOTE_TITLE="${NOTE_TITLE}"
 run_json_request "GET" "${API_BASE_URL}/notes/${SMOKE_NOTE_ID}" "" "${ADMIN_COOKIES}" "${GET_NOTE_RESPONSE}"
 SAVE_NOTE_PAYLOAD="$(python3 - "${SEARCH_NEEDLE}" <<'PY'
 import json
 import sys
 # SaveNoteRequest has no title field: only content/color/attachments.
-print(json.dumps({"content": "updated needle " + sys.argv[1]}))
+print(json.dumps({"content": "# Beta Smoke H1\n\nupdated needle " + sys.argv[1]}))
 PY
 )"
 csrf_json_request "PUT" "${API_BASE_URL}/notes/${SMOKE_NOTE_ID}" "${SAVE_NOTE_PAYLOAD}" "${ADMIN_COOKIES}" "${SAVE_NOTE_RESPONSE}"
+run_json_request "GET" "${API_BASE_URL}/notes/${SMOKE_NOTE_ID}" "" "${ADMIN_COOKIES}" "${GET_NOTE_RESPONSE}"
+python3 - "${GET_NOTE_RESPONSE}" "${SMOKE_NOTE_TITLE}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+if payload.get("metadata", {}).get("title") != sys.argv[2]:
+    raise SystemExit("editing the H1 unexpectedly renamed the note")
+if "# Beta Smoke H1" not in payload.get("content", ""):
+    raise SystemExit("edited note H1 was not preserved")
+PY
+
+RENAMED_NOTE_TITLE="Beta Smoke Renamed ${SEARCH_NEEDLE}"
+RENAME_NOTE_PAYLOAD="$(python3 - "${RENAMED_NOTE_TITLE}" <<'PY'
+import json
+import sys
+print(json.dumps({"title": sys.argv[1]}))
+PY
+)"
+csrf_json_request "POST" "${API_BASE_URL}/notes/${SMOKE_NOTE_ID}/rename" "${RENAME_NOTE_PAYLOAD}" "${ADMIN_COOKIES}" "${RENAME_NOTE_RESPONSE}"
+SMOKE_NOTE_TITLE="${RENAMED_NOTE_TITLE}"
+run_json_request "GET" "${API_BASE_URL}/notes/${SMOKE_NOTE_ID}" "" "${ADMIN_COOKIES}" "${GET_NOTE_RESPONSE}"
+python3 - "${GET_NOTE_RESPONSE}" "${SMOKE_NOTE_TITLE}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+if payload.get("metadata", {}).get("title") != sys.argv[2]:
+    raise SystemExit("explicit note rename was not persisted")
+if "# Beta Smoke H1" not in payload.get("content", ""):
+    raise SystemExit("explicit note rename changed the Markdown H1")
+PY
 run_json_request "GET" "${API_BASE_URL}/notes" "" "${ADMIN_COOKIES}" "${LIST_NOTES_RESPONSE}"
 
 echo "6. Verifying permission-aware search finds the note..."
-# Search runs with a bounded retry: the notes/chat projection is fed through
-# the durable outbox, so a freshly created note may take a few seconds to
-# become searchable.
+CURRENT_PHASE="search"
+# Search runs with a bounded retry because a freshly created note may take a
+# few seconds to appear in the name/path index. The unique marker is in the
+# note title, while the body/H1 assertions above cover Markdown content.
 SEARCH_PAYLOAD="$(python3 - "${SEARCH_NEEDLE}" <<'PY'
 import json
 import sys
@@ -402,14 +546,14 @@ PY
 )"
 SEARCH_OK=0
 for _ in $(seq 1 10); do
-	# Non-2xx is tolerated inside the retry window; the projection is fed
-	# through the durable outbox and may briefly lag.
-	SEARCH_HTTP="$(run_json_request "POST" "${API_BASE_URL}/search" "${SEARCH_PAYLOAD}" "${ADMIN_COOKIES}" "${SEARCH_RESPONSE}" "" "0")"
+	# Non-2xx is tolerated inside the bounded retry window while the new
+	# metadata row becomes visible through the normal request path.
+	SEARCH_HTTP="$(csrf_json_request "POST" "${API_BASE_URL}/search" "${SEARCH_PAYLOAD}" "${ADMIN_COOKIES}" "${SEARCH_RESPONSE}" "0")"
 	if [[ "${SEARCH_HTTP}" != 2* ]]; then
 		sleep 3
 		continue
 	fi
-	if python3 - "${SEARCH_RESPONSE}" <<'PY'; then
+	if python3 - "${SEARCH_RESPONSE}" "${SEARCH_NEEDLE}" <<'PY'; then
 import json
 import sys
 
@@ -419,7 +563,7 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
 results = payload.get("results") or payload.get("items") or []
 if not isinstance(results, list):
     raise SystemExit(1)
-needle = "needle betasearch-"
+needle = sys.argv[2]
 if not any(needle in json.dumps(item) for item in results):
     raise SystemExit(1)
 PY
@@ -429,19 +573,21 @@ PY
 	sleep 3
 done
 [[ "${SEARCH_OK}" == "1" ]] || {
+	cp "${SEARCH_RESPONSE}" "${REPORT_DIR%/}/search-failure-response.json" 2>/dev/null || true
 	echo "Search did not surface the smoke note (query: ${SEARCH_NEEDLE}) within 30s" >&2
 	exit 1
 }
 
 echo "6b. Verifying search is permission-aware (viewer must NOT find the note)..."
+CURRENT_PHASE="authorization"
 # The viewer holds no share on the smoke note; permission-aware search must
 # not surface it. This is the negative half of the search evidence.
-VIEWER_SEARCH_HTTP="$(run_json_request "POST" "${API_BASE_URL}/search" "${SEARCH_PAYLOAD}" "${VIEWER_COOKIES}" "${VIEWER_SEARCH_RESPONSE}" "" "0")"
+VIEWER_SEARCH_HTTP="$(csrf_json_request "POST" "${API_BASE_URL}/search" "${SEARCH_PAYLOAD}" "${VIEWER_COOKIES}" "${VIEWER_SEARCH_RESPONSE}" "0")"
 if [[ "${VIEWER_SEARCH_HTTP}" != 2* ]]; then
 	echo "Viewer search request failed with ${VIEWER_SEARCH_HTTP}" >&2
 	exit 1
 fi
-if ! python3 - "${VIEWER_SEARCH_RESPONSE}" <<'PY'; then
+if ! python3 - "${VIEWER_SEARCH_RESPONSE}" "${SEARCH_NEEDLE}" <<'PY'; then
 import json
 import sys
 
@@ -451,7 +597,7 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
 results = payload.get("results") or payload.get("items") or []
 if not isinstance(results, list):
     raise SystemExit(1)
-needle = "betasearch-"
+needle = sys.argv[2]
 leaked = [item for item in results if needle in json.dumps(item)]
 if leaked:
     raise SystemExit(1)
@@ -461,6 +607,7 @@ PY
 fi
 
 echo "7. Checking chat application status..."
+CURRENT_PHASE="collaboration"
 CHAT_STATUS_HTTP="$(run_json_request "GET" "${API_BASE_URL}/applications/chat/status" "" "${ADMIN_COOKIES}" "${CHAT_STATUS_RESPONSE}" "" "0")"
 if [[ "${CHAT_STATUS_HTTP}" != 2* ]]; then
 	echo "Chat status endpoint returned ${CHAT_STATUS_HTTP}" >&2
@@ -489,6 +636,7 @@ PY
 fi
 
 echo "8. Creating and revoking an internal share..."
+CURRENT_PHASE="sharing"
 INTERNAL_SHARE_PAYLOAD="$(python3 - "$VIEWER_EMAIL" <<'PY'
 import json
 import sys
@@ -515,6 +663,7 @@ fi
 csrf_json_request "DELETE" "${API_BASE_URL}/shares/${INTERNAL_SHARE_ID}/recipient" "" "${ADMIN_COOKIES}" "${REVOKE_INTERNAL_SHARE_RESPONSE}"
 
 echo "9. Verifying the admin audit log records smoke activity..."
+CURRENT_PHASE="observability"
 # AuditLogQuery paginates with page/per_page (not limit).
 AUDIT_HTTP="$(run_json_request "GET" "${API_BASE_URL}/admin/audit?per_page=20" "" "${ADMIN_COOKIES}" "${AUDIT_RESPONSE}")"
 [[ "${AUDIT_HTTP}" == 2* ]] || {
@@ -539,10 +688,16 @@ PY
 fi
 
 echo "10. Cleaning up smoke artifacts..."
-csrf_json_request "DELETE" "${API_BASE_URL}/notes/${SMOKE_NOTE_ID}" "" "${ADMIN_COOKIES}" "${DELETE_NOTE_RESPONSE}"
-csrf_json_request "DELETE" "${API_BASE_URL}/folders/${SMOKE_FOLDER_ID}" "" "${ADMIN_COOKIES}" "${DELETE_FOLDER_RESPONSE}"
+CURRENT_PHASE="cleanup"
+if [[ "${PILOT_PRESERVE_DATA}" == "1" ]]; then
+	echo "Preserving representative pilot data for the restart/restore checks."
+else
+	csrf_json_request "DELETE" "${API_BASE_URL}/notes/${SMOKE_NOTE_ID}" "" "${ADMIN_COOKIES}" "${DELETE_NOTE_RESPONSE}"
+	csrf_json_request "DELETE" "${API_BASE_URL}/folders/${SMOKE_FOLDER_ID}" "" "${ADMIN_COOKIES}" "${DELETE_FOLDER_RESPONSE}"
+fi
 
 echo "11. Verifying logout..."
+CURRENT_PHASE="logout"
 csrf_json_request "POST" "${API_BASE_URL}/auth/logout" "{}" "${ADMIN_COOKIES}" "${LOGOUT_RESPONSE}"
 POST_LOGOUT_STATUS="$(
 	curl -sS -o "${POST_LOGOUT_ME_RESPONSE}" -w "%{http_code}" \
@@ -554,6 +709,7 @@ POST_LOGOUT_STATUS="$(
 	exit 1
 }
 
+CURRENT_PHASE="complete"
 write_report "passed" "Beta smoke completed successfully."
 
 echo "Beta smoke passed."

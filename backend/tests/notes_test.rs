@@ -1112,7 +1112,7 @@ async fn contract_rename_note_preserves_okf_id_and_updates_frontmatter() {
             tenant_id,
             Some("Original Title".to_string()),
             None,
-            None,
+            Some("Original body".to_string()),
         )
         .await
         .unwrap();
@@ -1144,6 +1144,34 @@ async fn contract_rename_note_preserves_okf_id_and_updates_frontmatter() {
     assert!(renamed.content.contains("title: Renamed Title"));
     assert!(renamed.content.contains("bundle_name: Renamed Title"));
     assert!(renamed.content.contains(&format!("id: {original_okf_id}")));
+    // ADR-0029: an explicit note rename must not rewrite the first Markdown
+    // H1, which is ordinary document content.
+    assert!(renamed.content.contains("# Original Title"));
+    assert!(!renamed.content.contains("# Renamed Title"));
+
+    // Reloading preserves both independent values.
+    let reopened = service.get_note(note.id, user.id, tenant_id).await.unwrap();
+    assert_eq!(reopened.metadata.title, "Renamed Title");
+    assert!(reopened.content.contains("# Original Title"));
+
+    // Editing the H1 keeps the renamed note/file identity unchanged.
+    let edited = service
+        .save_note(
+            note.id,
+            user.id,
+            tenant_id,
+            "# Edited H1\n\nUpdated body".to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(edited.metadata.title, "Renamed Title");
+    assert!(edited.content.contains("# Edited H1"));
+
+    let reloaded_after_h1_edit = service.get_note(note.id, user.id, tenant_id).await.unwrap();
+    assert_eq!(reloaded_after_h1_edit.metadata.title, "Renamed Title");
+    assert!(reloaded_after_h1_edit.content.contains("# Edited H1"));
 
     // Manifest title updated.
     let rustshare_folder = metadata_store
