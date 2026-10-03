@@ -191,6 +191,18 @@ jobs:
 
       - name: Exercise bounded dependency failure and recovery
         env:
+          JWT_SECRET: ${{ secrets.CI_JWT_SECRET != '' && secrets.CI_JWT_SECRET || steps.pilot-secrets.outputs.jwt_secret }}
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY != '' && secrets.CI_ENCRYPTION_KEY || steps.pilot-secrets.outputs.encryption_key }}
+          POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
+          DATABASE_URL: postgres://rustshare:${{ steps.pilot-secrets.outputs.pg_password }}@postgres:5432/rustshare
+          RUSTFS_ROOT_USER: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          AWS_ACCESS_KEY_ID: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: "true"
+          RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
+          RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
           RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
           RUSTSHARE_BACKEND_PULL_POLICY: never
         run: |
