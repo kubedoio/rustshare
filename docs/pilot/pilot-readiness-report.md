@@ -5,11 +5,11 @@
 The previously deployed FWS candidate passed the repository Pilot Release
 gate, public load-balanced journey, clean deployment, restart/persistence,
 backup/restore, bounded dependency failure/recovery, and supported upgrade
-checks recorded below. This report now evaluates the tightened
-pre-pilot-user contract, which adds explicit account reset/change/offboarding
-acceptance. The updated authoritative workflow has not yet run for the current
-workspace changes, so there is no exact tested revision or machine evidence for
-that mandatory gate.
+checks recorded below. The updated authoritative workflow has now passed for
+an exact isolated CI candidate and produced account-lifecycle evidence. That
+candidate has not yet been deployed to FWS, and the second-operator lifecycle
+and recovery rehearsal remains outstanding; the pilot therefore remains NOT
+READY under the participant-start contract.
 
 The previous **READY WITH ACCEPTED LIMITATIONS** conclusion applied to the
 earlier bounded password-login baseline. It does not carry forward as approval
@@ -33,6 +33,20 @@ imply OIDC-provider acceptance.
   - [Pilot Release run 37156360337](https://github.com/kubedoio/rustshare/actions/runs/37156360337)
   - [Integration Tests run 37154953625](https://github.com/kubedoio/rustshare/actions/runs/37154953625)
   - [final branch checks run 37158465897](https://github.com/kubedoio/rustshare/actions/runs/37158465897)
+- Updated isolated CI candidate evidence:
+  - Source SHA: `83bd70406f9fb7e2d040a2fe95d35e9cfd0f4de4`
+  - Build/version: `pilot-83bd70406f9f`; deployment identity:
+    `github-actions-37206208388-1`; configuration identity:
+    `3dd95a1417e1ed14ac6347094d34e0b5255696d1b5ba4b5b443c93b0d7bb6cc7`
+  - [Pilot Release workflow_dispatch run 37206208388](https://github.com/kubedoio/rustshare/actions/runs/37206208388):
+    success, 2026-10-04 13:36:21–14:17:18 UTC.
+  - Machine artifact:
+    `rustshare-pilot-evidence-83bd70406f9fb7e2d040a2fe95d35e9cfd0f4de4`
+    (140,603 bytes; GitHub expiry 2027-01-02 13:36:18 UTC). It records
+    `BETA_SMOKE_USER_LIFECYCLE=passed`, successful restart/persistence,
+    backup/restore, previous-release upgrade, migrations, bounded failure
+    recovery, and security-sanity markers. The artifact's evidence-collection
+    and secret-log-scan markers passed.
 
 The machine-generated host identity is
 `/var/backups/rustshare/fws-evidence-20261004/pilot-identity.env`. It contains
@@ -50,6 +64,7 @@ no passwords, tokens, cookies, private keys, or database credentials.
 | Backup | PASS | Bundle `/var/backups/rustshare/20261004T000917Z`; structural verification passed for PostgreSQL, RustFS, configuration, manifest and SHA-256 checksums. |
 | Restore | PASS | `fws-restore-persistence.env` and restore-drill report: isolated Compose restore followed by representative data verification. |
 | Upgrade | PASS for supported path | The authoritative Pilot Release workflow upgrades `v0.8.0-alpha.5` to the candidate. The FWS candidate also verified Note/File data after replacement and 102 migrations through `20261002100000`. |
+| Account lifecycle | PASS in isolated candidate CI; operator rehearsal pending | Run 37206208388's canonical report records `BETA_SMOKE_USER_LIFECYCLE=passed`: create, admin reset, session revocation, old-password denial, self-service password change, disable/offboarding, denial, and cleanup. This does not prove the FWS deployment or two-admin recovery rehearsal. |
 | Health/diagnostics | PASS | `/health` remained 200 while PostgreSQL was stopped; `/health/ready` returned 503 with `database connectivity failed`, then recovered. RustFS failure returned 503 with `object storage check failed`, then recovered. |
 | Observability | PASS | Startup/migration/dependency logs, liveness/readiness component diagnostics, smoke phase reports and redacted failure evidence are retained. |
 | Security sanity | PASS for bounded pilot | Secure cookies, public HTTPS origin, protected routes and secret-redaction checks passed. OIDC provider acceptance is intentionally outside the password-login pilot. |
@@ -72,20 +87,28 @@ no passwords, tokens, cookies, private keys, or database credentials.
    were also verified on the host.
 7. PostgreSQL and RustFS outage/recovery probes demonstrated the distinction
    between liveness and dependency readiness.
+8. The updated Pilot Release passed for candidate SHA
+   `83bd70406f9fb7e2d040a2fe95d35e9cfd0f4de4`; its uploaded artifact records
+   the account-lifecycle result and exact workflow/deployment/configuration
+   identity. This CI result is separate from the currently deployed FWS SHA
+   `c3648fdb918ac2b7ff59952bc91e26cce66d5e70`.
 
 ## Accepted limitations and follow-up
 
-1. **Medium — mandatory user-lifecycle evidence pending.** Affected
-   operations: account setup, password recovery/change, and offboarding.
-   Evidence: the existing Admin → Users handlers support reset and disable,
-   but the added disposable-account workflow phase has only passed local shell
-   syntax/YAML checks and has not run in the hosted Pilot Release workflow.
-   The current FWS image remains the earlier tested revision. Workaround: do
-   not start the cohort; retain two independent administrators and use the
-   documented supervised lifecycle procedure for rehearsal only. Follow-up:
-   run the updated authoritative workflow for a specific candidate, verify
-   the `BETA_SMOKE_USER_LIFECYCLE=passed` artifact marker, and confirm the
-   two-admin procedure before cohort start.
+1. **Medium — candidate deployment and operator lifecycle rehearsal pending.**
+   Affected operations: account setup, password recovery/change, offboarding,
+   and recovery from administrator lockout. Evidence: isolated candidate SHA
+   `83bd70406f9fb7e2d040a2fe95d35e9cfd0f4de4` passed the lifecycle workflow
+   phase in run 37206208388, but FWS still runs the earlier tested SHA
+   `c3648fdb918ac2b7ff59952bc91e26cce66d5e70`; a second operator has not yet
+   rehearsed the documented lifecycle and two-admin recovery procedure.
+   Workaround: do not start the cohort; retain two independent administrators
+   and use supervised lifecycle procedures for rehearsal only. Follow-up:
+   complete human review of PR #337, deploy the approved exact candidate using
+   the documented operator procedure, and have a second operator verify two
+   independent admin accounts plus create/reset/change/disable behavior before
+   cohort start. The `fws-pilot` protected GitHub Environment is not configured;
+   deployment remains an explicit operator action.
 2. **Medium — password-login pilot baseline.** Affected operation: OIDC
    authentication. Evidence: password login passed; no FWS OIDC provider was
    configured for this run. Workaround: use the documented password-login
@@ -111,7 +134,10 @@ no passwords, tokens, cookies, private keys, or database credentials.
 
 ## Final decision
 
-**NOT READY** — a mandatory account-lifecycle gate is not yet evidenced for an
-exact candidate under the updated contract. Reassess only after the updated
-authoritative workflow and operator rehearsal pass. Do not begin Bund-specific
-expansion under this milestone.
+**NOT READY** — although the updated authoritative workflow and account-
+lifecycle phase passed for exact isolated candidate SHA
+`83bd70406f9fb7e2d040a2fe95d35e9cfd0f4de4`, that candidate is not the revision
+currently deployed to FWS and the second-operator/two-admin recovery rehearsal
+has not passed. Reassess after human review, deployment of the approved exact
+candidate, and operator rehearsal. Do not begin Bund-specific expansion under
+this milestone.
