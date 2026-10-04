@@ -723,7 +723,7 @@ import sys
 print(json.dumps({"current_password": sys.argv[1], "new_password": sys.argv[2], "confirm_password": sys.argv[2]}))
 PY
 )"
-	csrf_json_request "PUT" "${API_BASE_URL}/me/password" "${LIFECYCLE_CHANGE_PAYLOAD}" "${LIFECYCLE_COOKIE_JAR}" "${LIFECYCLE_MUTATION_RESPONSE}"
+	csrf_json_request "PATCH" "${API_BASE_URL}/me/password" "${LIFECYCLE_CHANGE_PAYLOAD}" "${LIFECYCLE_COOKIE_JAR}" "${LIFECYCLE_MUTATION_RESPONSE}"
 	LIFECYCLE_LOGIN_STATUS="$(login_with_password "${LIFECYCLE_EMAIL}" "${LIFECYCLE_RESET_PASSWORD}" "" "${LIFECYCLE_LOGIN_RESPONSE}" "0")"
 	[[ "${LIFECYCLE_LOGIN_STATUS}" == "401" ]] || {
 		echo "The previous password still authenticates after self-service password change" >&2
