@@ -78,3 +78,59 @@ exercise before the pilot can be called ready.
 - A new test harness or observability platform.
 - A complete security audit or formal OIDC-provider certification.
 - Unsupported downgrade semantics.
+
+## FWS HOST EXECUTION UPDATE (2026-10-04)
+
+The target host is `10.5.199.85` and is reached publicly as
+`https://app.kubedo.io`; TLS terminates at the load balancer and the host
+serves private HTTP. The following results are machine-generated or directly
+captured under `/var/backups/rustshare/fws-evidence-20261004`.
+
+### PRESENT AND VERIFIED
+
+- Exact candidate deployment: source
+  `c3648fdb918ac2b7ff59952bc91e26cce66d5e70`, image
+  `sha256:02862e272beadd035471808a13c25a8b05cc4ba13a5f531ecf7d38acca2072e8`,
+  Compose identity `3ee7e5b3e790ac48bccd76910107a759c919578975a64781c8b638b4b49793eb`.
+  Evidence: `pilot-identity.env`.
+- Public canonical journey: existing `scripts/run-beta-smoke.sh` passed for
+  authentication, Notes, Files, sharing, authorization, audit and logout.
+  Evidence: `fws-canonical-final.env`.
+- Real application restart and persistence: Note and File survived stop/start
+  and re-authentication. Evidence: `fws-restart-final.env`.
+- Real backup and isolated restore: PostgreSQL, RustFS and configuration bundle
+  verified; restore drill rechecked pilot data. Evidence:
+  `/var/backups/rustshare/20261004T000917Z` and `fws-restore-persistence.env`.
+- Dependency readiness: PostgreSQL and RustFS outage probes returned 503 with
+  component diagnostics and recovered to 200. Evidence:
+  `dependency-failure-drills.env`.
+- Candidate upgrade data verification: old-image-created Note/File survived
+  candidate replacement and migration startup. Evidence:
+  `fws-upgrade-candidate-verification.env`.
+
+### PRESENT BUT NOT VERIFIED
+
+- Clean-install acceptance on replacement FWS infrastructure. The production
+  deployment deliberately preserved existing volumes; the isolated drills
+  were not a clean operator install.
+- Full OIDC acceptance for the eventual FWS identity provider.
+
+### PARTIAL
+
+- Previous-image upgrade acceptance: the candidate preserved representative
+  data, but the retained old image’s full smoke stopped at its search phase.
+  Evidence: `20261004T002129Z-1282058-beta-smoke.env`.
+- Credential recovery: the retained database required a controlled password
+  rotation because its existing admin credential did not match the copied
+  first-boot `.env`; no supported application-level reset flow was available.
+
+### MISSING
+
+- A clean-install evidence bundle produced on a disposable replacement FWS
+  host from only the documented procedure and external prerequisites.
+- A supported operator password-reset procedure for an existing database.
+
+### OUT OF SCOPE
+
+- Bund expansion, HA/multi-region operation, zero-downtime upgrades,
+  unsupported downgrades and a complete security audit.

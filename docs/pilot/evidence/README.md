@@ -31,3 +31,10 @@ Expected files include:
 Artifacts must not contain .env contents, passwords, tokens, cookies, private
 keys or database credentials. A missing mandatory evidence file makes the
 workflow non-pilot-ready even if an earlier test step passed.
+
+For the FWS target-host exercise, the external evidence bundle is retained at
+`/var/backups/rustshare/fws-evidence-20261004` on the deployment host. Its
+`pilot-identity.env` binds the reports to the source SHA, candidate image,
+deployment identity and Compose configuration hash. The bundle is external to
+Git because it contains environment-specific operational records; only
+redacted summaries belong in repository documentation.

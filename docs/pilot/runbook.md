@@ -184,3 +184,49 @@ Interpretation:
 
 Do not collect or share cookies, authorization headers, request bodies with
 passwords, .env, private keys or raw secret-bearing configuration.
+
+## FWS load-balancer deployment
+
+For the FWS pilot host, the load balancer terminates TLS and forwards the
+public hostname to the host’s private HTTP listener. The backend therefore
+uses the public HTTPS origin for generated URLs and secure cookies, while the
+host-side Compose edge binds only to the private interface.
+
+Required settings include:
+
+~~~dotenv
+RUSTSHARE_PUBLIC_URL=https://app.kubedo.io
+VITE_API_URL=https://app.kubedo.io/api
+VITE_WS_URL=wss://app.kubedo.io/api
+SERVER_HOST=0.0.0.0
+SESSION_COOKIE_SECURE=true
+RUSTSHARE_SESSION_COOKIE_SECURE=true
+~~~
+
+The load balancer must forward the original HTTPS scheme (or the equivalent
+trusted forwarded-proto configuration) and WebSocket upgrades. Do not add a
+second public TLS terminator on the private host without changing this
+topology review.
+
+The validated FWS deployment used the repository base and production Compose
+files plus a host-local candidate override for the immutable backend image and
+private edge bind. Keep that override outside Git if it contains site-specific
+addresses; record its SHA-256 in the evidence identity. Validate the public
+surface, not only host-local HTTP:
+
+~~~bash
+curl -fsS https://app.kubedo.io/health
+curl -fsS https://app.kubedo.io/health/ready
+BASE_URL=https://app.kubedo.io \
+  ADMIN_EMAIL=... ADMIN_PASSWORD=... \
+  VIEWER_EMAIL=... VIEWER_PASSWORD=... \
+  PILOT_SOURCE_SHA=... PILOT_BUILD_VERSION=... \
+  PILOT_DEPLOYMENT_ID=... PILOT_CONFIG_ID=... \
+  scripts/run-beta-smoke.sh
+~~~
+
+The accepted target-host evidence for this run is retained at
+`/var/backups/rustshare/fws-evidence-20261004`. It includes the identity,
+canonical journey, restart/persistence, backup/restore, upgrade and bounded
+dependency-failure reports. Never copy the host `.env` into that evidence
+directory.
