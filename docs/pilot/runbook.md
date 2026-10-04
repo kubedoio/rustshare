@@ -32,6 +32,13 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 Record the Git SHA, image digest, host/environment name and a redacted config
 hash. Never paste .env into evidence or support tickets.
 
+On a shared host, choose unused loopback ports for the disposable clean-install
+exercise before starting it (`RUSTSHARE_POSTGRES_HOST_PORT`,
+`RUSTSHARE_RUSTFS_HOST_PORT` and `RUSTSHARE_RUSTFS_CONSOLE_HOST_PORT`). Do not
+reuse the production Compose project name or volumes. The operator must set a
+durable `RUSTSHARE_ADMIN_PASSWORD` before the first start; do not depend on a
+container-local bootstrap password for a pilot deployment.
+
 For an immutable candidate image, set the digest recorded by the release
 evidence and add the pilot image override:
 

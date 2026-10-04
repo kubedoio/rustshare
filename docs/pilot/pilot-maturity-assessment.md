@@ -107,27 +107,28 @@ captured under `/var/backups/rustshare/fws-evidence-20261004`.
 - Candidate upgrade data verification: old-image-created Note/File survived
   candidate replacement and migration startup. Evidence:
   `fws-upgrade-candidate-verification.env`.
+- Clean installation: a fresh staging directory ran `.env.example`,
+  `scripts/pre-flight.sh`, durable admin configuration, fresh Postgres/RustFS
+  volumes, the canonical smoke and restart persistence. Evidence:
+  `fws-clean-install.env`, `fws-clean-canonical.env` and
+  `fws-clean-restart-persistence.env`.
 
 ### PRESENT BUT NOT VERIFIED
 
-- Clean-install acceptance on replacement FWS infrastructure. The production
-  deployment deliberately preserved existing volumes; the isolated drills
-  were not a clean operator install.
 - Full OIDC acceptance for the eventual FWS identity provider.
 
 ### PARTIAL
 
-- Previous-image upgrade acceptance: the candidate preserved representative
-  data, but the retained old image’s full smoke stopped at its search phase.
-  Evidence: `20261004T002129Z-1282058-beta-smoke.env`.
+- A retained non-release `rustshare-backend:latest` image stopped its full
+  smoke at search. The supported `v0.8.0-alpha.5` to candidate upgrade passed
+  in the authoritative Pilot Release workflow. Evidence:
+  `20261004T002129Z-1282058-beta-smoke.env` and workflow run 37156360337.
 - Credential recovery: the retained database required a controlled password
   rotation because its existing admin credential did not match the copied
   first-boot `.env`; no supported application-level reset flow was available.
 
 ### MISSING
 
-- A clean-install evidence bundle produced on a disposable replacement FWS
-  host from only the documented procedure and external prerequisites.
 - A supported operator password-reset procedure for an existing database.
 
 ### OUT OF SCOPE

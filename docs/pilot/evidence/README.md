@@ -27,6 +27,8 @@ Expected files include:
   not fail.
 - pilot-workflow-summary.env — machine-generated workflow result and explicit
   target-environment readiness boundary.
+- clean-install.env and clean-restart-persistence.env — fresh-volume bootstrap
+  and restart evidence when a target host clean-install exercise is required.
 
 Artifacts must not contain .env contents, passwords, tokens, cookies, private
 keys or database credentials. A missing mandatory evidence file makes the
