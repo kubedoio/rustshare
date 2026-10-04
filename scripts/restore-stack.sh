@@ -25,6 +25,7 @@ external and must be restored separately; never regenerate them during a
 restore.
 
 Environment overrides:
+- COMPOSE_FILE (optional explicit Compose file list, separated by `:`)
 - POSTGRES_SERVICE (default: postgres)
 - POSTGRES_DB (default: rustshare)
 - POSTGRES_USER (default: rustshare)
@@ -71,6 +72,8 @@ wait_for_healthy() {
 		if [[ -z "${container_id}" ]]; then
 			if (( $(date +%s) - started_at >= timeout_seconds )); then
 				echo "Could not determine container ID for service '${service}'." >&2
+			compose ps >&2 || true
+			compose logs --tail=200 "${service}" >&2 || true
 				exit 1
 			fi
 
@@ -85,6 +88,8 @@ wait_for_healthy() {
 
 		if (( $(date +%s) - started_at >= timeout_seconds )); then
 			echo "Service '${service}' did not become healthy within ${timeout_seconds}s." >&2
+			compose ps >&2 || true
+			compose logs --tail=200 "${service}" >&2 || true
 			exit 1
 		fi
 
@@ -102,7 +107,7 @@ EDGE_SERVICE="${EDGE_SERVICE:-nginx}"
 
 cd "${PROJECT_ROOT}"
 
-if [[ -f .env ]]; then
+if [[ -f .env && -z "${COMPOSE_FILE:-}" ]]; then
 	# shellcheck disable=SC1091
 	set -a
 	. ./.env
@@ -122,9 +127,20 @@ if [[ "${WITH_CHAT}" == true ]]; then
 fi
 
 compose() {
-	local files=(-f docker-compose.yml)
-	if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
-		files+=(-f docker-compose.pilot.yml)
+	local files=()
+	if [[ -n "${COMPOSE_FILE:-}" ]]; then
+		local compose_file
+		local separator="${COMPOSE_PATH_SEPARATOR:-:}"
+		local -a compose_files=()
+		IFS="${separator}" read -r -a compose_files <<<"${COMPOSE_FILE}"
+		for compose_file in "${compose_files[@]}"; do
+			files+=(-f "${compose_file}")
+		done
+	else
+		files=(-f docker-compose.yml)
+		if [[ "${ELEMBRA_DEPLOYMENT_PROFILE:-source}" == "release" ]]; then
+			files+=(-f docker-compose.pilot.yml)
+		fi
 	fi
 	if [[ "${WITH_CHAT}" == true ]]; then
 		files+=(-f docker-compose.alpha.yml -f docker-compose.dogfood.yml)

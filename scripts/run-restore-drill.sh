@@ -22,6 +22,11 @@ Environment overrides:
 - DRILL_COMPOSE_FILE (default: docker-compose.restore-drill.yml)
 - DRILL_BASE_URL (default: http://localhost:18080)
 - DRILL_API_BASE_URL (default: ${DRILL_BASE_URL}/api/v1)
+- DRILL_POSTGRES_HOST_PORT (default: 15432)
+- DRILL_RUSTFS_HOST_PORT (default: 19000)
+- DRILL_RUSTFS_CONSOLE_HOST_PORT (default: 19001)
+- DRILL_BACKEND_HOST_PORT (default: 18081)
+- DRILL_NGINX_HOST_PORT (default: 18080)
 - DRILL_KEEP_STACK (default: false)
 - DRILL_REPORT_DIR (default: ./restore-drill-reports)
 - ADMIN_EMAIL (default: admin@localhost)
@@ -29,6 +34,9 @@ Environment overrides:
 - PUBLIC_SHARE_TOKEN (optional)
 - PUBLIC_SHARE_PASSWORD (optional)
 - ALLOW_SKIP_PUBLIC_SHARE (default: true)
+- RESTORE_DRILL_STATE_FILE (optional beta-smoke report containing data
+  identifiers to verify after restore)
+- RESTORE_DRILL_PILOT_REPORT_PATH (optional exact persistence report path)
 EOF
 }
 
@@ -67,17 +75,39 @@ EOF
 require_command docker
 require_command bash
 
+if [[ -f "${PROJECT_ROOT}/.env" && -z "${ADMIN_PASSWORD:-}" && -z "${RUSTSHARE_ADMIN_PASSWORD:-}" ]]; then
+	# shellcheck disable=SC1091
+	set -a
+	. "${PROJECT_ROOT}/.env"
+	set +a
+fi
+
 BACKUP_DIR="$(cd "$1" && pwd)"
 DRILL_PROJECT_NAME="${DRILL_PROJECT_NAME:-rustshare-restore-drill}"
 DRILL_COMPOSE_FILE="${DRILL_COMPOSE_FILE:-${PROJECT_ROOT}/docker-compose.restore-drill.yml}"
-DRILL_BASE_URL="${DRILL_BASE_URL:-http://localhost:18080}"
+DRILL_POSTGRES_HOST_PORT="${DRILL_POSTGRES_HOST_PORT:-15432}"
+DRILL_RUSTFS_HOST_PORT="${DRILL_RUSTFS_HOST_PORT:-19000}"
+DRILL_RUSTFS_CONSOLE_HOST_PORT="${DRILL_RUSTFS_CONSOLE_HOST_PORT:-19001}"
+DRILL_BACKEND_HOST_PORT="${DRILL_BACKEND_HOST_PORT:-18081}"
+DRILL_NGINX_HOST_PORT="${DRILL_NGINX_HOST_PORT:-18080}"
+DRILL_BASE_URL="${DRILL_BASE_URL:-http://localhost:${DRILL_NGINX_HOST_PORT}}"
 DRILL_API_BASE_URL="${DRILL_API_BASE_URL:-${DRILL_BASE_URL%/}/api/v1}"
 DRILL_KEEP_STACK="${DRILL_KEEP_STACK:-false}"
 DRILL_REPORT_DIR="${DRILL_REPORT_DIR:-${PROJECT_ROOT}/restore-drill-reports}"
 ALLOW_SKIP_PUBLIC_SHARE="${ALLOW_SKIP_PUBLIC_SHARE:-true}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
-ADMIN_EMAIL="${ADMIN_EMAIL:-admin@localhost}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-${RUSTSHARE_ADMIN_PASSWORD:-}}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-${RUSTSHARE_ADMIN_EMAIL:-admin@localhost}}"
+VIEWER_EMAIL="${VIEWER_EMAIL:-${RUSTSHARE_DEMO_VIEWER_EMAIL:-viewer@localhost}}"
+VIEWER_PASSWORD="${VIEWER_PASSWORD:-${RUSTSHARE_DEMO_VIEWER_PASSWORD:-}}"
+RESTORE_DRILL_STATE_FILE="${RESTORE_DRILL_STATE_FILE:-}"
+RESTORE_DRILL_PILOT_REPORT_PATH="${RESTORE_DRILL_PILOT_REPORT_PATH:-}"
 export RUSTSHARE_ADMIN_PASSWORD="${ADMIN_PASSWORD}"
+export RUSTSHARE_DEMO_VIEWER_PASSWORD="${VIEWER_PASSWORD}"
+export RESTORE_DRILL_POSTGRES_HOST_PORT="${DRILL_POSTGRES_HOST_PORT}"
+export RESTORE_DRILL_RUSTFS_HOST_PORT="${DRILL_RUSTFS_HOST_PORT}"
+export RESTORE_DRILL_RUSTFS_CONSOLE_HOST_PORT="${DRILL_RUSTFS_CONSOLE_HOST_PORT}"
+export RESTORE_DRILL_BACKEND_HOST_PORT="${DRILL_BACKEND_HOST_PORT}"
+export RESTORE_DRILL_NGINX_HOST_PORT="${DRILL_NGINX_HOST_PORT}"
 
 DRILL_STARTED_AT="$(timestamp)"
 REPORT_BASENAME="$(date -u +%Y%m%dT%H%M%SZ)-restore-drill.env"
@@ -88,13 +118,21 @@ export COMPOSE_FILE="${DRILL_COMPOSE_FILE}"
 
 cleanup() {
 	if [[ "${DRILL_KEEP_STACK}" == "true" ]]; then
-		return
+		return 0
 	fi
 
-	docker compose down -v --remove-orphans >/dev/null 2>&1 || true
+	docker compose down -v --remove-orphans >/dev/null 2>&1
 }
 
-trap 'write_report "failed" "Restore drill failed. Inspect the isolated compose project logs."; cleanup' ERR
+on_error() {
+	local exit_code=$?
+	trap - ERR
+	write_report "failed" "Restore drill failed. Inspect the isolated compose project logs."
+	cleanup || true
+	exit "${exit_code}"
+}
+
+trap on_error ERR
 
 cd "${PROJECT_ROOT}"
 
@@ -113,7 +151,7 @@ echo "Restoring backup into isolated project '${DRILL_PROJECT_NAME}'..."
 echo "Checking isolated stack health..."
 docker compose ps
 curl -fsS "${DRILL_BASE_URL%/}/health" >/dev/null
-curl -fsS "http://localhost:18081/health" >/dev/null
+curl -fsS "http://localhost:${DRILL_BACKEND_HOST_PORT}/health" >/dev/null
 
 echo "Running post-restore smoke test..."
 BASE_URL="${DRILL_BASE_URL}" \
@@ -125,8 +163,29 @@ PUBLIC_SHARE_TOKEN="${PUBLIC_SHARE_TOKEN:-}" \
 PUBLIC_SHARE_PASSWORD="${PUBLIC_SHARE_PASSWORD:-}" \
 	"${PROJECT_ROOT}/scripts/post-restore-smoke.sh"
 
+if [[ -n "${RESTORE_DRILL_STATE_FILE}" ]]; then
+	echo "Verifying representative pilot data after restore..."
+	BASE_URL="${DRILL_BASE_URL}" \
+	API_BASE_URL="${DRILL_API_BASE_URL}" \
+	PILOT_MODE="restore-verify" \
+	PILOT_VERIFY_STATE_FILE="${RESTORE_DRILL_STATE_FILE}" \
+	PILOT_REPORT_PATH="${RESTORE_DRILL_PILOT_REPORT_PATH}" \
+	PILOT_SOURCE_SHA="${PILOT_SOURCE_SHA:-unknown}" \
+	PILOT_BUILD_VERSION="${PILOT_BUILD_VERSION:-unknown}" \
+	PILOT_DEPLOYMENT_ID="${DRILL_PROJECT_NAME}" \
+	PILOT_CONFIG_ID="${PILOT_CONFIG_ID:-unknown}" \
+	ADMIN_EMAIL="${ADMIN_EMAIL}" \
+	ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
+	VIEWER_EMAIL="${VIEWER_EMAIL}" \
+	VIEWER_PASSWORD="${VIEWER_PASSWORD}" \
+		"${PROJECT_ROOT}/scripts/run-beta-smoke.sh"
+fi
+
+if ! cleanup; then
+	write_report "failed" "Restore drill completed its checks but cleanup failed. Inspect the isolated compose project."
+	exit 1
+fi
 write_report "passed" "Restore drill completed successfully in isolated Docker Compose project."
-cleanup
 trap - ERR
 
 echo "Restore drill passed."
