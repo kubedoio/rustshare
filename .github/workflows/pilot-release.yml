@@ -633,7 +633,7 @@ jobs:
 
       - name: Upload pilot evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rustshare-pilot-evidence-${{ github.sha }}
           path: /tmp/rustshare-pilot-evidence
@@ -695,7 +695,7 @@ jobs:
           exit-code: '0'
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@v4.37.3
+        uses: github/codeql-action/upload-sarif@v4.38.2
         if: always()
         with:
           sarif_file: trivy-results.sarif
