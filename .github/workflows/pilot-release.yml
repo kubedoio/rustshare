@@ -146,9 +146,12 @@ jobs:
           PILOT_REPORT_PATH: /tmp/rustshare-pilot-evidence/canonical-smoke.env
           PILOT_MODE: canonical
           PILOT_PRESERVE_DATA: "1"
+          PILOT_EXERCISE_USER_LIFECYCLE: "1"
           PILOT_SOURCE_SHA: ${{ github.sha }}
           REQUIRE_CHAT: "0"
-        run: ./scripts/run-beta-smoke.sh
+        run: |
+          ./scripts/run-beta-smoke.sh
+          grep -Fx 'BETA_SMOKE_USER_LIFECYCLE=passed' /tmp/rustshare-pilot-evidence/canonical-smoke.env
 
       - name: Verify RustShare UI is reachable
         run: |

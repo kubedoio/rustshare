@@ -23,6 +23,9 @@ set -euo pipefail
 # - VIEWER_PASSWORD (falls back to RUSTSHARE_DEMO_VIEWER_PASSWORD from .env)
 # - REQUIRE_CHAT (default: unset — chat status must respond but may be
 #   unconfigured; set to 1 to fail when chat is not fully configured)
+# - PILOT_EXERCISE_USER_LIFECYCLE (default: 0; set to 1 only in an ephemeral
+#   deployment to verify admin password reset, session revocation, disable and
+#   cleanup)
 # - REPORT_DIR (default: ./beta-smoke-reports)
 # - PILOT_REPORT_PATH (optional exact report path)
 # - PILOT_SOURCE_SHA, PILOT_BUILD_VERSION, PILOT_DEPLOYMENT_ID and
@@ -165,6 +168,7 @@ login_with_password() {
 	local password="$2"
 	local cookie_jar="$3"
 	local output_file="$4"
+	local expect_2xx="${5:-1}"
 	local payload
 	payload="$(python3 - "$email" "$password" <<'PY'
 import json
@@ -172,7 +176,7 @@ import sys
 print(json.dumps({"email": sys.argv[1], "password": sys.argv[2]}))
 PY
 )"
-	run_json_request "POST" "${API_BASE_URL}/auth/login" "${payload}" "${cookie_jar}" "${output_file}"
+	run_json_request "POST" "${API_BASE_URL}/auth/login" "${payload}" "${cookie_jar}" "${output_file}" "" "${expect_2xx}"
 }
 
 csrf_token_from_jar() {
@@ -235,6 +239,7 @@ BETA_SMOKE_DEPLOYMENT_ID=${PILOT_DEPLOYMENT_ID}
 BETA_SMOKE_CONFIG_ID=${PILOT_CONFIG_ID}
 BETA_SMOKE_FAILURE_PHASE=${CURRENT_PHASE}
 BETA_SMOKE_PRESERVE_DATA=${PILOT_PRESERVE_DATA}
+BETA_SMOKE_USER_LIFECYCLE=${USER_LIFECYCLE_RESULT}
 ADMIN_EMAIL=${ADMIN_EMAIL}
 VIEWER_EMAIL=${VIEWER_EMAIL}
 SMOKE_FOLDER_ID=${SMOKE_FOLDER_ID:-}
@@ -258,7 +263,14 @@ PILOT_DEPLOYMENT_ID="${PILOT_DEPLOYMENT_ID:-unknown}"
 PILOT_CONFIG_ID="${PILOT_CONFIG_ID:-unknown}"
 PILOT_PRESERVE_DATA="${PILOT_PRESERVE_DATA:-0}"
 PILOT_VERIFY_STATE_FILE="${PILOT_VERIFY_STATE_FILE:-}"
+PILOT_EXERCISE_USER_LIFECYCLE="${PILOT_EXERCISE_USER_LIFECYCLE:-0}"
+USER_LIFECYCLE_RESULT="not_run"
 CURRENT_PHASE="bootstrap"
+
+if [[ "${PILOT_EXERCISE_USER_LIFECYCLE}" != "0" && "${PILOT_EXERCISE_USER_LIFECYCLE}" != "1" ]]; then
+	echo "PILOT_EXERCISE_USER_LIFECYCLE must be 0 or 1" >&2
+	exit 1
+fi
 
 BASE_URL="${BASE_URL:-http://localhost}"
 API_BASE_URL="${API_BASE_URL:-${BASE_URL%/}/api/v1}"
@@ -661,6 +673,78 @@ PY
 	exit 1
 fi
 csrf_json_request "DELETE" "${API_BASE_URL}/shares/${INTERNAL_SHARE_ID}/recipient" "" "${ADMIN_COOKIES}" "${REVOKE_INTERNAL_SHARE_RESPONSE}"
+
+# ponytail: exercise mutable account lifecycle only in the disposable CI stack.
+if [[ "${PILOT_EXERCISE_USER_LIFECYCLE}" == "1" ]]; then
+	echo "8b. Verifying admin password recovery and user offboarding..."
+	CURRENT_PHASE="account_lifecycle"
+	USER_LIFECYCLE_RESULT="running"
+	LIFECYCLE_SUFFIX="$(date -u +%s)-${RANDOM}"
+	LIFECYCLE_EMAIL="pilot-lifecycle-${LIFECYCLE_SUFFIX}@example.invalid"
+	LIFECYCLE_USERNAME="pilot-lifecycle-${LIFECYCLE_SUFFIX}"
+	LIFECYCLE_INITIAL_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+	LIFECYCLE_RESET_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+	LIFECYCLE_CHANGED_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+	LIFECYCLE_CREATE_RESPONSE="${TMP_DIR}/lifecycle-create.json"
+	LIFECYCLE_LOGIN_RESPONSE="${TMP_DIR}/lifecycle-login.json"
+	LIFECYCLE_COOKIE_JAR="${TMP_DIR}/lifecycle.cookies"
+	LIFECYCLE_ME_RESPONSE="${TMP_DIR}/lifecycle-me.json"
+	LIFECYCLE_MUTATION_RESPONSE="${TMP_DIR}/lifecycle-mutation.json"
+	LIFECYCLE_PAYLOAD="$(python3 - "${LIFECYCLE_USERNAME}" "${LIFECYCLE_EMAIL}" "${LIFECYCLE_INITIAL_PASSWORD}" <<'PY'
+import json
+import sys
+print(json.dumps({"username": sys.argv[1], "email": sys.argv[2], "password": sys.argv[3], "display_name": "Pilot lifecycle check", "is_admin": False}))
+PY
+)"
+	csrf_json_request "POST" "${API_BASE_URL}/admin/users" "${LIFECYCLE_PAYLOAD}" "${ADMIN_COOKIES}" "${LIFECYCLE_CREATE_RESPONSE}"
+	LIFECYCLE_USER_ID="$(json_get "${LIFECYCLE_CREATE_RESPONSE}" "id")"
+	login_with_password "${LIFECYCLE_EMAIL}" "${LIFECYCLE_INITIAL_PASSWORD}" "${LIFECYCLE_COOKIE_JAR}" "${LIFECYCLE_LOGIN_RESPONSE}"
+	LIFECYCLE_RESET_PAYLOAD="$(python3 - "${LIFECYCLE_RESET_PASSWORD}" <<'PY'
+import json
+import sys
+print(json.dumps({"password": sys.argv[1]}))
+PY
+)"
+	csrf_json_request "PATCH" "${API_BASE_URL}/admin/users/${LIFECYCLE_USER_ID}" "${LIFECYCLE_RESET_PAYLOAD}" "${ADMIN_COOKIES}" "${LIFECYCLE_MUTATION_RESPONSE}"
+	LIFECYCLE_SESSION_STATUS="$(run_json_request "GET" "${API_BASE_URL}/me" "" "${LIFECYCLE_COOKIE_JAR}" "${LIFECYCLE_ME_RESPONSE}" "" "0")"
+	[[ "${LIFECYCLE_SESSION_STATUS}" == "401" ]] || {
+		echo "Admin password reset did not revoke the user's active session" >&2
+		exit 1
+	}
+	LIFECYCLE_LOGIN_STATUS="$(login_with_password "${LIFECYCLE_EMAIL}" "${LIFECYCLE_INITIAL_PASSWORD}" "" "${LIFECYCLE_LOGIN_RESPONSE}" "0")"
+	[[ "${LIFECYCLE_LOGIN_STATUS}" == "401" ]] || {
+		echo "The previous password still authenticates after admin reset" >&2
+		exit 1
+	}
+	login_with_password "${LIFECYCLE_EMAIL}" "${LIFECYCLE_RESET_PASSWORD}" "${LIFECYCLE_COOKIE_JAR}" "${LIFECYCLE_LOGIN_RESPONSE}"
+	LIFECYCLE_CHANGE_PAYLOAD="$(python3 - "${LIFECYCLE_RESET_PASSWORD}" "${LIFECYCLE_CHANGED_PASSWORD}" <<'PY'
+import json
+import sys
+print(json.dumps({"current_password": sys.argv[1], "new_password": sys.argv[2], "confirm_password": sys.argv[2]}))
+PY
+)"
+	csrf_json_request "PUT" "${API_BASE_URL}/me/password" "${LIFECYCLE_CHANGE_PAYLOAD}" "${LIFECYCLE_COOKIE_JAR}" "${LIFECYCLE_MUTATION_RESPONSE}"
+	LIFECYCLE_LOGIN_STATUS="$(login_with_password "${LIFECYCLE_EMAIL}" "${LIFECYCLE_RESET_PASSWORD}" "" "${LIFECYCLE_LOGIN_RESPONSE}" "0")"
+	[[ "${LIFECYCLE_LOGIN_STATUS}" == "401" ]] || {
+		echo "The previous password still authenticates after self-service password change" >&2
+		exit 1
+	}
+	login_with_password "${LIFECYCLE_EMAIL}" "${LIFECYCLE_CHANGED_PASSWORD}" "${LIFECYCLE_COOKIE_JAR}" "${LIFECYCLE_LOGIN_RESPONSE}"
+	csrf_json_request "POST" "${API_BASE_URL}/admin/users/${LIFECYCLE_USER_ID}/disable" "" "${ADMIN_COOKIES}" "${LIFECYCLE_MUTATION_RESPONSE}"
+	LIFECYCLE_SESSION_STATUS="$(run_json_request "GET" "${API_BASE_URL}/me" "" "${LIFECYCLE_COOKIE_JAR}" "${LIFECYCLE_ME_RESPONSE}" "" "0")"
+	[[ "${LIFECYCLE_SESSION_STATUS}" == "401" ]] || {
+		echo "Disabling the user did not revoke the user's active session" >&2
+		exit 1
+	}
+	LIFECYCLE_LOGIN_STATUS="$(login_with_password "${LIFECYCLE_EMAIL}" "${LIFECYCLE_RESET_PASSWORD}" "" "${LIFECYCLE_LOGIN_RESPONSE}" "0")"
+	[[ "${LIFECYCLE_LOGIN_STATUS}" == "401" ]] || {
+		echo "A disabled user can still authenticate" >&2
+		exit 1
+	}
+	csrf_json_request "DELETE" "${API_BASE_URL}/admin/users/${LIFECYCLE_USER_ID}" "" "${ADMIN_COOKIES}" "${LIFECYCLE_MUTATION_RESPONSE}"
+	USER_LIFECYCLE_RESULT="passed"
+	echo "Account lifecycle passed: reset revoked sessions, password change worked, and disabled account denied login."
+fi
 
 echo "9. Verifying the admin audit log records smoke activity..."
 CURRENT_PHASE="observability"

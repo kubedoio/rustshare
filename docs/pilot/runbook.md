@@ -64,6 +64,12 @@ curl -fsS https://pilot.example/health/ready
 return 200 before pilot traffic is allowed; its component response identifies
 database, object storage, event delivery and auth/session failures.
 
+The `outbox` component is informational and does not change the overall
+readiness decision. It can briefly report unhealthy while a dispatch tick is
+running. Recheck after the tick; if the component remains unhealthy or an
+included pilot operation depends on delayed projections, inspect backend logs
+and verify the affected event-driven behavior before declaring recovery.
+
 ## Stop and restart
 
 ~~~bash
@@ -91,6 +97,37 @@ REPORT_DIR=/secure/evidence \
 ~~~
 
 Keep the generated report and, on failure, the Compose status/log bundle.
+
+## User accounts, recovery, and offboarding
+
+Before the cohort starts, verify two independent administrator accounts. Keep
+the secondary account's strong credential in the approved operator secret
+store, separate from the primary administrator's normal sign-in. This avoids
+depending on direct database edits if one administrator is locked out.
+
+An administrator creates pilot accounts from **Admin → Users**. Set the
+least-privileged role and required workspace access; do not grant administrator
+privileges to pilot users. Deliver each initial password through an approved
+secure channel separate from this repository, issue tracker, and ordinary
+email. Ask the user to change it immediately in **Settings → Password**. The
+application does not currently enforce a first-login password change.
+
+To recover a user's forgotten password, a second administrator opens that
+user in **Admin → Users**, sets a new password, and securely relays it to the
+user. The admin password-update operation revokes the user's active sessions
+and device tokens and records an admin action. The user signs in with the new
+password and changes it in Settings. Do not put the password in support logs,
+tickets, or this runbook.
+
+For offboarding, use **Admin → Users → Disable**. Disabling a user revokes
+active sessions and device tokens. Prefer disable over delete unless the data
+owner has approved deletion and its file/object cleanup implications.
+
+There is no supported self-service or operator reset if every administrator
+credential is lost. Prevent that condition with two independently controlled
+administrator accounts and the documented secret-store procedure; any
+emergency database-level recovery is an exceptional, separately approved
+incident action, not a normal pilot step.
 
 For a committed candidate revision, trigger the authoritative workflow and
 retain its artifact:
@@ -220,6 +257,25 @@ files plus a host-local candidate override for the immutable backend image and
 private edge bind. Keep that override outside Git if it contains site-specific
 addresses; record its SHA-256 in the evidence identity. Validate the public
 surface, not only host-local HTTP:
+
+For the current FWS operator account, Docker commands require noninteractive
+`sudo` (direct Docker socket access is not granted). From the deployment
+directory, include the host-local candidate override when inspecting or
+operating the live stack:
+
+~~~bash
+cd /opt/rustshare
+sudo -n docker compose -f docker-compose.yml \
+  -f docker-compose.prod.yml -f docker-compose.fws-candidate.yml ps
+sudo -n docker compose -f docker-compose.yml \
+  -f docker-compose.prod.yml -f docker-compose.fws-candidate.yml logs --tail=200 backend
+~~~
+
+Do not add the operator to the Docker group solely to avoid `sudo`; Docker
+socket access is effectively root-equivalent. Apply the same privilege
+requirement to all Compose commands above and to backup/restore helper scripts
+that invoke Docker. The public hostname's load balancer terminates TLS; do not
+expose the host's private address in public evidence.
 
 ~~~bash
 curl -fsS https://app.kubedo.io/health

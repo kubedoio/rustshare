@@ -1,15 +1,22 @@
 # RustShare Pilot Readiness Report
 
-## Conclusion: READY WITH ACCEPTED LIMITATIONS
+## Conclusion: NOT READY
 
-The exact candidate has now passed the repository Pilot Release gate, the
-public FWS load-balanced journey, a fresh-volume clean deployment, restart
-and persistence checks, real backup/restore, bounded dependency failure and
-recovery checks, and the supported previous-release upgrade path.
+The previously deployed FWS candidate passed the repository Pilot Release
+gate, public load-balanced journey, clean deployment, restart/persistence,
+backup/restore, bounded dependency failure/recovery, and supported upgrade
+checks recorded below. This report now evaluates the tightened
+pre-pilot-user contract, which adds explicit account reset/change/offboarding
+acceptance. The updated authoritative workflow has not yet run for the current
+workspace changes, so there is no exact tested revision or machine evidence for
+that mandatory gate.
 
-RustShare is ready for the bounded FWS password-login pilot under the
-limitations below. This decision does not authorize Bund expansion or imply
-OIDC-provider acceptance.
+The previous **READY WITH ACCEPTED LIMITATIONS** conclusion applied to the
+earlier bounded password-login baseline. It does not carry forward as approval
+to start users under the expanded contract. Do not begin the cohort until the
+updated workflow passes for an exact candidate and the operator verifies the
+second-admin recovery procedure. This does not authorize Bund expansion or
+imply OIDC-provider acceptance.
 
 ## Revision and evidence identity
 
@@ -68,18 +75,35 @@ no passwords, tokens, cookies, private keys, or database credentials.
 
 ## Accepted limitations and follow-up
 
-1. **Medium — password-login pilot baseline.** Affected operation: OIDC
+1. **Medium — mandatory user-lifecycle evidence pending.** Affected
+   operations: account setup, password recovery/change, and offboarding.
+   Evidence: the existing Admin → Users handlers support reset and disable,
+   but the added disposable-account workflow phase has only passed local shell
+   syntax/YAML checks and has not run in the hosted Pilot Release workflow.
+   The current FWS image remains the earlier tested revision. Workaround: do
+   not start the cohort; retain two independent administrators and use the
+   documented supervised lifecycle procedure for rehearsal only. Follow-up:
+   run the updated authoritative workflow for a specific candidate, verify
+   the `BETA_SMOKE_USER_LIFECYCLE=passed` artifact marker, and confirm the
+   two-admin procedure before cohort start.
+2. **Medium — password-login pilot baseline.** Affected operation: OIDC
    authentication. Evidence: password login passed; no FWS OIDC provider was
    configured for this run. Workaround: use the documented password-login
    accounts for the bounded pilot. Follow-up: run OIDC acceptance when the
    provider, redirect URI and client credentials are provisioned.
-2. **Medium — existing-database credential recovery.** A retained database
+3. **Medium — loss of all administrator credentials.** A retained database
    required a controlled password-hash rotation because its existing admin
-   credential did not match the copied first-boot `.env`. Workaround: set and
-   preserve durable credentials before first start, as demonstrated by the
-   clean-install evidence. Follow-up: provide a supported application-level
-   password-reset procedure instead of direct DB intervention.
-3. **Low — unsupported old image behavior.** The retained host image
+   credential did not match the copied first-boot `.env`; changing the
+   first-boot `.env` does not reset an existing account. For ordinary user
+   recovery, Admin → Users can set a new password; the handler revokes the
+   target user's sessions and device tokens and records an admin action
+   (`backend/server/src/handlers/admin/users.rs`). Workaround: preserve
+   durable credentials before first start and keep a separately secured
+   second administrator. Follow-up: rehearse the admin reset/offboarding path
+   with a disposable account and verify the two-admin recovery procedure
+   before cohort start. If every administrator credential is lost, database
+   recovery remains an exceptional, separately approved incident action.
+4. **Low — unsupported old image behavior.** The retained host image
    `rustshare-backend:latest` stopped its full smoke during search, but it is
    not the supported previous release. The supported `v0.8.0-alpha.5` upgrade
    path passed in the authoritative workflow. Follow-up: remove or label the
@@ -87,7 +111,7 @@ no passwords, tokens, cookies, private keys, or database credentials.
 
 ## Final decision
 
-**READY WITH ACCEPTED LIMITATIONS** — the bounded FWS password-login pilot may
-proceed using the exact candidate, the runbook, the existing pilot workflow,
-the verified backup, and the documented recovery path. Do not begin
-Bund-specific expansion under this milestone.
+**NOT READY** — a mandatory account-lifecycle gate is not yet evidenced for an
+exact candidate under the updated contract. Reassess only after the updated
+authoritative workflow and operator rehearsal pass. Do not begin Bund-specific
+expansion under this milestone.
