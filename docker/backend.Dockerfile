@@ -31,7 +31,7 @@ RUN npm run build
 # We use a two-step approach without caching the target directory to ensure
 # the binary is always built from the actual source code.
 # =============================================================================
-FROM rust:1.98-bookworm AS builder
+FROM rust:1.99-bookworm AS builder
 
 ARG TARGETPLATFORM
 ARG USE_PRECOMPILED=false
@@ -78,7 +78,7 @@ RUN mkdir -p target/release \
 # =============================================================================
 # Stage 3: Runtime Image
 # =============================================================================
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:54df941ed0d06a1bd95ef5e0ce391fd8d9f94b64782dc9a60062727849ee3f97
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2
 
 # Copy binaries and frontend build
 COPY --from=builder /app/target/release/rustshare-server /usr/local/bin/
