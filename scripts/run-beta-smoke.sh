@@ -113,6 +113,26 @@ state_get() {
 		"${PILOT_VERIFY_STATE_FILE}"
 }
 
+file_sha256() {
+	python3 - "$1" <<'PY'
+import hashlib
+import sys
+
+digest = hashlib.sha256()
+with open(sys.argv[1], "rb") as handle:
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+print(digest.hexdigest())
+PY
+}
+
+file_matches_sha256() {
+	local expected="$1"
+	local path="$2"
+	[[ "${expected}" =~ ^[0-9a-f]{64}$ ]] || return 1
+	[[ "$(file_sha256 "${path}")" == "${expected}" ]]
+}
+
 run_json_request() {
 	local method="$1"
 	local url="$2"
@@ -237,19 +257,28 @@ BETA_SMOKE_SOURCE_SHA=${PILOT_SOURCE_SHA}
 BETA_SMOKE_BUILD_VERSION=${PILOT_BUILD_VERSION}
 BETA_SMOKE_DEPLOYMENT_ID=${PILOT_DEPLOYMENT_ID}
 BETA_SMOKE_CONFIG_ID=${PILOT_CONFIG_ID}
+BETA_SMOKE_WORKFLOW_RUN_ID=${GITHUB_RUN_ID:-unknown}
+BETA_SMOKE_WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT:-unknown}
 BETA_SMOKE_FAILURE_PHASE=${CURRENT_PHASE}
 BETA_SMOKE_PRESERVE_DATA=${PILOT_PRESERVE_DATA}
 BETA_SMOKE_USER_LIFECYCLE=${USER_LIFECYCLE_RESULT}
+BETA_SMOKE_FILE_SHARE_ACCESS=${FILE_SHARE_ACCESS_RESULT}
+BETA_SMOKE_FILE_SHARE_CLEANUP=${FILE_SHARE_CLEANUP_RESULT}
 ADMIN_EMAIL=${ADMIN_EMAIL}
 VIEWER_EMAIL=${VIEWER_EMAIL}
 SMOKE_FOLDER_ID=${SMOKE_FOLDER_ID:-}
 SMOKE_FILE_ID=${SMOKE_FILE_ID:-}
+SMOKE_FILE_NAME=${SMOKE_FILE_NAME:-}
 SMOKE_NOTE_ID=${SMOKE_NOTE_ID:-}
 SMOKE_NOTE_TITLE=${SMOKE_NOTE_TITLE:-}
+SMOKE_FILE_SHA256=${SMOKE_FILE_SHA256:-}
 SEARCH_NEEDLE=${SEARCH_NEEDLE:-}
 CHAT_STATUS_HTTP=${CHAT_STATUS_HTTP:-}
 REPORT_DETAILS=${details}
 EOF
+	if [[ "${status}" == "passed" && "${PERSISTENCE_STATE_VERIFIED}" == "1" ]]; then
+		printf 'BETA_SMOKE_PERSISTENCE_STATE_VERIFIED=passed\n' >>"${REPORT_PATH}"
+	fi
 }
 
 require_command curl
@@ -265,6 +294,10 @@ PILOT_PRESERVE_DATA="${PILOT_PRESERVE_DATA:-0}"
 PILOT_VERIFY_STATE_FILE="${PILOT_VERIFY_STATE_FILE:-}"
 PILOT_EXERCISE_USER_LIFECYCLE="${PILOT_EXERCISE_USER_LIFECYCLE:-0}"
 USER_LIFECYCLE_RESULT="not_run"
+FILE_SHARE_ACCESS_RESULT="not_run"
+FILE_SHARE_CLEANUP_RESULT="not_needed"
+INTERNAL_SHARE_ID=""
+PERSISTENCE_STATE_VERIFIED="0"
 CURRENT_PHASE="bootstrap"
 
 if [[ "${PILOT_EXERCISE_USER_LIFECYCLE}" != "0" && "${PILOT_EXERCISE_USER_LIFECYCLE}" != "1" ]]; then
@@ -297,6 +330,17 @@ cleanup() {
 # flow before exit 0.
 on_exit() {
 	local code=$?
+	if [[ "${code}" -ne 0 && -n "${INTERNAL_SHARE_ID:-}" ]]; then
+		local revoke_status
+		revoke_status="$(csrf_json_request "DELETE" "${API_BASE_URL}/shares/${INTERNAL_SHARE_ID}/recipient" "" "${ADMIN_COOKIES}" "${TMP_DIR}/cleanup-revoke-share.json" "0" || true)"
+		if [[ "${revoke_status}" == 2* ]]; then
+			FILE_SHARE_CLEANUP_RESULT="passed"
+		else
+			FILE_SHARE_CLEANUP_RESULT="failed"
+			echo "Failed to revoke the temporary File share after smoke failure." >&2
+			code=1
+		fi
+	fi
 	if [[ "${code}" -ne 0 ]]; then
 		write_report "failed" "Beta smoke failed during phase ${CURRENT_PHASE}."
 	fi
@@ -352,8 +396,12 @@ POST_LOGOUT_ME_RESPONSE="${TMP_DIR}/post-logout-me.json"
 
 PRIVATE_FILE_PATH="${TMP_DIR}/beta-private.txt"
 printf 'beta-private-%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >"${PRIVATE_FILE_PATH}"
+SMOKE_FILE_SHA256="$(file_sha256 "${PRIVATE_FILE_PATH}")"
 SEARCH_NEEDLE="betasearch-$(date -u +%s)"
 PRIVATE_FILE_NAME="beta-private-${SEARCH_NEEDLE}.txt"
+if [[ -z "${PILOT_VERIFY_STATE_FILE}" ]]; then
+	SMOKE_FILE_NAME="${PRIVATE_FILE_NAME}"
+fi
 
 echo "0. Verifying backend readiness..."
 CURRENT_PHASE="readiness"
@@ -389,8 +437,10 @@ if [[ -n "${PILOT_VERIFY_STATE_FILE}" ]]; then
 	VERIFY_NOTE_ID="$(state_get SMOKE_NOTE_ID)"
 	VERIFY_FILE_ID="$(state_get SMOKE_FILE_ID)"
 	VERIFY_NOTE_TITLE="$(state_get SMOKE_NOTE_TITLE)"
+	VERIFY_FILE_NAME="$(state_get SMOKE_FILE_NAME)"
+	VERIFY_FILE_SHA256="$(state_get SMOKE_FILE_SHA256)"
 	VERIFY_SEARCH_NEEDLE="$(state_get SEARCH_NEEDLE)"
-	[[ -n "${VERIFY_NOTE_ID}" && -n "${VERIFY_FILE_ID}" && -n "${VERIFY_NOTE_TITLE}" && -n "${VERIFY_SEARCH_NEEDLE}" ]] || {
+	[[ -n "${VERIFY_NOTE_ID}" && -n "${VERIFY_FILE_ID}" && -n "${VERIFY_FILE_NAME}" && -n "${VERIFY_NOTE_TITLE}" && -n "${VERIFY_FILE_SHA256}" && -n "${VERIFY_SEARCH_NEEDLE}" ]] || {
 		echo "Persistence state file is missing smoke identifiers" >&2
 		exit 1
 	}
@@ -424,8 +474,15 @@ PY
 		echo "Persisted file download failed with status ${PERSISTED_DOWNLOAD_STATUS}" >&2
 		exit 1
 	}
+	file_matches_sha256 "${VERIFY_FILE_SHA256}" "${PERSISTED_DOWNLOAD}" || {
+		echo "Persisted file content did not match the originally uploaded file" >&2
+		exit 1
+	}
 
+	PERSISTENCE_STATE_VERIFIED="1"
 	SMOKE_NOTE_TITLE="${VERIFY_NOTE_TITLE}"
+	SMOKE_FILE_NAME="${VERIFY_FILE_NAME}"
+	SMOKE_FILE_SHA256="${VERIFY_FILE_SHA256}"
 	CURRENT_PHASE="complete"
 	write_report "passed" "Persistence verification completed successfully."
 	echo "Persistence verification passed."
@@ -647,8 +704,19 @@ PY
 	fi
 fi
 
-echo "8. Creating and revoking an internal share..."
+echo "8. Verifying private File denial, usable share access, and revocation..."
 CURRENT_PHASE="sharing"
+VIEWER_PRIVATE_DOWNLOAD="${TMP_DIR}/viewer-private-file.bin"
+VIEWER_PRIVATE_DOWNLOAD_STATUS="$(
+	curl -sS -o "${VIEWER_PRIVATE_DOWNLOAD}" -w "%{http_code}" \
+		-b "${VIEWER_COOKIES}" -c "${VIEWER_COOKIES}" \
+		"${API_BASE_URL}/files/${SMOKE_FILE_ID}/download"
+)"
+[[ "${VIEWER_PRIVATE_DOWNLOAD_STATUS}" == "403" ]] || {
+	echo "Expected authenticated viewer to receive 403 for an unshared File, got ${VIEWER_PRIVATE_DOWNLOAD_STATUS}" >&2
+	exit 1
+}
+
 INTERNAL_SHARE_PAYLOAD="$(python3 - "$VIEWER_EMAIL" <<'PY'
 import json
 import sys
@@ -672,7 +740,34 @@ PY
 	echo "Internal share not visible to the recipient" >&2
 	exit 1
 fi
+VIEWER_SHARED_DOWNLOAD="${TMP_DIR}/viewer-shared-file.bin"
+VIEWER_SHARED_DOWNLOAD_STATUS="$(
+	curl -sS -o "${VIEWER_SHARED_DOWNLOAD}" -w "%{http_code}" \
+		-b "${VIEWER_COOKIES}" -c "${VIEWER_COOKIES}" \
+		"${API_BASE_URL}/files/${SMOKE_FILE_ID}/download"
+)"
+[[ "${VIEWER_SHARED_DOWNLOAD_STATUS}" == 2* ]] || {
+	echo "Expected active View share to allow File download, got ${VIEWER_SHARED_DOWNLOAD_STATUS}" >&2
+	exit 1
+}
+cmp -s "${PRIVATE_FILE_PATH}" "${VIEWER_SHARED_DOWNLOAD}" || {
+	echo "Shared File download did not match the uploaded content" >&2
+	exit 1
+}
 csrf_json_request "DELETE" "${API_BASE_URL}/shares/${INTERNAL_SHARE_ID}/recipient" "" "${ADMIN_COOKIES}" "${REVOKE_INTERNAL_SHARE_RESPONSE}"
+FILE_SHARE_CLEANUP_RESULT="passed"
+INTERNAL_SHARE_ID=""
+VIEWER_REVOKED_DOWNLOAD="${TMP_DIR}/viewer-revoked-file.bin"
+VIEWER_REVOKED_DOWNLOAD_STATUS="$(
+	curl -sS -o "${VIEWER_REVOKED_DOWNLOAD}" -w "%{http_code}" \
+		-b "${VIEWER_COOKIES}" -c "${VIEWER_COOKIES}" \
+		"${API_BASE_URL}/files/${SMOKE_FILE_ID}/download"
+)"
+[[ "${VIEWER_REVOKED_DOWNLOAD_STATUS}" == "403" ]] || {
+	echo "Expected revoked recipient to receive 403 for the File, got ${VIEWER_REVOKED_DOWNLOAD_STATUS}" >&2
+	exit 1
+}
+FILE_SHARE_ACCESS_RESULT="passed"
 
 # ponytail: exercise mutable account lifecycle only in the disposable CI stack.
 if [[ "${PILOT_EXERCISE_USER_LIFECYCLE}" == "1" ]]; then

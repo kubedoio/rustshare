@@ -21,6 +21,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Test pilot log redaction
+        run: python3 scripts/test_redact_pilot_logs.py
+
       - name: Build pilot backend image
         run: |
           docker build -f docker/backend.Dockerfile \
@@ -80,6 +83,13 @@ jobs:
           CONFIG_ID="$(sha256sum /tmp/pilot-compose.yaml | cut -d' ' -f1)"
           IMAGE_VERSION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
           IMAGE_REVISION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          IMAGE_ID="$(docker image inspect rustshare-backend:pilot --format '{{.Id}}')"
+          COMPOSE_PROJECT_NAME="rustshare-pilot-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          CLEAN_INSTALL_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          [[ "${IMAGE_REVISION}" == "${GITHUB_SHA}" ]] || {
+            echo "Pilot image revision ${IMAGE_REVISION} does not match ${GITHUB_SHA}" >&2
+            exit 1
+          }
           cat > /tmp/rustshare-pilot-evidence/pilot-identity.env <<EOF
           SOURCE_SHA=${GITHUB_SHA}
           SOURCE_STATUS=$(git status --porcelain)
@@ -88,12 +98,27 @@ jobs:
           DEPLOYMENT_ID=github-actions-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
           IMAGE_VERSION=${IMAGE_VERSION}
           IMAGE_REVISION=${IMAGE_REVISION}
+          IMAGE_ID=${IMAGE_ID}
           CONFIG_ID=${CONFIG_ID}
+          COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}
+          CLEAN_INSTALL_STARTED_AT=${CLEAN_INSTALL_STARTED_AT}
           STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           EOF
           echo "PILOT_CONFIG_ID=${CONFIG_ID}" >> "$GITHUB_ENV"
           echo "PILOT_BUILD_VERSION=${IMAGE_VERSION}" >> "$GITHUB_ENV"
+          echo "PILOT_IMAGE_ID=${IMAGE_ID}" >> "$GITHUB_ENV"
           echo "PILOT_DEPLOYMENT_ID=github-actions-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+          echo "COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}" >> "$GITHUB_ENV"
+
+      - name: Verify clean-install volumes are fresh
+        run: |
+          set -euo pipefail
+          for volume in "${COMPOSE_PROJECT_NAME}_postgres_data" "${COMPOSE_PROJECT_NAME}_rustfs_data"; do
+            if docker volume inspect "${volume}" >/dev/null 2>&1; then
+              echo "Expected a fresh pilot volume but found ${volume}" >&2
+              exit 1
+            fi
+          done
 
       - name: Boot pilot stack
         env:
@@ -115,6 +140,22 @@ jobs:
           RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml up -d postgres rustfs backend nginx
 
+      - name: Verify clean-install backend image identity
+        run: |
+          set -euo pipefail
+          container="$(docker compose -f docker-compose.yml -f docker-compose.pilot.yml ps -q backend)"
+          [[ -n "${container}" ]] || {
+            echo "Clean-install backend container is missing" >&2
+            exit 1
+          }
+          running_image_id="$(docker inspect --format '{{.Image}}' "${container}")"
+          [[ "${running_image_id}" == "${PILOT_IMAGE_ID}" ]] || {
+            echo "Clean-install backend image ${running_image_id} does not match tested image ${PILOT_IMAGE_ID}" >&2
+            exit 1
+          }
+          echo "PILOT_BACKEND_CONTAINER_IMAGE_ID=${running_image_id}" >> "$GITHUB_ENV"
+          echo "CLEAN_INSTALL_BACKEND_CONTAINER_IMAGE_ID=${running_image_id}" >> /tmp/rustshare-pilot-evidence/pilot-identity.env
+
       - name: Wait for backend readiness
         env:
           # nginx answers /health statically, so it cannot tell a crashed
@@ -135,6 +176,144 @@ jobs:
           echo "Pilot backend did not become ready in time" >&2
           exit 1
 
+      - name: Verify fresh-volume migrations
+        run: |
+          set -euo pipefail
+          for volume in "${COMPOSE_PROJECT_NAME}_postgres_data" "${COMPOSE_PROJECT_NAME}_rustfs_data"; do
+            docker volume inspect "${volume}" >/dev/null
+          done
+          migration_state="$(docker compose -f docker-compose.yml -f docker-compose.pilot.yml \
+            exec -T postgres psql -U rustshare -d rustshare -Atc \
+            'SELECT COUNT(*), COALESCE(MAX(version), 0) FROM _sqlx_migrations WHERE success')"
+          read -r migration_count latest_migration <<< "${migration_state//|/ }"
+          [[ "${migration_count}" =~ ^[1-9][0-9]*$ && "${latest_migration}" =~ ^[0-9]+$ ]] || {
+            echo "Fresh install has no successful SQLx migrations: ${migration_state}" >&2
+            exit 1
+          }
+          echo "PILOT_MIGRATION_COUNT=${migration_count}" >> "$GITHUB_ENV"
+          echo "PILOT_LATEST_MIGRATION=${latest_migration}" >> "$GITHUB_ENV"
+
+      - name: Verify migration failure aborts startup with a diagnostic
+        env:
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
+          PILOT_IMAGE_ID: ${{ env.PILOT_IMAGE_ID }}
+          JWT_SECRET: ${{ secrets.CI_JWT_SECRET != '' && secrets.CI_JWT_SECRET || steps.pilot-secrets.outputs.jwt_secret }}
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY != '' && secrets.CI_ENCRYPTION_KEY || steps.pilot-secrets.outputs.encryption_key }}
+          POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
+          RUSTFS_ROOT_USER: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          AWS_ACCESS_KEY_ID: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: "true"
+          RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
+          RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+        run: |
+          set -euo pipefail
+          compose=(docker compose -f docker-compose.yml -f docker-compose.pilot.yml)
+          probe_suffix="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          probe_role="rustshare_migration_probe_${probe_suffix}"
+          probe_database="rustshare_migration_probe_${probe_suffix}"
+          probe_password="$(openssl rand -hex 32)"
+          export DATABASE_URL="postgres://${probe_role}:${probe_password}@postgres:5432/${probe_database}"
+          raw_log="/tmp/rustshare-migration-failure-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log"
+          safe_log=/tmp/rustshare-pilot-evidence/migration-failure.log
+          : >"${safe_log}"
+          probe_db_created=0
+          probe_role_created=0
+
+          capture_safe_migration_diagnostics() {
+            local diagnostic
+            local matched=0
+            for diagnostic in \
+              'Configuration errors — server cannot start' \
+              'JWT_SECRET must be at least 32 characters.' \
+              'Connected to database' \
+              'permission denied for schema public' \
+              'Database migrations applied'; do
+              if grep -Fq -- "${diagnostic}" "${raw_log}"; then
+                printf '%s\n' "${diagnostic}" >>"${safe_log}"
+                matched=1
+              fi
+            done
+            if [[ "${matched}" == "0" ]]; then
+              printf '%s\n' 'No allowlisted startup diagnostic matched; raw output was discarded.' \
+                >>"${safe_log}"
+            fi
+          }
+
+          cleanup_migration_probe() {
+            result=$?
+            trap - EXIT
+            if [[ -e "${raw_log}" ]] && ! capture_safe_migration_diagnostics; then
+              echo "Could not capture safe migration probe diagnostics" >&2
+              result=1
+            fi
+            if [[ "${probe_db_created}" == "1" ]] && ! "${compose[@]}" exec -T postgres \
+              dropdb --if-exists --force -U rustshare "${probe_database}" >/dev/null; then
+              echo "Could not remove isolated migration probe database ${probe_database}" >&2
+              result=1
+            fi
+            if [[ "${probe_role_created}" == "1" ]] && ! "${compose[@]}" exec -T postgres \
+              psql -v ON_ERROR_STOP=1 -U rustshare -d postgres \
+              -c "DROP ROLE IF EXISTS ${probe_role}" >/dev/null; then
+              echo "Could not remove isolated migration probe role ${probe_role}" >&2
+              result=1
+            fi
+            [[ ! -e "${raw_log}" ]] || rm -f "${raw_log}"
+            exit "${result}"
+          }
+          trap cleanup_migration_probe EXIT
+
+          actual_image_id="$(docker image inspect --format '{{.Id}}' "${RUSTSHARE_BACKEND_IMAGE}")"
+          actual_revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "${RUSTSHARE_BACKEND_IMAGE}")"
+          [[ "${actual_image_id}" == "${PILOT_IMAGE_ID}" && "${actual_revision}" == "${GITHUB_SHA}" ]] || {
+            echo "Migration failure probe image does not match the tested candidate" >&2
+            exit 1
+          }
+
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d postgres \
+            -c "CREATE ROLE ${probe_role} LOGIN PASSWORD '${probe_password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
+          probe_role_created=1
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d postgres \
+            -c "CREATE DATABASE ${probe_database} OWNER rustshare"
+          probe_db_created=1
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d postgres \
+            -c "GRANT CONNECT ON DATABASE ${probe_database} TO ${probe_role}"
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d "${probe_database}" \
+            -c 'REVOKE CREATE ON SCHEMA public FROM PUBLIC'
+          schema_create_privilege="$("${compose[@]}" exec -T postgres psql -U rustshare -d "${probe_database}" \
+            -Atqc "SELECT has_schema_privilege('${probe_role}', 'public', 'CREATE')")"
+          [[ "${schema_create_privilege}" == "f" ]] || {
+            echo "Migration probe role unexpectedly has schema CREATE privilege" >&2
+            exit 1
+          }
+
+          if "${compose[@]}" run --rm --no-deps -e DATABASE_URL backend \
+            >"${raw_log}" 2>&1; then
+            echo "Backend unexpectedly started with insufficient migration privileges" >&2
+            exit 1
+          fi
+          grep -Fq 'Connected to database' "${raw_log}" || {
+            echo "Migration probe did not establish the database connection before failing" >&2
+            exit 1
+          }
+          grep -Fq 'permission denied for schema public' "${raw_log}" || {
+            echo "Migration failure diagnostic did not identify the database privilege error" >&2
+            exit 1
+          }
+          if grep -Fq 'Database migrations applied' "${raw_log}"; then
+            echo "Backend reported migrations applied despite the injected failure" >&2
+            exit 1
+          fi
+          printf 'MIGRATION_FAILURE_STATUS=passed\nMIGRATION_FAILURE_DIAGNOSTIC_STATUS=passed\nSOURCE_SHA=%s\nBUILD_VERSION=%s\nIMAGE_ID=%s\nIMAGE_REVISION=%s\nDEPLOYMENT_ID=%s\nCONFIG_ID=%s\nWORKFLOW_RUN_ID=%s\nWORKFLOW_RUN_ATTEMPT=%s\n' \
+            "${GITHUB_SHA}" "${PILOT_BUILD_VERSION}" "${actual_image_id}" \
+            "${actual_revision}" "${PILOT_DEPLOYMENT_ID}" "${PILOT_CONFIG_ID}" \
+            "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" \
+            > /tmp/rustshare-pilot-evidence/migration-failure.env
+
       - name: Run canonical pilot journey
         env:
           BASE_URL: http://127.0.0.1
@@ -153,15 +332,69 @@ jobs:
           ./scripts/run-beta-smoke.sh
           grep -Fx 'BETA_SMOKE_USER_LIFECYCLE=passed' /tmp/rustshare-pilot-evidence/canonical-smoke.env
 
-      - name: Verify RustShare UI is reachable
+      - name: Record clean-install evidence
         run: |
           set -euo pipefail
+          grep -Fx 'BETA_SMOKE_STATUS=passed' /tmp/rustshare-pilot-evidence/canonical-smoke.env
+          cat > /tmp/rustshare-pilot-evidence/clean-install.env <<EOF
+          CLEAN_INSTALL_STATUS=passed
+          SOURCE_SHA=${GITHUB_SHA}
+          BUILD_VERSION=${PILOT_BUILD_VERSION}
+          IMAGE_REVISION=${GITHUB_SHA}
+          BACKEND_CONTAINER_IMAGE_ID=${PILOT_BACKEND_CONTAINER_IMAGE_ID}
+          DEPLOYMENT_ID=${PILOT_DEPLOYMENT_ID}
+          CONFIG_ID=${PILOT_CONFIG_ID}
+          COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}
+          WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
+          WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
+          POSTGRES_VOLUME_STATUS=fresh
+          RUSTFS_DATA_VOLUME_STATUS=fresh
+          SQLX_MIGRATION_COUNT=${PILOT_MIGRATION_COUNT}
+          SQLX_LATEST_MIGRATION=${PILOT_LATEST_MIGRATION}
+          FIRST_BOOT_READY=passed
+          FIRST_CANONICAL_JOURNEY=passed
+          STARTED_AT=${CLEAN_INSTALL_STARTED_AT}
+          FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
+
+      - name: Verify RustShare UI is reachable
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://127.0.0.1
+          ADMIN_EMAIL: admin@localhost
+          ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          PLAYWRIGHT_JSON_OUTPUT_NAME: /tmp/rustshare-pilot-evidence/ui-playwright-results.json
+        run: |
+          set -euo pipefail
+          ui_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           curl --fail --silent --show-error http://127.0.0.1/ \
             > /tmp/rustshare-pilot-evidence/ui-index.html
           grep -Eiq '<!doctype html|<html[[:space:]>]' \
             /tmp/rustshare-pilot-evidence/ui-index.html
-          printf 'UI_STATUS=passed\nUI_URL=http://127.0.0.1/\n' \
+          npm ci
+          npx playwright install --with-deps chromium
+          pilot_file_name="$(sed -n 's/^SMOKE_FILE_NAME=//p' /tmp/rustshare-pilot-evidence/canonical-smoke.env)"
+          pilot_note_id="$(sed -n 's/^SMOKE_NOTE_ID=//p' /tmp/rustshare-pilot-evidence/canonical-smoke.env)"
+          pilot_note_title="$(sed -n 's/^SMOKE_NOTE_TITLE=//p' /tmp/rustshare-pilot-evidence/canonical-smoke.env)"
+          [[ -n "${pilot_file_name}" && -n "${pilot_note_id}" && -n "${pilot_note_title}" ]] || {
+            echo "Canonical smoke did not record the pilot File and Note identities" >&2
+            exit 1
+          }
+          PILOT_FILE_NAME="${pilot_file_name}" \
+            PILOT_NOTE_ID="${pilot_note_id}" \
+            PILOT_NOTE_TITLE="${pilot_note_title}" \
+            npm run test:e2e -- \
+            tests/pilot.e2e.ts --reporter=line,json
+          ui_playwright_status="$(python3 ../scripts/verify_pilot_ui_results.py \
+            "${PLAYWRIGHT_JSON_OUTPUT_NAME}")"
+          printf 'UI_STATUS=passed\nUI_STATIC_STATUS=passed\nUI_BROWSER_STATUS=passed\nUI_URL=http://127.0.0.1/\nUI_FILE_NAME=%s\nUI_NOTE_ID=%s\nUI_NOTE_TITLE=%s\nUI_NOTE_H1=Beta Smoke H1\nUI_SOURCE_SHA=%s\nUI_BUILD_VERSION=%s\nUI_DEPLOYMENT_ID=%s\nUI_CONFIG_ID=%s\nUI_WORKFLOW_RUN_ID=%s\nUI_WORKFLOW_RUN_ATTEMPT=%s\nUI_STARTED_AT=%s\nUI_FINISHED_AT=%s\n' \
+            "${pilot_file_name}" "${pilot_note_id}" "${pilot_note_title}" \
+            "${GITHUB_SHA}" "${PILOT_BUILD_VERSION}" \
+            "${PILOT_DEPLOYMENT_ID}" "${PILOT_CONFIG_ID}" "${GITHUB_RUN_ID}" \
+            "${GITHUB_RUN_ATTEMPT}" "${ui_started_at}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > /tmp/rustshare-pilot-evidence/ui.env
+          printf '%s\n' "${ui_playwright_status}" \
+            >> /tmp/rustshare-pilot-evidence/ui.env
 
       - name: Restart application and verify readiness
         env:
@@ -206,39 +439,95 @@ jobs:
           RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
           RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
           RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+          VIEWER_EMAIL: viewer@localhost
+          VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
           RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
           RUSTSHARE_BACKEND_PULL_POLICY: never
         run: |
           set -euo pipefail
           compose=(docker compose -f docker-compose.yml -f docker-compose.pilot.yml)
           failure_report=/tmp/rustshare-pilot-evidence/failure-drills.env
+          failure_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
           echo "Stopping PostgreSQL; readiness must fail."
           "${compose[@]}" stop postgres
-          set +e
-          curl --fail --silent --show-error --max-time 10 \
-            http://127.0.0.1/health/ready \
-            >/tmp/rustshare-pilot-evidence/health-database-down.json
-          database_status=$?
-          set -e
-          [[ "${database_status}" -ne 0 ]] || {
-            echo "Readiness falsely remained healthy while PostgreSQL was stopped" >&2
+          database_http_status="$(curl --silent --show-error --max-time 10 \
+            --output /tmp/rustshare-pilot-evidence/health-database-down.json \
+            --write-out '%{http_code}' http://127.0.0.1/health/ready)"
+          [[ "${database_http_status}" == "503" ]] || {
+            echo "PostgreSQL outage returned HTTP ${database_http_status}, expected 503" >&2
             exit 1
           }
+          jq --exit-status \
+            '.status == "not_ready" and
+             .components.database.status == "unhealthy" and
+             .components.database.error == "database connectivity failed" and
+             .components.object_storage.status == "healthy"' \
+            /tmp/rustshare-pilot-evidence/health-database-down.json >/dev/null
+          echo "Password login must report database failure while PostgreSQL is unavailable."
+          database_auth_status="$(jq -cn \
+            '{email: env.VIEWER_EMAIL, password: env.VIEWER_PASSWORD}' |
+            curl --silent --show-error --max-time 10 \
+              --output /dev/null --write-out '%{http_code}' \
+              -X POST -H 'Content-Type: application/json' \
+              --data-binary @- http://127.0.0.1/api/v1/auth/login)"
+          [[ "${database_auth_status}" == "500" ]] || {
+            echo "Login during PostgreSQL outage returned HTTP ${database_auth_status}, expected 500" >&2
+            exit 1
+          }
+
           "${compose[@]}" up -d postgres
+          database_recovered=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 10 \
+              http://127.0.0.1/health/ready \
+              >/tmp/rustshare-pilot-evidence/health-after-database-recovery.json; then
+              jq --exit-status \
+                '.status == "ready" and
+                 .components.database.status == "healthy" and
+                 .components.object_storage.status == "healthy"' \
+                /tmp/rustshare-pilot-evidence/health-after-database-recovery.json >/dev/null
+              database_recovered=1
+              break
+            fi
+            sleep 2
+          done
+          [[ "${database_recovered}" -eq 1 ]] || {
+            echo "Readiness did not recover after PostgreSQL restoration" >&2
+            exit 1
+          }
+          echo "Valid pilot login must recover after PostgreSQL restoration."
+          login_response="$(jq -cn \
+            '{email: env.VIEWER_EMAIL, password: env.VIEWER_PASSWORD}' |
+            curl --silent --show-error --max-time 10 \
+              --write-out $'\n%{http_code}' \
+              -X POST -H 'Content-Type: application/json' \
+              --data-binary @- http://127.0.0.1/api/v1/auth/login)"
+          login_status="${login_response##*$'\n'}"
+          login_body="${login_response%$'\n'*}"
+          [[ "${login_status}" == "200" ]] &&
+            jq --exit-status --arg email "${VIEWER_EMAIL}" \
+              '.user.email == $email' <<<"${login_body}" >/dev/null 2>&1 || {
+              echo "Pilot login did not recover after PostgreSQL restoration (HTTP ${login_status})" >&2
+              exit 1
+            }
+          unset login_response login_body
 
           echo "Stopping RustFS; readiness must fail."
           "${compose[@]}" stop rustfs
-          set +e
-          curl --fail --silent --show-error --max-time 10 \
-            http://127.0.0.1/health/ready \
-            >/tmp/rustshare-pilot-evidence/health-storage-down.json
-          storage_status=$?
-          set -e
-          [[ "${storage_status}" -ne 0 ]] || {
-            echo "Readiness falsely remained healthy while RustFS was stopped" >&2
+          storage_http_status="$(curl --silent --show-error --max-time 10 \
+            --output /tmp/rustshare-pilot-evidence/health-storage-down.json \
+            --write-out '%{http_code}' http://127.0.0.1/health/ready)"
+          [[ "${storage_http_status}" == "503" ]] || {
+            echo "RustFS outage returned HTTP ${storage_http_status}, expected 503" >&2
             exit 1
           }
+          jq --exit-status \
+            '.status == "not_ready" and
+             .components.object_storage.status == "unhealthy" and
+             .components.object_storage.error == "object storage check failed" and
+             .components.database.status == "healthy"' \
+            /tmp/rustshare-pilot-evidence/health-storage-down.json >/dev/null
           "${compose[@]}" up -d rustfs
 
           recovered=0
@@ -254,10 +543,24 @@ jobs:
             echo "Readiness did not recover after dependency restoration" >&2
             exit 1
           }
+          jq --exit-status \
+            '.status == "ready" and
+             .components.database.status == "healthy" and
+             .components.object_storage.status == "healthy"' \
+            /tmp/rustshare-pilot-evidence/health-after-dependency-recovery.json >/dev/null
+
+          auth_config="$(curl --fail --silent --show-error --max-time 10 \
+            http://127.0.0.1/api/v1/auth/config)"
+          jq --exit-status \
+            '.password_login_enabled == true and .oidc_enabled == false' \
+            <<<"${auth_config}" >/dev/null || {
+            echo "Pilot auth configuration differs from the expected password-login/no-OIDC setup" >&2
+            exit 1
+          }
 
           echo "Invalid password login must be rejected without a server error."
           auth_status="$(curl --silent --show-error -o \
-            /tmp/rustshare-pilot-evidence/authentication-failure.json \
+            /tmp/rustshare-pilot-evidence/invalid-credentials.json \
             -w '%{http_code}' -X POST \
             -H 'Content-Type: application/json' \
             --data '{"email":"invalid-pilot-user@localhost","password":"invalid-pilot-password"}' \
@@ -266,33 +569,45 @@ jobs:
             echo "Invalid login returned unexpected HTTP ${auth_status}" >&2
             exit 1
           }
-          printf 'DATABASE_FAILURE_STATUS=passed\nSTORAGE_FAILURE_STATUS=passed\n' \
+          failure_finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf 'DATABASE_FAILURE_STATUS=passed\nDATABASE_DIAGNOSTIC_STATUS=passed\nSTORAGE_FAILURE_STATUS=passed\nSTORAGE_DIAGNOSTIC_STATUS=passed\nDEPENDENCY_RECOVERY_STATUS=passed\n' \
             > "${failure_report}"
-          printf 'AUTHENTICATION_FAILURE_STATUS=passed\n' \
+          printf 'DATABASE_AUTHENTICATION_FAILURE_STATUS=passed\nDATABASE_AUTHENTICATION_RECOVERY_STATUS=passed\nINVALID_CREDENTIAL_REJECTION_STATUS=passed\nOIDC_PROVIDER_CONFIGURED=false\n' \
+            >> "${failure_report}"
+          printf 'SOURCE_SHA=%s\nBUILD_VERSION=%s\nDEPLOYMENT_ID=%s\nCONFIG_ID=%s\nWORKFLOW_RUN_ID=%s\nWORKFLOW_RUN_ATTEMPT=%s\nSTARTED_AT=%s\nFINISHED_AT=%s\n' \
+            "${GITHUB_SHA}" "${PILOT_BUILD_VERSION}" "${PILOT_DEPLOYMENT_ID}" \
+            "${PILOT_CONFIG_ID}" "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" \
+            "${failure_started_at}" "${failure_finished_at}" \
             >> "${failure_report}"
 
       - name: Validate invalid configuration fails closed
         env:
           RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
         run: |
-          set +e
-          docker run --rm \
+          set -euo pipefail
+          if docker run --rm \
             -e JWT_SECRET=weak \
-            -e RUSTSHARE_SECRET_ENCRYPTION_KEY=weak \
-            -e DATABASE_URL=postgres://invalid \
+            -e DATABASE_URL=postgres://localhost:5432/rustshare \
             rustshare-backend:pilot \
-            >/tmp/rustshare-pilot-evidence/invalid-config.log 2>&1
-          invalid_status=$?
-          set -e
-          [[ "${invalid_status}" -ne 0 ]] || {
+            >/tmp/rustshare-pilot-evidence/invalid-config.log 2>&1; then
             echo "Invalid configuration unexpectedly started successfully" >&2
+            exit 1
+          fi
+          grep -Fq 'Configuration errors — server cannot start' \
+            /tmp/rustshare-pilot-evidence/invalid-config.log || {
+            echo "Weak JWT configuration did not reach startup validation" >&2
+            exit 1
+          }
+          grep -Fq 'JWT_SECRET must be at least 32 characters.' \
+            /tmp/rustshare-pilot-evidence/invalid-config.log || {
+            echo "Startup did not identify the weak JWT_SECRET configuration" >&2
             exit 1
           }
           grep -q 'SESSION_COOKIE_SECURE: "true"' docker-compose.prod.yml || {
             echo "Production Compose profile does not enable secure session cookies" >&2
             exit 1
           }
-          printf 'INVALID_CONFIGURATION_STATUS=passed\n' \
+          printf 'INVALID_CONFIGURATION_STATUS=passed\nINVALID_CONFIGURATION_DIAGNOSTIC_STATUS=passed\n' \
             > /tmp/rustshare-pilot-evidence/security-sanity.env
           printf 'PRODUCTION_COOKIE_SECURITY=passed\n' \
             >> /tmp/rustshare-pilot-evidence/security-sanity.env
@@ -309,14 +624,55 @@ jobs:
           RUSTSHARE_BACKEND_PULL_POLICY: never
         run: |
           set -euo pipefail
-          backup_root=/tmp/rustshare-pilot-evidence/backups
-          scripts/backup-stack.sh "${backup_root}" | tee /tmp/rustshare-pilot-evidence/backup.log
+          evidence_dir=/tmp/rustshare-pilot-evidence
+          backup_root="/tmp/rustshare-pilot-private-backups-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          backup_log_raw="/tmp/rustshare-pilot-backup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log"
+          verify_log_raw="/tmp/rustshare-pilot-backup-verify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log"
+          mkdir "${backup_root}"
+          printf 'PILOT_PRIVATE_BACKUP_ROOT=%s\n' "${backup_root}" >> "$GITHUB_ENV"
+          set +e
+          scripts/backup-stack.sh "${backup_root}" >"${backup_log_raw}" 2>&1
+          backup_status=$?
+          python3 scripts/redact_pilot_logs.py \
+            < "${backup_log_raw}" > "${evidence_dir}/backup.log"
+          backup_redaction_status=$?
+          set -e
+          rm -f -- "${backup_log_raw}"
+          if [[ "${backup_redaction_status}" -ne 0 ]]; then
+            printf 'BACKUP_OUTPUT_SECRET_SCAN=failed\n' > "${evidence_dir}/backup.env"
+            echo "Backup diagnostics could not be safely redacted; refusing to continue." >&2
+            exit 1
+          fi
+          if [[ "${backup_status}" -ne 0 ]]; then
+            printf 'BACKUP_STATUS=failed\nBACKUP_OUTPUT_SECRET_SCAN=passed\n' \
+              > "${evidence_dir}/backup.env"
+            echo "Backup command failed; redacted diagnostics were retained." >&2
+            exit "${backup_status}"
+          fi
           backup_dir="$(find "${backup_root}" -mindepth 1 -maxdepth 1 -type d -print | sort | tail -n 1)"
           [[ -n "${backup_dir}" ]] || { echo "Backup directory was not created" >&2; exit 1; }
-          scripts/verify-backup-bundle.sh "${backup_dir}" | tee /tmp/rustshare-pilot-evidence/backup-verify.log
+          set +e
+          scripts/verify-backup-bundle.sh "${backup_dir}" >"${verify_log_raw}" 2>&1
+          verify_status=$?
+          python3 scripts/redact_pilot_logs.py \
+            < "${verify_log_raw}" > "${evidence_dir}/backup-verify.log"
+          verify_redaction_status=$?
+          set -e
+          rm -f -- "${verify_log_raw}"
+          if [[ "${verify_redaction_status}" -ne 0 ]]; then
+            printf 'BACKUP_OUTPUT_SECRET_SCAN=failed\n' > "${evidence_dir}/backup.env"
+            echo "Backup verification diagnostics could not be safely redacted." >&2
+            exit 1
+          fi
+          if [[ "${verify_status}" -ne 0 ]]; then
+            printf 'BACKUP_STATUS=failed\nBACKUP_OUTPUT_SECRET_SCAN=passed\n' \
+              > "${evidence_dir}/backup.env"
+            echo "Backup verification failed; redacted diagnostics were retained." >&2
+            exit "${verify_status}"
+          fi
           echo "PILOT_BACKUP_DIR=${backup_dir}" >> "$GITHUB_ENV"
-          printf 'BACKUP_STATUS=passed\nBACKUP_DIR=%s\n' "${backup_dir}" \
-            > /tmp/rustshare-pilot-evidence/backup.env
+          printf 'BACKUP_STATUS=passed\nBACKUP_OUTPUT_SECRET_SCAN=passed\n' \
+            > "${evidence_dir}/backup.env"
 
       - name: Restore backup in isolated drill and re-run journey verification
         env:
@@ -338,8 +694,20 @@ jobs:
           DRILL_REPORT_DIR: /tmp/rustshare-pilot-evidence
           RESTORE_DRILL_STATE_FILE: /tmp/rustshare-pilot-evidence/canonical-smoke.env
           RESTORE_DRILL_PILOT_REPORT_PATH: /tmp/rustshare-pilot-evidence/restore-persistence.env
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          PILOT_IMAGE_ID: ${{ env.PILOT_IMAGE_ID }}
           PILOT_SOURCE_SHA: ${{ github.sha }}
         run: scripts/run-restore-drill.sh "${PILOT_BACKUP_DIR}"
+
+      - name: Remove private pilot backup
+        if: always()
+        run: |
+          set -euo pipefail
+          expected_root="/tmp/rustshare-pilot-private-backups-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [[ -n "${PILOT_PRIVATE_BACKUP_ROOT:-}" ]]; then
+            [[ "${PILOT_PRIVATE_BACKUP_ROOT}" == "${expected_root}" ]]
+            rm -rf -- "${expected_root}"
+          fi
 
       - name: Validate previous release to candidate upgrade
         env:
@@ -456,7 +824,7 @@ jobs:
             PILOT_CONFIG_ID=upgrade-isolated \
             ./scripts/run-beta-smoke.sh
           "${compose[@]}" logs --no-color --tail=300 backend \
-            > /tmp/rustshare-pilot-evidence/upgrade-backend.log
+            > "/tmp/rustshare-pilot-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log" 2>&1
           printf 'UPGRADE_STATUS=passed\nPREVIOUS_TAG=%s\nPREVIOUS_SHA=%s\n' \
             "${previous_tag}" "${previous_sha}" \
             > /tmp/rustshare-pilot-evidence/upgrade.env
@@ -485,17 +853,32 @@ jobs:
           DATABASE_URL: postgres://rustshare:${{ steps.pilot-secrets.outputs.pg_password }}@localhost:5432/rustshare
         run: |
           set -euo pipefail
+          raw_log="/tmp/rustshare-pilot-migration-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log"
+          safe_log=/tmp/rustshare-pilot-evidence/migration.log
           if ! command -v sqlx >/dev/null 2>&1; then
             cargo install sqlx-cli --locked --no-default-features --features postgres,rustls
           fi
-          if scripts/test-application-migration.sh \
-            >/tmp/rustshare-pilot-evidence/migration.log 2>&1; then
-            printf 'MIGRATION_STATUS=passed\n' > /tmp/rustshare-pilot-evidence/migration.env
-          else
-            printf 'MIGRATION_STATUS=failed\n' > /tmp/rustshare-pilot-evidence/migration.env
-            cat /tmp/rustshare-pilot-evidence/migration.log
+          set +e
+          scripts/test-application-migration.sh >"${raw_log}" 2>&1
+          migration_status=$?
+          python3 scripts/redact_pilot_logs.py < "${raw_log}" > "${safe_log}"
+          redaction_status=$?
+          set -e
+          rm -f -- "${raw_log}"
+          if [[ "${redaction_status}" -ne 0 ]]; then
+            printf 'MIGRATION_STATUS=failed\nMIGRATION_DIAGNOSTIC_SECRET_SCAN=failed\n' \
+              > /tmp/rustshare-pilot-evidence/migration.env
+            echo "Migration diagnostics could not be safely redacted." >&2
             exit 1
           fi
+          if [[ "${migration_status}" -ne 0 ]]; then
+            printf 'MIGRATION_STATUS=failed\nMIGRATION_DIAGNOSTIC_SECRET_SCAN=passed\n' \
+              > /tmp/rustshare-pilot-evidence/migration.env
+            echo "Representative migration check failed; redacted diagnostics were retained." >&2
+            exit "${migration_status}"
+          fi
+          printf 'MIGRATION_STATUS=passed\nMIGRATION_DIAGNOSTIC_SECRET_SCAN=passed\n' \
+            > /tmp/rustshare-pilot-evidence/migration.env
 
       - name: Show service status on failure
         if: failure()
@@ -504,81 +887,111 @@ jobs:
           RUSTSHARE_BACKEND_PULL_POLICY: never
         run: |
           docker compose -f docker-compose.yml -f docker-compose.pilot.yml ps
-          docker compose -f docker-compose.yml -f docker-compose.pilot.yml logs --tail=200
 
       - name: Collect pilot evidence and diagnostics
+        id: collect-evidence
         if: always()
         env:
           RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
           RUSTSHARE_BACKEND_PULL_POLICY: never
-          JWT_SECRET: ${{ steps.pilot-secrets.outputs.jwt_secret }}
-          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ steps.pilot-secrets.outputs.encryption_key }}
+          JWT_SECRET: ${{ secrets.CI_JWT_SECRET != '' && secrets.CI_JWT_SECRET || steps.pilot-secrets.outputs.jwt_secret }}
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY != '' && secrets.CI_ENCRYPTION_KEY || steps.pilot-secrets.outputs.encryption_key }}
           RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
           RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
           RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
           POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
+          DATABASE_URL: postgres://rustshare:${{ steps.pilot-secrets.outputs.pg_password }}@postgres:5432/rustshare
+          RUSTFS_ROOT_USER: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
           RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          AWS_ACCESS_KEY_ID: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
         run: |
           set +e
           collection_status=0
-          mkdir -p /tmp/rustshare-pilot-evidence
-          git rev-parse HEAD > /tmp/rustshare-pilot-evidence/source-sha.txt || collection_status=1
-          git status --short > /tmp/rustshare-pilot-evidence/source-status.txt || collection_status=1
+          secret_log_leak=0
+          safe_to_upload=false
+          evidence_dir=/tmp/rustshare-pilot-evidence
+          raw_log="/tmp/rustshare-pilot-compose-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log"
+          upgrade_raw_log="/tmp/rustshare-pilot-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log"
+          safe_log="${evidence_dir}/compose-logs.txt"
+          safe_upgrade_log="${evidence_dir}/upgrade-backend.log"
+          trap 'rm -f -- "${raw_log}" "${upgrade_raw_log}" "${safe_log}.tmp" "${safe_upgrade_log}.tmp"' EXIT
+          mkdir -p "${evidence_dir}" || collection_status=1
+          git rev-parse HEAD > "${evidence_dir}/source-sha.txt" || collection_status=1
+          git status --short > "${evidence_dir}/source-status.txt" || collection_status=1
           docker compose -f docker-compose.yml -f docker-compose.pilot.yml ps \
-            > /tmp/rustshare-pilot-evidence/compose-ps.txt 2>&1 || collection_status=1
+            > "${evidence_dir}/compose-ps.txt" 2>&1 || collection_status=1
           docker compose -f docker-compose.yml -f docker-compose.pilot.yml logs \
-            --no-color --tail=400 \
-            > /tmp/rustshare-pilot-evidence/compose-logs.raw.txt 2>&1 || collection_status=1
-          cp /tmp/rustshare-pilot-evidence/compose-logs.raw.txt \
-            /tmp/rustshare-pilot-evidence/compose-logs.txt || collection_status=1
-          for secret in "${JWT_SECRET}" "${RUSTSHARE_SECRET_ENCRYPTION_KEY}" \
-            "${RUSTSHARE_CHAT_WEBHOOK_SECRET}" "${RUSTSHARE_ADMIN_PASSWORD}" \
-            "${RUSTSHARE_DEMO_VIEWER_PASSWORD}" "${POSTGRES_PASSWORD}" \
-            "${RUSTFS_ROOT_PASSWORD}"; do
-            sed -i "s|${secret}|[REDACTED]|g" \
-              /tmp/rustshare-pilot-evidence/compose-logs.txt
-          done
+            --no-color --tail=400 > "${raw_log}" 2>&1 || collection_status=1
+          python3 scripts/redact_pilot_logs.py --require-all \
+            < "${raw_log}" > "${safe_log}.tmp"
+          redact_status=$?
+          if [[ "${redact_status}" -eq 0 ]]; then
+            mv -- "${safe_log}.tmp" "${safe_log}" || collection_status=1
+          elif [[ "${redact_status}" -eq 10 ]]; then
+            secret_log_leak=1
+            mv -- "${safe_log}.tmp" "${safe_log}" || collection_status=1
+          else
+            collection_status=1
+            rm -f -- "${safe_log}.tmp" "${safe_log}"
+          fi
+          if [[ -f "${upgrade_raw_log}" ]]; then
+            if [[ ! -s "${upgrade_raw_log}" ]]; then
+              collection_status=1
+            else
+              python3 scripts/redact_pilot_logs.py --require-all \
+                < "${upgrade_raw_log}" > "${safe_upgrade_log}.tmp"
+              upgrade_redact_status=$?
+              if [[ "${upgrade_redact_status}" -eq 0 ]]; then
+                mv -- "${safe_upgrade_log}.tmp" "${safe_upgrade_log}" || collection_status=1
+              elif [[ "${upgrade_redact_status}" -eq 10 ]]; then
+                secret_log_leak=1
+                mv -- "${safe_upgrade_log}.tmp" "${safe_upgrade_log}" || collection_status=1
+              else
+                collection_status=1
+                rm -f -- "${safe_upgrade_log}.tmp" "${safe_upgrade_log}"
+              fi
+            fi
+          fi
           curl --silent --show-error http://127.0.0.1/health \
-            > /tmp/rustshare-pilot-evidence/health-live.json 2>&1 || collection_status=1
+            > "${evidence_dir}/health-live.json" 2>&1 || collection_status=1
           curl --silent --show-error http://127.0.0.1/health/ready \
-            > /tmp/rustshare-pilot-evidence/health-ready-final.json 2>&1 || collection_status=1
+            > "${evidence_dir}/health-ready-final.json" 2>&1 || collection_status=1
           sha256sum /tmp/pilot-compose.yaml \
-            > /tmp/rustshare-pilot-evidence/compose-config.sha256 || collection_status=1
+            > "${evidence_dir}/compose-config.sha256" || collection_status=1
           printf 'EVIDENCE_COLLECTED_AT=%s\n' \
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > /tmp/rustshare-pilot-evidence/evidence-collection.env
-          secret_log_leak=0
-          if [[ ! -s /tmp/rustshare-pilot-evidence/compose-logs.raw.txt ]]; then
+            > "${evidence_dir}/evidence-collection.env"
+          if [[ ! -s "${raw_log}" ]]; then
             collection_status=1
-          else
-            for secret in "${JWT_SECRET}" "${RUSTSHARE_SECRET_ENCRYPTION_KEY}" \
-              "${RUSTSHARE_CHAT_WEBHOOK_SECRET}" "${RUSTSHARE_ADMIN_PASSWORD}" \
-              "${RUSTSHARE_DEMO_VIEWER_PASSWORD}" "${POSTGRES_PASSWORD}" \
-              "${RUSTFS_ROOT_PASSWORD}"; do
-              [[ -n "${secret}" ]] || continue
-              grep -F -q "${secret}" \
-                /tmp/rustshare-pilot-evidence/compose-logs.raw.txt
-              scan_status=$?
-              if [[ "${scan_status}" -eq 0 ]]; then
-                secret_log_leak=1
-              elif [[ "${scan_status}" -gt 1 ]]; then
-                collection_status=1
-              fi
-            done
           fi
           if [[ "${secret_log_leak}" -ne 0 ]]; then
-            printf 'SECRET_LOG_SCAN=failed\n' >> /tmp/rustshare-pilot-evidence/security-sanity.env
+            printf 'SECRET_LOG_SCAN=failed\n' >> "${evidence_dir}/security-sanity.env"
           else
-            printf 'SECRET_LOG_SCAN=passed\n' >> /tmp/rustshare-pilot-evidence/security-sanity.env
+            printf 'SECRET_LOG_SCAN=passed\n' >> "${evidence_dir}/security-sanity.env"
           fi
-          rm -f /tmp/rustshare-pilot-evidence/compose-logs.raw.txt
           if [[ "${secret_log_leak}" -ne 0 || "${collection_status}" -ne 0 ]]; then
             printf 'EVIDENCE_COLLECTION_STATUS=failed\n' \
-              > /tmp/rustshare-pilot-evidence/evidence-collection-status.env
+              > "${evidence_dir}/evidence-collection-status.env"
+          else
+            printf 'EVIDENCE_COLLECTION_STATUS=passed\n' \
+              > "${evidence_dir}/evidence-collection-status.env"
+          fi
+          python3 scripts/redact_pilot_logs.py --require-all --check-tree "${evidence_dir}"
+          artifact_scan_status=$?
+          if [[ "${artifact_scan_status}" -eq 0 \
+                && "${collection_status}" -eq 0 \
+                && "${secret_log_leak}" -eq 0 ]]; then
+            safe_to_upload=true
+          else
+            collection_status=1
+            printf 'EVIDENCE_COLLECTION_STATUS=failed\n' \
+              > "${evidence_dir}/evidence-collection-status.env"
+          fi
+          printf 'safe_to_upload=%s\n' "${safe_to_upload}" >> "$GITHUB_OUTPUT"
+          if [[ "${secret_log_leak}" -ne 0 || "${collection_status}" -ne 0 ]]; then
             exit 1
           fi
-          printf 'EVIDENCE_COLLECTION_STATUS=passed\n' \
-            > /tmp/rustshare-pilot-evidence/evidence-collection-status.env
 
       - name: Tear down pilot stack
         if: always()
@@ -587,7 +1000,44 @@ jobs:
           RUSTSHARE_BACKEND_PULL_POLICY: never
         run: docker compose -f docker-compose.yml -f docker-compose.pilot.yml down -v
 
+      - name: Preserve tested pilot image
+        if: success()
+        run: |
+          IMAGE_DIR=/tmp/rustshare-pilot-tested-image
+          mkdir -p "${IMAGE_DIR}"
+          docker save rustshare-backend:pilot -o "${IMAGE_DIR}/rustshare-backend-pilot.tar"
+          ARCHIVE_SHA256="$(sha256sum "${IMAGE_DIR}/rustshare-backend-pilot.tar" | cut -d' ' -f1)"
+          IMAGE_ID="$(docker image inspect rustshare-backend:pilot --format '{{.Id}}')"
+          IMAGE_VERSION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+          IMAGE_REVISION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          RECORDED_IMAGE_ID="$(sed -n 's/^IMAGE_ID=//p' /tmp/rustshare-pilot-evidence/pilot-identity.env)"
+          [[ "${IMAGE_ID}" == "${RECORDED_IMAGE_ID}" ]] || {
+            echo "Tested image ID changed during pilot validation" >&2
+            exit 1
+          }
+          [[ "${IMAGE_REVISION}" == "${GITHUB_SHA}" ]] || exit 1
+          cat > "${IMAGE_DIR}/tested-image.env" <<EOF
+          SOURCE_SHA=${GITHUB_SHA}
+          WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
+          WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
+          IMAGE_VERSION=${IMAGE_VERSION}
+          IMAGE_REVISION=${IMAGE_REVISION}
+          IMAGE_ID=${IMAGE_ID}
+          ARCHIVE_SHA256=${ARCHIVE_SHA256}
+          EOF
+          cp "${IMAGE_DIR}/tested-image.env" /tmp/rustshare-pilot-evidence/tested-image.env
+
+      - name: Upload tested pilot image
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustshare-pilot-tested-image-${{ github.sha }}
+          path: /tmp/rustshare-pilot-tested-image
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Write pilot workflow summary
+        id: write-pilot-summary
         if: always()
         env:
           PILOT_JOB_STATUS: ${{ job.status }}
@@ -595,6 +1045,8 @@ jobs:
           if [[ "${PILOT_JOB_STATUS}" == "success" ]]; then
             for evidence in \
               pilot-identity.env \
+              tested-image.env \
+              clean-install.env \
               canonical-smoke.env \
               ui.env \
               failure-drills.env \
@@ -605,6 +1057,8 @@ jobs:
               upgrade-previous.env \
               upgrade-candidate.env \
               migration.env \
+              migration-failure.env \
+              migration-failure.log \
               security-sanity.env; do
               [[ -s "/tmp/rustshare-pilot-evidence/${evidence}" ]] || {
                 echo "Missing mandatory pilot evidence: ${evidence}" >&2
@@ -621,6 +1075,168 @@ jobs:
               echo "Missing mandatory restore-drill evidence" >&2
               exit 1
             }
+            evidence_dir=/tmp/rustshare-pilot-evidence
+            require_line() {
+              local report="$1"
+              local expected="$2"
+              local key="${expected%%=*}"
+              local exact_matches key_matches
+              exact_matches="$(grep -Fxc -- "${expected}" "${report}" || true)"
+              key_matches="$(grep -c "^${key}=" "${report}" || true)"
+              [[ "${exact_matches}" == 1 && "${key_matches}" == 1 ]] || {
+                echo "Evidence mismatch in ${report}: expected exactly one ${expected}" >&2
+                exit 1
+              }
+            }
+            require_smoke_passed() {
+              local report="$1"
+              require_line "${report}" 'BETA_SMOKE_STATUS=passed'
+              require_line "${report}" 'BETA_SMOKE_FAILURE_PHASE=complete'
+              require_line "${report}" "BETA_SMOKE_WORKFLOW_RUN_ID=${GITHUB_RUN_ID}"
+              require_line "${report}" "BETA_SMOKE_WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
+              grep -Eq '^BETA_SMOKE_STARTED_AT=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "${report}"
+              grep -Eq '^BETA_SMOKE_FINISHED_AT=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "${report}"
+            }
+            identity="${evidence_dir}/pilot-identity.env"
+            image_evidence="${evidence_dir}/tested-image.env"
+            clean_install="${evidence_dir}/clean-install.env"
+            image_id="$(sed -n 's/^IMAGE_ID=//p' "${identity}")"
+            image_version="$(sed -n 's/^IMAGE_VERSION=//p' "${identity}")"
+            deployment_id="$(sed -n 's/^DEPLOYMENT_ID=//p' "${identity}")"
+            config_id="$(sed -n 's/^CONFIG_ID=//p' "${identity}")"
+            archive_sha="$(sed -n 's/^ARCHIVE_SHA256=//p' "${image_evidence}")"
+            require_line "${identity}" "SOURCE_SHA=${GITHUB_SHA}"
+            require_line "${identity}" "IMAGE_REVISION=${GITHUB_SHA}"
+            require_line "${identity}" "WORKFLOW_RUN_ID=${GITHUB_RUN_ID}"
+            require_line "${identity}" "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
+            require_line "${image_evidence}" "IMAGE_VERSION=${image_version}"
+            require_line "${image_evidence}" "SOURCE_SHA=${GITHUB_SHA}"
+            require_line "${image_evidence}" "IMAGE_REVISION=${GITHUB_SHA}"
+            require_line "${image_evidence}" "IMAGE_ID=${image_id}"
+            require_line "${image_evidence}" "WORKFLOW_RUN_ID=${GITHUB_RUN_ID}"
+            require_line "${image_evidence}" "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
+            [[ "${image_id}" =~ ^sha256:[0-9a-f]{64}$ && "${archive_sha}" =~ ^[0-9a-f]{64}$ ]]
+            require_line "${clean_install}" 'CLEAN_INSTALL_STATUS=passed'
+            require_line "${clean_install}" "SOURCE_SHA=${GITHUB_SHA}"
+            require_line "${clean_install}" "BUILD_VERSION=${image_version}"
+            require_line "${clean_install}" "BACKEND_CONTAINER_IMAGE_ID=${image_id}"
+            require_line "${clean_install}" "DEPLOYMENT_ID=${deployment_id}"
+            require_line "${clean_install}" "CONFIG_ID=${config_id}"
+            require_line "${clean_install}" "WORKFLOW_RUN_ID=${GITHUB_RUN_ID}"
+            require_line "${clean_install}" "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
+            require_line "${evidence_dir}/ui.env" 'UI_STATUS=passed'
+            require_line "${evidence_dir}/ui.env" 'UI_BROWSER_STATUS=passed'
+            require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_EXPECTED=1'
+            require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_SKIPPED=0'
+            require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_UNEXPECTED=0'
+            require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_FLAKY=0'
+            smoke_file_name="$(sed -n 's/^SMOKE_FILE_NAME=//p' "${evidence_dir}/canonical-smoke.env")"
+            smoke_note_id="$(sed -n 's/^SMOKE_NOTE_ID=//p' "${evidence_dir}/canonical-smoke.env")"
+            smoke_note_title="$(sed -n 's/^SMOKE_NOTE_TITLE=//p' "${evidence_dir}/canonical-smoke.env")"
+            [[ -n "${smoke_file_name}" && -n "${smoke_note_id}" && -n "${smoke_note_title}" ]]
+            require_line "${evidence_dir}/ui.env" "UI_FILE_NAME=${smoke_file_name}"
+            require_line "${evidence_dir}/ui.env" "UI_NOTE_ID=${smoke_note_id}"
+            require_line "${evidence_dir}/ui.env" "UI_NOTE_TITLE=${smoke_note_title}"
+            require_line "${evidence_dir}/ui.env" 'UI_NOTE_H1=Beta Smoke H1'
+            require_line "${evidence_dir}/ui.env" "UI_SOURCE_SHA=${GITHUB_SHA}"
+            require_line "${evidence_dir}/ui.env" "UI_BUILD_VERSION=${image_version}"
+            require_line "${evidence_dir}/ui.env" "UI_DEPLOYMENT_ID=${deployment_id}"
+            require_line "${evidence_dir}/ui.env" "UI_CONFIG_ID=${config_id}"
+            require_line "${evidence_dir}/ui.env" "UI_WORKFLOW_RUN_ID=${GITHUB_RUN_ID}"
+            require_line "${evidence_dir}/ui.env" "UI_WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
+            grep -Eq '^UI_STARTED_AT=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "${evidence_dir}/ui.env"
+            grep -Eq '^UI_FINISHED_AT=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' "${evidence_dir}/ui.env"
+            require_line "${evidence_dir}/failure-drills.env" 'DATABASE_FAILURE_STATUS=passed'
+            require_line "${evidence_dir}/failure-drills.env" 'DATABASE_DIAGNOSTIC_STATUS=passed'
+            require_line "${evidence_dir}/failure-drills.env" 'STORAGE_FAILURE_STATUS=passed'
+            require_line "${evidence_dir}/failure-drills.env" 'STORAGE_DIAGNOSTIC_STATUS=passed'
+            require_line "${evidence_dir}/failure-drills.env" 'DEPENDENCY_RECOVERY_STATUS=passed'
+            require_line "${evidence_dir}/failure-drills.env" 'DATABASE_AUTHENTICATION_FAILURE_STATUS=passed'
+            require_line "${evidence_dir}/failure-drills.env" 'DATABASE_AUTHENTICATION_RECOVERY_STATUS=passed'
+            require_line "${evidence_dir}/failure-drills.env" 'INVALID_CREDENTIAL_REJECTION_STATUS=passed'
+            require_line "${evidence_dir}/failure-drills.env" 'OIDC_PROVIDER_CONFIGURED=false'
+            require_line "${evidence_dir}/failure-drills.env" "SOURCE_SHA=${GITHUB_SHA}"
+            require_line "${evidence_dir}/failure-drills.env" "BUILD_VERSION=${image_version}"
+            require_line "${evidence_dir}/failure-drills.env" "DEPLOYMENT_ID=${deployment_id}"
+            require_line "${evidence_dir}/failure-drills.env" "CONFIG_ID=${config_id}"
+            require_line "${evidence_dir}/failure-drills.env" "WORKFLOW_RUN_ID=${GITHUB_RUN_ID}"
+            require_line "${evidence_dir}/failure-drills.env" "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
+            failure_started_count="$(grep -c '^STARTED_AT=' "${evidence_dir}/failure-drills.env" || true)"
+            failure_finished_count="$(grep -c '^FINISHED_AT=' "${evidence_dir}/failure-drills.env" || true)"
+            [[ "${failure_started_count}" == "1" && "${failure_finished_count}" == "1" ]] || { echo "failure-drill evidence must contain exactly one start and finish timestamp"; exit 1; }
+            failure_started_at="$(sed -n 's/^STARTED_AT=//p' "${evidence_dir}/failure-drills.env")"
+            failure_finished_at="$(sed -n 's/^FINISHED_AT=//p' "${evidence_dir}/failure-drills.env")"
+            [[ "${failure_started_at}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || { echo "invalid failure-drill start timestamp"; exit 1; }
+            [[ "${failure_finished_at}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || { echo "invalid failure-drill finish timestamp"; exit 1; }
+            failure_started_parsed="$(date -u -d "${failure_started_at}" +'%s %Y-%m-%dT%H:%M:%SZ')" || { echo "invalid failure-drill start timestamp"; exit 1; }
+            failure_finished_parsed="$(date -u -d "${failure_finished_at}" +'%s %Y-%m-%dT%H:%M:%SZ')" || { echo "invalid failure-drill finish timestamp"; exit 1; }
+            read -r failure_started_epoch failure_started_roundtrip <<< "${failure_started_parsed}"
+            read -r failure_finished_epoch failure_finished_roundtrip <<< "${failure_finished_parsed}"
+            [[ "${failure_started_roundtrip}" == "${failure_started_at}" ]] || { echo "invalid failure-drill start timestamp"; exit 1; }
+            [[ "${failure_finished_roundtrip}" == "${failure_finished_at}" ]] || { echo "invalid failure-drill finish timestamp"; exit 1; }
+            (( failure_finished_epoch < failure_started_epoch )) && { echo "failure-drill finish timestamp precedes start"; exit 1; }
+            require_line "${evidence_dir}/backup.env" 'BACKUP_STATUS=passed'
+            require_line "${evidence_dir}/backup.env" 'BACKUP_OUTPUT_SECRET_SCAN=passed'
+            require_line "${evidence_dir}/upgrade.env" 'UPGRADE_STATUS=passed'
+            require_line "${evidence_dir}/migration.env" 'MIGRATION_STATUS=passed'
+            require_line "${evidence_dir}/migration.env" 'MIGRATION_DIAGNOSTIC_SECRET_SCAN=passed'
+            require_line "${evidence_dir}/migration-failure.env" 'MIGRATION_FAILURE_STATUS=passed'
+            require_line "${evidence_dir}/migration-failure.env" 'MIGRATION_FAILURE_DIAGNOSTIC_STATUS=passed'
+            grep -Fqx 'Connected to database' "${evidence_dir}/migration-failure.log"
+            grep -Fqx 'permission denied for schema public' "${evidence_dir}/migration-failure.log"
+            require_line "${evidence_dir}/migration-failure.env" "SOURCE_SHA=${GITHUB_SHA}"
+            require_line "${evidence_dir}/migration-failure.env" "BUILD_VERSION=${image_version}"
+            require_line "${evidence_dir}/migration-failure.env" "IMAGE_ID=${image_id}"
+            require_line "${evidence_dir}/migration-failure.env" "IMAGE_REVISION=${GITHUB_SHA}"
+            require_line "${evidence_dir}/migration-failure.env" "DEPLOYMENT_ID=${deployment_id}"
+            require_line "${evidence_dir}/migration-failure.env" "CONFIG_ID=${config_id}"
+            require_line "${evidence_dir}/migration-failure.env" "WORKFLOW_RUN_ID=${GITHUB_RUN_ID}"
+            require_line "${evidence_dir}/migration-failure.env" "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
+            require_line "${evidence_dir}/security-sanity.env" 'INVALID_CONFIGURATION_STATUS=passed'
+            require_line "${evidence_dir}/security-sanity.env" 'INVALID_CONFIGURATION_DIAGNOSTIC_STATUS=passed'
+            require_line "${evidence_dir}/security-sanity.env" 'PRODUCTION_COOKIE_SECURITY=passed'
+            require_line "${evidence_dir}/security-sanity.env" 'SECRET_LOG_SCAN=passed'
+            require_line "${evidence_dir}/evidence-collection-status.env" 'EVIDENCE_COLLECTION_STATUS=passed'
+            for report in canonical-smoke.env persistence.env restore-persistence.env upgrade-previous.env upgrade-candidate.env; do
+              require_smoke_passed "${evidence_dir}/${report}"
+            done
+            for report in canonical-smoke.env upgrade-previous.env; do
+              require_line "${evidence_dir}/${report}" 'BETA_SMOKE_FILE_SHARE_ACCESS=passed'
+            done
+            for report in persistence.env restore-persistence.env upgrade-candidate.env; do
+              require_line "${evidence_dir}/${report}" 'BETA_SMOKE_PERSISTENCE_STATE_VERIFIED=passed'
+            done
+            for report in canonical-smoke.env persistence.env restore-persistence.env upgrade-candidate.env; do
+              require_line "${evidence_dir}/${report}" "BETA_SMOKE_SOURCE_SHA=${GITHUB_SHA}"
+            done
+            for report in canonical-smoke.env persistence.env; do
+              require_line "${evidence_dir}/${report}" "BETA_SMOKE_BUILD_VERSION=${image_version}"
+              require_line "${evidence_dir}/${report}" "BETA_SMOKE_DEPLOYMENT_ID=${deployment_id}"
+              require_line "${evidence_dir}/${report}" "BETA_SMOKE_CONFIG_ID=${config_id}"
+            done
+            require_line "${evidence_dir}/restore-persistence.env" "BETA_SMOKE_BUILD_VERSION=${image_version}"
+            require_line "${evidence_dir}/restore-persistence.env" 'BETA_SMOKE_DEPLOYMENT_ID=rustshare-restore-drill'
+            require_line "${evidence_dir}/restore-persistence.env" "BETA_SMOKE_CONFIG_ID=${config_id}"
+            previous_sha="$(sed -n 's/^PREVIOUS_SHA=//p' "${evidence_dir}/upgrade.env")"
+            previous_tag="$(sed -n 's/^PREVIOUS_TAG=//p' "${evidence_dir}/upgrade.env")"
+            require_line "${evidence_dir}/upgrade-previous.env" "BETA_SMOKE_SOURCE_SHA=${previous_sha}"
+            require_line "${evidence_dir}/upgrade-previous.env" "BETA_SMOKE_BUILD_VERSION=${previous_tag}"
+            require_line "${evidence_dir}/upgrade-previous.env" 'BETA_SMOKE_DEPLOYMENT_ID=rustshare-pilot-upgrade'
+            require_line "${evidence_dir}/upgrade-previous.env" 'BETA_SMOKE_CONFIG_ID=upgrade-isolated'
+            require_line "${evidence_dir}/upgrade-candidate.env" "BETA_SMOKE_BUILD_VERSION=${image_version}"
+            require_line "${evidence_dir}/upgrade-candidate.env" 'BETA_SMOKE_DEPLOYMENT_ID=rustshare-pilot-upgrade'
+            require_line "${evidence_dir}/upgrade-candidate.env" 'BETA_SMOKE_CONFIG_ID=upgrade-isolated'
+            for report in "${restore_reports[@]}"; do
+              require_line "${report}" 'RESTORE_DRILL_STATUS=passed'
+              require_line "${report}" "RESTORE_DRILL_SOURCE_SHA=${GITHUB_SHA}"
+              require_line "${report}" "RESTORE_DRILL_BACKEND_IMAGE_ID=${image_id}"
+              require_line "${report}" "RESTORE_DRILL_IMAGE_REVISION=${GITHUB_SHA}"
+              require_line "${report}" "RESTORE_DRILL_BUILD_VERSION=${image_version}"
+              require_line "${report}" "RESTORE_DRILL_DEPLOYMENT_ID=${deployment_id}"
+              require_line "${report}" "RESTORE_DRILL_CONFIG_ID=${config_id}"
+              require_line "${report}" "RESTORE_DRILL_WORKFLOW_RUN_ID=${GITHUB_RUN_ID}"
+              require_line "${report}" "RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
+            done
             workflow_result=passed
           else
             workflow_result=failed
@@ -634,8 +1250,57 @@ jobs:
           FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           EOF
 
-      - name: Upload pilot evidence
+      - name: Ensure pilot workflow result is recorded
+        id: ensure-pilot-workflow-result
         if: always()
+        env:
+          PILOT_SUMMARY_STEP_OUTCOME: ${{ steps.write-pilot-summary.outcome }}
+          JWT_SECRET: ${{ secrets.CI_JWT_SECRET != '' && secrets.CI_JWT_SECRET || steps.pilot-secrets.outputs.jwt_secret }}
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY != '' && secrets.CI_ENCRYPTION_KEY || steps.pilot-secrets.outputs.encryption_key }}
+          RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
+          RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+          POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
+          DATABASE_URL: postgres://rustshare:${{ steps.pilot-secrets.outputs.pg_password }}@postgres:5432/rustshare
+          RUSTFS_ROOT_USER: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          AWS_ACCESS_KEY_ID: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+        run: |
+          set -euo pipefail
+          evidence_dir=/tmp/rustshare-pilot-evidence
+          summary="${evidence_dir}/pilot-workflow-summary.env"
+          result_count="$(grep -c '^WORKFLOW_RESULT=' "${summary}" 2>/dev/null || true)"
+          valid_result_count="$(grep -Ec '^WORKFLOW_RESULT=(passed|failed)$' "${summary}" 2>/dev/null || true)"
+          source_count="$(grep -Fxc "SOURCE_SHA=${GITHUB_SHA}" "${summary}" 2>/dev/null || true)"
+          run_count="$(grep -Fxc "WORKFLOW_RUN_ID=${GITHUB_RUN_ID}" "${summary}" 2>/dev/null || true)"
+          attempt_count="$(grep -Fxc "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}" "${summary}" 2>/dev/null || true)"
+          summary_is_valid=false
+          if [[ "${PILOT_SUMMARY_STEP_OUTCOME}" == "success" \
+                && -s "${summary}" \
+                && "${result_count}" == 1 \
+                && "${valid_result_count}" == 1 \
+                && "${source_count}" == 1 \
+                && "${run_count}" == 1 \
+                && "${attempt_count}" == 1 ]]; then
+            summary_is_valid=true
+          fi
+          if [[ "${summary_is_valid}" != "true" ]]; then
+            mkdir -p "${evidence_dir}"
+            cat > "${summary}" <<EOF
+          SOURCE_SHA=${GITHUB_SHA}
+          WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
+          WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
+          WORKFLOW_RESULT=failed
+          FAILING_PHASE=workflow-summary-validation
+          READINESS_DECISION=NOT_READY_UNTIL_TARGET_ENVIRONMENT_ACCEPTANCE
+          FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
+          fi
+          python3 scripts/redact_pilot_logs.py --require-all --check-tree "${evidence_dir}"
+
+      - name: Upload pilot evidence
+        if: always() && steps.collect-evidence.outputs.safe_to_upload == 'true' && steps.ensure-pilot-workflow-result.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: rustshare-pilot-evidence-${{ github.sha }}
@@ -653,8 +1318,40 @@ jobs:
       packages: write
       security-events: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
+      - name: Download tested pilot image
+        uses: actions/download-artifact@v4
+        with:
+          name: rustshare-pilot-tested-image-${{ github.sha }}
+          path: pilot-image-artifact
+
+      - name: Verify and load tested pilot image
+        id: image
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          source pilot-image-artifact/tested-image.env
+          [[ "${SOURCE_SHA}" == "${EXPECTED_SHA}" ]]
+          [[ "${IMAGE_REVISION}" == "${EXPECTED_SHA}" ]]
+          [[ "${WORKFLOW_RUN_ID}" == "${EXPECTED_RUN_ID}" ]]
+          [[ "${WORKFLOW_RUN_ATTEMPT}" == "${EXPECTED_RUN_ATTEMPT}" ]]
+          [[ "${IMAGE_VERSION}" == "pilot-${EXPECTED_SHA:0:12}" ]]
+          ARCHIVE=pilot-image-artifact/rustshare-backend-pilot.tar
+          ACTUAL_ARCHIVE_SHA256="$(sha256sum "${ARCHIVE}" | cut -d' ' -f1)"
+          [[ "${ACTUAL_ARCHIVE_SHA256}" == "${ARCHIVE_SHA256}" ]]
+          docker load --input "${ARCHIVE}"
+          ACTUAL_IMAGE_ID="$(docker image inspect rustshare-backend:pilot --format '{{.Id}}')"
+          ACTUAL_IMAGE_REVISION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          ACTUAL_IMAGE_VERSION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+          [[ "${ACTUAL_IMAGE_ID}" == "${IMAGE_ID}" ]]
+          [[ "${ACTUAL_IMAGE_REVISION}" == "${EXPECTED_SHA}" ]]
+          [[ "${ACTUAL_IMAGE_VERSION}" == "${IMAGE_VERSION}" ]]
+          echo "image_id=${IMAGE_ID}" >> "$GITHUB_OUTPUT"
+          echo "image_revision=${IMAGE_REVISION}" >> "$GITHUB_OUTPUT"
+          echo "archive_sha256=${ARCHIVE_SHA256}" >> "$GITHUB_OUTPUT"
+          echo "image_version=${IMAGE_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -676,17 +1373,12 @@ jobs:
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
           echo "sha=$SHA_TAG" >> $GITHUB_OUTPUT
 
-      - name: Build image
+      - name: Retag tested image
         run: |
           TAGS="${{ steps.tags.outputs.tags }}"
-          TAG_ARGS=""
           for tag in $TAGS; do
-            TAG_ARGS="$TAG_ARGS -t $IMAGE_NAME:$tag"
+            docker tag rustshare-backend:pilot "$IMAGE_NAME:$tag"
           done
-          docker build -f docker/backend.Dockerfile \
-            --build-arg VERSION="pilot-${GITHUB_SHA:0:12}" \
-            --build-arg REVISION="${GITHUB_SHA}" \
-            $TAG_ARGS .
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
@@ -695,7 +1387,7 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL'
-          exit-code: '0'
+          exit-code: '1'
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v4.37.3
@@ -713,8 +1405,40 @@ jobs:
           fi
 
       - name: Push image
+        id: push
         run: |
+          set -euo pipefail
           TAGS="${{ steps.tags.outputs.tags }}"
+          PUSH_LOG="$(mktemp)"
+          docker push "$IMAGE_NAME:${{ steps.tags.outputs.sha }}" 2>&1 | tee "$PUSH_LOG"
+          DIGEST="$(awk '/digest: sha256:/ {print $3}' "$PUSH_LOG" | tail -n1)"
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "Could not determine pushed image manifest digest" >&2
+            exit 1
+          }
           for tag in $TAGS; do
-            docker push $IMAGE_NAME:$tag
+            [[ "$tag" == "${{ steps.tags.outputs.sha }}" ]] || docker push "$IMAGE_NAME:$tag"
           done
+          mkdir -p pilot-publication-evidence
+          cat > pilot-publication-evidence/publication.env <<EOF
+          SOURCE_SHA=${GITHUB_SHA}
+          WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
+          WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
+          IMAGE_VERSION=${{ steps.image.outputs.image_version }}
+          IMAGE_REVISION=${{ steps.image.outputs.image_revision }}
+          IMAGE_ID=${{ steps.image.outputs.image_id }}
+          ARCHIVE_SHA256=${{ steps.image.outputs.archive_sha256 }}
+          REGISTRY_IMAGE=${IMAGE_NAME}
+          REGISTRY_TAG=${{ steps.tags.outputs.sha }}
+          REGISTRY_MANIFEST_DIGEST=${DIGEST}
+          PUBLISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
+
+      - name: Upload publication evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustshare-pilot-publication-${{ github.sha }}
+          path: pilot-publication-evidence/publication.env
+          if-no-files-found: error
+          retention-days: 90

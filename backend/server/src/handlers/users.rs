@@ -324,24 +324,17 @@ pub async fn delete_user_session(
                 .and_then(|value| value.to_str().ok());
             let ip_address =
                 crate::middleware::extract_client_ip(&headers, None).map(|value| value.to_string());
-            let description = format!(
-                "Revoked browser session{}",
-                target_session
-                    .user_agent
-                    .as_deref()
-                    .map(|agent| format!(" ({agent})"))
-                    .unwrap_or_default()
-            );
+            let description = "Revoked browser session";
 
             if let Err(error) = state
                 .metadata_store
                 .create_user_security_event(rustshare_storage::UserSecurityEventRecord {
                     user_id,
                     event_type: "session_revoked",
-                    description: &description,
+                    description,
                     ip_address: ip_address.as_deref(),
                     user_agent,
-                    session_id: current_session_id,
+                    session_id: Some(target_session.id),
                 })
                 .await
             {
@@ -382,14 +375,22 @@ pub async fn list_user_security_events(
         Ok(events) => {
             let response: Vec<UserSecurityEventResponse> = events
                 .into_iter()
-                .map(|event| UserSecurityEventResponse {
-                    id: event.id.to_string(),
-                    event_type: event.event_type,
-                    description: event.description,
-                    ip_address: event.ip_address,
-                    user_agent: event.user_agent,
-                    session_id: event.session_id.map(|value| value.to_string()),
-                    occurred_at: event.occurred_at.to_rfc3339(),
+                .map(|event| {
+                    let description = if event.event_type == "session_revoked" {
+                        "Revoked browser session".to_string()
+                    } else {
+                        event.description
+                    };
+
+                    UserSecurityEventResponse {
+                        id: event.id.to_string(),
+                        event_type: event.event_type,
+                        description,
+                        ip_address: event.ip_address,
+                        user_agent: None,
+                        session_id: event.session_id.map(|value| value.to_string()),
+                        occurred_at: event.occurred_at.to_rfc3339(),
+                    }
                 })
                 .collect();
 
