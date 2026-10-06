@@ -1330,3 +1330,16 @@ the new named Playwright cleanup step; the other 31 tests passed. The guard
 now asserts fixture restoration remains inside `finally` through the named
 step. This run is not UI or operational evidence; the updated regression
 suite and authoritative workflow must be rerun on the next revision.
+
+Pilot Release Notes journey diagnosis (2026-10-06): run
+[37446932597](https://github.com/kubedoio/rustshare/actions/runs/37446932597)
+on SHA `aaf82f161ceebc875c241fba68ceeb2d28764d6d` passed authentication, Files
+folder/File access, Note loading, and baseline title/H1 verification. Its
+named `Edit Markdown H1 without renaming Note` step failed because the test
+waited for an `Edit` button for 15 seconds. Source inspection confirms the
+Notes application route initializes Notes in `edit` mode, whose shared editor
+toggle is therefore `Read`; the product behavior was correct and the test's
+mode assumption was wrong. The test now starts H1 editing directly in the
+already-active editor and still verifies save, independent rename, reload, and
+fixture restoration. This workflow did not reach backup, restore, or upgrade;
+those gates remain unverified pending a successful rerun.

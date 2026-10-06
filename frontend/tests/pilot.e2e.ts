@@ -47,7 +47,6 @@ test('pilot administrator uses Files and edits a Note name independently from it
 	const renamedNote = `${pilotNoteTitle} renamed in browser`;
 
 	const editH1 = async (nextH1: string) => {
-		await page.getByRole('button', { name: 'Edit', exact: true }).click();
 		const editorH1 = page.locator('.ProseMirror h1');
 		await expect(editorH1).toBeVisible();
 		await editorH1.click();
