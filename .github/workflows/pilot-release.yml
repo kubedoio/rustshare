@@ -589,6 +589,11 @@ jobs:
           if docker run --rm \
             -e JWT_SECRET=weak \
             -e DATABASE_URL=postgres://localhost:5432/rustshare \
+            -e RUSTFS_ENDPOINT=http://127.0.0.1:9000 \
+            -e RUSTFS_REGION=us-east-1 \
+            -e RUSTFS_BUCKET=rustshare-test-pilot-invalid-config \
+            -e RUSTSHARE_PUBLIC_URL=https://pilot.invalid \
+            -e "RUSTSHARE_CHAT_WEBHOOK_SECRET=$(openssl rand -hex 32)" \
             rustshare-backend:pilot \
             >/tmp/rustshare-pilot-evidence/invalid-config.log 2>&1; then
             echo "Invalid configuration unexpectedly started successfully" >&2

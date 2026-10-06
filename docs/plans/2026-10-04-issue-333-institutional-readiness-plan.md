@@ -1343,3 +1343,38 @@ mode assumption was wrong. The test now starts H1 editing directly in the
 already-active editor and still verifies save, independent rename, reload, and
 fixture restoration. This workflow did not reach backup, restore, or upgrade;
 those gates remain unverified pending a successful rerun.
+
+Pilot Release invalid-configuration failure diagnosis (2026-10-06): run
+[37450395372](https://github.com/kubedoio/rustshare/actions/runs/37450395372)
+tested exact SHA `ee43dc6d20ef347896d50f17387a3d4e3924933b`. It passed clean
+deployment, the canonical browser journey, restart/persistence, and dependency
+failure/recovery. The invalid-configuration phase then failed correctly closed,
+but its assertion was inconclusive: the test container supplied a weak JWT and
+database URL while omitting required RustFS and chat configuration, so startup
+reported missing `rustfs_endpoint` before it could report the weak JWT. The
+artifact records that diagnostic; backup, restore, and upgrade were skipped.
+The workflow now supplies non-production dummy values for the other required
+fields and an ephemeral webhook value so the assertion specifically requires
+the weak-JWT diagnostic. This fix still needs a fresh authoritative run.
+
+SCIM lifecycle characterization (2026-10-06): the existing guarded
+PostgreSQL/RustFS regression now calls SCIM v1 deprovision and SCIM v2
+`active=false`, plus SCIM v2 DELETE. DELETE now deprovisions by setting
+`disabled_at` instead of hard-deleting the account; the regression verifies
+credential revocation, account retention after re-enablement, and preservation
+of owned file metadata and object bytes. This avoids the existing user-delete
+cascade removing owned metadata. The existing Integration Tests workflow
+supplies an ephemeral bearer token to its serialized ignored-test sweep.
+Formatting, targeted compilation, targeted Clippy, and `git diff --check` pass;
+the real-service case has not yet run locally because the available local test
+container's database is named `rustshare`, which the test's `rustshare_test*`
+safety guard correctly rejects. The next Integration Tests run must provide
+real-service evidence for this regression. The SCIM DELETE behavior change is
+authentication/lifecycle sensitive and requires human review before merge; it
+has not been deployed to FWS.
+
+Phase 0 recheck (2026-10-06): issue #333 remains open with no approval comment;
+PR #337 is open at `ee43dc6d20ef347896d50f17387a3d4e3924933b` with
+`REVIEW_REQUIRED`. ADR-0030, ADR-0032, ADR-0037, and ADR-0038 remain Proposed
+(ADR-0038 is not on `main`). No organization/group/workspace authorization or
+schema change is authorized by the pilot workflow results.

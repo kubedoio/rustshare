@@ -138,7 +138,9 @@ jobs:
         env:
           RUSTSHARE_TEST_DISPOSABLE_DB: "1"
           RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE: "1"
-        run: cargo test --workspace --all-features -j 1 -- --ignored --test-threads=1
+        run: |
+          RUSTSHARE_SCIM_BEARER_TOKEN="$(openssl rand -hex 32)" \
+            cargo test --workspace --all-features -j 1 -- --ignored --test-threads=1
 
       - name: Ask Workspace security matrix (repeated)
         # Keep this explicit: the recording-provider matrix is the security

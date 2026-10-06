@@ -388,9 +388,13 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
     }
 
     async fn delete_user(&self, id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query!("DELETE FROM users WHERE id = $1", id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE users SET disabled_at = NOW(), updated_at = NOW() \
+             WHERE id = $1 AND disabled_at IS NULL",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -857,7 +861,7 @@ pub async fn patch_user(
 }
 
 /// DELETE /scim/v2/Users/{id}
-/// Delete a user.
+/// Deprovision a user while retaining the account and its owned data.
 pub async fn delete_user(
     State(state): State<AppState>,
     headers: HeaderMap,
