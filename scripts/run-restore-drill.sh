@@ -184,7 +184,7 @@ cleanup() {
 on_error() {
 	local exit_code=$?
 	local cleanup_details=""
-	trap - ERR
+	trap - ERR EXIT
 	if ! cleanup; then
 		cleanup_details=" Cleanup failed; resources for '${DRILL_PROJECT_NAME}' may remain."
 		echo "Restore drill cleanup failed for project '${DRILL_PROJECT_NAME}'." >&2
@@ -193,7 +193,7 @@ on_error() {
 	exit "${exit_code}"
 }
 
-trap on_error ERR
+trap on_error ERR EXIT
 
 cd "${PROJECT_ROOT}"
 
@@ -288,7 +288,7 @@ if ! cleanup; then
 	exit 1
 fi
 write_report "passed" "Restore drill completed successfully in isolated Docker Compose project."
-trap - ERR
+trap - ERR EXIT
 
 echo "Restore drill passed."
 echo "Report written to ${REPORT_PATH}"

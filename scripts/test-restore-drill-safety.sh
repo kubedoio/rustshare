@@ -135,6 +135,8 @@ if [[ "${status}" -eq 0 ]]; then
 fi
 [[ "${output}" == *"Another restore drill is already running"* ]]
 [[ "${output}" == *"${project_name}"* ]]
+lock_failure_report="$(rg -l '^RESTORE_DRILL_STATUS=failed$' "${case_dir}/reports")"
+[[ -n "${lock_failure_report}" ]]
 if [[ -s "${docker_calls_file}" ]]; then
 	echo "Restore drill called Docker despite failing to acquire its project lock." >&2
 	cat "${docker_calls_file}" >&2
