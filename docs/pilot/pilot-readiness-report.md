@@ -186,7 +186,7 @@ deployed to FWS; target-host evidence is recorded below and in
 | Authenticate/authorize | PASS | The 2026-10-06 FWS canonical smoke: admin and viewer login, protected File denial, sharing/revocation and audit assertions; see the dated evidence record. |
 | Institutional organization/group/workspace authorization | NOT ACCEPTED | Phase 0 decisions remain open; ADR-0038, [`0030-elembra-application-model.md`](../adr/0030-elembra-application-model.md), [`0032-resource-refs-and-authorization.md`](../adr/0032-resource-refs-and-authorization.md), and [`0037-calendar-application-and-external-sync.md`](../adr/0037-calendar-application-and-external-sync.md) are Proposed. Existing group administration and membership are not proven tenant-safe; see the [#333 plan](../plans/2026-10-04-issue-333-institutional-readiness-plan.md). |
 | Canonical product journey | PASS | The 2026-10-06 FWS canonical smoke: UI reachability, Files upload/download, Notes create/read/update, search, sharing/revocation and logout. |
-| Authenticated UI/browser hydration | PASS in isolated CI; FWS browser acceptance pending | Pilot Release run 37461268485 passed the authenticated Playwright sign-in, Files, and Notes journey on candidate SHA `1b4aeb18c9578f225e732ff44225ea6df54a874a`; the Notes name/H1 independence and reload checks passed. The result has `expected=1`, `skipped=0`, `unexpected=0`, `flaky=0`. No authenticated browser session has been captured against FWS. |
+| Authenticated UI/browser hydration | PASS in isolated CI and on FWS | Pilot Release run 37461268485 passed the authenticated Playwright sign-in, Files, and Notes journey on candidate SHA `1b4aeb18c9578f225e732ff44225ea6df54a874a`. The target-host browser run on 2026-10-06 also passed one expected test with zero skipped/unexpected/flaky tests; it verified the deployed candidate's Files view and Note name/H1 independent edits, reload persistence, and restoration of the fixture. See [`fws-browser-2026-10-06.md`](evidence/fws-browser-2026-10-06.md) and its Playwright JSON report. |
 | Restart/persistence | PASS in CI and on FWS | The canonical FWS smoke persisted representative Note/File data, backend restart completed, and report-driven smoke reauthenticated and verified both records; machine reports are retained in the FWS evidence bundle. |
 | Backup | PASS | Fresh FWS bundle `/var/backups/rustshare/20261006T163355Z`; structural verification passed for PostgreSQL, RustFS, configuration, manifest and SHA-256 checksums. |
 | Restore | PASS in isolated CI; FWS restore not run | Pilot Release run 37461268485 passed isolated Compose restore and verification. An in-place FWS restore was not run. |
@@ -338,17 +338,7 @@ deployed to FWS; target-host evidence is recorded below and in
     Notes/Files/share journey passed; keep Chat and delayed projections out of
     scope. Follow-up: diagnose the slow initial tick and verify a real subscribed
     event delivery before expanding scope.
- 9. **Medium — authenticated Notes/Files UI behavior on FWS remains unverified.**
-   Affected operation: signing in, opening a File, editing a Note's Markdown
-   H1, renaming the Note independently, and reloading. Evidence: the exact
-    candidate's Pilot Release run 37461268485 passed the authenticated Playwright
-    flow with one expected test, zero skipped/unexpected/flaky tests, including
-    the Notes name/H1 regression and reload. The exact candidate is now deployed
-    to FWS and its authenticated API smoke passed, but no FWS browser session has
-    yet been captured. Workaround: API behavior is verified; do not claim the
-    target-host browser UI as separately tested. Follow-up: run the authenticated
-    browser journey against FWS and retain its report.
- 10. **Low — concurrent application root-path changes may leave extra folders.**
+  9. **Low — concurrent application root-path changes may leave extra folders.**
     Affected operation: changing an application's configured root path. Evidence:
     the admin update route provisions the requested folder before its config
     transaction; concurrent requests can each create a root folder even though
@@ -360,7 +350,7 @@ deployed to FWS; target-host evidence is recorded below and in
     old folders automatically because they may contain user data. Follow-up:
     define whether old roots are retained as user content and establish a
     reference-safe cleanup policy before automating removal.
-11. **High — candidate image security gate is unresolved.** Affected operation:
+ 10. **High — candidate image security gate is unresolved.** Affected operation:
     accepting and publishing the exact candidate image for pilot use. Evidence:
     merge run 37496000263 failed the CRITICAL-only Trivy step and skipped GHCR
     publication. Its Trivy analysis records 44 findings (2 high, 32 medium,
@@ -373,7 +363,7 @@ deployed to FWS; target-host evidence is recorded below and in
     the scan with preserved raw report and effective scanner arguments, resolve
     the exit-status/report mismatch without weakening the intended gate, then
     rerun and retain evidence bound to the candidate image.
-12. **Medium — failed-job-only publication retry cannot reuse the tested artifact.**
+ 11. **Medium — failed-job-only publication retry cannot reuse the tested artifact.**
     Affected operation: recovery of a publication-only Pilot Release failure.
     Evidence: run 37496000263 attempt 2 downloaded the immutable image artifact
     from attempt 1, then `Verify and load tested pilot image` failed because it
@@ -388,14 +378,14 @@ deployed to FWS; target-host evidence is recorded below and in
 ## Final decision
 
 **NOT READY** — the exact tested candidate is deployed to FWS and its public
-canonical journey, backup verification, backend restart and persistence check
-passed. However, the independent second-admin recovery rehearsal has not yet
-been completed, the merge image's Trivy publication gate failed with an
-unresolved scan/report mismatch, its failed-job-only retry did not reach
-scanning, the initial outbox delay remains unexplained and event delivery is
-unverified, FWS
-authenticated browser evidence and staged scale evidence are missing, and institutional
-organization/workspace authorization remains unapproved and unimplemented.
+canonical journey, authenticated FWS browser journey, backup verification,
+backend restart and persistence check passed. However, the independent
+second-admin recovery rehearsal has not yet been completed, the merge image's
+Trivy publication gate failed with an unresolved scan/report mismatch, its
+failed-job-only retry did not reach scanning, the initial outbox delay remains
+unexplained and event delivery is unverified, staged scale evidence is missing,
+and institutional organization/workspace authorization remains unapproved and
+unimplemented.
 Keep the bounded cohort stopped until the independent rehearsal and explicit
 acceptance of the operational limitations are recorded. Keep broader #333
 institutional work gated on ADR/product decisions. Do not begin Bund-specific
