@@ -1043,7 +1043,7 @@ jobs:
 
       - name: Upload tested pilot image
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rustshare-pilot-tested-image-${{ github.sha }}
           path: /tmp/rustshare-pilot-tested-image
@@ -1315,7 +1315,7 @@ jobs:
 
       - name: Upload pilot evidence
         if: always() && steps.collect-evidence.outputs.safe_to_upload == 'true' && steps.ensure-pilot-workflow-result.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rustshare-pilot-evidence-${{ github.sha }}
           path: /tmp/rustshare-pilot-evidence
@@ -1333,7 +1333,7 @@ jobs:
       security-events: write
     steps:
       - name: Download tested pilot image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: rustshare-pilot-tested-image-${{ github.sha }}
           path: pilot-image-artifact
@@ -1404,7 +1404,7 @@ jobs:
           exit-code: '1'
 
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@v4.37.3
+        uses: github/codeql-action/upload-sarif@v4.38.2
         if: always()
         with:
           sarif_file: trivy-results.sarif
@@ -1450,7 +1450,7 @@ jobs:
 
       - name: Upload publication evidence
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rustshare-pilot-publication-${{ github.sha }}
           path: pilot-publication-evidence/publication.env
