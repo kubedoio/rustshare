@@ -63,10 +63,11 @@
   `/var/backups/rustshare/fws-evidence-20261006`; the redacted summary is
   [`FWS deployment evidence`](evidence/fws-deployment-2026-10-06.md).
 - The current conclusion remains **NOT READY** pending a genuinely independent
-  second-admin recovery rehearsal. The optional outbox component is also
-  unhealthy after restart (overall readiness is still `ready`); outbox-backed
-  projections and Chat are not accepted for this pilot. Broader institutional
-  #333 work remains gated on proposed ADR/product decisions.
+  second-admin recovery rehearsal. The first post-restart outbox probe was
+  unhealthy, then ten later probes spanning more than the 60-second freshness
+  window were healthy; no consumer deliveries were present to verify. Chat is
+  disabled and outbox-backed projections remain outside this pilot. Broader
+  institutional #333 work remains gated on proposed ADR/product decisions.
 
 ## Prior exact-candidate workflow update (2026-10-06; superseded by SHA `1b4aeb1`)
 
@@ -325,16 +326,18 @@ deployed to FWS; target-host evidence is recorded below and in
    Follow-up: obtain product/security decisions, run the reviewed read-only
    inventory against the pilot data, then implement and verify tenant-scoped
    administration, inherited access, audit, and revocation before cohort use.
- 8. **Medium — optional outbox dispatcher remains unhealthy on FWS.** Affected
-    operations: delayed integration projections and outbox-backed Chat flows.
-    Evidence: after the exact candidate's deployment and restart, `/health/ready`
-    returned overall `ready` while the informational `outbox` component reported
-    `outbox dispatcher has not completed a tick`; the worker-start log is present
-    and no completed tick is evidenced. The FWS Chat bridge is also disabled by
-    an invalid service key. Workaround: the tested Notes/Files/share journey
-    passed; do not include Chat or depend on delayed projections in this pilot.
-    Follow-up: diagnose the dispatcher and validate a completed tick plus the
-    required event consumer behavior before expanding scope.
+ 8. **Medium — dispatcher completed a late initial tick; event delivery remains
+    unverified.** Affected operations: delayed integration projections and
+    outbox-backed Chat flows. Evidence: the first post-restart probe reported
+    `outbox dispatcher has not completed a tick`; later `/health/ready` probes
+    were healthy ten times from `17:37:15Z` through `17:39:08Z`, spanning the
+    configured 60-second freshness window. The point-in-time database check
+    showed 33 outbox rows but zero integration delivery rows, so no consumer
+    delivery was exercised; logs did not explain the initial delay. The Chat
+    bridge is still disabled by an invalid service key. Workaround: the tested
+    Notes/Files/share journey passed; keep Chat and delayed projections out of
+    scope. Follow-up: diagnose the slow initial tick and verify a real subscribed
+    event delivery before expanding scope.
  9. **Medium — authenticated Notes/Files UI behavior on FWS remains unverified.**
    Affected operation: signing in, opening a File, editing a Note's Markdown
    H1, renaming the Note independently, and reloading. Evidence: the exact
@@ -389,7 +392,8 @@ canonical journey, backup verification, backend restart and persistence check
 passed. However, the independent second-admin recovery rehearsal has not yet
 been completed, the merge image's Trivy publication gate failed with an
 unresolved scan/report mismatch, its failed-job-only retry did not reach
-scanning, the optional outbox remains unhealthy, FWS
+scanning, the initial outbox delay remains unexplained and event delivery is
+unverified, FWS
 authenticated browser evidence and staged scale evidence are missing, and institutional
 organization/workspace authorization remains unapproved and unimplemented.
 Keep the bounded cohort stopped until the independent rehearsal and explicit

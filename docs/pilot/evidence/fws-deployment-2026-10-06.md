@@ -66,13 +66,16 @@ pending.
   manifest and SHA-256 checksums. Deployment secrets remain in the operator
   secret store, not the backup evidence or this repository.
 - `/health` and `/health/ready` returned 200. Database, object storage,
-  authentication/session and event-delivery components reported healthy.
-  The optional outbox component remains unhealthy with
-  `outbox dispatcher has not completed a tick`; overall readiness remains
-  ready by contract. Treat delayed outbox projections/Chat as unverified and
-  do not depend on them during this pilot. FWS logs also report that the Chat
-  bridge is disabled because its configured service key is invalid; Chat is
-  outside the Notes/Files pilot journey.
+  authentication/session and event-delivery components reported healthy. The
+  outbox initially reported `outbox dispatcher has not completed a tick`, but
+  later returned healthy on ten polls from `17:37:15Z` through `17:39:08Z`,
+  spanning more than its configured 60-second freshness window. This verifies
+  a completed recent dispatcher tick after the initial delay. It does not prove
+  event delivery: the point-in-time database check showed 33 outbox rows and
+  zero delivery rows in pending, claimed, processed or dead-lettered states.
+  FWS logs showed no dispatcher error explaining the initial delay. The Chat
+  bridge remains disabled because its configured service key is invalid; do not
+  depend on Chat or delayed projections in this Notes/Files pilot.
 - Canonical smoke ran from an external HTTPS-capable operator runner because
   the FWS host cannot connect outbound to its own public hostname. The first
   host-local attempt is retained as a failed readiness-phase diagnostic; it
@@ -99,9 +102,10 @@ pending.
   yet confirmed and completed the second-admin recovery/session-revocation
   rehearsal. An agent-controlled second login is not independent evidence.
 - The bounded FWS cohort has not started. Do not announce the revision as
-  READY or admit pilot users until that rehearsal is recorded, the outbox
-  limitation is explicitly accepted or resolved for the operations the cohort
-  will use, and the merge-image security-gate mismatch is resolved.
+  READY or admit pilot users until that rehearsal is recorded and the
+  merge-image security-gate mismatch is resolved. Keep Chat and outbox-backed
+  event behavior outside the bounded Notes/Files pilot unless separately
+  verified and accepted.
 - Broader #333 institutional work remains gated by the proposed ADR/product
   decisions; this deployment makes no organization, tenant, calendar or
   institutional authorization claim.
