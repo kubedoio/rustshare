@@ -1,0 +1,148 @@
+{
+  "config": {
+    "argv": [
+      "/usr/local/bin/node",
+      "/srv/data02/projects/rustshare/frontend/node_modules/.bin/playwright",
+      "test",
+      "tests/pilot.e2e.ts",
+      "--reporter=json"
+    ],
+    "configFile": "/srv/data02/projects/rustshare/frontend/playwright.config.ts",
+    "rootDir": "/srv/data02/projects/rustshare/frontend",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/srv/data02/projects/rustshare/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/srv/data02/projects/rustshare/frontend",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.e2e.{ts,js}"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.63.0",
+    "workers": 8,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "tests/pilot.e2e.ts",
+      "file": "tests/pilot.e2e.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "pilot administrator uses Files and edits a Note name independently from its H1",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 90000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 6397,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "steps": [
+                    {
+                      "title": "Authenticate and open Files",
+                      "duration": 1170
+                    },
+                    {
+                      "title": "Open pilot folder and verify its File",
+                      "duration": 2678
+                    },
+                    {
+                      "title": "Open pilot Note",
+                      "duration": 380
+                    },
+                    {
+                      "title": "Verify original Note name and Markdown H1",
+                      "duration": 11
+                    },
+                    {
+                      "title": "Edit Markdown H1 without renaming Note",
+                      "duration": 361
+                    },
+                    {
+                      "title": "Rename Note without changing Markdown H1",
+                      "duration": 298
+                    },
+                    {
+                      "title": "Reload and verify both values persist",
+                      "duration": 299
+                    },
+                    {
+                      "title": "Restore pilot Note fixture",
+                      "duration": 1112
+                    }
+                  ],
+                  "startTime": "2026-10-06T17:58:47.179Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "72d1478bc329733f0c5e-93fa63111450b91a7471",
+          "file": "tests/pilot.e2e.ts",
+          "line": 15,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-06T17:58:46.089Z",
+    "duration": 7681.062000000001,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}
