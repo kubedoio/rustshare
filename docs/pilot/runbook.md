@@ -34,6 +34,47 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 Record the Git SHA, image digest, host/environment name and a redacted config
 hash. Never paste .env into evidence or support tickets.
 
+### FWS load-balancer host
+
+The FWS load balancer terminates TLS. Keep the application host's nginx bound
+to its private interface on port 80; do not publish PostgreSQL or RustFS. Load
+the exact tested image artifact (not a local rebuild), verify its archive
+checksum from `tested-image.env`, then verify its embedded source revision:
+
+~~~bash
+archive="rustshare-backend-pilot.tar"
+expected_archive_sha="$(awk -F= '$1 == "ARCHIVE_SHA256" {print $2}' tested-image.env)"
+printf '%s  %s\n' "${expected_archive_sha}" "${archive}" | sha256sum --check -
+docker load --input "${archive}"
+candidate_sha="$(awk -F= '$1 == "SOURCE_SHA" {print $2}' tested-image.env)"
+candidate_tag="rustshare-backend:pilot-${candidate_sha:0:12}"
+docker tag rustshare-backend:pilot "${candidate_tag}"
+actual_sha="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${candidate_tag}")"
+test "${actual_sha}" = "${candidate_sha}"
+
+export RUSTSHARE_BACKEND_IMAGE="${candidate_tag}"
+export FWS_PRIVATE_BIND_ADDRESS="REPLACE_WITH_HOST_PRIVATE_IP"
+export RUSTSHARE_BACKEND_PULL_POLICY=never
+compose=(docker compose -p rustshare \
+  -f docker-compose.yml \
+  -f docker-compose.prod.yml \
+  -f docker-compose.pilot.yml \
+  -f docker-compose.fws-candidate.yml)
+"${compose[@]}" config --quiet
+"${compose[@]}" up -d backend nginx
+~~~
+
+Keep the previous backend image tag and a verified pre-upgrade backup. Check
+the host's container image ID and revision label after deployment. Record the
+archive checksum and runtime ID separately: the FWS Docker 29.6.1 import kept
+the candidate's source/version labels and all 23 layer DiffIDs but reported a
+host-local image ID different from the CI `IMAGE_ID` field.
+
+The FWS host cannot route outbound HTTPS to its own public hostname. Run the
+canonical smoke from an operator runner with HTTPS access to the public origin,
+or use a separately documented private-route test; do not interpret a failure
+of host-to-public DNS/hairpin routing as an application health failure.
+
 On a shared host, choose unused loopback ports for the disposable clean-install
 exercise before starting it (`RUSTSHARE_POSTGRES_HOST_PORT`,
 `RUSTSHARE_RUSTFS_HOST_PORT` and `RUSTSHARE_RUSTFS_CONSOLE_HOST_PORT`). Do not
@@ -177,9 +218,11 @@ production deployment:
 export COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
 ~~~
 
-For the immutable image variant, include `docker-compose.pilot.yml` in that
-value as well. The backup and restore scripts honor this explicit Compose
-file set.
+For an FWS candidate image, include both `docker-compose.pilot.yml` and
+`docker-compose.fws-candidate.yml` in that value. Ensure
+`RUSTSHARE_BACKEND_IMAGE`, `FWS_PRIVATE_BIND_ADDRESS`, and
+`RUSTSHARE_BACKEND_PULL_POLICY=never` are set in the operator environment. The
+backup and restore scripts honor this explicit Compose file set.
 
 ~~~bash
 backup_root="/secure/backups/rustshare"

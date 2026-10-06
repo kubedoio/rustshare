@@ -1,0 +1,11 @@
+# FWS terminates TLS at the load balancer and accepts only its private HTTP
+# hop. The backend image must already be loaded and revision-verified locally.
+services:
+  backend:
+    image: ${RUSTSHARE_BACKEND_IMAGE:?set the exact tested backend image}
+    build: null
+    pull_policy: never
+
+  nginx:
+    ports: !override
+      - "${FWS_PRIVATE_BIND_ADDRESS:?set the FWS private interface address}:80:80"
