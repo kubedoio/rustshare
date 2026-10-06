@@ -167,6 +167,35 @@ For offboarding, use **Admin → Users → Disable**. Disabling a user revokes
 active sessions and device tokens. Prefer disable over delete unless the data
 owner has approved deletion and its file/object cleanup implications.
 
+### Mandatory independent two-admin rehearsal
+
+Complete this with a second operator who did not deploy the candidate, using
+their own secondary administrator account. Do this before inviting pilot users.
+Use a dedicated disposable non-admin test account with no user data; never use
+a real pilot account.
+
+1. The second operator reviews this runbook, signs in with their own admin
+   credentials, and records the candidate SHA, deployment identity, and UTC
+   start time.
+2. In a separate browser profile, sign in as the disposable user and open a
+   protected RustShare page. Keep this session open for the stale-session test.
+3. As the second administrator, reset the disposable user's password in
+   **Admin → Users**. Confirm the old browser session is rejected on its next
+   protected request, then authenticate in a fresh session with the new
+   password and confirm permitted access works.
+4. Disable the disposable user in **Admin → Users**. Confirm a fresh login is
+   rejected and the previously authenticated session can no longer access the
+   protected page. Leave the account disabled unless cleanup is explicitly
+   required and approved.
+5. Record pass/fail for each check and retain only redacted diagnostics. If any
+   check fails, stop: do not start the bounded cohort; preserve the account
+   state and escalate through the project owner.
+
+Evidence must identify the candidate SHA, deployment, UTC time, approved
+independent-operator and secondary-admin account references, disposable account
+reference, each result, and diagnostic artifact paths. Do not record passwords,
+cookies, tokens, session IDs, or personal contact details in the repository.
+
 There is no supported self-service or operator reset if every administrator
 credential is lost. Prevent that condition with two independently controlled
 administrator accounts and the documented secret-store procedure; any
