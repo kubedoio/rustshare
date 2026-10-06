@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { listAuditLog } from '$lib/api/admin';
+import AuditTable from '../AuditTable.svelte';
 
 vi.mock('$lib/api/client', () => ({
 	apiClient: {
@@ -117,5 +119,54 @@ describe('AuditTable admin API functions', () => {
 		const call = vi.mocked(apiClient.get).mock.calls[0][0] as string;
 		expect(call).toContain('type=auth');
 		expect(call).not.toContain('user_id');
+	});
+});
+
+describe('AuditTable component', () => {
+	it('passes the selected type, trimmed actor, and date range to the filter callback', async () => {
+		const onFilterChange = vi.fn();
+		render(AuditTable, { props: { onFilterChange } });
+
+		await fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'admin_action' } });
+		await fireEvent.input(screen.getByLabelText('User ID / search'), {
+			target: { value: '  user-42  ' }
+		});
+		await fireEvent.change(screen.getByLabelText('From'), {
+			target: { value: '2026-10-01' }
+		});
+		await fireEvent.change(screen.getByLabelText('To'), {
+			target: { value: '2026-10-31' }
+		});
+
+		expect(onFilterChange).toHaveBeenLastCalledWith({
+			type: 'admin_action',
+			user_id: 'user-42',
+			from: '2026-10-01',
+			to: '2026-10-31'
+		});
+	});
+
+	it('changes pages and disables navigation at the first and last page', async () => {
+		const onPageChange = vi.fn();
+		const { rerender } = render(AuditTable, {
+			props: { total: 120, page: 1, perPage: 50, onPageChange }
+		});
+
+		const previous = screen.getByRole('button', { name: 'Previous' });
+		const next = screen.getByRole('button', { name: 'Next' });
+		expect((previous as HTMLButtonElement).disabled).toBe(true);
+		expect((next as HTMLButtonElement).disabled).toBe(false);
+		expect(screen.getByText('Page 1 of 3')).toBeTruthy();
+
+		await fireEvent.click(next);
+		expect(onPageChange).toHaveBeenCalledWith(2);
+
+		await rerender({ total: 120, page: 3, perPage: 50, onPageChange });
+		expect((screen.getByRole('button', { name: 'Previous' }) as HTMLButtonElement).disabled).toBe(
+			false
+		);
+		expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true);
+		await fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+		expect(onPageChange).toHaveBeenLastCalledWith(2);
 	});
 });

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::{
-    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, log_admin_action,
+    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, insert_admin_action,
 };
 use crate::{
     handlers::{AdminUser, AppError},
@@ -177,6 +177,7 @@ pub async fn create_group(
 
     let new_id = Uuid::new_v4();
 
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let row = sqlx::query_as::<_, GroupDetailRow>(
         r#"
         INSERT INTO user_groups (id, name, description, created_by)
@@ -188,7 +189,7 @@ pub async fn create_group(
     .bind(&req.name)
     .bind(&req.description)
     .bind(actor_id)
-    .fetch_one(&state.db_pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
         if let sqlx::Error::Database(ref db_err) = e {
@@ -199,15 +200,17 @@ pub async fn create_group(
         db_error(e)
     })?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "group.created",
         Some("group"),
         Some(new_id),
         json!({"name": req.name}),
     )
-    .await;
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
     Ok((
         StatusCode::CREATED,
@@ -297,13 +300,14 @@ pub async fn update_group(
     Path(group_id): Path<Uuid>,
     Json(req): Json<UpdateGroupRequest>,
 ) -> Result<Json<GroupResponse>, AppError> {
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     // Fetch current group
     let current = sqlx::query_as::<_, GroupDetailRow>(
         "SELECT id, name, description, created_by, created_at, updated_at
          FROM user_groups WHERE id = $1",
     )
     .bind(group_id)
-    .fetch_optional(&state.db_pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(db_error)?
     .ok_or_else(|| admin_not_found("Group not found"))?;
@@ -330,7 +334,7 @@ pub async fn update_group(
     .bind(group_id)
     .bind(&new_name)
     .bind(&new_description)
-    .fetch_optional(&state.db_pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| {
         if let sqlx::Error::Database(ref db_err) = e {
@@ -342,15 +346,17 @@ pub async fn update_group(
     })?
     .ok_or_else(|| admin_not_found("Group not found"))?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "group.updated",
         Some("group"),
         Some(group_id),
         json!({"name": updated.name}),
     )
-    .await;
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
     let member_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM group_members WHERE group_id = $1")
@@ -385,33 +391,35 @@ pub async fn delete_group(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(group_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    // Verify group exists and grab name for audit log
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
+    // Lock the row so the audit event and deletion describe the same group.
     let row = sqlx::query_as::<_, GroupDetailRow>(
         "SELECT id, name, description, created_by, created_at, updated_at
-         FROM user_groups WHERE id = $1",
+         FROM user_groups WHERE id = $1 FOR UPDATE",
     )
     .bind(group_id)
-    .fetch_optional(&state.db_pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(db_error)?
     .ok_or_else(|| admin_not_found("Group not found"))?;
 
-    // Log before deletion so the target still exists in the DB
-    log_admin_action(
-        &state.db_pool,
+    // CASCADE on group_members handles membership rows
+    sqlx::query!("DELETE FROM user_groups WHERE id = $1", group_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "group.deleted",
         Some("group"),
         Some(group_id),
         json!({"name": row.name}),
     )
-    .await;
-
-    // CASCADE on group_members handles membership rows
-    sqlx::query!("DELETE FROM user_groups WHERE id = $1", group_id)
-        .execute(&state.db_pool)
-        .await
-        .map_err(db_error)?;
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -460,6 +468,7 @@ pub async fn add_member(
         return Err(admin_not_found("User not found"));
     }
 
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let result = sqlx::query!(
         r#"
         INSERT INTO group_members (group_id, user_id, added_by)
@@ -470,7 +479,7 @@ pub async fn add_member(
         req.user_id,
         actor_id
     )
-    .execute(&state.db_pool)
+    .execute(&mut *tx)
     .await
     .map_err(db_error)?;
 
@@ -478,15 +487,17 @@ pub async fn add_member(
         return Err(admin_conflict("User is already a member of this group"));
     }
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "group.member_added",
         Some("group"),
         Some(group_id),
         json!({"user_id": req.user_id}),
     )
-    .await;
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
     // Best-effort ACL refresh so newly added member can search group-shared notes.
     let note_service = Arc::clone(&state.note_service);
@@ -523,12 +534,13 @@ pub async fn remove_member(
             .map_err(db_error)?
             .ok_or_else(|| admin_not_found("Group not found"))?;
 
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let result = sqlx::query!(
         "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2",
         group_id,
         user_id
     )
-    .execute(&state.db_pool)
+    .execute(&mut *tx)
     .await
     .map_err(db_error)?;
 
@@ -536,15 +548,17 @@ pub async fn remove_member(
         return Err(admin_not_found("Membership not found"));
     }
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "group.member_removed",
         Some("group"),
         Some(group_id),
         json!({"user_id": user_id}),
     )
-    .await;
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
     // Best-effort ACL refresh so removed member stops seeing group-shared notes in search.
     let note_service = Arc::clone(&state.note_service);

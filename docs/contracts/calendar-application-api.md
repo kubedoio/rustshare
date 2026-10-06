@@ -7,11 +7,10 @@ ADR: `docs/adr/0037-calendar-application-and-external-sync.md`
 
 REST contract for the `io.elembra.calendar` Application. Base path
 `/api/v1/calendar`. Every JSON API route requires an authenticated session and
-an enabled Calendar Application for the caller's tenant. Two surfaces are
-excepted: the OAuth callback (`GET /api/v1/calendar/oauth/{kind}/callback`),
-which is invoked by the provider's browser redirect and authenticated by the
-single-use `state` rather than a session, and the ICS feed
-(`GET /api/v1/calendar/feed/{token}`), which is bound to its feed token:
+an enabled Calendar Application for the caller's tenant. The OAuth callback
+(`GET /api/v1/calendar/oauth/{kind}/callback`) is invoked by the provider's
+browser redirect and authenticated by the single-use `state` rather than a
+session:
 
 - `401` — unauthenticated.
 - `403 { "error": "Calendar module is disabled" }` — Application disabled for
@@ -117,6 +116,25 @@ Response `201` with the event object. Publishes
 ### `GET /api/v1/calendar/events/{id}`
 
 Single event, including `description`. `200` / `404`.
+
+### `GET /api/v1/calendar/events/{id}/export`
+
+Exports one event readable by the authenticated owner as a private, non-cacheable
+`.ics` attachment (`200`, `Content-Type: text/calendar; charset=utf-8`,
+`Cache-Control: private, no-store`, filename based on the event UUID). Requires
+Calendar enabled and uses the same tenant/owner-scoped lookup as the event read
+route (`401` unauthenticated, `403` disabled, `404` foreign or missing event).
+The stable `UID` preserves a non-empty source `external_uid` for imported or
+provider-backed events; internal events use RustShare's event UUID;
+`DTSTAMP` uses `updated_at`. Timed values are UTC instants. All-day values use
+DATE properties and the stored exclusive UTC-midnight end date.
+
+Until the exporter can emit a complete timezone definition and preserve
+detached recurrence identity, it returns `409` for recurrence overrides and
+for recurring masters whose timezone is not exactly `UTC`. RRULE values with
+line breaks are also refused. These are explicit interoperability limits,
+not silently flattened exports; recurring export semantics remain a follow-up
+for #329.
 
 ### `PATCH /api/v1/calendar/events/{id}`
 
@@ -279,8 +297,15 @@ kinds; `409` if a sync is already running for the source.
 
 - `file` — the `.ics` file (required, ≤ 10 MB, `Content-Type:
   text/calendar` or extension `.ics`; `400` otherwise, `413` over limit).
+- The complete multipart request is limited to 11 MiB; multipart framing and
+  all additional fields count toward this total (`413` over limit).
 - `source_id` — target `ical_import` source (optional; omitted creates a
   source named after the file).
+
+Files containing more than 10,000 VEVENT components are rejected by the
+asynchronous import job with `status: "failed"` and a bounded `last_error`;
+the limit is checked before any events are written, so this failure does not
+partially import the file.
 
 The upload is spooled to a temp file and an import job is enqueued; parsing
 and upsert run in the worker. `202`:
@@ -288,6 +313,18 @@ and upsert run in the worker. `202`:
 ```json
 { "job_id": "uuid", "source_id": "uuid", "status": "pending" }
 ```
+
+Each event is imported only when its semantics fit the Calendar event model.
+Events containing unsupported properties (`ATTACH`, `ATTENDEE`, `CATEGORIES`,
+`CLASS`, `CONFERENCE`, `EXDATE`, `GEO`, `ORGANIZER`, `RDATE`, `RELATED-TO`,
+`RESOURCES`, `TRANSP`, `URL`, or `VALARM`), duplicate `RECURRENCE-ID`
+properties, and `RECURRENCE-ID` with a `RANGE` parameter are skipped and
+counted in `failed_events`; other events in the file continue. The job's
+`last_error` reports unsupported property names/parameters and says the event
+was not imported; it does not include property values such as attendee
+addresses or recurrence-range values. A completed job may therefore contain
+per-event failures, so clients should inspect both the counters and
+`last_error`.
 
 ### `GET /api/v1/calendar/import-jobs`
 
@@ -319,20 +356,16 @@ Re-importing the same file into the same source is safe: event identity is
 `(source_id, UID, RECURRENCE-ID)`, so the second import updates in place and
 creates no duplicates.
 
-## Export (stretch)
+## Read-only subscription feed (deferred)
 
-### `GET /api/v1/calendar/feed/{token}`
-
-Unauthenticated-by-session, token-bound read-only ICS feed of the token
-owner's internal events. The route pattern is a single `{token}` segment
-(axum 0.8 rejects dynamic suffixes such as `{token}.ics`), so a request for
-`/{token}.ics` arrives with `token = "<token>.ics"` and the handler strips a
-trailing `.ics`. Tokens are created/revoked from the settings panel
-via `POST/DELETE /api/v1/calendar/feed-token` (session-authenticated). The
-feed token is a 256-bit random value stored hashed; `404` for unknown tokens
-(no existence leak). This endpoint and the OAuth callback are the only calendar
-surfaces reachable without a session; this endpoint is explicitly out of the
-enablement-gated JSON API shape documented above.
+No calendar feed route or feed-token lifecycle endpoint is implemented. A
+previous draft described `GET /api/v1/calendar/feed/{token}` and
+`POST/DELETE /api/v1/calendar/feed-token` as available; those descriptions were
+aspirational and are withdrawn. The capability URL cannot be enabled safely
+until request-path secrets are redacted across application tracing, bundled
+Nginx, and the external TLS load balancer. See the proposed Issue #329
+assessment in [ADR-0037](../adr/0037-calendar-application-and-external-sync.md).
+Use the authenticated single-event export route above for now.
 
 ## Status and error summary
 
@@ -345,7 +378,7 @@ enablement-gated JSON API shape documented above.
 | 400 | validation failure (bad range, bad kind, non-OAuth source, …) |
 | 401 | unauthenticated |
 | 403 | Calendar Application disabled for tenant |
-| 404 | unknown or foreign-owned resource; unknown feed token |
+| 404 | unknown or foreign-owned resource |
 | 409 | state conflict (read-only mirror write, duplicate source, sync in flight) |
 | 413 | upload over limit |
 | 503 | OAuth provider not configured on this deployment |

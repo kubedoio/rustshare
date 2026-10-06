@@ -88,6 +88,14 @@ name = "admin_users_test"
 path = "../tests/admin_users_test.rs"
 
 [[test]]
+name = "admin_user_disable_transaction_test"
+path = "../tests/admin_user_disable_transaction_test.rs"
+
+[[test]]
+name = "user_disable_credential_revocation_test"
+path = "../tests/user_disable_credential_revocation_test.rs"
+
+[[test]]
 name = "admin_groups_test"
 path = "../tests/admin_groups_test.rs"
 
@@ -96,8 +104,28 @@ name = "admin_config_oidc_test"
 path = "../tests/admin_config_oidc_test.rs"
 
 [[test]]
+name = "oidc_provider_failure_test"
+path = "../tests/oidc_provider_failure_test.rs"
+
+[[test]]
 name = "admin_config_smtp_test"
 path = "../tests/admin_config_smtp_test.rs"
+
+[[test]]
+name = "admin_security_config_transaction_test"
+path = "../tests/admin_security_config_transaction_test.rs"
+
+[[test]]
+name = "admin_application_update_transaction_test"
+path = "../tests/admin_application_update_transaction_test.rs"
+
+[[test]]
+name = "admin_application_enablement_transaction_test"
+path = "../tests/admin_application_enablement_transaction_test.rs"
+
+[[test]]
+name = "admin_template_transaction_test"
+path = "../tests/admin_template_transaction_test.rs"
 
 [[test]]
 name = "admin_webhooks_test"
@@ -106,6 +134,10 @@ path = "../tests/admin_webhooks_test.rs"
 [[test]]
 name = "admin_audit_test"
 path = "../tests/admin_audit_test.rs"
+
+[[test]]
+name = "admin_audit_redaction_test"
+path = "../tests/admin_audit_redaction_test.rs"
 
 [[test]]
 name = "admin_workflows_test"
@@ -130,6 +162,10 @@ path = "../tests/brainstorming_test.rs"
 [[test]]
 name = "group_sharing_test"
 path = "../tests/group_sharing_test.rs"
+
+[[test]]
+name = "pilot_group_scope_inventory_test"
+path = "../tests/pilot_group_scope_inventory_test.rs"
 
 [[test]]
 name = "contracts"
@@ -162,6 +198,10 @@ path = "../tests/meetings_test.rs"
 [[test]]
 name = "standups_test"
 path = "../tests/standups_test.rs"
+
+[[test]]
+name = "meeting_context_owner_boundary_test"
+path = "../tests/meeting_context_owner_boundary_test.rs"
 
 [[test]]
 name = "file_operations"
@@ -328,6 +368,7 @@ name = "vault_webui_content_test"
 path = "../tests/vault_webui_content_test.rs"
 
 [dev-dependencies]
+ical = { version = "0.11", default-features = false, features = ["ical"] }
 rustshare-crypto = { path = "../crates/crypto" }
 hmac = { workspace = true }
 hex = { workspace = true }

@@ -12,7 +12,7 @@ use serde_json::json;
 use sha2::Sha256;
 use uuid::Uuid;
 
-use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
+use super::{admin_bad_request, admin_internal_error, admin_not_found, insert_admin_action};
 use crate::{
     handlers::{AdminUser, AppError},
     AppState,
@@ -171,6 +171,7 @@ pub async fn create_webhook(
     let secret_enc = encrypt_optional_secret(req.secret.as_deref(), &state)?;
     let enabled = req.enabled.unwrap_or(true);
 
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let row = sqlx::query_as::<_, WebhookRow>(&format!(
         "INSERT INTO webhook_configs (name, url, secret_enc, enabled, events, created_by)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -182,21 +183,22 @@ pub async fn create_webhook(
     .bind(enabled)
     .bind(&req.events)
     .bind(actor_id)
-    .fetch_one(&state.db_pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(db_error)?;
 
     let webhook_id = row.id;
-
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "webhook.created",
         Some("webhook"),
         Some(webhook_id),
-        json!({"name": req.name, "url": req.url}),
+        json!({"name": req.name}),
     )
-    .await;
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
     Ok((StatusCode::CREATED, Json(WebhookResponse::from(row))))
 }
@@ -222,12 +224,13 @@ pub async fn update_webhook(
     Path(webhook_id): Path<Uuid>,
     Json(req): Json<UpdateWebhookRequest>,
 ) -> Result<Json<WebhookResponse>, AppError> {
-    // Fetch current
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
+    // Fetch current while holding the transaction used for the update and audit.
     let current = sqlx::query_as::<_, WebhookRow>(&format!(
         "SELECT {COLS} FROM webhook_configs WHERE id = $1"
     ))
     .bind(webhook_id)
-    .fetch_optional(&state.db_pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(db_error)?
     .ok_or_else(|| admin_not_found("Webhook not found"))?;
@@ -267,20 +270,22 @@ pub async fn update_webhook(
     .bind(&new_secret_enc)
     .bind(new_enabled)
     .bind(&new_events)
-    .fetch_optional(&state.db_pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(db_error)?
     .ok_or_else(|| admin_not_found("Webhook not found"))?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "webhook.updated",
         Some("webhook"),
         Some(webhook_id),
-        json!({"name": new_name, "url": new_url}),
+        json!({"name": new_name}),
     )
-    .await;
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
     Ok(Json(WebhookResponse::from(row)))
 }
@@ -303,8 +308,9 @@ pub async fn delete_webhook(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(webhook_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let result = sqlx::query!("DELETE FROM webhook_configs WHERE id = $1", webhook_id)
-        .execute(&state.db_pool)
+        .execute(&mut *tx)
         .await
         .map_err(db_error)?;
 
@@ -312,15 +318,17 @@ pub async fn delete_webhook(
         return Err(admin_not_found("Webhook not found"));
     }
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "webhook.deleted",
         Some("webhook"),
         Some(webhook_id),
         json!({}),
     )
-    .await;
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }

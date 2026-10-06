@@ -8,9 +8,11 @@ use rustshare_core::domain::{ApplicationConfig, TenantId, WorkspaceId};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
+use super::{
+    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, insert_admin_action,
+};
 use crate::config::ChatProvisioningMode;
-use crate::services::application_service::UpdateApplicationInput;
+use crate::services::application_service::{ApplicationError, UpdateApplicationInput};
 use crate::services::chat_bootstrap::ChatBootstrapError;
 use crate::{
     handlers::{AdminUser, AppError, AuthenticatedUser},
@@ -113,24 +115,52 @@ pub async fn enable_application(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<Json<ApplicationConfig>, AppError> {
-    let application = state
+    let prepared_root_path = state
         .application_service
-        .enable_application(&key, user_id, tenant_id)
+        .prepare_application_enable(&key, user_id, tenant_id)
         .await
         .map_err(|e| match e.to_string().contains("not found") {
             true => admin_not_found(e.to_string()),
             false => admin_internal_error(e.to_string()),
         })?;
 
-    log_admin_action(
-        &state.db_pool,
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|error| admin_internal_error(error.to_string()))?;
+    let application = state
+        .application_service
+        .set_application_enabled_in_transaction(
+            &key,
+            true,
+            tenant_id,
+            Some(&prepared_root_path),
+            &mut tx,
+        )
+        .await
+        .map_err(|e| match e {
+            ApplicationError::ConfigurationChanged => {
+                admin_conflict("Application root path changed during enablement; retry")
+            }
+            error if error.to_string().contains("not found") => admin_not_found(error.to_string()),
+            error => admin_internal_error(error.to_string()),
+        })?;
+
+    insert_admin_action(
+        &mut tx,
         user_id,
         "application.enabled",
         Some("application"),
         Some(application.id),
         json!({"application_id": key}),
     )
-    .await;
+    .await
+    .map_err(|error| admin_internal_error(error.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|error| admin_internal_error(error.to_string()))?;
 
     // Zero-config bootstrap (ADR-0036): in auto mode, enabling Chat
     // provisions the deployment Buzz community immediately. A failure is
@@ -189,24 +219,34 @@ pub async fn disable_application(
     State(state): State<ApplicationState>,
     Path(key): Path<String>,
 ) -> Result<Json<ApplicationConfig>, AppError> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|error| admin_internal_error(error.to_string()))?;
     let application = state
         .application_service
-        .disable_application(&key, user_id, tenant_id)
+        .set_application_enabled_in_transaction(&key, false, tenant_id, None, &mut tx)
         .await
         .map_err(|e| match e.to_string().contains("not found") {
             true => admin_not_found(e.to_string()),
             false => admin_internal_error(e.to_string()),
         })?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         user_id,
         "application.disabled",
         Some("application"),
         Some(application.id),
         json!({"application_id": key}),
     )
-    .await;
+    .await
+    .map_err(|error| admin_internal_error(error.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|error| admin_internal_error(error.to_string()))?;
 
     Ok(Json(application))
 }
@@ -227,9 +267,25 @@ pub async fn update_application(
     Path(key): Path<String>,
     Json(body): Json<UpdateApplicationRequest>,
 ) -> Result<Json<ApplicationConfig>, AppError> {
+    if let Some(root_path) = body.root_path.as_deref() {
+        state
+            .application_service
+            .prepare_application_root_path(&key, root_path, user_id, tenant_id)
+            .await
+            .map_err(|e| match e.to_string().contains("not found") {
+                true => admin_not_found(e.to_string()),
+                false => admin_bad_request(e.to_string()),
+            })?;
+    }
+
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|error| admin_internal_error(error.to_string()))?;
     let application = state
         .application_service
-        .update_application(
+        .update_application_in_transaction(
             &key,
             UpdateApplicationInput {
                 display_name: body.display_name,
@@ -246,6 +302,7 @@ pub async fn update_application(
                 content_indexing: body.content_indexing,
             },
             tenant_id,
+            &mut tx,
         )
         .await
         .map_err(|e| match e.to_string().contains("not found") {
@@ -253,15 +310,20 @@ pub async fn update_application(
             false => admin_bad_request(e.to_string()),
         })?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         user_id,
         "application.updated",
         Some("application"),
         Some(application.id),
         json!({"application_id": key}),
     )
-    .await;
+    .await
+    .map_err(|error| admin_internal_error(error.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|error| admin_internal_error(error.to_string()))?;
 
     Ok(Json(application))
 }

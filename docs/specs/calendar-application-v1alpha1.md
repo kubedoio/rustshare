@@ -10,8 +10,9 @@ Issue: #315
 
 Define the Elembra Calendar Application: an Embedded first-party Application
 that provides (a) Elembra-native calendar events, (b) one-shot iCal/.ics
-import, and (c) read-only synchronization from Google Calendar and
-Microsoft/Outlook.
+import, (c) read-only synchronization from Google Calendar and
+Microsoft/Outlook, and (d) owner-scoped single-event iCalendar export with
+explicit limits on recurring-event semantics.
 
 This specification follows the Application manifest contract
 (`application-manifest-v1alpha1.md`), consumes the connector state model of
@@ -89,8 +90,10 @@ health: null
 The manifest is code-owned in `first_party_manifests()`
 (`backend/crates/core/src/domain/application.rs`); tenant configuration only
 enables/disables it. All `/api/v1/calendar/...` JSON API routes fail closed
-with 403 when the Application is disabled for the tenant (the OAuth callback
-and ICS feed are the documented exceptions).
+with 403 when the Application is disabled for the tenant, except the OAuth
+callback authenticated by its single-use state. The capability-token ICS feed
+mentioned in an earlier draft is deferred and has no route; see the Issue #329
+assessment in ADR-0037.
 
 ## Visibility model
 
@@ -258,6 +261,12 @@ Rows are deleted on consume (single use); expired rows are ignored/swept.
   streams to a temp file via the same mechanism as the mail upload path
   (`stream_multipart_field_to_temp_file`, whose mail cap is 25 MiB), with a
   calendar cap of 10 MB.
+- The full multipart request is capped at 11 MiB, including framing and any
+  additional fields, so ignored fields cannot consume the server-wide upload
+  allowance.
+- A file may contain at most 10,000 VEVENT components. The importer rejects an
+  over-limit file as a failed job before parsing components or writing any
+  events; the byte and event-count limits jointly bound upload and import work.
 - The file is parsed with a maintained RFC 5545 parser crate (implementation
   decision recorded in the plan; `icalendar` preferred, `ical` and a
   hand-rolled parser rejected). Recurrence expansion uses the maintained
@@ -421,6 +430,10 @@ Normative request/response definitions live in
   /api/v1/calendar/events/{id}` — internal CRUD; `GET` supports `from`/`to`
   range queries (required, bounded to 366 days) and expands recurrences
   server-side within the window.
+- `GET /api/v1/calendar/events/{id}/export` — owner-scoped `.ics` attachment;
+  recurring masters outside UTC and detached recurrence overrides return
+  `409` until complete timezone/recurrence serialization is supported (see
+  [API contract](../contracts/calendar-application-api.md)).
 - `GET/POST /api/v1/calendar/sources`, `PATCH/DELETE
   /api/v1/calendar/sources/{id}` — source management (no token material ever
   returned).
@@ -437,18 +450,16 @@ Normative request/response definitions live in
   park the source at `auth_required`; `409` while a live sync lease holds the
   source. No Microsoft session revoke is attempted; Google's best-effort token
   revocation is unchanged.
-- Stretch: `GET /api/v1/calendar/feed/{token}` — read-only per-user ICS export
-  feed; feed tokens are created/revoked via session-authenticated `POST`/`DELETE
-  /api/v1/calendar/feed-token`. (axum 0.8 matches the whole final segment, so a
-  request for `/{token}.ics` arrives as `token = "<token>.ics"`; the handler
-  must strip a trailing `.ics`, and the `{token}.ics` route pattern must not be
-  registered.)
+- Deferred: a capability-token read-only feed is not implemented. Earlier
+  aspirational route notes are withdrawn because request paths currently enter
+  application and bundled-proxy logs, while the external TLS load balancer's
+  path-logging behavior has not been verified. See the proposed Issue #329
+  assessment in [ADR-0037](../adr/0037-calendar-application-and-external-sync.md).
 
 Every JSON API route requires an authenticated principal and an enabled
 `io.elembra.calendar` Application for the tenant (403 otherwise), mirroring
 `require_mail_enabled`. The OAuth callback is authenticated by its single-use
-`state` instead of a session, and the stretch ICS feed by its feed token, so
-both are exempt from the session/enablement gate.
+`state` instead of a session, so it is exempt from the session/enablement gate.
 
 ## UI views
 

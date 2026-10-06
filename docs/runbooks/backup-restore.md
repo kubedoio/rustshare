@@ -201,11 +201,13 @@ Prove backups are recoverable without touching production:
 ### What It Does
 
 1. Verifies the backup bundle.
-2. Spins up an isolated Docker Compose project (`rustshare-restore-drill`) on alternate ports (`18080`, `18081`).
+2. Checks that no containers, volumes, or networks already use the selected project name, then spins up an isolated Docker Compose project (`rustshare-restore-drill`) on alternate ports (`18080`, `18081`).
 3. Restores the core Elembra backup into the isolated project.
 4. Runs the post-restore smoke test against the isolated stack.
 5. Tears down the drill stack (unless `DRILL_KEEP_STACK=true`).
 6. Writes a report to `./restore-drill-reports/`.
+
+The drill refuses to start if resources with the selected Compose project label already exist. It never clears a previous stack automatically: inspect those resources and explicitly remove them only after confirming they belong to this disposable drill project. This protects existing Docker data from an accidental `down -v`.
 
 ### Environment Overrides
 

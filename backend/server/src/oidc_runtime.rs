@@ -14,6 +14,8 @@ use crate::AppState;
 pub const OIDC_CONFIG_ID: Uuid = uuid!("00000000-0000-0000-0000-000000000001");
 const OIDC_RUNTIME_CACHE_TTL: Duration = Duration::from_secs(60);
 const OIDC_PROVIDER_CACHE_TTL: Duration = Duration::from_secs(300);
+pub const OIDC_PROVIDER_UNAVAILABLE_MESSAGE: &str =
+    "OIDC authentication is temporarily unavailable";
 
 #[derive(Clone, Debug, Default)]
 pub struct OidcRuntimeCache {
@@ -252,14 +254,29 @@ pub async fn load_oidc_runtime_settings(state: &AppState) -> Result<OidcRuntimeS
     .bind(OIDC_CONFIG_ID)
     .fetch_optional(&state.db_pool)
     .await
-    .map_err(|error| format!("Failed to load OIDC runtime config: {error}"))?
-    .ok_or_else(|| "OIDC runtime config row is missing".to_string())?;
+    .map_err(|_| {
+        tracing::error!(
+            failure_stage = "runtime_config_database_load",
+            "OIDC runtime configuration could not be loaded"
+        );
+        OIDC_PROVIDER_UNAVAILABLE_MESSAGE.to_string()
+    })?
+    .ok_or_else(|| {
+        tracing::error!(
+            failure_stage = "runtime_config_missing",
+            "OIDC runtime configuration is unavailable"
+        );
+        OIDC_PROVIDER_UNAVAILABLE_MESSAGE.to_string()
+    })?;
 
     let client_secret = match row.client_secret_enc {
-        Some(secret) => Some(
-            decrypt_secret(&secret, &state.secret_key)
-                .map_err(|error| format!("Failed to decrypt OIDC client secret: {error}"))?,
-        ),
+        Some(secret) => Some(decrypt_secret(&secret, &state.secret_key).map_err(|_| {
+            tracing::error!(
+                failure_stage = "client_secret_decryption",
+                "OIDC client secret could not be decrypted"
+            );
+            OIDC_PROVIDER_UNAVAILABLE_MESSAGE.to_string()
+        })?),
         None => None,
     };
 
@@ -302,13 +319,23 @@ pub async fn load_provider_metadata(
     }
 
     let http_client = oidc_http_client()?;
-    let metadata = CoreProviderMetadata::discover_async(
-        openidconnect::IssuerUrl::new(issuer_url.to_string())
-            .map_err(|error| format!("Invalid OIDC issuer URL: {error}"))?,
-        &http_client,
-    )
-    .await
-    .map_err(|error| format!("OIDC discovery failed: {error}"))?;
+    let parsed_issuer_url =
+        openidconnect::IssuerUrl::new(issuer_url.to_string()).map_err(|_| {
+            tracing::error!(
+                failure_stage = "issuer_validation",
+                "OIDC provider initialization failed"
+            );
+            OIDC_PROVIDER_UNAVAILABLE_MESSAGE.to_string()
+        })?;
+    let metadata = CoreProviderMetadata::discover_async(parsed_issuer_url, &http_client)
+        .await
+        .map_err(|_| {
+            tracing::error!(
+                failure_stage = "provider_discovery",
+                "OIDC provider initialization failed"
+            );
+            OIDC_PROVIDER_UNAVAILABLE_MESSAGE.to_string()
+        })?;
 
     state
         .oidc_runtime_cache
@@ -380,7 +407,13 @@ pub fn oidc_http_client() -> Result<openidconnect::reqwest::Client, String> {
     openidconnect::reqwest::ClientBuilder::new()
         .redirect(openidconnect::reqwest::redirect::Policy::none())
         .build()
-        .map_err(|error| format!("Failed to build OIDC HTTP client: {error}"))
+        .map_err(|_| {
+            tracing::error!(
+                failure_stage = "http_client_initialization",
+                "OIDC provider initialization failed"
+            );
+            OIDC_PROVIDER_UNAVAILABLE_MESSAGE.to_string()
+        })
 }
 
 fn oidc_row_needs_bootstrap(row: &OidcConfigRow) -> bool {

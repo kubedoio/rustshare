@@ -3,6 +3,10 @@ import { render, screen } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import Page from './+page.svelte';
 
+const { markdownDocumentPageMock } = vi.hoisted(() => ({
+	markdownDocumentPageMock: vi.fn(() => null)
+}));
+
 vi.mock('$app/environment', () => ({ browser: true }));
 
 vi.mock('$app/stores', () => ({
@@ -89,7 +93,7 @@ vi.mock('$lib/stores/toast', () => ({
 }));
 
 vi.mock('$lib/editor/components/MarkdownDocumentPage.svelte', () => ({
-	default: vi.fn(() => null)
+	default: markdownDocumentPageMock
 }));
 
 vi.mock('$lib/components/modals/ShareModal.svelte', () => ({
@@ -117,6 +121,41 @@ vi.mock('lucide-svelte', () => ({
 }));
 
 describe('Note detail page conflict banner', () => {
+	it('passes the saved note name separately from its Markdown H1', async () => {
+		const { createQuery } = await import('$lib/query-compat');
+		vi.mocked(createQuery).mockReturnValue(
+			createMockQuery({
+				id: 'note-1',
+				name: 'note.md',
+				content: '---\ntitle: Frontmatter title\n---\n# Independent Markdown H1\n\nBody.',
+				metadata: {
+					title: 'Renamed note name',
+					visibility: 'private',
+					public_share_id: null,
+					created_at: new Date().toISOString(),
+					updated_at: new Date().toISOString(),
+					excerpt: ''
+				},
+				parent_folder_id: null,
+				current_version: 1,
+				created_at: new Date().toISOString(),
+				modified_at: new Date().toISOString()
+			})
+		);
+
+		render(Page);
+
+		const call = markdownDocumentPageMock.mock.calls.at(-1) as unknown as unknown[];
+		const props = (call[1] ?? call[0]) as {
+			title: string;
+			subtitle: string;
+			content: string;
+		};
+		expect(props.title).toBe('Renamed note name');
+		expect(props.subtitle).toBe('Independent Markdown H1');
+		expect(props.content).toContain('# Independent Markdown H1');
+	});
+
 	it('does not render a cached note whose id belongs to the previous route', async () => {
 		const { createQuery } = await import('$lib/query-compat');
 		vi.mocked(createQuery).mockReturnValue(

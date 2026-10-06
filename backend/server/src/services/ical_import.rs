@@ -30,6 +30,8 @@ use uuid::Uuid;
 
 /// Cap on the `last_error` sample persisted on the job row.
 const MAX_LAST_ERROR_LEN: usize = 512;
+/// Maximum VEVENT components accepted in one uploaded calendar.
+const MAX_CALENDAR_IMPORT_EVENTS: usize = 10_000;
 /// Heartbeat/progress flush interval in events.
 const PROGRESS_FLUSH_INTERVAL: usize = 25;
 
@@ -97,6 +99,58 @@ fn find_param<'a>(prop: &'a Property<'_>, name: &str) -> Option<&'a str> {
         .find(|param| param.key.as_str().eq_ignore_ascii_case(name))
         .and_then(|param| param.val.as_ref())
         .map(|val| val.as_str())
+}
+
+fn unsupported_event_fields(component: &Component<'_>) -> Vec<&'static str> {
+    const UNSUPPORTED: &[&str] = &[
+        "ATTACH",
+        "ATTENDEE",
+        "CATEGORIES",
+        "CLASS",
+        "CONFERENCE",
+        "EXDATE",
+        "GEO",
+        "ORGANIZER",
+        "RDATE",
+        "RELATED-TO",
+        "RESOURCES",
+        "TRANSP",
+        "URL",
+    ];
+
+    let mut fields: Vec<&'static str> = UNSUPPORTED
+        .iter()
+        .copied()
+        .filter(|name| find_prop(component, name).is_some())
+        .collect();
+    if component
+        .components
+        .iter()
+        .any(|child| child.name.as_str().eq_ignore_ascii_case("VALARM"))
+    {
+        fields.push("VALARM");
+    }
+    let (recurrence_id_count, has_recurrence_range) = component
+        .properties
+        .iter()
+        .filter(|prop| prop.name.as_str().eq_ignore_ascii_case("RECURRENCE-ID"))
+        .fold((0usize, false), |(count, has_range), prop| {
+            (
+                count + 1,
+                has_range
+                    || prop
+                        .params
+                        .iter()
+                        .any(|parameter| parameter.key.as_str().eq_ignore_ascii_case("RANGE")),
+            )
+        });
+    if recurrence_id_count > 1 {
+        fields.push("multiple RECURRENCE-ID properties");
+    }
+    if has_recurrence_range {
+        fields.push("RECURRENCE-ID RANGE");
+    }
+    fields
 }
 
 /// One `VTIMEZONE` definition extracted from the file, keyed by its `TZID`.
@@ -552,9 +606,17 @@ fn map_vevent(
     component: &Component<'_>,
     timezones: &VTimezoneIndex,
 ) -> Result<ParsedEvent, String> {
+    let unsupported_fields = unsupported_event_fields(component);
+    if !unsupported_fields.is_empty() {
+        return Err(format!(
+            "VEVENT uses unsupported fields {}; this event was not imported",
+            unsupported_fields.join(", ")
+        ));
+    }
+
     let uid = find_prop(component, "UID")
-        .map(|prop| prop.val.as_str().trim().to_string())
-        .filter(|uid| !uid.is_empty())
+        .map(|prop| prop.val.as_str().to_owned())
+        .filter(|uid| !uid.trim().is_empty())
         .ok_or("VEVENT is missing UID")?;
 
     let dtstart_prop = find_prop(component, "DTSTART").ok_or("VEVENT is missing DTSTART")?;
@@ -636,13 +698,22 @@ fn is_counted_skip(name: &str) -> bool {
 /// component, so concatenated VCALENDAR blocks (an RFC 5545 stream) have to be
 /// parsed individually. A leading UTF-8 BOM is removed separately because it
 /// would otherwise make the first line unparseable.
-fn split_top_level_components(unfolded: &str) -> Vec<String> {
+fn split_top_level_components(unfolded: &str) -> Result<Vec<String>, IcalImportError> {
     let mut blocks = Vec::new();
     let mut current: Vec<&str> = Vec::new();
     let mut depth: i32 = 0;
+    let mut event_count = 0;
     for line in unfolded.lines() {
         let line = line.trim_end_matches('\r');
         let trimmed = line.trim_start();
+        if trimmed.eq_ignore_ascii_case("BEGIN:VEVENT") {
+            event_count += 1;
+            if event_count > MAX_CALENDAR_IMPORT_EVENTS {
+                return Err(IcalImportError::Unparseable(format!(
+                    "calendar exceeds the {MAX_CALENDAR_IMPORT_EVENTS}-VEVENT import limit"
+                )));
+            }
+        }
         let upper = trimmed.to_ascii_uppercase();
         let is_begin = upper.starts_with("BEGIN:");
         let is_end = upper.starts_with("END:");
@@ -667,7 +738,7 @@ fn split_top_level_components(unfolded: &str) -> Vec<String> {
     if !current.is_empty() {
         blocks.push(current.join("\n"));
     }
-    blocks
+    Ok(blocks)
 }
 
 /// Parse the file content. A structurally unreadable file is a hard error
@@ -678,7 +749,7 @@ fn parse_file(bytes: &[u8]) -> Result<ParsedFile, IcalImportError> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let unfolded = icalendar::parser::unfold(text);
 
-    let blocks = split_top_level_components(&unfolded);
+    let blocks = split_top_level_components(&unfolded)?;
     if blocks.is_empty() {
         return Err(IcalImportError::Unparseable(
             "file contains no calendar components".to_string(),
@@ -960,6 +1031,112 @@ END:VCALENDAR
     }
 
     #[test]
+    fn preserves_uid_text_whitespace_and_escapes() {
+        let ics = "\
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID: item\\,weekly\\;source@example.test\x20
+DTSTART:20261005T140000Z
+DTEND:20261005T150000Z
+END:VEVENT
+END:VCALENDAR
+";
+
+        let parsed = parse_file(ics.as_bytes()).expect("parses");
+        let event = parsed.events[0].as_ref().expect("event maps");
+
+        assert_eq!(event.external_uid, " item,weekly;source@example.test ");
+    }
+
+    #[test]
+    fn rejects_whitespace_only_uid() {
+        let ics = "\
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:\x20\x20
+DTSTART:20261005T140000Z
+DTEND:20261005T150000Z
+END:VEVENT
+END:VCALENDAR
+";
+
+        let parsed = parse_file(ics.as_bytes()).expect("calendar structure parses");
+
+        assert!(matches!(
+            parsed.events[0],
+            Err(ref message) if message == "VEVENT is missing UID"
+        ));
+    }
+
+    #[test]
+    fn reports_unsupported_event_fields_without_including_values() {
+        let ics = "\
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:unsupported-1
+DTSTART:20261005T140000Z
+DTEND:20261005T150000Z
+ORGANIZER:mailto:private@example.test
+ATTENDEE;CN=Private:mailto:private@example.test
+END:VEVENT
+END:VCALENDAR
+";
+
+        let parsed = parse_file(ics.as_bytes()).expect("calendar structure parses");
+        let error = parsed.events[0]
+            .as_ref()
+            .expect_err("unsupported fields fail the event");
+
+        assert!(error.contains("ATTENDEE, ORGANIZER"), "error was {error}");
+        assert!(
+            error.contains("event was not imported"),
+            "error was {error}"
+        );
+        assert!(!error.contains("private@example.test"));
+    }
+
+    #[test]
+    fn rejects_recurrence_id_range_without_including_parameter_value() {
+        let ics = "\
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:range-master
+DTSTART:20261005T140000Z
+DTEND:20261005T150000Z
+RRULE:FREQ=WEEKLY;COUNT=4
+END:VEVENT
+BEGIN:VEVENT
+UID:range-master
+RECURRENCE-ID:20261012T140000Z
+RECURRENCE-ID;range=thisandfuture:20261012T140000Z
+DTSTART:20261012T160000Z
+DTEND:20261012T170000Z
+END:VEVENT
+END:VCALENDAR
+";
+
+        let parsed = parse_file(ics.as_bytes()).expect("calendar structure parses");
+        let error = parsed.events[1]
+            .as_ref()
+            .expect_err("duplicate and ranged recurrence IDs are unsupported");
+
+        assert!(
+            error.contains("multiple RECURRENCE-ID properties"),
+            "error was {error}"
+        );
+        assert!(error.contains("RECURRENCE-ID RANGE"), "error was {error}");
+        assert!(
+            error.contains("event was not imported"),
+            "error was {error}"
+        );
+        assert!(!error.contains("thisandfuture"));
+    }
+
+    #[test]
     fn converts_tzid_to_utc() {
         let parsed = parse_file(TZID_ICS.as_bytes()).expect("parses");
         let event = parsed.events[0].as_ref().expect("event maps");
@@ -1029,7 +1206,7 @@ END:VCALENDAR
     }
 
     #[test]
-    fn malformed_component_counts_as_failed_and_valarm_is_ignored() {
+    fn malformed_component_and_valarm_are_reported_per_event() {
         let ics = "\
 BEGIN:VCALENDAR
 BEGIN:VEVENT
@@ -1048,7 +1225,7 @@ END:VCALENDAR
 ";
         let parsed = parse_file(ics.as_bytes()).expect("parses");
         assert_eq!(parsed.events.len(), 2);
-        assert!(parsed.events[0].is_ok());
+        assert!(parsed.events[0].as_ref().unwrap_err().contains("VALARM"));
         let error = parsed.events[1].as_ref().unwrap_err();
         assert!(error.contains("DTSTART"), "unexpected error: {error}");
     }
@@ -1083,6 +1260,27 @@ END:VCALENDAR
     fn structurally_unreadable_file_fails() {
         let result = parse_file(b"this is not a calendar at all");
         assert!(matches!(result, Err(IcalImportError::Unparseable(_))));
+    }
+
+    #[test]
+    fn too_many_events_fails_before_component_parsing() {
+        let mut ics = String::from("BEGIN:VCALENDAR\n");
+        for index in 0..=MAX_CALENDAR_IMPORT_EVENTS {
+            if index == MAX_CALENDAR_IMPORT_EVENTS / 2 {
+                // The limit applies to the whole upload, not per concatenated
+                // VCALENDAR root.
+                ics.push_str("END:VCALENDAR\nBEGIN:VCALENDAR\n");
+            }
+            ics.push_str("BEGIN:VEVENT\nEND:VEVENT\n");
+        }
+        ics.push_str("END:VCALENDAR\n");
+
+        let result = parse_file(ics.as_bytes());
+        assert!(matches!(
+            result,
+            Err(IcalImportError::Unparseable(message))
+                if message == format!("calendar exceeds the {MAX_CALENDAR_IMPORT_EVENTS}-VEVENT import limit")
+        ));
     }
 
     #[test]
@@ -1363,7 +1561,7 @@ END:VCALENDAR
     }
 
     #[test]
-    fn ignores_vtimezone_and_valarm_without_counting_skipped() {
+    fn ignores_vtimezone_and_rejects_valarm_without_counting_skipped() {
         let ics = "\
 BEGIN:VCALENDAR
 BEGIN:VTIMEZONE
@@ -1386,6 +1584,7 @@ END:VCALENDAR
 ";
         let parsed = parse_file(ics.as_bytes()).expect("parses");
         assert_eq!(parsed.events.len(), 1);
+        assert!(parsed.events[0].as_ref().unwrap_err().contains("VALARM"));
         assert_eq!(parsed.skipped_components, 0);
     }
 

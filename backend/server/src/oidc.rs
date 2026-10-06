@@ -18,7 +18,7 @@ use crate::{
     middleware,
     oidc_runtime::{
         load_oidc_runtime_settings, load_provider_metadata, oidc_http_client,
-        MobileOidcRuntimeConfig,
+        MobileOidcRuntimeConfig, OIDC_PROVIDER_UNAVAILABLE_MESSAGE,
     },
     web_session::{build_csrf_cookie, build_session_cookie, create_user_session},
     AppState,
@@ -94,7 +94,7 @@ pub async fn auth_config(
 ) -> Result<Json<AuthConfigResponse>, (StatusCode, String)> {
     let oidc_settings = load_oidc_runtime_settings(&state)
         .await
-        .map_err(internal_oidc_error)?;
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "runtime_settings"))?;
     let web_oidc = oidc_settings.web_login_config();
     let mobile_oidc = oidc_settings.mobile_config();
 
@@ -112,26 +112,22 @@ pub async fn oidc_login(
 ) -> Result<Redirect, (StatusCode, String)> {
     let settings = load_oidc_runtime_settings(&state)
         .await
-        .map_err(internal_oidc_error)?;
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "runtime_settings"))?;
     let config = settings
         .web_login_config()
         .ok_or_else(|| (StatusCode::NOT_FOUND, "OIDC is not configured".to_string()))?;
     let redirect_to = sanitize_redirect_target(query.redirect_to.as_deref());
     let provider_metadata = load_provider_metadata(&state, &config.issuer_url)
         .await
-        .map_err(internal_oidc_error)?;
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "provider_discovery"))?;
     let client = CoreClient::from_provider_metadata(
         provider_metadata,
         ClientId::new(config.client_id.clone()),
         Some(ClientSecret::new(config.client_secret.clone())),
     )
     .set_redirect_uri(
-        RedirectUrl::new(config.redirect_url.clone()).map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Invalid OIDC redirect URL: {error}"),
-            )
-        })?,
+        RedirectUrl::new(config.redirect_url.clone())
+            .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "redirect_url_validation"))?,
     );
 
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
@@ -158,11 +154,8 @@ pub async fn oidc_login(
         .metadata_store
         .create_oidc_login_state(&login_state)
         .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to persist OIDC login state: {error}"),
-            )
+        .map_err(|_| {
+            internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "login_state_persist")
         })?;
 
     let auth_url = auth_url.to_string();
@@ -175,7 +168,7 @@ pub async fn mobile_oidc_authorize(
 ) -> Result<Json<MobileOidcAuthorizeResponse>, (StatusCode, String)> {
     let settings = load_oidc_runtime_settings(&state)
         .await
-        .map_err(internal_oidc_error)?;
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "runtime_settings"))?;
     let config = settings.mobile_config().ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
@@ -192,7 +185,7 @@ pub async fn mobile_oidc_authorize(
 
     let provider_metadata = load_provider_metadata(&state, &config.issuer_url)
         .await
-        .map_err(internal_oidc_error)?;
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "provider_discovery"))?;
     let authorization_url = build_mobile_authorization_url(&config, &provider_metadata, &req)?;
 
     Ok(Json(MobileOidcAuthorizeResponse { authorization_url }))
@@ -204,7 +197,7 @@ pub async fn mobile_oidc_exchange(
 ) -> Result<Json<MobileOidcExchangeResponse>, (StatusCode, String)> {
     let settings = load_oidc_runtime_settings(&state)
         .await
-        .map_err(internal_oidc_error)?;
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "runtime_settings"))?;
     let config = settings.mobile_config().ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
@@ -215,37 +208,25 @@ pub async fn mobile_oidc_exchange(
 
     let provider_metadata = load_provider_metadata(&state, &config.issuer_url)
         .await
-        .map_err(internal_oidc_error)?;
-    let http_client = oidc_http_client().map_err(internal_oidc_error)?;
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "provider_discovery"))?;
+    let http_client = oidc_http_client()
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "http_client_initialization"))?;
     let client = CoreClient::from_provider_metadata(
         provider_metadata,
         ClientId::new(config.client_id.clone()),
         config.client_secret.clone().map(ClientSecret::new),
     )
-    .set_redirect_uri(RedirectUrl::new(req.redirect_uri.clone()).map_err(|error| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("Invalid mobile OIDC redirect URI: {error}"),
-        )
+    .set_redirect_uri(RedirectUrl::new(req.redirect_uri.clone()).map_err(|_| {
+        internal_oidc_error(StatusCode::BAD_REQUEST, "mobile_redirect_uri_validation")
     })?);
 
     let token_response = client
         .exchange_code(AuthorizationCode::new(req.code.clone()))
-        .map_err(|error| {
-            (
-                StatusCode::BAD_REQUEST,
-                format!("Invalid OIDC code exchange: {error}"),
-            )
-        })?
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_REQUEST, "mobile_code_exchange"))?
         .set_pkce_verifier(PkceCodeVerifier::new(req.code_verifier.clone()))
         .request_async(&http_client)
         .await
-        .map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("OIDC token exchange failed: {error}"),
-            )
-        })?;
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "mobile_token_exchange"))?;
 
     let id_token = token_response.id_token().ok_or_else(|| {
         (
@@ -257,12 +238,7 @@ pub async fn mobile_oidc_exchange(
     let nonce = Nonce::new(req.nonce.clone());
     let claims = id_token
         .claims(&id_token_verifier, &nonce)
-        .map_err(|error| {
-            (
-                StatusCode::UNAUTHORIZED,
-                format!("Invalid OIDC ID token: {error}"),
-            )
-        })?;
+        .map_err(|_| internal_oidc_error(StatusCode::UNAUTHORIZED, "mobile_id_token_validation"))?;
 
     if let Some(email_verified) = claims.email_verified() {
         if !email_verified {
@@ -287,7 +263,9 @@ pub async fn mobile_oidc_exchange(
     let token = state
         .jwt_manager
         .generate(user.id, user.email.clone(), user.tenant_id)
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        .map_err(|_| {
+            internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "mobile_jwt_generation")
+        })?;
 
     Ok(Json(MobileOidcExchangeResponse {
         token,
@@ -306,13 +284,14 @@ pub async fn oidc_callback(
     headers: HeaderMap,
     Query(query): Query<OidcCallbackQuery>,
 ) -> Result<Response, (StatusCode, String)> {
-    if let Some(error) = query.error {
-        let description = query
-            .error_description
-            .unwrap_or_else(|| "Provider rejected the login request".to_string());
+    if query.error.is_some() {
+        tracing::warn!(
+            failure_stage = "provider_rejected_login",
+            "OIDC login was rejected"
+        );
         return Err((
             StatusCode::BAD_REQUEST,
-            format!("OIDC login failed: {error}: {description}"),
+            "OIDC login was rejected by the identity provider".to_string(),
         ));
     }
 
@@ -330,12 +309,7 @@ pub async fn oidc_callback(
         .metadata_store
         .find_oidc_login_state(&state_token)
         .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to load OIDC login state: {error}"),
-            )
-        })?
+        .map_err(|_| internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "login_state_load"))?
     else {
         return Err((StatusCode::BAD_REQUEST, "Unknown OIDC state".to_string()));
     };
@@ -344,11 +318,8 @@ pub async fn oidc_callback(
         .metadata_store
         .delete_oidc_login_state(&state_token)
         .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to consume OIDC login state: {error}"),
-            )
+        .map_err(|_| {
+            internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "login_state_consume")
         })?;
 
     if login_state.is_expired() {
@@ -360,44 +331,31 @@ pub async fn oidc_callback(
 
     let settings = load_oidc_runtime_settings(&state)
         .await
-        .map_err(internal_oidc_error)?;
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "runtime_settings"))?;
     let config = settings
         .web_login_config()
         .ok_or_else(|| (StatusCode::NOT_FOUND, "OIDC is not configured".to_string()))?;
     let provider_metadata = load_provider_metadata(&state, &config.issuer_url)
         .await
-        .map_err(internal_oidc_error)?;
-    let http_client = oidc_http_client().map_err(internal_oidc_error)?;
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "provider_discovery"))?;
+    let http_client = oidc_http_client()
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "http_client_initialization"))?;
     let client = CoreClient::from_provider_metadata(
         provider_metadata,
         ClientId::new(config.client_id.clone()),
         Some(ClientSecret::new(config.client_secret.clone())),
     )
     .set_redirect_uri(
-        RedirectUrl::new(config.redirect_url.clone()).map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Invalid OIDC redirect URL: {error}"),
-            )
-        })?,
+        RedirectUrl::new(config.redirect_url.clone())
+            .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "redirect_url_validation"))?,
     );
     let token_response = client
         .exchange_code(AuthorizationCode::new(code))
-        .map_err(|error| {
-            (
-                StatusCode::BAD_REQUEST,
-                format!("Invalid OIDC code exchange: {error}"),
-            )
-        })?
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_REQUEST, "web_code_exchange"))?
         .set_pkce_verifier(PkceCodeVerifier::new(login_state.pkce_verifier.clone()))
         .request_async(&http_client)
         .await
-        .map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("OIDC token exchange failed: {error}"),
-            )
-        })?;
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "web_token_exchange"))?;
 
     let id_token = token_response.id_token().ok_or_else(|| {
         (
@@ -409,12 +367,7 @@ pub async fn oidc_callback(
     let nonce = Nonce::new(login_state.nonce.clone());
     let claims = id_token
         .claims(&id_token_verifier, &nonce)
-        .map_err(|error| {
-            (
-                StatusCode::UNAUTHORIZED,
-                format!("Invalid OIDC ID token: {error}"),
-            )
-        })?;
+        .map_err(|_| internal_oidc_error(StatusCode::UNAUTHORIZED, "web_id_token_validation"))?;
 
     if let Some(email_verified) = claims.email_verified() {
         if !email_verified {
@@ -449,9 +402,9 @@ pub async fn oidc_callback(
         ip_address.clone(),
     )
     .await
-    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    .map_err(|_| internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "session_persist"))?;
 
-    if let Err(error) = state
+    if state
         .metadata_store
         .create_user_security_event(rustshare_storage::UserSecurityEventRecord {
             user_id: user.id,
@@ -462,26 +415,30 @@ pub async fn oidc_callback(
             session_id: None,
         })
         .await
+        .is_err()
     {
-        tracing::warn!("Failed to record OIDC login security event: {:?}", error);
+        tracing::warn!(
+            failure_stage = "security_event_write",
+            "Failed to record OIDC login security event"
+        );
     }
 
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         header::SET_COOKIE,
-        HeaderValue::from_str(&build_session_cookie(&session_token)).map_err(|error| {
-            (
+        HeaderValue::from_str(&build_session_cookie(&session_token)).map_err(|_| {
+            internal_oidc_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to serialize session cookie: {error}"),
+                "session_cookie_serialization",
             )
         })?,
     );
     response_headers.append(
         header::SET_COOKIE,
-        HeaderValue::from_str(&build_csrf_cookie(&csrf_token)).map_err(|error| {
-            (
+        HeaderValue::from_str(&build_csrf_cookie(&csrf_token)).map_err(|_| {
+            internal_oidc_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to serialize CSRF cookie: {error}"),
+                "csrf_cookie_serialization",
             )
         })?,
     );
@@ -509,10 +466,10 @@ fn validate_mobile_oidc_request(
             "Unsupported mobile OIDC redirect URI".to_string(),
         ));
     }
-    Url::parse(redirect_uri).map_err(|error| {
+    Url::parse(redirect_uri).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
-            format!("Invalid mobile OIDC redirect URI: {error}"),
+            "Invalid mobile OIDC redirect URI".to_string(),
         )
     })?;
     if code_challenge.trim().is_empty() {
@@ -547,10 +504,10 @@ fn validate_mobile_oidc_exchange_request(
             "Unsupported mobile OIDC redirect URI".to_string(),
         ));
     }
-    Url::parse(&req.redirect_uri).map_err(|error| {
+    Url::parse(&req.redirect_uri).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
-            format!("Invalid mobile OIDC redirect URI: {error}"),
+            "Invalid mobile OIDC redirect URI".to_string(),
         )
     })?;
     if req.code.trim().is_empty() {
@@ -581,11 +538,7 @@ fn build_mobile_authorization_url(
     req: &MobileOidcAuthorizeRequest,
 ) -> Result<String, (StatusCode, String)> {
     let mut authorization_url = Url::parse(provider_metadata.authorization_endpoint().as_str())
-        .map_err(|error| {
-            internal_oidc_error(format!(
-                "Invalid provider authorization endpoint URL: {error}"
-            ))
-        })?;
+        .map_err(|_| internal_oidc_error(StatusCode::BAD_GATEWAY, "provider_authorization_url"))?;
     let scope_value = config
         .scopes()
         .into_iter()
@@ -608,8 +561,9 @@ fn build_mobile_authorization_url(
     Ok(authorization_url.into())
 }
 
-fn internal_oidc_error(message: String) -> (StatusCode, String) {
-    (StatusCode::BAD_GATEWAY, message)
+fn internal_oidc_error(status: StatusCode, failure_stage: &'static str) -> (StatusCode, String) {
+    tracing::error!(failure_stage, "OIDC authentication operation failed");
+    (status, OIDC_PROVIDER_UNAVAILABLE_MESSAGE.to_string())
 }
 
 fn sanitize_redirect_target(value: Option<&str>) -> String {
@@ -638,12 +592,7 @@ async fn find_or_create_oidc_user(
         .metadata_store
         .find_user_by_email_and_tenant(email, state.default_tenant_id)
         .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to load user by e-mail: {error}"),
-            )
-        })?
+        .map_err(|_| internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "user_lookup"))?
     {
         if user.disabled_at.is_some() {
             return Err((StatusCode::FORBIDDEN, "account_disabled".to_string()));
@@ -660,11 +609,8 @@ async fn find_or_create_oidc_user(
 
     let username = allocate_username(state, email).await?;
     let password_hash = rustshare_auth::PasswordHasher::hash(&generate_web_session_token())
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to provision OIDC user password placeholder: {error}"),
-            )
+        .map_err(|_| {
+            internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "user_password_hash")
         })?;
     let user = User::new(
         username,
@@ -680,12 +626,7 @@ async fn find_or_create_oidc_user(
         .metadata_store
         .create_user(&user)
         .await
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to create OIDC user: {error}"),
-            )
-        })?;
+        .map_err(|_| internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "user_create"))?;
 
     Ok(user)
 }
@@ -704,11 +645,8 @@ async fn allocate_username(state: &AppState, email: &str) -> Result<String, (Sta
             .metadata_store
             .find_user_by_username(&candidate)
             .await
-            .map_err(|error| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to check username availability: {error}"),
-                )
+            .map_err(|_| {
+                internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "username_lookup")
             })?;
 
         if existing.is_none() {

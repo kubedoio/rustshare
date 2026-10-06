@@ -80,6 +80,7 @@ struct AuditRow {
     tag = "Admin",
     responses(
         (status = 200, description = "Success"),
+        (status = 400, description = "Invalid audit query parameters", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
     ),
 )]
@@ -88,9 +89,8 @@ pub async fn list_audit_log(
     AdminUser { user_id: _ }: AdminUser,
     Query(query): Query<AuditLogQuery>,
 ) -> Result<Json<PaginatedAuditLog>, AppError> {
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
-    let offset = (page - 1) * per_page;
+    let (page, per_page, offset) = audit_pagination_parameters(query.page, query.per_page)
+        .ok_or_else(|| admin_bad_request("page produces an offset outside the supported range"))?;
 
     let event_type_filter = query.event_type.as_deref().unwrap_or("all");
 
@@ -139,7 +139,7 @@ pub async fn list_audit_log(
                 COALESCE(sal.actor_label, 'anonymous')::text AS actor_label,
                 sal.action::text AS action_type,
                 sal.share_id::text AS target_label,
-                json_build_object('ip_address', sal.ip_address::text, 'success', sal.success)::jsonb AS detail,
+                json_build_object('success', sal.success)::jsonb AS detail,
                 NULL::uuid AS actor_id
             FROM share_access_log sal"
                 .to_string(),
@@ -155,7 +155,7 @@ pub async fn list_audit_log(
                 COALESCE(u.username, 'deleted_user')::text AS actor_label,
                 use2.event_type::text AS action_type,
                 NULL::text AS target_label,
-                json_build_object('description', use2.description)::jsonb AS detail,
+                '{}'::jsonb AS detail,
                 use2.user_id AS actor_id
             FROM user_security_events use2
             LEFT JOIN users u ON u.id = use2.user_id"
@@ -277,25 +277,33 @@ LIMIT ${limit_pos} OFFSET ${offset_pos}"
         .await
         .map_err(db_error)?;
 
-    // SELECT query
-    let select_query = bind_params!(sqlx::query_as::<_, AuditRow>(&select_sql))
-        .bind(per_page)
-        .bind(offset);
-    let rows: Vec<AuditRow> = select_query
-        .fetch_all(&state.db_pool)
-        .await
-        .map_err(db_error)?;
+    // A page beyond the current end needs no SELECT; avoid asking PostgreSQL to
+    // walk and discard an arbitrarily large offset.
+    let rows: Vec<AuditRow> = if offset >= total {
+        Vec::new()
+    } else {
+        let select_query = bind_params!(sqlx::query_as::<_, AuditRow>(&select_sql))
+            .bind(per_page)
+            .bind(offset);
+        select_query
+            .fetch_all(&state.db_pool)
+            .await
+            .map_err(db_error)?
+    };
 
     let entries = rows
         .into_iter()
-        .map(|row| AuditEntry {
-            id: row.id.to_string(),
-            occurred_at: row.occurred_at,
-            event_type: row.event_type,
-            actor_label: row.actor_label,
-            action_type: row.action_type,
-            target_label: row.target_label,
-            detail: row.detail,
+        .map(|row| {
+            let detail = project_audit_detail(&row.event_type, &row.action_type, &row.detail);
+            AuditEntry {
+                id: row.id.to_string(),
+                occurred_at: row.occurred_at,
+                event_type: row.event_type,
+                actor_label: row.actor_label,
+                action_type: row.action_type,
+                target_label: row.target_label,
+                detail,
+            }
         })
         .collect();
 
@@ -311,7 +319,303 @@ LIMIT ${limit_pos} OFFSET ${offset_pos}"
 // Helpers
 // ---------------------------------------------------------------------------
 
+fn audit_pagination_parameters(
+    page: Option<i64>,
+    per_page: Option<i64>,
+) -> Option<(i64, i64, i64)> {
+    let page = page.unwrap_or(1).max(1);
+    let per_page = per_page.unwrap_or(20).clamp(1, 100);
+    let offset = (page - 1).checked_mul(per_page)?;
+    Some((page, per_page, offset))
+}
+
 fn db_error(e: sqlx::Error) -> AppError {
     tracing::error!("Database error: {:?}", e);
     admin_internal_error("Database error")
+}
+
+fn project_audit_detail(
+    event_type: &str,
+    action_type: &str,
+    detail: &serde_json::Value,
+) -> serde_json::Value {
+    use serde_json::{json, Map, Value};
+
+    let Some(fields) = detail.as_object() else {
+        return json!({});
+    };
+    let mut projected = Map::new();
+
+    match event_type {
+        "share_access" => copy_bool(fields, &mut projected, "success"),
+        // Descriptions are free-form and may contain user or session data.
+        "security_event" => {}
+        "admin_action" => match action_type {
+            "group.created" | "group.updated" | "group.deleted" => {
+                copy_safe_display_text(fields, &mut projected, "name");
+            }
+            "user.quota_changed" => {
+                copy_nonnegative_integer(fields, &mut projected, "old_quota");
+                copy_nonnegative_integer(fields, &mut projected, "new_quota");
+            }
+            "user.admin_status_changed" => {
+                copy_bool(fields, &mut projected, "old_is_admin");
+                copy_bool(fields, &mut projected, "new_is_admin");
+            }
+            "user.deleted" => {
+                copy_nonnegative_integer(fields, &mut projected, "storage_keys_count")
+            }
+            "config.security_updated" => {
+                copy_bool(fields, &mut projected, "login_protection_enabled");
+                copy_nonnegative_integer(fields, &mut projected, "max_login_attempts");
+                copy_nonnegative_integer(fields, &mut projected, "login_block_duration_minutes");
+            }
+            "application.enabled" | "application.disabled" | "application.updated" => {
+                copy_safe_identifier(fields, &mut projected, "application_id");
+            }
+            "group.member_added" | "group.member_removed" => {
+                copy_uuid(fields, &mut projected, "user_id");
+            }
+            "template.created" | "template.updated" => {
+                copy_safe_identifier(fields, &mut projected, "template_key");
+                copy_safe_identifier(fields, &mut projected, "application_id");
+            }
+            "template.deleted" => copy_safe_identifier(fields, &mut projected, "key"),
+            "template.duplicated" => {
+                copy_safe_identifier(fields, &mut projected, "original_key");
+                copy_safe_identifier(fields, &mut projected, "new_key");
+                copy_uuid(fields, &mut projected, "new_id");
+            }
+            "object.created.from_template" => {
+                copy_safe_identifier(fields, &mut projected, "template_key");
+                copy_uuid(fields, &mut projected, "object_id");
+            }
+            _ => {}
+        },
+        _ => {}
+    }
+
+    Value::Object(projected)
+}
+
+fn copy_bool(
+    source: &serde_json::Map<String, serde_json::Value>,
+    destination: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    if let Some(value) = source.get(key).and_then(serde_json::Value::as_bool) {
+        destination.insert(key.to_string(), serde_json::Value::Bool(value));
+    }
+}
+
+fn copy_nonnegative_integer(
+    source: &serde_json::Map<String, serde_json::Value>,
+    destination: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    if let Some(value) = source.get(key).and_then(serde_json::Value::as_u64) {
+        destination.insert(key.to_string(), serde_json::json!(value));
+    }
+}
+
+fn copy_uuid(
+    source: &serde_json::Map<String, serde_json::Value>,
+    destination: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    if let Some(value) = source
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+    {
+        destination.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
+    }
+}
+
+fn copy_safe_identifier(
+    source: &serde_json::Map<String, serde_json::Value>,
+    destination: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    let Some(value) = source.get(key).and_then(serde_json::Value::as_str) else {
+        return;
+    };
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return;
+    }
+    destination.insert(
+        key.to_string(),
+        serde_json::Value::String(value.to_string()),
+    );
+}
+
+fn copy_safe_display_text(
+    source: &serde_json::Map<String, serde_json::Value>,
+    destination: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    let Some(value) = source.get(key).and_then(serde_json::Value::as_str) else {
+        return;
+    };
+    if value.trim().is_empty() || value.len() > 255 || value.chars().any(char::is_control) {
+        return;
+    }
+    destination.insert(
+        key.to_string(),
+        serde_json::Value::String(value.to_string()),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{audit_pagination_parameters, project_audit_detail};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    #[test]
+    fn audit_pagination_parameters_default_and_clamp_inputs() {
+        assert_eq!(audit_pagination_parameters(None, None), Some((1, 20, 0)));
+        assert_eq!(
+            audit_pagination_parameters(Some(0), Some(0)),
+            Some((1, 1, 0))
+        );
+        assert_eq!(
+            audit_pagination_parameters(Some(2), Some(1000)),
+            Some((2, 100, 100))
+        );
+    }
+
+    #[test]
+    fn audit_pagination_parameters_reject_offset_overflow() {
+        assert_eq!(audit_pagination_parameters(Some(i64::MAX), Some(100)), None);
+    }
+
+    #[test]
+    fn admin_action_detail_keeps_only_typed_allowlisted_fields() {
+        let member_id = Uuid::new_v4();
+        let detail = json!({
+            "user_id": member_id,
+            "access_token": "do-not-return",
+            "note_body": "private content"
+        });
+
+        assert_eq!(
+            project_audit_detail("admin_action", "group.member_added", &detail),
+            json!({ "user_id": member_id.to_string() })
+        );
+    }
+
+    #[test]
+    fn security_event_detail_omits_free_form_description() {
+        let detail = json!({ "description": "secret text", "ip_address": "192.0.2.1" });
+
+        assert_eq!(
+            project_audit_detail("security_event", "login.failed", &detail),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn share_access_detail_keeps_success_but_omits_network_metadata() {
+        let detail = json!({
+            "success": true,
+            "ip_address": "192.0.2.1",
+            "user_agent": "private-agent"
+        });
+
+        assert_eq!(
+            project_audit_detail("share_access", "download", &detail),
+            json!({ "success": true })
+        );
+    }
+
+    #[test]
+    fn object_creation_detail_never_returns_user_path() {
+        let object_id = Uuid::new_v4();
+        let detail = json!({
+            "template_key": "template_default",
+            "object_id": object_id,
+            "path": "/Workspace/private/notes.md"
+        });
+
+        assert_eq!(
+            project_audit_detail("admin_action", "object.created.from_template", &detail),
+            json!({
+                "template_key": "template_default",
+                "object_id": object_id.to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn unknown_admin_action_detail_fails_closed() {
+        let detail = json!({ "arbitrary": "private", "secret": "do-not-return" });
+
+        assert_eq!(
+            project_audit_detail("admin_action", "future.action", &detail),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn group_lifecycle_detail_keeps_only_bounded_display_name() {
+        for action in ["group.created", "group.updated", "group.deleted"] {
+            assert_eq!(
+                project_audit_detail(
+                    "admin_action",
+                    action,
+                    &json!({
+                        "name": "FWS Pilot Team",
+                        "extra": "unapproved detail"
+                    })
+                ),
+                json!({ "name": "FWS Pilot Team" })
+            );
+        }
+
+        assert_eq!(
+            project_audit_detail(
+                "admin_action",
+                "group.deleted",
+                &json!({ "name": "unsafe\nname" })
+            ),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn mismatched_event_type_does_not_expose_admin_action_metadata() {
+        assert_eq!(
+            project_audit_detail(
+                "security_event",
+                "group.deleted",
+                &json!({ "name": "FWS Pilot Team" })
+            ),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn unknown_event_type_and_malformed_detail_fail_closed() {
+        assert_eq!(
+            project_audit_detail(
+                "future_event",
+                "group.deleted",
+                &json!({ "name": "FWS Pilot Team", "secret": "do-not-return" })
+            ),
+            json!({})
+        );
+        assert_eq!(
+            project_audit_detail("admin_action", "group.deleted", &json!("not an object")),
+            json!({})
+        );
+    }
 }
