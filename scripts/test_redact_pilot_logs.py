@@ -724,7 +724,10 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
         self.assertIn("/apps/notes/${encodeURIComponent(pilotNoteId)}", e2e)
         self.assertIn("await editH1(editedH1)", e2e)
         self.assertIn("await rename(pilotNoteTitle, renamedNote)", e2e)
-        self.assertIn("await restoreSmokeNote()", e2e)
+        self.assertRegex(
+            e2e,
+            r"finally\s*\{\s*await test\.step\('Restore pilot Note fixture', restoreSmokeNote\);\s*\}",
+        )
         self.assertIn("E2E_BASE_URL: http://127.0.0.1", ui_step)
         self.assertIn("'UI_BROWSER_STATUS=passed'", summary_step)
         self.assertIn("'UI_PLAYWRIGHT_EXPECTED=1'", summary_step)

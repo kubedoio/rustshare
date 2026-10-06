@@ -1320,3 +1320,13 @@ Playwright steps for authentication, Files access, Note edits, reload
 verification, and fixture restoration. This is diagnostic instrumentation,
 not a fix or a passing UI result; rerun on a new exact SHA and keep the UI,
 backup/restore, and upgrade gates open until the journey succeeds.
+
+Pilot Release instrumentation guard follow-up (2026-10-06): run
+[37446637108](https://github.com/kubedoio/rustshare/actions/runs/37446637108)
+on SHA `8e0c00a2fdb34c4c4e4c5f5e8f0e0c330b1bf6c9` failed before image build or
+deployment. One of the 32 log-redaction/evidence regression tests still
+required the previous literal `await restoreSmokeNote()` form and rejected
+the new named Playwright cleanup step; the other 31 tests passed. The guard
+now asserts fixture restoration remains inside `finally` through the named
+step. This run is not UI or operational evidence; the updated regression
+suite and authoritative workflow must be rerun on the next revision.
