@@ -2,16 +2,58 @@
 
 ## Conclusion: NOT READY
 
+## Latest exact-candidate workflow update (2026-10-06)
+
+- Candidate source SHA: `82b47d04608b242b074e2a5a5f4d21590158d76a`.
+- [Integration Tests run 37455378778](https://github.com/kubedoio/rustshare/actions/runs/37455378778):
+  success. Its log explicitly records
+  `user_disable_credential_revocation_test.rs` running the real-service
+  `disabling_user_revokes_credentials_and_stale_cookie_cannot_authenticate`
+  test, with 1 passed and 0 failed.
+- [Pilot Release run 37455425225](https://github.com/kubedoio/rustshare/actions/runs/37455425225):
+  completed successfully. Clean deployment, canonical journey,
+  UI reachability, application restart and persistence, bounded dependency
+  failure/recovery, invalid-configuration rejection, backup verification, and
+  isolated restore/re-verification have passed. The previous-release-to-
+  candidate upgrade passed (11:38:52–11:58:42 UTC). Representative migration
+  verification and evidence collection passed; the run completed successfully.
+  The artifact binds build `pilot-82b47d04608b`, image
+  `sha256:d157b6a39faeedc434aab17301c55b7af28106d788db55d773d9af3758a459c6`,
+  deployment `github-actions-37455425225-1`, and config fingerprint
+  `88198f4e2ec00e6c3414dc354c995c9508ef62294f638ccc9e7d972e79af0bbe`.
+  `pilot-workflow-summary.env` records `WORKFLOW_RESULT=passed`;
+  `ui-playwright-results.json` has `expected=1`, `skipped=0`,
+  `unexpected=0`, `flaky=0`; the representative migration passed; and the
+  upgrade used
+  `v0.8.0-alpha.5` (`d28816cbedaa877026cdd8bcb57274c54694e40a`).
+- The artifact also records `SOURCE_STATUS=?? scripts/__pycache__/`, created by
+  the Python redaction test before source identity capture. This is a
+  checkout-cleanliness evidence defect: a green result must not claim a clean
+  source tree in this state. The workflow now disables Python bytecode and
+  fails closed on a dirty checkout; rerun on the corrected revision is
+  required before accepting pristine-source evidence. Artifact:
+  `rustshare-pilot-evidence-82b47d04608b242b074e2a5a5f4d21590158d76a`
+  (29,786 bytes; run 37455425225).
+- This is isolated GitHub Actions evidence only. SHA `82b47d…` has not been
+  deployed to FWS, and the two-administrator/second-operator recovery
+  rehearsal remains outstanding. Institutional authorization design remains
+  unapproved and unimplemented. Therefore the conclusion remains **NOT READY**.
+
+The gate table and risk register below retain the historical FWS and earlier
+candidate evidence they cite. Read the exact-candidate update above for the
+current in-progress CI run; do not reinterpret historical PASS entries as a
+combined acceptance of this revision.
+
 The previously deployed FWS candidate passed the repository Pilot Release
 gate, public load-balanced journey, clean deployment, restart/persistence,
 backup/restore, bounded dependency failure/recovery, and supported upgrade
-checks recorded below. The updated authoritative workflow has now passed for
-exact isolated CI candidates, most recently
-`c5a82d830e0d890b28d82fc43f374869b9fd296d`, and produced account-lifecycle
-evidence. That candidate has not yet been deployed to FWS, the latest run
-predates local evidence-gate changes, and the second-operator lifecycle and
-recovery rehearsal remains outstanding; the pilot therefore remains NOT READY
-under the participant-start contract.
+checks recorded below. An earlier isolated CI candidate,
+`c5a82d830e0d890b28d82fc43f374869b9fd296d`, passed its then-committed Pilot
+Release workflow and produced account-lifecycle evidence, but was not deployed
+to FWS. The current candidate's workflow state is recorded above and has not
+finished its upgrade/evidence phases. The second-operator lifecycle and
+recovery rehearsal also remains outstanding; the pilot therefore remains NOT
+READY under the participant-start contract.
 
 The previous **READY WITH ACCEPTED LIMITATIONS** conclusion applied to the
 earlier bounded password-login baseline. It does not carry forward as approval

@@ -22,6 +22,8 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Test pilot log redaction
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
         run: python3 scripts/test_redact_pilot_logs.py
 
       - name: Build pilot backend image
@@ -86,13 +88,19 @@ jobs:
           IMAGE_ID="$(docker image inspect rustshare-backend:pilot --format '{{.Id}}')"
           COMPOSE_PROJECT_NAME="rustshare-pilot-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           CLEAN_INSTALL_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          SOURCE_STATUS="$(git status --porcelain)"
+          if [[ -n "${SOURCE_STATUS}" ]]; then
+            echo "Pilot checkout is not clean before evidence identity capture:" >&2
+            echo "${SOURCE_STATUS}" >&2
+            exit 1
+          fi
           [[ "${IMAGE_REVISION}" == "${GITHUB_SHA}" ]] || {
             echo "Pilot image revision ${IMAGE_REVISION} does not match ${GITHUB_SHA}" >&2
             exit 1
           }
           cat > /tmp/rustshare-pilot-evidence/pilot-identity.env <<EOF
           SOURCE_SHA=${GITHUB_SHA}
-          SOURCE_STATUS=$(git status --porcelain)
+          SOURCE_STATUS=${SOURCE_STATUS}
           WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
           WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
           DEPLOYMENT_ID=github-actions-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}

@@ -183,6 +183,15 @@ class PilotLogRedactionTests(unittest.TestCase):
 
 
 class PilotEvidenceWorkflowTests(unittest.TestCase):
+    def test_pilot_identity_requires_clean_checkout_without_python_bytecode(self) -> None:
+        redaction_step = workflow_step("Test pilot log redaction")
+        identity_step = workflow_run("Record pilot identity")
+
+        self.assertIn('PYTHONDONTWRITEBYTECODE: "1"', redaction_step)
+        self.assertIn('SOURCE_STATUS="$(git status --porcelain)"', identity_step)
+        self.assertIn('if [[ -n "${SOURCE_STATUS}" ]]; then', identity_step)
+        self.assertIn('SOURCE_STATUS=${SOURCE_STATUS}', identity_step)
+
     def test_clean_install_start_time_is_exported_to_evidence_step(self) -> None:
         identity_step = workflow_run("Record pilot identity")
         evidence_step = workflow_run("Record clean-install evidence")
