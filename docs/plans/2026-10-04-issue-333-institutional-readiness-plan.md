@@ -1378,3 +1378,30 @@ PR #337 is open at `ee43dc6d20ef347896d50f17387a3d4e3924933b` with
 `REVIEW_REQUIRED`. ADR-0030, ADR-0032, ADR-0037, and ADR-0038 remain Proposed
 (ADR-0038 is not on `main`). No organization/group/workspace authorization or
 schema change is authorized by the pilot workflow results.
+
+Pilot operational maturity gate (2026-10-06): the authoritative Pilot Release
+run [37461268485](https://github.com/kubedoio/rustshare/actions/runs/37461268485)
+completed successfully on exact candidate SHA
+`1b4aeb18c9578f225e732ff44225ea6df54a874a`. Its clean-install identity
+records an empty `SOURCE_STATUS`, exact image/build/deployment/configuration
+identity, and its evidence collection passed. The machine artifact
+`rustshare-pilot-evidence-1b4aeb18c9578f225e732ff44225ea6df54a874a`
+(ID `11413759734`) and tested image artifact (ID `11414049393`) are retained.
+The run passed the canonical user/File/Note journey, authenticated browser
+Notes/Files checks, restart persistence, dependency failure and recovery,
+invalid configuration, backup/restore, previous-release upgrade, and
+representative migrations. The exact-SHA Integration Tests run
+[37461229546](https://github.com/kubedoio/rustshare/actions/runs/37461229546)
+also passed the real-service SCIM credential-revocation regression.
+
+This closes the current Pilot Release workflow evidence gap for isolated CI;
+it does not accept the FWS environment. As of this recheck, issue #333 remains
+open with no approval comments, PR #337 is open with `REVIEW_REQUIRED` at
+documentation head `0772bec23572a461f41f491c4edc315485660c5c`, and ADR-0030,
+ADR-0032, ADR-0037, and ADR-0038 remain Proposed. PR checks on that later
+documentation-only head are still running; no new product or authorization
+code was added after the tested candidate SHA. Do not deploy the candidate or
+start cohort users on this CI result alone. FWS acceptance, the independent
+clean-install/runbook and two-admin recovery rehearsal, and product/security
+approval remain required. No scale test was run: pilot-owner SLO/concurrency
+targets remain unspecified and must not be invented by implementation.
