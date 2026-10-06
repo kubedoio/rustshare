@@ -4,6 +4,45 @@
 
 ## Latest exact-candidate workflow update (2026-10-06)
 
+- Candidate source SHA: `1b4aeb18c9578f225e732ff44225ea6df54a874a`.
+- [Pilot Release run 37461268485](https://github.com/kubedoio/rustshare/actions/runs/37461268485)
+  completed successfully on this exact SHA (12:09:29–12:47:20 UTC). The
+  Integration Tests and every executed PR check passed on this revision,
+  including Chat Product Acceptance and CodeQL. Conditional Test, Build
+  Release, SQLx Prepare, and Code Coverage jobs were skipped by their
+  workflows.
+- The clean-install identity records `SOURCE_STATUS=` (empty),
+  `SOURCE_SHA=1b4aeb18c9578f225e732ff44225ea6df54a874a`, build
+  `pilot-1b4aeb18c957`, deployment `github-actions-37461268485-1`, and config
+  fingerprint
+  `631d58a0f7584c4ccb7e7f3eba5bcf9b49dca7f0fd9dbd9a2a07893d8d15e19f`.
+  The tested image ID is
+  `sha256:55acfc99d78b3341c6f882a4b1d5145aaef7b2e51c276ec9ea64338eecbac14e`;
+  its preserved archive SHA-256 is
+  `1b06f12ee9bc1dae69759920d6ac379ef69dc6520d528b1e7c57d87c9aa3e6c5`.
+- The workflow passed clean install and migrations, the canonical user/File/
+  Note journey, authenticated browser UI and Notes rename/H1 regression,
+  restart/persistence, migration-failure diagnostics, database and storage
+  failure/recovery, invalid-configuration rejection, backup and isolated
+  restore/re-verification, and previous-release upgrade plus representative
+  migration checks. Persistence reports explicitly record
+  `BETA_SMOKE_PERSISTENCE_STATE_VERIFIED=passed`; Playwright reports
+  `expected=1`, `skipped=0`, `unexpected=0`, `flaky=0`. The upgrade source was
+  `v0.8.0-alpha.5` (`d28816cbedaa877026cdd8bcb57274c54694e40a`). Cookie,
+  secret-log, migration-diagnostic, and backup-output secret checks passed.
+- Evidence artifact
+  `rustshare-pilot-evidence-1b4aeb18c9578f225e732ff44225ea6df54a874a`
+  (29,415 bytes; artifact ID `11413759734`) and tested-image artifact
+  `rustshare-pilot-tested-image-1b4aeb18c9578f225e732ff44225ea6df54a874a`
+  (44,343,457 bytes; artifact ID `11414049393`) are retained on the workflow
+  run. `WORKFLOW_RESULT=passed` and evidence collection passed.
+- This proves the isolated GitHub Actions deployment only. It is not an FWS
+  target-environment acceptance: candidate deployment to FWS, the two-admin/
+  second-operator recovery rehearsal, and institutional authorization design
+  approvals remain outstanding. Conclusion remains **NOT READY**.
+
+## Prior exact-candidate workflow update (2026-10-06; superseded by SHA `1b4aeb1`)
+
 - Candidate source SHA: `82b47d04608b242b074e2a5a5f4d21590158d76a`.
 - [Integration Tests run 37455378778](https://github.com/kubedoio/rustshare/actions/runs/37455378778):
   success. Its log explicitly records
@@ -41,7 +80,7 @@
 
 The gate table and risk register below retain the historical FWS and earlier
 candidate evidence they cite. Read the exact-candidate update above for the
-current in-progress CI run; do not reinterpret historical PASS entries as a
+latest completed CI run; do not reinterpret historical PASS entries as a
 combined acceptance of this revision.
 
 The previously deployed FWS candidate passed the repository Pilot Release
@@ -50,17 +89,18 @@ backup/restore, bounded dependency failure/recovery, and supported upgrade
 checks recorded below. An earlier isolated CI candidate,
 `c5a82d830e0d890b28d82fc43f374869b9fd296d`, passed its then-committed Pilot
 Release workflow and produced account-lifecycle evidence, but was not deployed
-to FWS. The current candidate's workflow state is recorded above and has not
-finished its upgrade/evidence phases. The second-operator lifecycle and
-recovery rehearsal also remains outstanding; the pilot therefore remains NOT
-READY under the participant-start contract.
+to FWS. The current candidate's workflow completed its upgrade and evidence
+phases successfully, but it has not been accepted in the FWS target
+environment. The second-operator lifecycle and recovery rehearsal also
+remain outstanding; the pilot therefore remains NOT READY under the
+participant-start contract.
 
 The previous **READY WITH ACCEPTED LIMITATIONS** conclusion applied to the
 earlier bounded password-login baseline. It does not carry forward as approval
-to start users under the expanded contract. Do not begin the cohort until the
-updated workflow passes for an exact candidate and the operator verifies the
-second-admin recovery procedure. This does not authorize Bund expansion or
-imply OIDC-provider acceptance.
+to start users under the expanded contract. The updated workflow has now
+passed for an exact candidate; do not begin the cohort until FWS acceptance
+and the operator's second-admin recovery procedure are verified. This does
+not authorize Bund expansion or imply OIDC-provider acceptance.
 
 ## Revision and evidence identity
 
