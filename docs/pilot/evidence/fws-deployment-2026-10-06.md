@@ -73,9 +73,12 @@ pending.
   a completed recent dispatcher tick after the initial delay. It does not prove
   event delivery: the point-in-time database check showed 33 outbox rows and
   zero delivery rows in pending, claimed, processed or dead-lettered states.
-  FWS logs showed no dispatcher error explaining the initial delay. The Chat
-  bridge remains disabled because its configured service key is invalid; do not
-  depend on Chat or delayed projections in this Notes/Files pilot.
+  A follow-up public probe at `18:25:00Z` again returned overall `ready` with
+  the `outbox` component `unhealthy`, confirming the component signal is not
+  stably healthy. FWS logs showed no dispatcher error explaining the initial
+  delay. The Chat bridge remains disabled because its configured service key is
+  invalid; do not depend on Chat or delayed projections in this Notes/Files
+  pilot.
 - Canonical smoke ran from an external HTTPS-capable operator runner because
   the FWS host cannot connect outbound to its own public hostname. The first
   host-local attempt is retained as a failed readiness-phase diagnostic; it

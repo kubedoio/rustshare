@@ -331,13 +331,14 @@ deployed to FWS; target-host evidence is recorded below and in
     outbox-backed Chat flows. Evidence: the first post-restart probe reported
     `outbox dispatcher has not completed a tick`; later `/health/ready` probes
     were healthy ten times from `17:37:15Z` through `17:39:08Z`, spanning the
-    configured 60-second freshness window. The point-in-time database check
-    showed 33 outbox rows but zero integration delivery rows, so no consumer
-    delivery was exercised; logs did not explain the initial delay. The Chat
-    bridge is still disabled by an invalid service key. Workaround: the tested
-    Notes/Files/share journey passed; keep Chat and delayed projections out of
-    scope. Follow-up: diagnose the slow initial tick and verify a real subscribed
-    event delivery before expanding scope.
+     configured 60-second freshness window. A public probe at `18:25:00Z` again
+     returned overall `ready` while the `outbox` component was `unhealthy`.
+     The point-in-time database check showed 33 outbox rows but zero integration
+     delivery rows, so no consumer delivery was exercised; logs did not explain
+     the initial delay. The Chat bridge is still disabled by an invalid service
+     key. Workaround: the tested Notes/Files/share journey passed; keep Chat and
+     delayed projections out of scope. Follow-up: diagnose the unstable health
+     signal and verify a real subscribed event delivery before expanding scope.
   9. **Low — concurrent application root-path changes may leave extra folders.**
     Affected operation: changing an application's configured root path. Evidence:
     the admin update route provisions the requested folder before its config
