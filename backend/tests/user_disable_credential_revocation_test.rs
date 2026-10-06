@@ -212,11 +212,11 @@ async fn disabling_user_revokes_credentials_and_stale_cookie_cannot_authenticate
         .await;
 
     let mut cleanup_error = None;
-    for statement in [
-        format!("DELETE FROM users WHERE id = '{user_id}'"),
-        format!("DELETE FROM tenants WHERE id = '{tenant_id}'"),
+    for (statement, id) in [
+        ("DELETE FROM users WHERE id = $1", user_id),
+        ("DELETE FROM tenants WHERE id = $1", tenant_id),
     ] {
-        if let Err(error) = sqlx::query(&statement).execute(&pool).await {
+        if let Err(error) = sqlx::query(statement).bind(id).execute(&pool).await {
             cleanup_error.get_or_insert(error);
         }
     }

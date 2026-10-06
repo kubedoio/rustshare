@@ -200,6 +200,10 @@ name = "standups_test"
 path = "../tests/standups_test.rs"
 
 [[test]]
+name = "meeting_context_owner_boundary_test"
+path = "../tests/meeting_context_owner_boundary_test.rs"
+
+[[test]]
 name = "file_operations"
 path = "../tests/file_operations.rs"
 

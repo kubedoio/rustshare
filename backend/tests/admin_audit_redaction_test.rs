@@ -46,9 +46,10 @@ fn disposable_target_guards_reject_production_like_prefixes() {
 async fn cleanup_statement(
     pool: &sqlx::PgPool,
     statement: &str,
+    id: Uuid,
     first_error: &mut Option<sqlx::Error>,
 ) {
-    if let Err(error) = sqlx::query(statement).execute(pool).await {
+    if let Err(error) = sqlx::query(statement).bind(id).execute(pool).await {
         if first_error.is_none() {
             *first_error = Some(error);
         }
@@ -638,23 +639,44 @@ async fn unified_admin_audit_enforces_admin_access_redacts_private_data_and_boun
     .await;
 
     let mut cleanup_error = None;
-    for statement in [
-        format!("DELETE FROM share_access_log WHERE id = '{share_access_id}'"),
-        format!("DELETE FROM shares WHERE id = '{share_id}'"),
-        format!("DELETE FROM files WHERE id = '{file_id}'"),
-        format!("DELETE FROM admin_actions WHERE id = '{template_action_id}'"),
-        format!("DELETE FROM admin_actions WHERE id = '{admin_action_id}'"),
-        format!("DELETE FROM user_security_events WHERE id = '{security_event_id}'"),
-        format!("DELETE FROM user_security_events WHERE id = '{session_revoked_event_id}'"),
-        format!("DELETE FROM user_security_events WHERE id = '{other_user_security_event_id}'"),
-        format!("DELETE FROM user_sessions WHERE id = '{disabled_admin_session_id}'"),
-        format!("DELETE FROM user_sessions WHERE id = '{revoked_session_id}'"),
-        format!("DELETE FROM users WHERE id = '{non_admin_id}'"),
-        format!("DELETE FROM users WHERE id = '{disabled_admin_id}'"),
-        format!("DELETE FROM users WHERE id = '{actor_id}'"),
-        format!("DELETE FROM tenants WHERE id = '{tenant_id}'"),
+    for (statement, id) in [
+        (
+            "DELETE FROM share_access_log WHERE id = $1",
+            share_access_id,
+        ),
+        ("DELETE FROM shares WHERE id = $1", share_id),
+        ("DELETE FROM files WHERE id = $1", file_id),
+        (
+            "DELETE FROM admin_actions WHERE id = $1",
+            template_action_id,
+        ),
+        ("DELETE FROM admin_actions WHERE id = $1", admin_action_id),
+        (
+            "DELETE FROM user_security_events WHERE id = $1",
+            security_event_id,
+        ),
+        (
+            "DELETE FROM user_security_events WHERE id = $1",
+            session_revoked_event_id,
+        ),
+        (
+            "DELETE FROM user_security_events WHERE id = $1",
+            other_user_security_event_id,
+        ),
+        (
+            "DELETE FROM user_sessions WHERE id = $1",
+            disabled_admin_session_id,
+        ),
+        (
+            "DELETE FROM user_sessions WHERE id = $1",
+            revoked_session_id,
+        ),
+        ("DELETE FROM users WHERE id = $1", non_admin_id),
+        ("DELETE FROM users WHERE id = $1", disabled_admin_id),
+        ("DELETE FROM users WHERE id = $1", actor_id),
+        ("DELETE FROM tenants WHERE id = $1", tenant_id),
     ] {
-        cleanup_statement(&pool, &statement, &mut cleanup_error).await;
+        cleanup_statement(&pool, statement, id, &mut cleanup_error).await;
     }
 
     if let Err(test_error) = attempt {

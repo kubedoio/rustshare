@@ -1234,3 +1234,19 @@ confirmed Cargo continued through ignored integration targets and then exited,
 but no exit code or captured final summary was available. That sweep is not
 counted as passing evidence. These are local results from the dirty worktree,
 not a hosted revision-bound run.
+
+Meeting-context owner-boundary follow-up (2026-10-06): an independent Phase 4
+review confirmed that workspace-visible event-to-artifact links depend on
+unapproved ADR-0030/0032/0037/0038 and the unresolved #327 meeting layout; no
+cross-resource sharing semantics were added. New real-service API coverage
+creates a Meeting, Decision, and Standup for one user, then proves a different
+user in the same tenant receives 403 for read, update, and delete on each
+resource, while the owner can still read the original content. It passed 1/1
+against the guarded loopback PostgreSQL/RustFS services; target Clippy with
+warnings denied, formatting, and `git diff --check` pass. The first run exposed
+that fixture teardown must remove `file_versions` before users; cleanup now
+removes only the fresh test users' file metadata and deletes object bytes only
+after reference checks under the shared blob lock. The follow-up run passed,
+and a post-run query confirmed zero matching fixture users. This is local
+uncommitted evidence, not a hosted revision-bound result. Phase 0 decisions
+and the institutional Phase 4 workflow remain open.

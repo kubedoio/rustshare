@@ -16,6 +16,7 @@
 mod support;
 
 use axum::{body::Body, http::Request};
+use rand::Rng;
 use rustshare_core::services::{EmailError, EmailService};
 use rustshare_crypto::{decrypt_secret, encrypt_secret, SecretEncryptionKey};
 use sqlx::Row;
@@ -45,7 +46,9 @@ async fn test_pool() -> sqlx::PgPool {
 }
 
 fn test_encryption_key() -> SecretEncryptionKey {
-    SecretEncryptionKey::from_bytes([0x42u8; 32])
+    let mut bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut bytes);
+    SecretEncryptionKey::from_bytes(bytes)
 }
 
 async fn cleanup_statement(

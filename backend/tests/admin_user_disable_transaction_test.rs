@@ -1878,7 +1878,7 @@ async fn admin_user_create_and_delete_audits_are_transactional() -> TestResult<(
 
         let delete_audit_trigger = format!(
             "CREATE TRIGGER {trigger_name} BEFORE INSERT ON admin_actions
-             FOR EACH ROW EXECUTE FUNCTION {function_name}('{actor_id}', 'user.deleted', '{created_user_id}', '{sequence_name}')"
+             FOR EACH ROW EXECUTE FUNCTION {function_name}('{actor_id}', 'user.deleted', '*', '{sequence_name}')"
         );
         sqlx::query(&delete_audit_trigger).execute(&pool).await?;
         let delete_request = || {
