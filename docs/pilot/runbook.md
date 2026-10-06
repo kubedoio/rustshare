@@ -6,7 +6,8 @@ or immutable backend image recorded in the evidence bundle.
 
 ## Prerequisites
 
-- Linux host with Docker Engine and the Compose plugin;
+- Linux host with Docker Engine and Docker Compose plugin 2.24.4 or later
+  (`!override` is used by the FWS candidate override);
 - repository checkout at the exact tested revision, or access to the exact
   immutable backend image;
 - for GitHub-hosted acceptance, authenticated GitHub CLI access with permission
@@ -42,20 +43,21 @@ the exact tested image artifact (not a local rebuild), verify its archive
 checksum from `tested-image.env`, then verify its embedded source revision:
 
 ~~~bash
+set -euo pipefail
 archive="rustshare-backend-pilot.tar"
 expected_archive_sha="$(awk -F= '$1 == "ARCHIVE_SHA256" {print $2}' tested-image.env)"
 printf '%s  %s\n' "${expected_archive_sha}" "${archive}" | sha256sum --check -
-docker load --input "${archive}"
+sudo -n docker load --input "${archive}"
 candidate_sha="$(awk -F= '$1 == "SOURCE_SHA" {print $2}' tested-image.env)"
 candidate_tag="rustshare-backend:pilot-${candidate_sha:0:12}"
-docker tag rustshare-backend:pilot "${candidate_tag}"
-actual_sha="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${candidate_tag}")"
+sudo -n docker tag rustshare-backend:pilot "${candidate_tag}"
+actual_sha="$(sudo -n docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${candidate_tag}")"
 test "${actual_sha}" = "${candidate_sha}"
 
 export RUSTSHARE_BACKEND_IMAGE="${candidate_tag}"
 export FWS_PRIVATE_BIND_ADDRESS="REPLACE_WITH_HOST_PRIVATE_IP"
 export RUSTSHARE_BACKEND_PULL_POLICY=never
-compose=(docker compose -p rustshare \
+compose=(sudo -n --preserve-env=RUSTSHARE_BACKEND_IMAGE,FWS_PRIVATE_BIND_ADDRESS,RUSTSHARE_BACKEND_PULL_POLICY docker compose -p rustshare \
   -f docker-compose.yml \
   -f docker-compose.prod.yml \
   -f docker-compose.pilot.yml \
@@ -255,10 +257,11 @@ backup and restore scripts honor this explicit Compose file set.
 
 ~~~bash
 backup_root="/secure/backups/rustshare"
-./scripts/backup-stack.sh "${backup_root}"
+sudo -n --preserve-env=COMPOSE_FILE,RUSTSHARE_BACKEND_IMAGE,FWS_PRIVATE_BIND_ADDRESS,RUSTSHARE_BACKEND_PULL_POLICY \
+  ./scripts/backup-stack.sh "${backup_root}"
 # Set backup_path to the exact path printed by “Backup created at …”.
 backup_path="${backup_root}/REPLACE_WITH_TIMESTAMP"
-./scripts/verify-backup-bundle.sh "${backup_path}"
+sudo -n ./scripts/verify-backup-bundle.sh "${backup_path}"
 ~~~
 
 The bundle contains the PostgreSQL dump, RustFS data snapshot, deployment
@@ -276,7 +279,7 @@ available by default on supported Ubuntu hosts).
 
 ~~~bash
 backup_path="/secure/backups/rustshare/REPLACE_WITH_TIMESTAMP"
-./scripts/run-restore-drill.sh "${backup_path}"
+sudo -n ./scripts/run-restore-drill.sh "${backup_path}"
 ~~~
 
 The drill takes an operating-system lock for its `DRILL_PROJECT_NAME` and
@@ -291,14 +294,29 @@ For an approved in-place recovery, stop traffic, restore the external secrets,
 then run:
 
 ~~~bash
+set -euo pipefail
+# FWS candidate stack: keep these identical to the active deployment.
+export COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml:docker-compose.pilot.yml:docker-compose.fws-candidate.yml
+export RUSTSHARE_BACKEND_IMAGE="rustshare-backend:pilot-REPLACE_WITH_SOURCE_SHA_PREFIX"
+export FWS_PRIVATE_BIND_ADDRESS="REPLACE_WITH_HOST_PRIVATE_IP"
+export RUSTSHARE_BACKEND_PULL_POLICY=never
 backup_path="/secure/backups/rustshare/REPLACE_WITH_TIMESTAMP"
-./scripts/restore-stack.sh "${backup_path}"
-curl -fsS https://pilot.example/health/ready
-./scripts/run-beta-smoke.sh
+sudo -n --preserve-env=COMPOSE_FILE,RUSTSHARE_BACKEND_IMAGE,FWS_PRIVATE_BIND_ADDRESS,RUSTSHARE_BACKEND_PULL_POLICY \
+  ./scripts/restore-stack.sh "${backup_path}"
+curl -fsS https://app.kubedo.io/health/ready
+BASE_URL=https://app.kubedo.io \
+  ADMIN_EMAIL=... ADMIN_PASSWORD=... \
+  VIEWER_EMAIL=... VIEWER_PASSWORD=... \
+  PILOT_SOURCE_SHA=... PILOT_BUILD_VERSION=... \
+  PILOT_DEPLOYMENT_ID=... PILOT_CONFIG_ID=... \
+  ./scripts/run-beta-smoke.sh
 ~~~
 
 The post-restore journey must verify a known pilot record, not only that the
 containers are running.
+
+For non-FWS deployments, set `COMPOSE_FILE` to the files used by that stack and
+run the restore helper with that deployment's Docker privileges.
 
 ## Upgrade
 
@@ -381,9 +399,13 @@ addresses; record its SHA-256 in the evidence identity. Validate the public
 surface, not only host-local HTTP:
 
 For the current FWS operator account, Docker commands require noninteractive
-`sudo` (direct Docker socket access is not granted). From the deployment
-directory, include the host-local candidate override when inspecting or
-operating the live stack:
+`sudo` (direct Docker socket access is not granted). Use `sudo -n` for the
+Docker-backed backup/restore helpers above; preserve the exported Compose
+settings when invoking them. The generic diagnostics block assumes an operator
+with Docker access; for FWS, use the candidate-aware commands below. On other
+hosts, use the site's configured Docker access. From the FWS deployment
+directory, include the candidate override when inspecting or operating the live
+stack:
 
 ~~~bash
 cd /opt/rustshare
@@ -394,10 +416,9 @@ sudo -n docker compose -f docker-compose.yml \
 ~~~
 
 Do not add the operator to the Docker group solely to avoid `sudo`; Docker
-socket access is effectively root-equivalent. Apply the same privilege
-requirement to all Compose commands above and to backup/restore helper scripts
-that invoke Docker. The public hostname's load balancer terminates TLS; do not
-expose the host's private address in public evidence.
+socket access is effectively root-equivalent. The public hostname's load
+balancer terminates TLS; do not expose the host's private address in public
+evidence.
 
 ~~~bash
 curl -fsS https://app.kubedo.io/health
@@ -410,8 +431,8 @@ BASE_URL=https://app.kubedo.io \
   scripts/run-beta-smoke.sh
 ~~~
 
-The accepted target-host evidence for this run is retained at
-`/var/backups/rustshare/fws-evidence-20261004`. It includes the identity,
+The accepted target-host evidence for the 2026-10-06 candidate is retained at
+`/var/backups/rustshare/fws-evidence-20261006`. It includes the identity,
 canonical journey, restart/persistence, backup/restore, upgrade and bounded
 dependency-failure reports. Never copy the host `.env` into that evidence
 directory.

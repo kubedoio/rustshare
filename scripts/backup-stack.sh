@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+# Backups contain user data even though deployment secrets are excluded.
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -174,9 +176,11 @@ fi
 echo "Creating configuration snapshot..."
 tar -czf "${TARGET_DIR}/config.tar.gz" \
 	docker-compose.yml \
+	docker-compose.prod.yml \
 	docker-compose.alpha.yml \
 	docker-compose.dogfood.yml \
 	docker-compose.pilot.yml \
+	docker-compose.fws-candidate.yml \
 	docker-compose.dev.yml \
 	docker \
 	scripts \
@@ -196,8 +200,18 @@ CHAT_BACKUP=${WITH_CHAT}
 BUZZ_POSTGRES_SERVICE=${BUZZ_POSTGRES_SERVICE:-}
 BUZZ_RUSTFS_SERVICE=${BUZZ_RUSTFS_SERVICE:-}
 CHAT_SECRETS_EXTERNAL=.env,.elembra/chat.env
-GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
-GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+COMPOSE_FILE=${COMPOSE_FILE:-}
+RUSTSHARE_BACKEND_IMAGE=${RUSTSHARE_BACKEND_IMAGE:-}
+RUSTSHARE_BACKEND_PULL_POLICY=${RUSTSHARE_BACKEND_PULL_POLICY:-}
+FWS_PRIVATE_BIND_ADDRESS=${FWS_PRIVATE_BIND_ADDRESS:-}
+GIT_BRANCH=$(
+	git -C "${PROJECT_ROOT}" -c safe.directory="${PROJECT_ROOT}" \
+		rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown
+)
+GIT_COMMIT=$(
+	git -C "${PROJECT_ROOT}" -c safe.directory="${PROJECT_ROOT}" \
+		rev-parse HEAD 2>/dev/null || echo unknown
+)
 EOF
 
 if command -v shasum >/dev/null 2>&1; then

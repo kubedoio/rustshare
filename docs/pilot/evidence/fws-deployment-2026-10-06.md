@@ -56,8 +56,10 @@ pending.
 
 ## FWS deployment and verification
 
-- Environment: FWS host `10.5.199.85`, deployment `fws-app-20261006-rustshare`,
-  public origin `https://app.kubedo.io`; TLS terminates at the load balancer.
+- Environment: FWS Ubuntu host behind the load balancer, deployment
+  `fws-app-20261006-rustshare`, public origin `https://app.kubedo.io`; TLS
+  terminates at the load balancer. The private host address is intentionally
+  omitted from this public evidence.
 - Backend runs the source/version above and was healthy after deployment and
   after restart. PostgreSQL recorded 103 successful migrations, latest
   `20261003090000`.

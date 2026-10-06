@@ -3,7 +3,7 @@
 services:
   backend:
     image: ${RUSTSHARE_BACKEND_IMAGE:?set the exact tested backend image}
-    build: null
+    build: !reset null
     pull_policy: never
 
   nginx:

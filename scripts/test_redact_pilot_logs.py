@@ -1038,6 +1038,47 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
         self.assertLess(workflow.index("- name: Scan image with Trivy"), workflow.index("- name: Push image"))
         self.assertLess(workflow.index("- name: Enforce critical image findings"), workflow.index("- name: Push image"))
 
+    def test_fws_backup_captures_deployment_config_with_private_permissions(self) -> None:
+        backup_script = SCRIPT.with_name("backup-stack.sh").read_text(encoding="utf-8")
+
+        self.assertRegex(backup_script, r"(?m)^umask 077$")
+        for compose_file in ("docker-compose.prod.yml", "docker-compose.fws-candidate.yml"):
+            with self.subTest(compose_file=compose_file):
+                self.assertIn(compose_file, backup_script)
+        for setting in (
+            "COMPOSE_FILE=${COMPOSE_FILE:-}",
+            "RUSTSHARE_BACKEND_IMAGE=${RUSTSHARE_BACKEND_IMAGE:-}",
+            "RUSTSHARE_BACKEND_PULL_POLICY=${RUSTSHARE_BACKEND_PULL_POLICY:-}",
+            "FWS_PRIVATE_BIND_ADDRESS=${FWS_PRIVATE_BIND_ADDRESS:-}",
+        ):
+            with self.subTest(setting=setting):
+                self.assertIn(setting, backup_script)
+
+    def test_fws_runbook_checks_candidate_identity_before_root_compose(self) -> None:
+        runbook = (SCRIPT.parents[1] / "docs/pilot/runbook.md").read_text(encoding="utf-8")
+        fws_section = runbook.split("### FWS load-balancer host", maxsplit=1)[1]
+        fws_instructions = fws_section.split("~~~", maxsplit=2)[1]
+        recovery_section = runbook.split("For an approved in-place recovery", maxsplit=1)[1]
+        restore_instructions = recovery_section.split("~~~", maxsplit=2)[1]
+
+        self.assertIn("set -euo pipefail", fws_instructions)
+        self.assertIn("sudo -n docker load", fws_instructions)
+        self.assertIn("sudo -n docker image inspect", fws_instructions)
+        self.assertIn("sudo -n --preserve-env=RUSTSHARE_BACKEND_IMAGE", fws_instructions)
+        self.assertIn("sudo -n --preserve-env=COMPOSE_FILE", restore_instructions)
+        self.assertIn("docker-compose.fws-candidate.yml", restore_instructions)
+        self.assertIn("sudo -n --preserve-env=COMPOSE_FILE,RUSTSHARE_BACKEND_IMAGE", runbook)
+        self.assertIn("sudo -n ./scripts/verify-backup-bundle.sh", runbook)
+
+    def test_public_pilot_evidence_omits_the_fws_private_host_address(self) -> None:
+        repo_root = SCRIPT.parents[1]
+        for path in (
+            repo_root / "docs/pilot/pilot-maturity-assessment.md",
+            repo_root / "docs/pilot/evidence/fws-deployment-2026-10-06.md",
+        ):
+            with self.subTest(path=path.name):
+                self.assertNotIn("10.5.199.85", path.read_text(encoding="utf-8"))
+
     def test_all_effective_runtime_secrets_are_available_to_redactor(self) -> None:
         collect_step = workflow_step("Collect pilot evidence and diagnostics")
 
