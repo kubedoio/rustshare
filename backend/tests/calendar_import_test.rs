@@ -16,6 +16,7 @@
 //! Every test takes the shared `SERIAL` guard and cleans up exactly the rows
 //! it created under fresh tenants.
 
+use std::io::BufReader;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -117,9 +118,18 @@ async fn spawn_import_worker(state: &AppState) {
 }
 
 /// Poll `GET /api/v1/calendar/import-jobs/{id}` until the job reaches a
-/// terminal state, asserting it completes successfully.
+/// terminal state; callers assert the expected status.
 async fn wait_for_job(app: &axum::Router<()>, token: &str, job_id: Uuid) -> Value {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    wait_for_job_with_timeout(app, token, job_id, std::time::Duration::from_secs(30)).await
+}
+
+async fn wait_for_job_with_timeout(
+    app: &axum::Router<()>,
+    token: &str,
+    job_id: Uuid,
+    timeout: std::time::Duration,
+) -> Value {
+    let deadline = std::time::Instant::now() + timeout;
     loop {
         let response = app
             .clone()
@@ -315,6 +325,215 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
+async fn imported_recurring_utc_event_exports_with_uid_times_and_rrule() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env_without_calendar_outbox().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_import_export", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    spawn_import_worker(&state).await;
+
+    let ics = "\
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID: item\\,weekly\\;source\\\\partner@example.test\x20
+DTSTART:20261008T140000Z
+DTEND:20261008T150000Z
+RRULE:FREQ=WEEKLY;COUNT=3
+SUMMARY:Issue 329 weekly sync
+END:VEVENT
+END:VCALENDAR
+";
+    let (status, body) = upload_ics(&app, &token, "issue-329.ics", ics).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let job = wait_for_job(
+        &app,
+        &token,
+        Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap(),
+    )
+    .await;
+    assert_eq!(job["status"], "completed");
+    assert_eq!(job["failed_events"], 0);
+    assert_eq!(job["processed_events"], 1);
+
+    let event_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM calendar_events \
+         WHERE tenant_id = $1 AND owner_id = $2 \
+           AND external_uid = $3 \
+           AND recurrence_id IS NULL",
+    )
+    .bind(tenant_id)
+    .bind(user.id)
+    .bind(" item,weekly;source\\partner@example.test ")
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("find imported recurring event");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}/export"))
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let exported = String::from_utf8(
+        axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read exported calendar")
+            .to_vec(),
+    )
+    .expect("exported calendar should be UTF-8");
+
+    let properties: Vec<&str> = exported.lines().collect();
+    assert!(properties.contains(&"UID: item\\,weekly\\;source\\\\partner@example.test\x20"));
+
+    let mut parser = ical::IcalParser::new(BufReader::new(exported.as_bytes()));
+    let calendar = parser
+        .next()
+        .expect("one exported VCALENDAR")
+        .expect("independent parser accepts exported VCALENDAR");
+    assert!(parser.next().is_none(), "exactly one exported VCALENDAR");
+    assert_eq!(calendar.events.len(), 1, "one exported VEVENT");
+    let exported_event = &calendar.events[0];
+    let property_value = |name: &str| {
+        exported_event
+            .properties
+            .iter()
+            .find(|property| property.name == name)
+            .and_then(|property| property.value.as_deref())
+            .unwrap_or_else(|| panic!("exported event is missing {name}"))
+    };
+    assert_eq!(property_value("DTSTART"), "20261008T140000Z");
+    assert_eq!(property_value("DTEND"), "20261008T150000Z");
+    assert_eq!(property_value("RRULE"), "FREQ=WEEKLY;COUNT=3");
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn unsupported_ics_fields_are_reported_without_importing_or_disclosing_values() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env_without_calendar_outbox().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_import_unsupported", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    spawn_import_worker(&state).await;
+
+    let ics = "\
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:issue-329-unsupported@example.test
+DTSTART:20261008T140000Z
+DTEND:20261008T150000Z
+ORGANIZER:mailto:private@example.test
+ATTENDEE;CN=Private:mailto:private@example.test
+SUMMARY:Meeting with unsupported participants
+END:VEVENT
+END:VCALENDAR
+";
+    let (status, body) = upload_ics(&app, &token, "unsupported.ics", ics).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let job = wait_for_job(
+        &app,
+        &token,
+        Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap(),
+    )
+    .await;
+
+    assert_eq!(job["status"], "completed");
+    assert_eq!(job["total_events"], 1);
+    assert_eq!(job["processed_events"], 0);
+    assert_eq!(job["failed_events"], 1);
+    let error = job["last_error"].as_str().expect("actionable import error");
+    assert!(error.contains("ATTENDEE, ORGANIZER"), "error was {error}");
+    assert!(
+        error.contains("event was not imported"),
+        "error was {error}"
+    );
+    assert!(!error.contains("private@example.test"));
+
+    let imported_count = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM calendar_events \
+         WHERE tenant_id = $1 AND owner_id = $2 \
+           AND external_uid = 'issue-329-unsupported@example.test'",
+    )
+    .bind(tenant_id)
+    .bind(user.id)
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("count events with unsupported properties");
+    assert_eq!(imported_count, 0);
+
+    let range_ics = "\
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:issue-329-range@example.test
+DTSTART:20261008T140000Z
+DTEND:20261008T150000Z
+RRULE:FREQ=WEEKLY;COUNT=3
+SUMMARY:Weekly meeting
+END:VEVENT
+BEGIN:VEVENT
+UID:issue-329-range@example.test
+RECURRENCE-ID:20261015T140000Z
+RECURRENCE-ID;RANGE=THISANDFUTURE:20261015T140000Z
+DTSTART:20261015T160000Z
+DTEND:20261015T170000Z
+SUMMARY:Changed and following meetings
+END:VEVENT
+END:VCALENDAR
+";
+    let (status, body) = upload_ics(&app, &token, "range.ics", range_ics).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let range_job = wait_for_job(
+        &app,
+        &token,
+        Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap(),
+    )
+    .await;
+
+    assert_eq!(range_job["status"], "completed");
+    assert_eq!(range_job["total_events"], 2);
+    assert_eq!(range_job["processed_events"], 1);
+    assert_eq!(range_job["failed_events"], 1);
+    let range_error = range_job["last_error"]
+        .as_str()
+        .expect("unsupported RANGE diagnostic");
+    assert!(range_error.contains("multiple RECURRENCE-ID properties"));
+    assert!(range_error.contains("RECURRENCE-ID RANGE"));
+    assert!(range_error.contains("event was not imported"));
+    assert!(!range_error.contains("THISANDFUTURE"));
+
+    let imported_range_overrides = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM calendar_events \
+         WHERE tenant_id = $1 AND owner_id = $2 \
+           AND external_uid = 'issue-329-range@example.test' \
+           AND recurrence_id IS NOT NULL",
+    )
+    .bind(tenant_id)
+    .bind(user.id)
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("count imported RANGE overrides");
+    assert_eq!(imported_range_overrides, 0);
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
 async fn structurally_invalid_ics_fails_the_job() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env_without_calendar_outbox().await;
@@ -432,6 +651,58 @@ async fn non_ics_upload_is_rejected() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn oversized_ics_upload_is_rejected_before_creating_import_state() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env_without_calendar_outbox().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_import_oversize", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    // Keep the request one byte over the documented 10 MiB ICS field cap.
+    let oversized_ics = "x".repeat(10 * 1024 * 1024 + 1);
+    let (status, body) = upload_ics(&app, &token, "oversized.ics", &oversized_ics).await;
+
+    // Unknown fields are ignored semantically, but still count toward the
+    // route's total 11 MiB multipart request bound.
+    let oversized_ignored_field = "x".repeat(11 * 1024 * 1024);
+    let oversized_request = format!(
+        "--{IMPORT_BOUNDARY}\r\n\
+         Content-Disposition: form-data; name=\"file\"; filename=\"small.ics\"\r\n\
+         Content-Type: text/calendar\r\n\r\n\
+         {ICS_FIXTURE}\r\n\
+         --{IMPORT_BOUNDARY}\r\n\
+         Content-Disposition: form-data; name=\"ignored\"\r\n\r\n\
+         {oversized_ignored_field}\r\n\
+         --{IMPORT_BOUNDARY}--\r\n"
+    );
+    let (request_status, request_body) =
+        upload_multipart(&app, &token, oversized_request.into_bytes()).await;
+
+    let import_state: (i64, i64) = sqlx::query_as(
+        "SELECT \
+            (SELECT count(*) FROM calendar_import_jobs WHERE tenant_id = $1), \
+            (SELECT count(*) FROM calendar_sources WHERE tenant_id = $1)",
+    )
+    .bind(tenant_id)
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("count import state after oversized upload");
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "response: {body}");
+    assert_eq!(
+        request_status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "response: {request_body}"
+    );
+    assert_eq!(import_state, (0, 0));
 }
 
 #[tokio::test]
@@ -665,5 +936,95 @@ END:VCALENDAR
     assert_eq!(count_imported_events(&state, tenant_id).await, 1);
 
     cleanup_outbox(&state.db_pool, tenant_id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn event_limit_fails_the_job_without_persisting_partial_import() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env_without_calendar_outbox().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_import_limit", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    spawn_import_worker(&state).await;
+
+    // Exceed the parser's event cap by one while staying below the existing
+    // multipart byte limit. Since the whole file must parse before upserting,
+    // this hard failure must leave the calendar unchanged.
+    let mut ics = String::from("BEGIN:VCALENDAR\n");
+    for index in 0..=10_000 {
+        ics.push_str(&format!(
+            "BEGIN:VEVENT\nUID:limit-{index}\nDTSTART:20261005T140000Z\nDTEND:20261005T150000Z\nEND:VEVENT\n"
+        ));
+    }
+    ics.push_str("END:VCALENDAR\n");
+
+    let (status, body) = upload_ics(&app, &token, "over-limit.ics", &ics).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let job = wait_for_job(
+        &app,
+        &token,
+        Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap(),
+    )
+    .await;
+
+    assert_eq!(job["status"], "failed");
+    assert_eq!(
+        job["last_error"],
+        "calendar file is unreadable: calendar exceeds the 10000-VEVENT import limit"
+    );
+    assert_eq!(count_imported_events(&state, tenant_id).await, 0);
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn maximum_sized_calendar_import_completes_and_persists_every_event() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env_without_calendar_outbox().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_import_max", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    spawn_import_worker(&state).await;
+
+    let mut ics = String::from("BEGIN:VCALENDAR\nVERSION:2.0\n");
+    for index in 0..10_000 {
+        ics.push_str(&format!(
+            "BEGIN:VEVENT\nUID:maximum-{index}\nDTSTART:20261005T140000Z\nDTEND:20261005T150000Z\nEND:VEVENT\n"
+        ));
+    }
+    ics.push_str("END:VCALENDAR\n");
+    assert!(ics.len() < 10 * 1024 * 1024);
+    let payload_bytes = ics.len();
+
+    let started_at = std::time::Instant::now();
+    let (status, body) = upload_ics(&app, &token, "maximum.ics", &ics).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let job = wait_for_job_with_timeout(
+        &app,
+        &token,
+        Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap(),
+        std::time::Duration::from_secs(300),
+    )
+    .await;
+    let elapsed = started_at.elapsed();
+    let imported_events = count_imported_events(&state, tenant_id).await;
+
+    assert_eq!(job["status"], "completed");
+    assert_eq!(job["total_events"], 10_000);
+    assert_eq!(job["processed_events"], 10_000);
+    assert_eq!(job["failed_events"], 0);
+    assert_eq!(imported_events, 10_000);
+    eprintln!(
+        "MAX_CALENDAR_IMPORT events=10000 payload_bytes={payload_bytes} elapsed_ms={} persisted_events={imported_events}",
+        elapsed.as_millis(),
+    );
+
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }

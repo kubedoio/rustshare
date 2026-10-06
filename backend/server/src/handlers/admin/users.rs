@@ -11,7 +11,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{
-    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, log_admin_action,
+    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, insert_admin_action,
 };
 use crate::{
     handlers::{AdminUser, AppError},
@@ -367,6 +367,7 @@ pub async fn create_admin_user(
     let storage_quota = req.storage_quota_bytes.unwrap_or(10_737_418_240_i64);
 
     let cols = "id, username, email, display_name, is_admin, storage_quota, disabled_at, created_at, updated_at";
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let row = sqlx::query_as::<_, UserRow>(&format!(
         "INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -379,9 +380,21 @@ pub async fn create_admin_user(
     .bind(&display_name)
     .bind(is_admin)
     .bind(storage_quota)
-    .fetch_one(&state.db_pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(db_error)?;
+
+    insert_admin_action(
+        &mut tx,
+        actor_id,
+        "user.created",
+        Some("user"),
+        Some(new_id),
+        json!({"username": req.username}),
+    )
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
     // Seed default Application preferences for new user
     let pref_repo =
@@ -394,16 +407,6 @@ pub async fn create_admin_user(
             e
         );
     }
-
-    log_admin_action(
-        &state.db_pool,
-        actor_id,
-        "user.created",
-        Some("user"),
-        Some(new_id),
-        json!({"username": req.username}),
-    )
-    .await;
 
     Ok((StatusCode::CREATED, Json(AdminUserResponse::from(row))))
 }
@@ -467,15 +470,30 @@ pub async fn update_admin_user(
     Path(user_id): Path<Uuid>,
     Json(req): Json<UpdateUserRequest>,
 ) -> Result<Json<AdminUserResponse>, AppError> {
+    let password_changed = req.password.is_some();
+    let password_hash = if let Some(ref pw) = req.password {
+        if pw.len() < 8 {
+            return Err(admin_bad_request("Password must be at least 8 characters"));
+        }
+        Some(
+            PasswordHasher::hash(pw)
+                .map_err(|_| admin_internal_error("Password hashing failed"))?,
+        )
+    } else {
+        None
+    };
+
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let cols = "id, username, email, display_name, is_admin, storage_quota, disabled_at, created_at, updated_at";
 
-    // Fetch current user
-    let current = sqlx::query_as::<_, UserRow>(&format!("SELECT {cols} FROM users WHERE id = $1"))
-        .bind(user_id)
-        .fetch_optional(&state.db_pool)
-        .await
-        .map_err(db_error)?
-        .ok_or_else(|| admin_not_found("User not found"))?;
+    let current = sqlx::query_as::<_, UserRow>(&format!(
+        "SELECT {cols} FROM users WHERE id = $1 FOR UPDATE"
+    ))
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(db_error)?
+    .ok_or_else(|| admin_not_found("User not found"))?;
 
     let new_display_name = req
         .display_name
@@ -487,19 +505,6 @@ pub async fn update_admin_user(
     let new_is_admin = req.is_admin.unwrap_or(current.is_admin);
 
     let quota_changed = new_quota != current.storage_quota;
-    let password_changed = req.password.is_some();
-
-    // Validate and hash password if provided
-    let password_hash = if let Some(ref pw) = req.password {
-        if pw.len() < 8 {
-            return Err(admin_bad_request("Password must be at least 8 characters"));
-        }
-        let hash = PasswordHasher::hash(pw)
-            .map_err(|_| admin_internal_error("Password hashing failed"))?;
-        Some(hash)
-    } else {
-        None
-    };
 
     // Build dynamic query
     let password_clause = if password_changed {
@@ -527,7 +532,7 @@ pub async fn update_admin_user(
     }
 
     let row = q
-        .fetch_optional(&state.db_pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(db_error)?
         .ok_or_else(|| admin_not_found("User not found"))?;
@@ -535,7 +540,7 @@ pub async fn update_admin_user(
     if password_changed {
         // Invalidate all sessions for the user
         sqlx::query!("DELETE FROM user_sessions WHERE user_id = $1", user_id)
-            .execute(&state.db_pool)
+            .execute(&mut *tx)
             .await
             .map_err(db_error)?;
 
@@ -544,24 +549,25 @@ pub async fn update_admin_user(
             "UPDATE device_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL",
             user_id
         )
-        .execute(&state.db_pool)
+        .execute(&mut *tx)
         .await
         .map_err(db_error)?;
 
-        log_admin_action(
-            &state.db_pool,
+        insert_admin_action(
+            &mut tx,
             actor_id,
             "user.password_changed",
             Some("user"),
             Some(user_id),
             json!({"username": current.username}),
         )
-        .await;
+        .await
+        .map_err(db_error)?;
     }
 
     if quota_changed {
-        log_admin_action(
-            &state.db_pool,
+        insert_admin_action(
+            &mut tx,
             actor_id,
             "user.quota_changed",
             Some("user"),
@@ -571,8 +577,27 @@ pub async fn update_admin_user(
                 "new_quota": new_quota,
             }),
         )
-        .await;
+        .await
+        .map_err(db_error)?;
     }
+
+    if new_is_admin != current.is_admin {
+        insert_admin_action(
+            &mut tx,
+            actor_id,
+            "user.admin_status_changed",
+            Some("user"),
+            Some(user_id),
+            json!({
+                "old_is_admin": current.is_admin,
+                "new_is_admin": new_is_admin,
+            }),
+        )
+        .await
+        .map_err(db_error)?;
+    }
+
+    tx.commit().await.map_err(db_error)?;
 
     Ok(Json(AdminUserResponse::from(row)))
 }
@@ -596,16 +621,21 @@ pub async fn disable_admin_user(
         return Err(admin_bad_request("Cannot disable your own account"));
     }
 
-    sqlx::query!(
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
+
+    let updated = sqlx::query!(
         "UPDATE users SET disabled_at = NOW() WHERE id = $1",
         user_id
     )
-    .execute(&state.db_pool)
+    .execute(&mut *tx)
     .await
     .map_err(db_error)?;
+    if updated.rows_affected() == 0 {
+        return Err(admin_not_found("User not found"));
+    }
 
     sqlx::query!("DELETE FROM user_sessions WHERE user_id = $1", user_id)
-        .execute(&state.db_pool)
+        .execute(&mut *tx)
         .await
         .map_err(db_error)?;
 
@@ -614,19 +644,22 @@ pub async fn disable_admin_user(
         "UPDATE device_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL",
         user_id
     )
-    .execute(&state.db_pool)
+    .execute(&mut *tx)
     .await
     .map_err(db_error)?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "user.disabled",
         Some("user"),
         Some(user_id),
         json!({}),
     )
-    .await;
+    .await
+    .map_err(db_error)?;
+
+    tx.commit().await.map_err(db_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -646,20 +679,27 @@ pub async fn enable_admin_user(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(user_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    sqlx::query!("UPDATE users SET disabled_at = NULL WHERE id = $1", user_id)
-        .execute(&state.db_pool)
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
+    let updated = sqlx::query!("UPDATE users SET disabled_at = NULL WHERE id = $1", user_id)
+        .execute(&mut *tx)
         .await
         .map_err(db_error)?;
+    if updated.rows_affected() == 0 {
+        return Err(admin_not_found("User not found"));
+    }
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "user.enabled",
         Some("user"),
         Some(user_id),
         json!({}),
     )
-    .await;
+    .await
+    .map_err(db_error)?;
+
+    tx.commit().await.map_err(db_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -693,22 +733,27 @@ pub async fn delete_admin_user(
     .await
     .map_err(db_error)?;
 
-    // Log before deletion so actor_id is still valid
-    log_admin_action(
-        &state.db_pool,
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
+    // Delete user (CASCADE handles files, file_versions, shares, etc.)
+    let deleted = sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error)?;
+    if deleted.rows_affected() == 0 {
+        return Err(admin_not_found("User not found"));
+    }
+
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "user.deleted",
         Some("user"),
         Some(user_id),
         json!({"storage_keys_count": storage_keys.len()}),
     )
-    .await;
-
-    // Delete user (CASCADE handles files, file_versions, shares, etc.)
-    sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
-        .execute(&state.db_pool)
-        .await
-        .map_err(db_error)?;
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
     // Spawn background blob cleanup
     let object_store = std::sync::Arc::clone(&state.object_store);

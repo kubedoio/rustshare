@@ -152,6 +152,72 @@ async fn cleanup_user(pool: &PgPool, user_id: Uuid) {
         .expect("Failed to cleanup test user");
 }
 
+async fn cleanup_kanban_user(
+    pool: &PgPool,
+    metadata_store: &MetadataStore,
+    object_store: &ObjectStore,
+    user_id: Uuid,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let object_keys = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT storage_key FROM files WHERE owner_id = $1
+        UNION
+        SELECT versions.storage_key
+        FROM file_versions AS versions
+        JOIN files ON files.id = versions.file_id
+        WHERE files.owner_id = $1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+
+    sqlx::query("DELETE FROM files WHERE owner_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM folders WHERE owner_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+
+    for object_key in object_keys {
+        let _blob_lock = object_store.acquire_blob_lock(&object_key).await?;
+        if metadata_store
+            .count_blob_references(&object_key)
+            .await?
+            .total()
+            != 0
+        {
+            continue;
+        }
+
+        if object_store.exists(&object_key).await? {
+            // Recheck while holding the same lock used by blob writers and GC.
+            if metadata_store
+                .count_blob_references(&object_key)
+                .await?
+                .total()
+                == 0
+            {
+                object_store.delete(&object_key).await?;
+                if object_store.exists(&object_key).await? {
+                    return Err(std::io::Error::other(format!(
+                        "RustFS object still exists after cleanup: {object_key}"
+                    ))
+                    .into());
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn create_kanban_service(
     event_store: Arc<EventStore>,
     metadata_store: Arc<MetadataStore>,
@@ -619,33 +685,43 @@ async fn contract_move_card_rebalances_orders_when_too_dense() {
 async fn contract_get_board_by_slug_returns_board() {
     let (pool, event_store, metadata_store, object_store) = setup_test_env().await;
     let tenant_id = Uuid::new_v4();
-    let user = create_test_user(&metadata_store, "slug_user", tenant_id).await;
-    let service = create_kanban_service(event_store, metadata_store.clone(), object_store, &pool);
+    let username = format!("slug_user_{}", Uuid::new_v4().simple());
+    let user = create_test_user(&metadata_store, &username, tenant_id).await;
+    let service = create_kanban_service(
+        event_store,
+        metadata_store.clone(),
+        object_store.clone(),
+        &pool,
+    );
 
-    let board = service
-        .create_board(
-            CreateBoardInput {
-                title: "Slug Board".to_string(),
-            },
-            user.id,
-            tenant_id,
-        )
-        .await
-        .unwrap();
+    let journey = async {
+        let board = service
+            .create_board(
+                CreateBoardInput {
+                    title: "Slug Board".to_string(),
+                },
+                user.id,
+                tenant_id,
+            )
+            .await?;
 
-    // Get by ID
-    let by_id = service
-        .get_board(board.id.clone(), user.id, tenant_id)
-        .await
-        .unwrap();
+        let by_id = service
+            .get_board(board.id.clone(), user.id, tenant_id)
+            .await?;
+        let by_slug = service
+            .get_board("slug-board".to_string(), user.id, tenant_id)
+            .await?;
+
+        Ok::<_, KanbanError>((by_id, by_slug, board.id))
+    }
+    .await;
+
+    let cleanup = cleanup_kanban_user(&pool, &metadata_store, &object_store, user.id).await;
+    cleanup.expect("Failed to cleanup Kanban test files and objects");
+
+    let (by_id, by_slug, board_id) = journey.expect("Kanban board journey failed");
     assert_eq!(by_id.title, "Slug Board");
-
-    // Get by Slug
-    let by_slug = service
-        .get_board("slug-board".to_string(), user.id, tenant_id)
-        .await
-        .unwrap();
-    assert_eq!(by_slug.id, board.id);
+    assert_eq!(by_slug.id, board_id);
     assert_eq!(by_slug.slug, "slug-board");
 }
 

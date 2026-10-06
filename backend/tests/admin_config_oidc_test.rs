@@ -12,11 +12,19 @@
 //!
 //! Run with: cargo test --test admin_config_oidc_test -- --ignored
 
+mod support;
+
+use axum::{body::Body, http::Request};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rustshare_crypto::{decrypt_secret, encrypt_secret, SecretEncryptionKey};
 use sqlx::Row;
+use std::error::Error;
+use support::calendar_harness::{assert_local_database, setup_test_env, SERIAL};
 use tokio::sync::Mutex;
+use tower::ServiceExt;
 use uuid::Uuid;
+
+type TestResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 const OIDC_CONFIG_ID: &str = "00000000-0000-0000-0000-000000000001";
 static OIDC_CONFIG_TEST_LOCK: Mutex<()> = Mutex::const_new(());
@@ -74,7 +82,7 @@ async fn cleanup(pool: &sqlx::PgPool, user_ids: &[Uuid]) {
     }
 }
 
-async fn reset_oidc_config(pool: &sqlx::PgPool) {
+async fn reset_oidc_config(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     let oidc_id: Uuid = OIDC_CONFIG_ID.parse().unwrap();
     sqlx::query(
         "UPDATE oidc_config
@@ -86,8 +94,28 @@ async fn reset_oidc_config(pool: &sqlx::PgPool) {
     )
     .bind(oidc_id)
     .execute(pool)
-    .await
-    .expect("reset oidc_config");
+    .await?;
+    Ok(())
+}
+
+async fn cleanup_statement(
+    pool: &sqlx::PgPool,
+    statement: &str,
+    first_error: &mut Option<sqlx::Error>,
+) {
+    if let Err(error) = sqlx::query(statement).execute(pool).await {
+        if first_error.is_none() {
+            *first_error = Some(error);
+        }
+    }
+}
+
+fn require_test(condition: bool, message: &'static str) -> TestResult<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(message).into())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +279,7 @@ async fn test_oidc_config_update_stores_encrypted_secret() {
         .execute(&pool)
         .await
         .ok();
-    reset_oidc_config(&pool).await;
+    reset_oidc_config(&pool).await.expect("reset oidc_config");
     cleanup(&pool, &[actor_id]).await;
 }
 
@@ -325,7 +353,7 @@ async fn test_oidc_config_update() {
         .execute(&pool)
         .await
         .ok();
-    reset_oidc_config(&pool).await;
+    reset_oidc_config(&pool).await.expect("reset oidc_config");
     cleanup(&pool, &[actor_id]).await;
 }
 
@@ -376,5 +404,258 @@ async fn test_oidc_runtime_fields_persist() {
     );
     assert_eq!(login_label.as_deref(), Some("Continue with school SSO"));
 
-    reset_oidc_config(&pool).await;
+    reset_oidc_config(&pool).await.expect("reset oidc_config");
+}
+
+#[tokio::test]
+#[ignore = "requires explicitly configured disposable local PostgreSQL and RustFS services"]
+async fn oidc_config_update_rolls_back_when_audit_insert_fails() -> TestResult<()> {
+    let _serial = SERIAL.lock().await;
+    let _oidc_lock = OIDC_CONFIG_TEST_LOCK.lock().await;
+
+    let database_url = std::env::var("DATABASE_URL").expect(
+        "set DATABASE_URL explicitly to a disposable local database; the harness fallback is not safe for this test",
+    );
+    let parsed_database_url = url::Url::parse(&database_url)?;
+    let database_name = parsed_database_url.path().trim_start_matches('/');
+    assert!(database_name == "rustshare_test" || database_name.starts_with("rustshare_test_"));
+    assert!(matches!(
+        parsed_database_url.host_str(),
+        Some("localhost" | "127.0.0.1")
+    ));
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB")
+            .ok()
+            .as_deref(),
+        Some("1")
+    );
+    assert_local_database();
+
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE")
+            .ok()
+            .as_deref(),
+        Some("1")
+    );
+    let endpoint = std::env::var("S3_ENDPOINT").or_else(|_| std::env::var("RUSTFS_ENDPOINT"))?;
+    let parsed_endpoint = url::Url::parse(&endpoint)?;
+    assert!(matches!(
+        parsed_endpoint.host_str(),
+        Some("localhost" | "127.0.0.1")
+    ));
+    assert!(parsed_endpoint.username().is_empty() && parsed_endpoint.password().is_none());
+    let bucket = std::env::var("S3_BUCKET").or_else(|_| std::env::var("RUSTFS_BUCKET"))?;
+    assert!(
+        bucket == "rustshare-test"
+            || bucket.starts_with("rustshare-test-")
+            || bucket.starts_with("rustshare-test_")
+    );
+
+    let encryption_key = rustshare_crypto::SecretEncryptionKey::from_bytes([0u8; 32]);
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let tenant_id = Uuid::new_v4();
+    let actor_id = Uuid::new_v4();
+    let suffix = actor_id.simple().to_string();
+    let username = format!("oidc_audit_admin_{suffix}");
+    let function_name = format!("rs_oidc_audit_fail_{suffix}");
+    let trigger_name = format!("rs_oidc_audit_fail_{suffix}");
+    let sequence_name = format!("rs_oidc_audit_seq_{suffix}");
+    let oidc_id: Uuid = OIDC_CONFIG_ID.parse()?;
+
+    let attempt: TestResult<()> = async {
+        reset_oidc_config(&pool).await?;
+        sqlx::query(
+            "INSERT INTO tenants (id, name, created_at, updated_at)
+             VALUES ($1, $2, NOW(), NOW())",
+        )
+        .bind(tenant_id)
+        .bind(format!("OIDC audit transaction test {tenant_id}"))
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO users
+                (id, username, email, password_hash, display_name, is_admin,
+                 storage_quota, tenant_id)
+             VALUES ($1, $2, $3, 'test-password-hash', $2, true, 10737418240, $4)",
+        )
+        .bind(actor_id)
+        .bind(&username)
+        .bind(format!("{username}@test.local"))
+        .bind(tenant_id)
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(&format!("CREATE SEQUENCE {sequence_name}"))
+            .execute(&pool)
+            .await?;
+        sqlx::query(&format!(
+            "CREATE FUNCTION {function_name}() RETURNS trigger
+             LANGUAGE plpgsql AS $trigger$
+             BEGIN
+                 IF NEW.actor_id = TG_ARGV[0]::uuid
+                    AND NEW.action_type = 'config.oidc_updated' THEN
+                     PERFORM nextval(TG_ARGV[1]::regclass);
+                     RAISE EXCEPTION 'injected OIDC audit insert failure';
+                 END IF;
+                 RETURN NEW;
+             END;
+             $trigger$"
+        ))
+        .execute(&pool)
+        .await?;
+        sqlx::query(&format!(
+            "CREATE TRIGGER {trigger_name} BEFORE INSERT ON admin_actions
+             FOR EACH ROW EXECUTE FUNCTION {function_name}('{actor_id}', '{sequence_name}')"
+        ))
+        .execute(&pool)
+        .await?;
+
+        let app = rustshare_server::routes::admin_routes().with_state(state.clone());
+        let bearer = support::calendar_harness::create_auth_token(&state, actor_id, tenant_id);
+        let secret = format!("oidc-client-secret-{suffix}");
+        let body = serde_json::json!({
+            "enabled": true,
+            "provider_name": "Pilot Identity Provider",
+            "client_id": "pilot-client-id",
+            "client_secret": secret,
+            "issuer_url": "https://idp.example.test",
+            "redirect_url": "https://rustshare.example.test/api/v1/auth/oidc/callback",
+            "login_label": "Pilot Sign In",
+            "scopes": ["openid", "email"],
+            "auto_provision_users": false,
+            "device_pair_code_ttl_seconds": 600
+        })
+        .to_string();
+        let request = || -> Result<Request<Body>, axum::http::Error> {
+            Request::builder()
+                .method(axum::http::Method::PUT)
+                .uri("/api/v1/admin/config/oidc")
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {bearer}"),
+                )
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.clone()))
+        };
+
+        let failed = app.clone().oneshot(request()?).await?;
+        require_test(
+            failed.status() == axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "OIDC config update should fail when audit insertion fails",
+        )?;
+        let sequence_marker: i64 =
+            sqlx::query_scalar(&format!("SELECT last_value FROM {sequence_name}"))
+                .fetch_one(&pool)
+                .await?;
+        require_test(
+            sequence_marker == 1,
+            "OIDC audit failure trigger did not fire",
+        )?;
+        let rolled_back: bool = sqlx::query_scalar(
+            "SELECT NOT enabled AND provider_name IS NULL AND client_id IS NULL
+                 AND client_secret_enc IS NULL AND updated_by IS NULL
+             FROM oidc_config WHERE id = $1",
+        )
+        .bind(oidc_id)
+        .fetch_one(&pool)
+        .await?;
+        require_test(
+            rolled_back,
+            "failed audit insert must roll back OIDC config",
+        )?;
+        let no_failure_audit: bool = sqlx::query_scalar(
+            "SELECT NOT EXISTS (SELECT 1 FROM admin_actions
+             WHERE actor_id = $1 AND action_type = 'config.oidc_updated')",
+        )
+        .bind(actor_id)
+        .fetch_one(&pool)
+        .await?;
+        require_test(
+            no_failure_audit,
+            "failed audit insert must not create an audit event",
+        )?;
+
+        sqlx::query(&format!("DROP TRIGGER {trigger_name} ON admin_actions"))
+            .execute(&pool)
+            .await?;
+        let succeeded = app.oneshot(request()?).await?;
+        require_test(
+            succeeded.status() == axum::http::StatusCode::OK,
+            "OIDC config update should succeed after audit failure trigger is removed",
+        )?;
+        let stored_secret: String =
+            sqlx::query_scalar("SELECT client_secret_enc FROM oidc_config WHERE id = $1")
+                .bind(oidc_id)
+                .fetch_one(&pool)
+                .await?;
+        require_test(
+            stored_secret != secret,
+            "stored OIDC client secret must be encrypted",
+        )?;
+        require_test(
+            decrypt_secret(&stored_secret, &encryption_key)? == secret,
+            "stored OIDC client secret must decrypt to the submitted value",
+        )?;
+        let audit_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM admin_actions
+             WHERE actor_id = $1 AND action_type = 'config.oidc_updated'",
+        )
+        .bind(actor_id)
+        .fetch_one(&pool)
+        .await?;
+        require_test(
+            audit_count == 1,
+            "successful OIDC update must create one audit event",
+        )?;
+        let audit_detail: serde_json::Value = sqlx::query_scalar(
+            "SELECT detail FROM admin_actions
+             WHERE actor_id = $1 AND action_type = 'config.oidc_updated'",
+        )
+        .bind(actor_id)
+        .fetch_one(&pool)
+        .await?;
+        require_test(
+            audit_detail == serde_json::json!({}),
+            "OIDC audit detail must be empty",
+        )?;
+        require_test(
+            !audit_detail.to_string().contains(&secret),
+            "OIDC audit detail must not contain the client secret",
+        )?;
+
+        Ok(())
+    }
+    .await;
+
+    let mut cleanup_error = None;
+    for statement in [
+        format!("DROP TRIGGER IF EXISTS {trigger_name} ON admin_actions"),
+        format!("DROP FUNCTION IF EXISTS {function_name}()"),
+        format!("DROP SEQUENCE IF EXISTS {sequence_name}"),
+        format!("DELETE FROM admin_actions WHERE actor_id = '{actor_id}'"),
+        format!(
+            "UPDATE oidc_config SET enabled = false, provider_name = NULL,
+             client_id = NULL, client_secret_enc = NULL, issuer_url = NULL,
+             redirect_url = NULL, login_label = NULL, scopes = NULL,
+             auto_provision_users = false, updated_by = NULL, updated_at = NOW()
+             WHERE id = '{oidc_id}'"
+        ),
+        format!("DELETE FROM users WHERE id = '{actor_id}'"),
+        format!("DELETE FROM tenants WHERE id = '{tenant_id}'"),
+    ] {
+        cleanup_statement(&pool, &statement, &mut cleanup_error).await;
+    }
+    rustshare_server::oidc_runtime::invalidate_oidc_runtime_cache(&state).await;
+
+    if let Err(test_error) = attempt {
+        if let Some(cleanup_error) = cleanup_error {
+            return Err(format!("{test_error}; cleanup also failed: {cleanup_error}").into());
+        }
+        return Err(test_error);
+    }
+    if let Some(cleanup_error) = cleanup_error {
+        return Err(Box::new(cleanup_error) as Box<dyn Error + Send + Sync>);
+    }
+    Ok(())
 }

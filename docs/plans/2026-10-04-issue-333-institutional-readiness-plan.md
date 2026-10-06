@@ -383,6 +383,18 @@ failed create leaves no user and the failed delete preserves the user, then
 retries successfully and checks exactly one event per operation. It also
 verifies the create event contains the username but not the password. This
 does not change preference seeding or post-commit object cleanup semantics.
+Missing-target follow-up (2026-10-06): disable, enable, and permanent-delete
+now check affected rows before related mutations or success audit insertion.
+The guarded handler regression verifies each returns 404 for an unknown user
+and writes no lifecycle audit event. The complete ignored admin lifecycle/audit
+test target passed against the disposable PostgreSQL/RustFS services (6/6).
+Current-worktree revalidation (2026-10-06): the six-test admin lifecycle/audit
+target, four application/security/template transaction targets, and the OIDC
+and SMTP config transaction targets all passed against the explicit disposable
+PostgreSQL/RustFS services (12/12). The separate credential-revocation target
+also passed (1/1), and the server library suite passed 560 tests with 9 ignored.
+These are local uncommitted results. Tenant-scoped audit attribution and
+visibility of failed attempts remain open behind Phase 0 decisions.
 Admin webhook create, update, and delete now commit their PostgreSQL mutation
 and corresponding admin audit event in one transaction. Webhook audit details
 now record the name only, not the configured URL (which may contain embedded
@@ -652,6 +664,14 @@ Required verification: end-to-end create/edit/reopen journey; permission changes
 
 Required verification: standards-compatible fixtures, malformed/hostile input, repeated import idempotency, recurrence/time zones, permission changes and revocation, and no cross-tenant disclosure.
 
+Current-worktree revalidation (2026-10-06): the ignored real-service Calendar
+API and import suites passed 24/24 and 13/13 respectively against the
+disposable PostgreSQL/RustFS services. The import suite includes the 10,000-
+VEVENT completion case, repeat-import idempotency, source ownership, hostile
+input, and unsupported-field diagnostics. This does not yet prove the Phase 3
+browser workflow or Phase 5 permission-change/cross-tenant acceptance, and it
+is not evidence for a committed revision.
+
 ### Phase 6 — Bulk onboarding and offboarding (#331)
 
 - Support a documented CSV or similarly simple structured import. Preview and validate before mutation; report duplicates, invalid fields, unresolved groups/workspaces, and per-row outcomes clearly.
@@ -659,6 +679,7 @@ Required verification: standards-compatible fixtures, malformed/hostile input, r
 - Make bounded batches idempotent and report partial failure so an administrator can safely retry without duplicate users or grants.
 - Define disable/offboard semantics for sessions/tokens, group/workspace access, shares/capabilities, and user-authored content. Revoke access safely while preserving content according to explicit policy; do not silently hard-delete it.
 - Current single-user lifecycle gap closed locally: the existing disable endpoint wraps `users.disabled_at`, web-session deletion, and device-token revocation in one PostgreSQL transaction. The real PostgreSQL/RustFS regression injects a token-revocation failure and proves rollback, continued cookie authentication, and no success audit action; after restoring the dependency, retry proves the user is disabled, the session is deleted, the device token is revoked, the cookie is rejected, and exactly one success audit action exists. It also verifies both the authored Markdown metadata row and the exact object bytes remain in S3-compatible storage. The test is registered in `backend/server/Cargo.toml`; its guards require an explicit disposable local database name and `RUSTSHARE_TEST_DISPOSABLE_DB=1`, plus an explicit `RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE=1`, loopback-only S3 endpoint, and `rustshare-test*` bucket before the harness can create/use storage. On 2026-10-05 it passed (1/1) against a fresh migrated schema on isolated local PostgreSQL/RustFS services; the test-created database was dropped and verified absent, and the test removed its object key from the local test bucket. The non-DB target passed 7 tests with the real-service test ignored; formatting, target compilation, and server all-target Clippy pass. This remains an uncommitted working-tree result, not evidence for a committed revision. Group/workspace access, shares/capabilities, bulk lifecycle operations, and broader semantics remain gated on Phase 0 authorization decisions.
+- The separate disabled-account cookie/device-token regression passed (1/1) on 2026-10-06 against the explicitly named disposable `rustshare_test` database and loopback test RustFS bucket. It verifies existing sessions are removed, device credentials are revoked, stale cookies are rejected, and re-enabling the account does not revive an old cookie. This validates the current worktree only; it does not close group/workspace/share offboarding or bulk onboarding.
 - Record each significant operation in the audit trail and scope every import to one organization.
 
 Required verification: dry-run/preview, valid and invalid rows, duplicates, retry after partial failure, large-but-bounded input, unauthorized cross-tenant assignment, session/token revocation, preservation of content, audit coverage, and UI/API operation by an organization admin without DB access.

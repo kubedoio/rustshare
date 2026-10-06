@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::services::icon_registry::is_approved_icon_key;
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
-use sqlx::Row;
+use sqlx::{Postgres, Row, Transaction};
 
 /// Errors that can occur in Application operations.
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +31,8 @@ pub enum ApplicationError {
     InvalidName(String),
     #[error("Invalid data: {0}")]
     InvalidData(String),
+    #[error("Application configuration changed during enablement")]
+    ConfigurationChanged,
 }
 
 impl From<rustshare_core::services::FolderError> for ApplicationError {
@@ -547,6 +549,79 @@ impl ApplicationService {
         self.get_application(key, tenant_id).await
     }
 
+    /// Ensure an application's root folder exists before opening the short
+    /// transaction that changes its enablement state.
+    pub async fn prepare_application_enable(
+        &self,
+        key: &str,
+        actor_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<String, ApplicationError> {
+        let application = self.get_application(key, tenant_id).await?;
+        self.ensure_application_root_folder(&application, actor_id, tenant_id)
+            .await?;
+        Ok(application.root_path)
+    }
+
+    /// Provision a requested root path before an administrator's config transaction.
+    pub async fn prepare_application_root_path(
+        &self,
+        key: &str,
+        root_path: &str,
+        actor_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), ApplicationError> {
+        validate_root_path(root_path)?;
+        let mut application = self.get_application(key, tenant_id).await?;
+        application.root_path = root_path.to_string();
+        self.ensure_application_root_folder(&application, actor_id, tenant_id)
+            .await
+    }
+
+    /// Change application enablement inside the administrator's transaction.
+    pub async fn set_application_enabled_in_transaction(
+        &self,
+        key: &str,
+        enabled: bool,
+        tenant_id: Uuid,
+        prepared_root_path: Option<&str>,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<ApplicationConfig, ApplicationError> {
+        let row = sqlx::query(
+            "SELECT configuration FROM application_enablements
+             WHERE application_id = $1 AND tenant_id = $2 AND workspace_id = $2
+             FOR UPDATE",
+        )
+        .bind(key)
+        .bind(tenant_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(|| ApplicationError::NotFound(key.to_string()))?;
+        let configuration: serde_json::Value = row.try_get("configuration")?;
+        let manifest = self.manifest(key)?;
+        let application = self.application_config_from_manifest(
+            manifest,
+            enabled,
+            configuration.clone(),
+            tenant_id,
+        );
+        if prepared_root_path.is_some_and(|path| application.root_path != path) {
+            return Err(ApplicationError::ConfigurationChanged);
+        }
+
+        sqlx::query(
+            "UPDATE application_enablements SET enabled = $1, updated_at = now()
+             WHERE application_id = $2 AND tenant_id = $3 AND workspace_id = $3",
+        )
+        .bind(enabled)
+        .bind(key)
+        .bind(tenant_id)
+        .execute(&mut **tx)
+        .await?;
+
+        Ok(application)
+    }
+
     /// List all configured Applications for the admin shell.
     pub async fn list_applications(
         &self,
@@ -614,22 +689,34 @@ impl ApplicationService {
         Ok(self.application_config_from_manifest(manifest, enabled, configuration, tenant_id))
     }
 
-    /// Update Application configuration (admin only). Only certain fields are mutable.
-    pub async fn update_application(
+    /// Update Application configuration within an administrator-owned transaction.
+    /// Only certain fields are mutable.
+    pub async fn update_application_in_transaction(
         &self,
         key: &str,
         input: UpdateApplicationInput,
         tenant_id: Uuid,
+        tx: &mut Transaction<'_, Postgres>,
     ) -> Result<ApplicationConfig, ApplicationError> {
-        let application = self.get_application(key, tenant_id).await?;
-        let existing_configuration: serde_json::Value = sqlx::query_scalar(
-            "SELECT configuration FROM application_enablements
-             WHERE application_id = $1 AND tenant_id = $2 AND workspace_id = $2",
+        let row = sqlx::query(
+            "SELECT enabled, configuration FROM application_enablements
+             WHERE application_id = $1 AND tenant_id = $2 AND workspace_id = $2
+             FOR UPDATE",
         )
         .bind(key)
         .bind(tenant_id)
-        .fetch_one(self.metadata_store.pool())
+        .fetch_optional(&mut **tx)
         .await?;
+        let row = row.ok_or_else(|| ApplicationError::NotFound(key.to_string()))?;
+        let enabled = row.try_get("enabled")?;
+        let existing_configuration: serde_json::Value = row.try_get("configuration")?;
+        let manifest = self.manifest(key)?;
+        let application = self.application_config_from_manifest(
+            manifest,
+            enabled,
+            existing_configuration.clone(),
+            tenant_id,
+        );
 
         let display_name = input.display_name.unwrap_or(application.display_name);
         let description = input.description.unwrap_or(application.description);
@@ -725,13 +812,13 @@ impl ApplicationService {
              SET configuration = $1, updated_at = now()
              WHERE application_id = $2 AND tenant_id = $3 AND workspace_id = $3",
         )
-        .bind(configuration)
+        .bind(&configuration)
         .bind(key)
         .bind(tenant_id)
-        .execute(self.metadata_store.pool())
+        .execute(&mut **tx)
         .await?;
 
-        self.get_application(key, tenant_id).await
+        Ok(self.application_config_from_manifest(manifest, enabled, configuration, tenant_id))
     }
 
     /// Get a summary of Application contents for a declared route slug.
@@ -889,7 +976,7 @@ impl ApplicationService {
             .map_err(|e| ApplicationError::Storage(e.to_string()))
     }
 
-    /// Ensure the Application root folder exists under /Workspace.
+    /// Ensure the configured Application root's legacy folder mapping exists.
     async fn ensure_application_root_folder(
         &self,
         application: &ApplicationConfig,
@@ -903,29 +990,16 @@ impl ApplicationService {
             .next()
             .unwrap_or(&application.root_path)
             .to_string();
-
-        if root_name.is_empty() {
+        if root_name.is_empty() || root_name == "." {
             return Err(ApplicationError::InvalidName(
-                "Root path cannot be empty".to_string(),
+                "Root path cannot map to an empty or dot folder name".to_string(),
             ));
         }
 
-        let ws = self.ensure_workspace_folder(owner_id, tenant_id).await?;
-
-        let folders = self
-            .metadata_store
-            .list_folders(Some(ws.id), owner_id, tenant_id)
-            .await
-            .map_err(|e| ApplicationError::Database(e.to_string()))?;
-
-        if folders.iter().any(|f| f.name == root_name) {
-            return Ok(());
-        }
-
+        let workspace = self.ensure_workspace_folder(owner_id, tenant_id).await?;
         self.folder_service
-            .create_folder_or_get(root_name, Some(ws.id), owner_id, tenant_id)
+            .create_folder_or_get(root_name, Some(workspace.id), owner_id, tenant_id)
             .await?;
-
         Ok(())
     }
 
@@ -1391,6 +1465,16 @@ fn validate_root_path(root_path: &str) -> Result<(), ApplicationError> {
     if !root_path.starts_with("/Workspace/") {
         return Err(ApplicationError::InvalidName(format!(
             "Root path must be under /Workspace: {root_path}"
+        )));
+    }
+    let components: Vec<_> = root_path["/Workspace/".len()..].split('/').collect();
+    if components.len() != 1
+        || components
+            .iter()
+            .any(|component| component.is_empty() || *component == ".")
+    {
+        return Err(ApplicationError::InvalidName(format!(
+            "Root path must name one folder directly under /Workspace: {root_path}"
         )));
     }
 
@@ -1958,8 +2042,15 @@ mod tests {
     }
 
     #[test]
-    fn validate_root_path_accepts_nested_workspace_paths() {
-        assert!(validate_root_path("/Workspace/Notes/Archive").is_ok());
-        assert!(validate_root_path("/Workspace/Meetings/2026").is_ok());
+    fn validate_root_path_accepts_a_workspace_child() {
+        assert!(validate_root_path("/Workspace/Notes").is_ok());
+    }
+
+    #[test]
+    fn validate_root_path_rejects_nested_empty_or_dot_components() {
+        assert!(validate_root_path("/Workspace/Notes/Archive").is_err());
+        assert!(validate_root_path("/Workspace/Notes/Archive/").is_err());
+        assert!(validate_root_path("/Workspace//Archive").is_err());
+        assert!(validate_root_path("/Workspace/./Archive").is_err());
     }
 }

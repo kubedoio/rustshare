@@ -142,10 +142,48 @@ Additional rulings:
   `publish_in_tx` adapter (`outbox_store.rs:1521`), which Calendar does not
   use.
 - **Sharing**: v1 events are visible only to their owner. A read-only
-  per-user `.ics` export/subscribe feed is allowed as a stretch goal.
-  Workspace-shared calendars and public share links are deferred until a
-  permission design exists (see "Out of scope"); we do not map Files share
-  semantics onto per-user external data by default.
+  per-user `.ics` export/subscribe feed was initially allowed as a stretch
+  goal; that allowance is superseded by the Issue #329 follow-up assessment
+  below, which recommends deferring it until capability-path log redaction is
+  verified end-to-end. Workspace-shared calendars and public share links are
+  deferred until a permission design exists (see "Out of scope"); we do not
+  map Files share semantics onto per-user external data by default.
+
+### Issue #329 follow-up assessment (2026-10-04; proposed)
+
+This assessment does not change ADR-0037's `Proposed` status and is not an
+authorization to add a capability endpoint.
+
+- **Read-only feed: defer until secret redaction is end-to-end verified.** A
+  per-user feed is compatible with the current owner-only data model, but its
+  bearer-equivalent URL would be a long-lived capability. The current server
+  trace middleware records the raw path (`backend/server/src/middleware/trace.rs`),
+  `TraceLayer::new_for_http()` records the request URI, and the bundled Nginx
+  config enables its default access log (`docker/nginx.conf`). The production
+  deployment also has an external TLS-terminating load balancer whose access
+  log policy is not represented or verified in this repository. Therefore the
+  documented token feed is not implemented and must not be treated as an
+  available endpoint. Reconsider it only after app, bundled proxy, and
+  external-ingress logs are shown to redact or suppress the token path; require
+  hashed high-entropy tokens, owner-bound queries, immediate revocation, and
+  access-revocation tests. Do not log request URLs or token values.
+- **CalDAV: defer server compatibility for the institutional pilot.** A
+  standards-capable read-only server entails WebDAV discovery and
+  `OPTIONS`/`PROPFIND`, principal and calendar-home mapping, calendar
+  collections, `REPORT` queries, and resource/ETag semantics; useful
+  incremental sync adds `DAV:sync-collection` (RFC 6578). Write/scheduling
+  compatibility further requires conditional `PUT`/`DELETE`, conflict
+  behavior, recurrence/timezone preservation, and scheduling inbox/outbox
+  semantics (RFC 6638). That protocol and ACL surface is disproportionate
+  without a named pilot client requirement. Keep bounded `.ics` import and
+  single-event export as the pilot interoperability path, with documented
+  recurrence/timezone limits; revisit CalDAV only against a concrete client
+  and compatibility test matrix.
+
+References: [RFC 4791 (CalDAV)](https://www.rfc-editor.org/rfc/rfc4791),
+[RFC 6578 (WebDAV sync)](https://www.rfc-editor.org/rfc/rfc6578),
+[RFC 6638 (CalDAV scheduling)](https://www.rfc-editor.org/rfc/rfc6638),
+and [RFC 6764 (service discovery)](https://www.rfc-editor.org/rfc/rfc6764).
 - **Frontend**: a hand-rolled Day / Monday–Friday work-week / month / agenda
   grid (`CalendarApplicationView.svelte`) registered in the existing renderer
   map (`frontend/src/routes/(app)/apps/[key]/ApplicationPageRenderer.svelte`),
@@ -272,8 +310,10 @@ tests plus human review before merge:
   the Elembra grant in their Microsoft account to invalidate it upstream.
 - All `/api/v1/calendar/...` JSON API routes are gated on tenant application
   enablement; unauthenticated and cross-tenant access fail closed. The OAuth
-  callback (authenticated by its single-use `state`) and the stretch ICS feed
-  (token-bound) are intentionally outside this session/enablement gate.
+  callback is authenticated by its single-use `state` and is outside the
+  session/enablement gate. The capability-token feed remains deferred and has
+  no route until end-to-end secret-path redaction is verified (see the Issue
+  #329 follow-up assessment above).
 
 ## Acceptance criteria
 

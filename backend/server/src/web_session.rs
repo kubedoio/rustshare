@@ -44,6 +44,22 @@ pub async fn resolve_user_session(
         return Ok(None);
     }
 
+    let user_is_enabled =
+        sqlx::query_scalar::<_, bool>("SELECT disabled_at IS NULL FROM users WHERE id = $1")
+            .bind(session.user_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(|error| error.to_string())?;
+
+    if user_is_enabled != Some(true) {
+        state
+            .metadata_store
+            .delete_user_session_by_token_hash(&token_hash)
+            .await
+            .map_err(|error| error.to_string())?;
+        return Ok(None);
+    }
+
     state
         .metadata_store
         .touch_user_session(session.id)

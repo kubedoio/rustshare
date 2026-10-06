@@ -55,11 +55,11 @@ jobs:
       postgres:
         image: pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
         env:
-          POSTGRES_DB: rustshare
+          POSTGRES_DB: rustshare_test
           POSTGRES_USER: rustshare
           POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
         options: >-
-          --health-cmd "pg_isready -U rustshare"
+          --health-cmd "pg_isready -U rustshare -d rustshare_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -71,7 +71,7 @@ jobs:
       # Per-run cryptographically random secrets. These are not real secrets;
       # they are generated for each run and discarded afterwards.
       POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
-      DATABASE_URL: postgres://rustshare:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/rustshare
+      DATABASE_URL: postgres://rustshare:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/rustshare_test
       JWT_SECRET: ${{ needs.generate-secrets.outputs.jwt_secret }}
       RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ needs.generate-secrets.outputs.encryption_key }}
       RUSTSHARE_ADMIN_PASSWORD: ${{ needs.generate-secrets.outputs.admin_password }}
@@ -79,10 +79,13 @@ jobs:
       RUSTFS_ROOT_PASSWORD: ${{ needs.generate-secrets.outputs.rustfs_root_password }}
       AWS_ACCESS_KEY_ID: ${{ needs.generate-secrets.outputs.rustfs_root_user }}
       AWS_SECRET_ACCESS_KEY: ${{ needs.generate-secrets.outputs.rustfs_root_password }}
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_REGION: us-east-1
       RUSTFS_ENDPOINT: http://127.0.0.1:9000
       RUSTFS_PUBLIC_ENDPOINT: http://127.0.0.1:9000
       RUSTFS_REGION: us-east-1
-      RUSTFS_BUCKET: rustshare-files
+      RUSTFS_BUCKET: rustshare-test-integration
+      S3_BUCKET: rustshare-test-integration
       RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: "true"
       RUSTSHARE_ADMIN_EMAIL: admin@localhost
       RUSTSHARE_ADMIN_USERNAME: admin
@@ -132,6 +135,9 @@ jobs:
         # `--test-threads=1` serializes tests inside each binary. The ignored
         # suites share a database and object-GC triggers can deadlock when
         # concurrent cleanup transactions touch the same queue index.
+        env:
+          RUSTSHARE_TEST_DISPOSABLE_DB: "1"
+          RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE: "1"
         run: cargo test --workspace --all-features -j 1 -- --ignored --test-threads=1
 
       - name: Ask Workspace security matrix (repeated)

@@ -14,9 +14,33 @@ SQLX_OFFLINE=true cargo test --workspace --all-features --lib
 
 Integration tests and contract tests require running services (PostgreSQL + RustFS/S3-compatible storage).
 
+The full workspace sweep is serialized because ignored suites share a database
+and object-GC work queue. Run it only against a disposable PostgreSQL database
+named `rustshare_test` or `rustshare_test_*` and a disposable loopback S3
+service on port 9000 or 19000, using a `rustshare-test*` bucket. The calendar
+and OIDC suites require `RUSTSHARE_TEST_DISPOSABLE_DB=1` and
+`RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE=1`; those flags are acknowledgements,
+not safeguards by themselves. Test credentials must match the selected
+services. Never point these tests at a pilot/deployment database or bucket.
+Set `DATABASE_URL` to that database and the AWS credentials to the selected
+test RustFS service before running the tests.
+
+The harness prefers `S3_ENDPOINT`, `S3_REGION`, and `S3_BUCKET` over their
+`RUSTFS_*` equivalents. The application uses `RUSTFS_PUBLIC_ENDPOINT` for
+presigned URLs. Tests load dotenv configuration from `backend/`; if
+`backend/.env` sets an S3 endpoint, explicitly set the `S3_*` values to the
+same disposable loopback service as `RUSTFS_*`. Otherwise a local endpoint can
+override the intended test service. The GitHub `integration-tests` job sets
+both endpoint/region aliases explicitly.
+
+After verifying that all endpoints, database names, bucket names, and
+credentials target disposable services:
+
 ```bash
-cargo test --workspace --all-features -- --ignored
-cargo test --workspace --test contracts -- --ignored
+export RUSTSHARE_TEST_DISPOSABLE_DB=1
+export RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE=1
+cargo test --workspace --all-features -j 1 -- --ignored --test-threads=1
+cargo test --workspace --test contracts -j 1 -- --ignored --test-threads=1
 ```
 
 > See [backend/TESTING.md](../../backend/TESTING.md) for setup details.
@@ -63,7 +87,7 @@ Requires the full local stack to be running.
 | Command                                             | Needs running services          |
 | --------------------------------------------------- | ------------------------------- |
 | `SQLX_OFFLINE=true cargo test --workspace --all-features --lib` | No (with `SQLX_OFFLINE=true`)   |
-| `cargo test --workspace --all-features -- --ignored`            | Yes (PostgreSQL + RustFS)       |
+| `cargo test --workspace --all-features -j 1 -- --ignored --test-threads=1` | Yes (disposable PostgreSQL + RustFS) |
 | `cargo test --workspace --test contracts -- --ignored`          | Yes (PostgreSQL + RustFS)       |
 | `npm run test`                             | No                              |
 | `npm run test:e2e`                         | Yes (running backend)           |

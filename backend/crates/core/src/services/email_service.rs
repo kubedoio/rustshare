@@ -554,6 +554,7 @@ struct SmtpConfigRow {
 mod tests {
     use super::*;
     use crate::domain::MailSmtpSettings;
+    use crate::validation::{EnvVarRestore, ENV_LOCK};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -666,6 +667,9 @@ mod tests {
 
     #[tokio::test]
     async fn validate_smtp_host_rejects_localhost() {
+        let _guard = ENV_LOCK.lock().await;
+        let _restore = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
+        std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         let err = validate_smtp_host("127.0.0.1", 25)
             .await
             .expect_err("loopback SMTP host should be rejected");

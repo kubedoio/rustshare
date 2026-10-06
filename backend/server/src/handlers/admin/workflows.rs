@@ -11,7 +11,7 @@ use crate::{
     AppState,
 };
 
-use super::log_admin_action;
+use super::insert_admin_action;
 
 #[derive(sqlx::FromRow, Serialize, utoipa::ToSchema)]
 pub struct WorkflowResponse {
@@ -108,6 +108,11 @@ pub async fn update_workflow(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateWorkflowRequest>,
 ) -> Result<Json<WorkflowResponse>, AppError> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
     let row = sqlx::query_as::<_, WorkflowRow>(
         "UPDATE workflows
          SET subject = COALESCE($2, subject),
@@ -128,20 +133,24 @@ pub async fn update_workflow(
     .bind(req.terms_text)
     .bind(req.status)
     .bind(actor_id)
-    .fetch_optional(&state.db_pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| AppError::internal(e.to_string()))?
     .ok_or_else(|| AppError::not_found("Workflow not found"))?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "workflow.updated",
         Some("workflow"),
         Some(id),
         json!({}),
     )
-    .await;
+    .await
+    .map_err(|e| AppError::internal(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok(Json(WorkflowResponse::from(row)))
 }
@@ -198,6 +207,11 @@ pub async fn enable_workflow(
         ));
     }
 
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
     let row = sqlx::query_as::<_, WorkflowRow>(
         "UPDATE workflows
          SET status = 'active', updated_by = $2, updated_at = NOW()
@@ -207,19 +221,23 @@ pub async fn enable_workflow(
     )
     .bind(id)
     .bind(actor_id)
-    .fetch_one(&state.db_pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| AppError::internal(e.to_string()))?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "workflow.enabled",
         Some("workflow"),
         Some(id),
         json!({}),
     )
-    .await;
+    .await
+    .map_err(|e| AppError::internal(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok(Json(WorkflowResponse::from(row)))
 }
@@ -238,6 +256,11 @@ pub async fn disable_workflow(
     AdminUser { user_id: actor_id }: AdminUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<WorkflowResponse>, AppError> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
     let row = sqlx::query_as::<_, WorkflowRow>(
         "UPDATE workflows
          SET status = 'draft', updated_by = $2, updated_at = NOW()
@@ -247,20 +270,24 @@ pub async fn disable_workflow(
     )
     .bind(id)
     .bind(actor_id)
-    .fetch_optional(&state.db_pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| AppError::internal(e.to_string()))?
     .ok_or_else(|| AppError::not_found("Workflow not found"))?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "workflow.disabled",
         Some("workflow"),
         Some(id),
         json!({}),
     )
-    .await;
+    .await
+    .map_err(|e| AppError::internal(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok(Json(WorkflowResponse::from(row)))
 }

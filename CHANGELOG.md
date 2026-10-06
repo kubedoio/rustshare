@@ -15,6 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Admin audit responses now allowlist typed action details, omit free-form
+  security-event descriptions and share-access network metadata, and retain a
+  bounded group name for group lifecycle events.
+- Calendar `.ics` export now preserves a non-empty imported/provider UID, with
+  RFC 5545 TEXT escaping for UID values; internal events continue to use their
+  RustShare event UUID.
+- Calendar `.ics` imports now fail unsupported individual events visibly
+  instead of silently dropping organizer, attendee, recurrence-exception, and
+  related semantics, including duplicate/ranged `RECURRENCE-ID` values; job
+  diagnostics report property names without values.
+- Calendar `.ics` imports reject files with more than 10,000 VEVENT components
+  before writing any events, avoiding partial imports when the resource limit
+  is exceeded.
 - Calendar application (issue #315): internal events with recurrence
   expansion, `.ics` import (including embedded-VTIMEZONE resolution for
   non-IANA TZIDs), and read-only Google/Outlook OAuth sync with cursor-based
@@ -23,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while per-run import/sync `imported.v1` events are best-effort after the run
   commits (counts and identifiers only, per minimum-safe-data; at-most-once at
   publish time, at-least-once once outbox-persisted, dedupe by envelope id).
+  Authenticated users can also export one of their own events as an `.ics`
+  file; timed values retain their UTC instants and a valid IANA timezone is
+  included as calendar metadata. Until timezone-aware recurrence serialization
+  is supported, exports reject non-UTC recurring events and recurrence
+  overrides rather than emitting altered event semantics.
   Disconnecting an OAuth source wipes the local tokens
   and parks the source at `auth_required` without a Microsoft session
   revoke (Google's best-effort token revocation is unchanged); the settings
@@ -44,6 +62,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Self-service security-event responses no longer expose free-form session
+  revocation descriptions or user-agent strings; share-access logs retain the
+  actor label and IP address used by the UI but omit user-agent and
+  share-session identity/subject metadata.
+- OIDC runtime-config, provider-discovery, callback, token-exchange, and
+  internal failures return stable generic responses; server diagnostics record
+  only failure stages, not provider details, ciphertext, tokens, or error text.
+- Admin-user create, update, disable, enable, and delete operations now commit
+  their applicable audit events atomically with database changes. Password changes include
+  session deletion and device-token revocation; changes to the existing global
+  admin flag record the old and new values without implying organization-role
+  semantics. Disable, enable, and delete now return not found without writing a
+  success audit event when the target user does not exist. Group create, update,
+  delete, member-add, and member-remove
+  operations now commit their mutations and audit events together. Webhook
+  create, update, and delete now do the same; audit metadata omits webhook
+  URLs and signing secrets. Template create/update audit metadata records only
+  template and application identifiers, not default-file content or config.
+  Workflow update, enable, and disable mutations now commit with their audit
+  events as well.
+- OIDC configuration updates now lock and update the existing row in one
+  transaction with the `config.oidc_updated` audit event; an audit failure
+  rolls the configuration back, and runtime cache invalidation occurs only
+  after commit. Audit details remain empty so provider credentials are not
+  recorded.
+- SMTP configuration updates now commit with their empty-detail
+  `config.smtp_updated` audit event, so audit insertion failure rolls the
+  configuration back instead of leaving an unaudited change.
+- Security configuration updates now commit with the existing
+  `config.security_updated` audit event; failed audit insertion rolls back the
+  singleton settings change.
+- Application configuration updates now commit with the existing
+  `application.updated` audit event; audit failure rolls back the update.
+- Application enable/disable state changes now commit with their existing
+  audit events. Enablement rejects a concurrent root-path change after folder
+  preparation rather than enabling an application with an unprovisioned path;
+  new root-path updates are limited to one folder directly under `/Workspace`
+  and provision that folder before committing the configuration change.
+  Existing nested-path configurations retain their legacy basename mapping.
+- Template create, update, delete, and duplicate operations now commit with
+  their existing audit events; failures leave both content and audit state
+  unchanged.
 - Bundled Buzz Chat now targets the stable upstream `relay-v0.2.1` baseline
   through the Elembra forward-port, pinned by immutable image digest in
   `config/buzz-compatibility.env`; the dedicated Buzz RustFS lifecycle and
@@ -69,6 +129,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Disabling a user through SCIM now revokes persisted browser sessions and
+  device tokens in the same database transaction as the account-state change;
+  cookie authentication also rejects stale sessions for disabled or missing
+  accounts, so re-enabling an account cannot revive an old credential.
 - Calendar event creation from the UI: a stale frontend bundle sent
   `timezone: null` to the non-null create DTO, which surfaced as a generic
   `400 Invalid JSON payload`. The client now always sends a concrete timezone

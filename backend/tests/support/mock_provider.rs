@@ -439,8 +439,9 @@ fn default_data_response(kind: MockProviderKind, query: &HashMap<String, String>
                     "http://graph.example/v1.0/me/calendarView/delta?$deltatoken={cursor}-advanced"
                 ));
             } else {
-                body["@odata.deltaLink"] =
-                    json!("http://graph.example/v1.0/me/calendarView/delta?$deltatoken=initial-delta-token");
+                body["@odata.deltaLink"] = json!(
+                    "http://graph.example/v1.0/me/calendarView/delta?$deltatoken=initial-delta-token"
+                );
             }
             MockResponse::ok(body)
         }

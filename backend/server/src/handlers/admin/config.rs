@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::{uuid, Uuid};
 
-use super::{admin_bad_request, admin_internal_error, admin_not_found, log_admin_action};
+use super::{admin_bad_request, admin_internal_error, admin_not_found, insert_admin_action};
 use crate::{
     handlers::{AdminUser, AppError},
     oidc_runtime::{invalidate_oidc_runtime_cache, OIDC_CONFIG_ID},
@@ -234,16 +234,18 @@ pub async fn update_oidc_config(
         }
     }
 
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     // Fetch existing row to use as fallback for fields not provided.
     let current = sqlx::query_as::<_, OidcConfigRow>(
         "SELECT id, enabled, provider_name, client_id, client_secret_enc,
                 issuer_url, redirect_url, login_label, scopes, auto_provision_users, device_pair_code_ttl_seconds,
                 updated_by, updated_at
          FROM oidc_config
-         WHERE id = $1",
+         WHERE id = $1
+         FOR UPDATE",
     )
     .bind(OIDC_CONFIG_ID)
-    .fetch_optional(&state.db_pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(db_error)?
     .ok_or_else(|| admin_not_found("OIDC config not found"))?;
@@ -307,21 +309,24 @@ pub async fn update_oidc_config(
     .bind(new_auto_provision)
     .bind(new_device_pair_ttl)
     .bind(actor_id)
-    .fetch_optional(&state.db_pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(db_error)?
     .ok_or_else(|| admin_not_found("OIDC config not found"))?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "config.oidc_updated",
         None,
         None,
         json!({}),
     )
-    .await;
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
+    // Invalidate the runtime cache only after the config and audit event commit.
     invalidate_oidc_runtime_cache(&state).await;
 
     Ok(Json(OidcConfigResponse::from(row)))
@@ -445,15 +450,17 @@ pub async fn update_smtp_config(
     AdminUser { user_id: actor_id }: AdminUser,
     Json(req): Json<UpdateSmtpConfigRequest>,
 ) -> Result<Json<SmtpConfigResponse>, AppError> {
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     // Fetch current row to preserve unset fields
     let current = sqlx::query_as::<_, SmtpConfigRow>(
         "SELECT id, enabled, host, port, username, password_enc,
                 from_address, from_name, tls_mode, updated_by, updated_at
          FROM smtp_config
-         WHERE id = $1",
+         WHERE id = $1
+         FOR UPDATE",
     )
     .bind(SMTP_CONFIG_ID)
-    .fetch_optional(&state.db_pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(db_error)?
     .ok_or_else(|| admin_not_found("SMTP config not found"))?;
@@ -520,20 +527,22 @@ pub async fn update_smtp_config(
     .bind(new_from_name)
     .bind(new_tls_mode)
     .bind(actor_id)
-    .fetch_optional(&state.db_pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(db_error)?
     .ok_or_else(|| admin_not_found("SMTP config not found"))?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "config.smtp_updated",
         None,
         None,
         json!({}),
     )
-    .await;
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
     Ok(Json(SmtpConfigResponse::from(row)))
 }
@@ -683,9 +692,11 @@ pub async fn update_security_config(
         }
     }
 
+    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let config = state
         .metadata_store
-        .update_security_config(
+        .update_security_config_in_tx(
+            &mut tx,
             req.login_protection_enabled,
             req.max_login_attempts,
             req.login_block_duration_minutes,
@@ -696,8 +707,8 @@ pub async fn update_security_config(
             admin_internal_error("Failed to update security config")
         })?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         actor_id,
         "config.security_updated",
         None,
@@ -708,7 +719,9 @@ pub async fn update_security_config(
             "login_block_duration_minutes": config.login_block_duration_minutes,
         }),
     )
-    .await;
+    .await
+    .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
 
     Ok(Json(SecurityConfigResponse {
         login_protection_enabled: config.login_protection_enabled,
