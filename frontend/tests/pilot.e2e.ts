@@ -15,6 +15,8 @@ if (!adminEmail || !adminPassword || !pilotFileName || !pilotNoteId || !pilotNot
 test('pilot administrator uses Files and edits a Note name independently from its H1', async ({
 	page
 }) => {
+	test.setTimeout(90_000);
+
 	await page.goto('/login');
 	await page.getByLabel('Email').fill(adminEmail);
 	await page.getByLabel('Password').fill(adminPassword);

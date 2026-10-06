@@ -1293,3 +1293,17 @@ folder button, retaining the folder/file journey while disambiguating the
 navigation label. Targeted Prettier, ESLint, and `npm run check` pass; the
 workflow must be rerun on a new pushed SHA before counting UI or later
 recovery phases as passed.
+
+Pilot Release UI timeout follow-up (2026-10-06): run
+[37439058926](https://github.com/kubedoio/rustshare/actions/runs/37439058926)
+on SHA `a9ba754f62146f4fd401e9bc267124ef295317a9` passed through clean-install
+evidence and failed during the Notes browser test at Playwright's default
+30-second whole-test deadline. The retained result gives the cleanup reload
+failure after Playwright closed the page, but no trace identifying which
+individual operation consumed the deadline. The browser scenario performs
+authentication, Files navigation, Note H1 edit/save, independent rename/save,
+reload verification, and fixture restoration; it now has a bounded 90-second
+whole-test deadline, with existing per-assertion deadlines unchanged and no
+retries. This is a test-budget correction, not evidence that the UI journey
+passed. Rerun the authoritative workflow on the next pushed SHA; UI, backup,
+restore, and upgrade remain unverified until then.
