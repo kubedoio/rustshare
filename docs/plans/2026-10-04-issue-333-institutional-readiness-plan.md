@@ -1307,3 +1307,16 @@ whole-test deadline, with existing per-assertion deadlines unchanged and no
 retries. This is a test-budget correction, not evidence that the UI journey
 passed. Rerun the authoritative workflow on the next pushed SHA; UI, backup,
 restore, and upgrade remain unverified until then.
+
+Pilot Release UI diagnostic follow-up (2026-10-06): run
+[37442638671](https://github.com/kubedoio/rustshare/actions/runs/37442638671)
+on SHA `4a44896dbeb97dd247de9010cf8387d3d5b699d1` again failed in the Notes
+browser test at its 90-second whole-test timeout. The reporter JSON records
+the timeout and a cleanup reload after Playwright closed the page, but contains
+no operation-level steps; the collected backend logs do not identify the
+awaited browser action. No retry or pass was recorded. The test now sets
+bounded 15-second action and 20-second navigation timeouts and emits named
+Playwright steps for authentication, Files access, Note edits, reload
+verification, and fixture restoration. This is diagnostic instrumentation,
+not a fix or a passing UI result; rerun on a new exact SHA and keep the UI,
+backup/restore, and upgrade gates open until the journey succeeds.

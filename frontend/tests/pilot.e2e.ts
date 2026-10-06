@@ -16,21 +16,30 @@ test('pilot administrator uses Files and edits a Note name independently from it
 	page
 }) => {
 	test.setTimeout(90_000);
+	page.setDefaultTimeout(15_000);
+	page.setDefaultNavigationTimeout(20_000);
 
-	await page.goto('/login');
-	await page.getByLabel('Email').fill(adminEmail);
-	await page.getByLabel('Password').fill(adminPassword);
-	await page.getByRole('button', { name: 'Sign in with password' }).click();
+	await test.step('Authenticate and open Files', async () => {
+		await page.goto('/login');
+		await page.getByLabel('Email').fill(adminEmail);
+		await page.getByLabel('Password').fill(adminPassword);
+		await page.getByRole('button', { name: 'Sign in with password' }).click();
 
-	await page.waitForURL('**/files', { timeout: 10_000 });
-	await expect(page.getByRole('heading', { name: 'My Files' })).toBeVisible();
-	const smokeFolderRow = page.locator('tbody tr').filter({ hasText: 'Beta Smoke' });
-	await expect(smokeFolderRow).toHaveCount(1, { timeout: 10_000 });
-	await smokeFolderRow.getByRole('button', { name: 'Beta Smoke', exact: true }).click();
-	await expect(page.getByRole('heading', { name: 'Beta Smoke' })).toBeVisible();
-	await expect(page.getByText(pilotFileName, { exact: true })).toBeVisible({ timeout: 10_000 });
+		await page.waitForURL('**/files', { timeout: 10_000 });
+		await expect(page.getByRole('heading', { name: 'My Files' })).toBeVisible();
+	});
 
-	await page.goto(`/apps/notes/${encodeURIComponent(pilotNoteId)}`);
+	await test.step('Open pilot folder and verify its File', async () => {
+		const smokeFolderRow = page.locator('tbody tr').filter({ hasText: 'Beta Smoke' });
+		await expect(smokeFolderRow).toHaveCount(1, { timeout: 10_000 });
+		await smokeFolderRow.getByRole('button', { name: 'Beta Smoke', exact: true }).click();
+		await expect(page.getByRole('heading', { name: 'Beta Smoke' })).toBeVisible();
+		await expect(page.getByText(pilotFileName, { exact: true })).toBeVisible({ timeout: 10_000 });
+	});
+
+	await test.step('Open pilot Note', async () => {
+		await page.goto(`/apps/notes/${encodeURIComponent(pilotNoteId)}`);
+	});
 	const noteName = page.locator('h1.doc-title-wrapper');
 	const markdownH1 = page.locator('.doc-subtitle');
 	const originalH1 = 'Beta Smoke H1';
@@ -82,19 +91,27 @@ test('pilot administrator uses Files and edits a Note name independently from it
 	};
 
 	try {
-		await expect(noteName).toHaveText(pilotNoteTitle, { timeout: 10_000 });
-		await expect(markdownH1).toHaveText(originalH1);
+		await test.step('Verify original Note name and Markdown H1', async () => {
+			await expect(noteName).toHaveText(pilotNoteTitle, { timeout: 10_000 });
+			await expect(markdownH1).toHaveText(originalH1);
+		});
 
-		await editH1(editedH1);
-		await expect(noteName).toHaveText(pilotNoteTitle);
+		await test.step('Edit Markdown H1 without renaming Note', async () => {
+			await editH1(editedH1);
+			await expect(noteName).toHaveText(pilotNoteTitle);
+		});
 
-		await rename(pilotNoteTitle, renamedNote);
-		await expect(markdownH1).toHaveText(editedH1);
+		await test.step('Rename Note without changing Markdown H1', async () => {
+			await rename(pilotNoteTitle, renamedNote);
+			await expect(markdownH1).toHaveText(editedH1);
+		});
 
-		await page.reload();
-		await expect(noteName).toHaveText(renamedNote, { timeout: 10_000 });
-		await expect(markdownH1).toHaveText(editedH1);
+		await test.step('Reload and verify both values persist', async () => {
+			await page.reload();
+			await expect(noteName).toHaveText(renamedNote, { timeout: 10_000 });
+			await expect(markdownH1).toHaveText(editedH1);
+		});
 	} finally {
-		await restoreSmokeNote();
+		await test.step('Restore pilot Note fixture', restoreSmokeNote);
 	}
 });
