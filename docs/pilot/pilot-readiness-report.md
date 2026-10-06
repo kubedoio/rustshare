@@ -350,19 +350,21 @@ deployed to FWS; target-host evidence is recorded below and in
     old folders automatically because they may contain user data. Follow-up:
     define whether old roots are retained as user content and establish a
     reference-safe cleanup policy before automating removal.
- 10. **High — candidate image security gate is unresolved.** Affected operation:
-    accepting and publishing the exact candidate image for pilot use. Evidence:
-    merge run 37496000263 failed the CRITICAL-only Trivy step and skipped GHCR
-    publication. Its Trivy analysis records 44 findings (2 high, 32 medium,
-    10 low, none reported as critical), while a local Trivy 0.70.0 scan of the
-    run's exact archive with the critical-only threshold exited successfully
-    with zero critical findings. The disagreement between the CI exit status
-    and uploaded analysis has not been explained. Workaround: retain and do not
-    replace the currently deployed, exact tested FWS image; do not claim the
-    merge image passed publication/security acceptance. Follow-up: reproduce
-    the scan with preserved raw report and effective scanner arguments, resolve
-    the exit-status/report mismatch without weakening the intended gate, then
-    rerun and retain evidence bound to the candidate image.
+  10. **High — candidate image security gate is not yet revalidated.** Affected
+     operation: accepting and publishing the exact candidate image for pilot
+     use. Evidence: merge run 37496000263 failed publication. Its SARIF analysis
+     records 44 findings (2 high, 32 medium, 10 low, none critical), and the
+     exact image archive passes a direct Trivy 0.70.0 CRITICAL-only scan. The
+     cause is identified: Trivy Action v0.36.0 removes `TRIVY_SEVERITY` when
+     producing all-severity SARIF unless `limit-severities-for-sarif` is enabled
+     ([upstream entrypoint](https://github.com/aquasecurity/trivy-action/blob/v0.36.0/entrypoint.sh#L508-L531)).
+     Consequently the action's `exit-code: 1` was applied to all findings, not
+     just CRITICAL ones. The workflow now separates all-severity SARIF reporting
+     from a CRITICAL-only blocking scan, but that correction has not yet passed
+     the full GitHub workflow. Workaround: retain the exact tested FWS image and
+     do not claim the merge image passed publication/security acceptance.
+     Follow-up: pass the corrected full workflow and preserve the resulting
+     image/security evidence before replacing or publishing the candidate.
  11. **Medium — failed-job-only publication retry cannot reuse the tested artifact.**
     Affected operation: recovery of a publication-only Pilot Release failure.
     Evidence: run 37496000263 attempt 2 downloaded the immutable image artifact

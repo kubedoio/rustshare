@@ -735,7 +735,7 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
         self.assertIn("await rename(pilotNoteTitle, renamedNote)", e2e)
         self.assertRegex(
             e2e,
-            r"finally\s*\{\s*await test\.step\('Restore pilot Note fixture', restoreSmokeNote\);\s*\}",
+            r"finally\s*\{\s*if\s*\(noteOpened\)\s*await test\.step\('Restore pilot Note fixture', restoreSmokeNote\);\s*\}",
         )
         self.assertIn("E2E_BASE_URL: http://127.0.0.1", ui_step)
         self.assertIn("'UI_BROWSER_STATUS=passed'", summary_step)
@@ -1022,14 +1022,21 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
             collect_step,
         )
 
-    def test_critical_image_vulnerabilities_block_publication(self) -> None:
+    def test_critical_image_findings_block_publication(self) -> None:
         scan_step = workflow_step("Scan image with Trivy")
+        gate_step = workflow_step("Enforce critical image findings")
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn("severity: 'CRITICAL'", scan_step)
-        self.assertIn("exit-code: '1'", scan_step)
+        self.assertIn("format: 'sarif'", scan_step)
+        self.assertIn("limit-severities-for-sarif: 'false'", scan_step)
+        self.assertIn("exit-code: '0'", scan_step)
         self.assertNotIn("continue-on-error", scan_step)
+        self.assertIn("format: 'table'", gate_step)
+        self.assertIn("severity: 'CRITICAL'", gate_step)
+        self.assertIn("exit-code: '1'", gate_step)
+        self.assertNotIn("continue-on-error", gate_step)
         self.assertLess(workflow.index("- name: Scan image with Trivy"), workflow.index("- name: Push image"))
+        self.assertLess(workflow.index("- name: Enforce critical image findings"), workflow.index("- name: Push image"))
 
     def test_all_effective_runtime_secrets_are_available_to_redactor(self) -> None:
         collect_step = workflow_step("Collect pilot evidence and diagnostics")
