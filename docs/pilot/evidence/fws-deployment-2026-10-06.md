@@ -23,6 +23,37 @@ pending.
   The archive and its checksum are retained in the external FWS evidence
   bundle; do not substitute a rebuild.
 
+## Post-merge image publication/security gate
+
+- Merge-triggered Pilot Release run
+  [37496000263](https://github.com/kubedoio/rustshare/actions/runs/37496000263)
+  passed `pilot-compose-smoke`, including the supported upgrade test, but the
+  separate `publish-pilot-image` job failed at `Scan image with Trivy`; GHCR
+  publication was skipped. The FWS deployment above was not replaced.
+- The failed run's tested-image artifact is for merge SHA
+  `e30274ffe9b4962a85dcd7ada8503665b305ff20`, archive SHA-256
+  `74443eaf54075bd6b20b8c71ba77bbd7fddee0f84a6f629f27c96d456820d7c2`.
+  GitHub's uploaded Trivy analysis for that run reports 44 findings: 2 high,
+  32 medium and 10 low, with no critical-severity findings in the analysis.
+- An independent Trivy 0.70.0 scan of that exact archive with the workflow's
+  `CRITICAL` severity threshold exited successfully with zero findings. This
+  conflicts with the CI Trivy step's exit code 1. The raw CI SARIF is not
+  included in the published run artifacts, and the exit-status/analysis
+  mismatch remains unexplained. This does not prove the separately deployed
+  pre-merge candidate archive passed image scanning.
+- A failed-jobs-only rerun created attempt 2 but did not repeat the scan:
+  `Verify and load tested pilot image` rejected the immutable attempt-1 image
+  artifact because it requires `WORKFLOW_RUN_ATTEMPT` to equal the current
+  attempt. The scan and push were skipped, and SARIF upload then had no file.
+  This fail-closed behavior preserves provenance but means a selective retry
+  cannot recover a publication-only failure; rerun the full workflow if a new
+  tested artifact is needed. Do not loosen the provenance check to make a
+  partial retry appear successful.
+- Treat image publication/security acceptance as unresolved. Do not replace the
+  FWS image with a rebuild or the failed merge-run image until the scanner
+  configuration/result mismatch is reproduced and reconciled without
+  weakening the gate, and the workflow succeeds with revision-bound evidence.
+
 ## FWS deployment and verification
 
 - Environment: FWS host `10.5.199.85`, deployment `fws-app-20261006-rustshare`,
@@ -68,9 +99,9 @@ pending.
   yet confirmed and completed the second-admin recovery/session-revocation
   rehearsal. An agent-controlled second login is not independent evidence.
 - The bounded FWS cohort has not started. Do not announce the revision as
-  READY or admit pilot users until that rehearsal is recorded and the outbox
+  READY or admit pilot users until that rehearsal is recorded, the outbox
   limitation is explicitly accepted or resolved for the operations the cohort
-  will use.
+  will use, and the merge-image security-gate mismatch is resolved.
 - Broader #333 institutional work remains gated by the proposed ADR/product
   decisions; this deployment makes no organization, tenant, calendar or
   institutional authorization claim.

@@ -170,9 +170,11 @@ no passwords, tokens, cookies, private keys, or database credentials.
 
 The evidence combines separate environments: authoritative Pilot Release run
 37461268485 on source SHA
-`1b4aeb18c9578f225e732ff44225ea6df54a874a` passed; the merge-triggered run
-for `e30274ffe9b4962a85dcd7ada8503665b305ff20` is still in progress and is not
-used as evidence for that candidate. The exact tested candidate was then
+`1b4aeb18c9578f225e732ff44225ea6df54a874a` passed. Merge-triggered run
+37496000263 for `e30274ffe9b4962a85dcd7ada8503665b305ff20` passed its
+`pilot-compose-smoke` job, including the upgrade test, but failed its separate
+image-publication job at Trivy; image publication was skipped. That failure is
+not treated as a successful security scan. The exact tested candidate was
 deployed to FWS; target-host evidence is recorded below and in
 [`evidence/fws-deployment-2026-10-06.md`](evidence/fws-deployment-2026-10-06.md).
 
@@ -187,11 +189,12 @@ deployed to FWS; target-host evidence is recorded below and in
 | Restart/persistence | PASS in CI and on FWS | The canonical FWS smoke persisted representative Note/File data, backend restart completed, and report-driven smoke reauthenticated and verified both records; machine reports are retained in the FWS evidence bundle. |
 | Backup | PASS | Fresh FWS bundle `/var/backups/rustshare/20261006T163355Z`; structural verification passed for PostgreSQL, RustFS, configuration, manifest and SHA-256 checksums. |
 | Restore | PASS in isolated CI; FWS restore not run | Pilot Release run 37461268485 passed isolated Compose restore and verification. An in-place FWS restore was not run. |
-| Upgrade | PASS in isolated CI; merge-run upgrade pending | The authoritative candidate workflow upgrades `v0.8.0-alpha.5` to the candidate. The merge-triggered run 37496000263 is still validating this path and is not yet counted as passed. No FWS upgrade was performed after deploying this candidate. |
+| Upgrade | PASS in isolated CI and merge-run smoke | Pilot Release run 37461268485 and the `pilot-compose-smoke` job in merge-triggered run 37496000263 validated upgrade from `v0.8.0-alpha.5`. No FWS upgrade was performed after deploying this candidate. |
 | Account lifecycle | PARTIAL; independent FWS rehearsal pending | The canonical smoke in run 37461268485 records `BETA_SMOKE_USER_LIFECYCLE=passed`; Integration Tests run 37461229546 on the same SHA passed `disabling_user_revokes_credentials_and_stale_cookie_cannot_authenticate`. The candidate containing this correction is deployed to FWS, but no independent operator has rehearsed the lifecycle or two-admin recovery there. |
 | Health/diagnostics | PASS | `/health` remained 200 while PostgreSQL was stopped; `/health/ready` returned 503 with `database connectivity failed`, then recovered. RustFS failure returned 503 with `object storage check failed`, then recovered. |
 | Observability | PASS | Startup/migration/dependency logs, liveness/readiness component diagnostics, smoke phase reports and redacted failure evidence are retained. |
-| Security sanity | PASS for bounded pilot | Secure cookies, public HTTPS origin, protected routes and secret-redaction checks passed. OIDC provider acceptance is intentionally outside the password-login pilot. |
+| Security sanity | PARTIAL | Secure cookies, public HTTPS origin, protected routes and secret-redaction checks passed in the exact candidate workflow. The merge-image Trivy failure below remains unresolved; OIDC provider acceptance is intentionally outside the password-login pilot. |
+| Image vulnerability scan/publication | NOT ACCEPTED | Merge run 37496000263 failed `Scan image with Trivy`; the GHCR push was skipped. Its uploaded Trivy analysis contains 44 findings (2 high, 32 medium, 10 low, no critical reported), while an independent Trivy 0.70.0 scan of that run's exact image archive with `--severity CRITICAL` returned zero findings. The mismatch is unexplained; neither result is accepted as a passing revision-bound gate until reproduced and reconciled. See limitation 11. |
 
 ## Institutional acceptance by issue
 
@@ -224,7 +227,15 @@ deployed to FWS; target-host evidence is recorded below and in
    failure/recovery, invalid configuration, backup/restore, supported upgrade,
    migration checks, and evidence collection. Its evidence binds source,
    image, deployment, configuration and workflow identities.
-6. FWS `/health` and `/health/ready` returned 200; database, object storage,
+6. The merge-triggered run 37496000263 passed its functional pilot-compose
+   smoke, including supported upgrade, but its separate Trivy image-publication
+   job failed and did not push an image. The run's archive is SHA-256
+   `74443eaf54075bd6b20b8c71ba77bbd7fddee0f84a6f629f27c96d456820d7c2`.
+   GitHub's Trivy analysis reports 44 findings but none at critical severity;
+   a local Trivy 0.70.0 scan of that exact archive using the critical-only
+   threshold also found zero. The exit-1 mismatch is unresolved, so this is a
+   failed/unaccepted gate, not a green scan.
+7. FWS `/health` and `/health/ready` returned 200; database, object storage,
    auth/session and event delivery were healthy. The optional outbox component
    remains unhealthy after restart and the Chat bridge is disabled; see the
    target-host evidence for the operational boundary.
@@ -346,14 +357,40 @@ deployed to FWS; target-host evidence is recorded below and in
     old folders automatically because they may contain user data. Follow-up:
     define whether old roots are retained as user content and establish a
     reference-safe cleanup policy before automating removal.
+11. **High — candidate image security gate is unresolved.** Affected operation:
+    accepting and publishing the exact candidate image for pilot use. Evidence:
+    merge run 37496000263 failed the CRITICAL-only Trivy step and skipped GHCR
+    publication. Its Trivy analysis records 44 findings (2 high, 32 medium,
+    10 low, none reported as critical), while a local Trivy 0.70.0 scan of the
+    run's exact archive with the critical-only threshold exited successfully
+    with zero critical findings. The disagreement between the CI exit status
+    and uploaded analysis has not been explained. Workaround: retain and do not
+    replace the currently deployed, exact tested FWS image; do not claim the
+    merge image passed publication/security acceptance. Follow-up: reproduce
+    the scan with preserved raw report and effective scanner arguments, resolve
+    the exit-status/report mismatch without weakening the intended gate, then
+    rerun and retain evidence bound to the candidate image.
+12. **Medium — failed-job-only publication retry cannot reuse the tested artifact.**
+    Affected operation: recovery of a publication-only Pilot Release failure.
+    Evidence: run 37496000263 attempt 2 downloaded the immutable image artifact
+    from attempt 1, then `Verify and load tested pilot image` failed because it
+    required the artifact's `WORKFLOW_RUN_ATTEMPT` to equal the current attempt.
+    Trivy and push were skipped; the subsequent SARIF upload correctly failed
+    because no report existed. This is fail-closed, not a false green. Workaround:
+    preserve the original failure and rerun the complete workflow if another
+    revision-bound artifact is required. Follow-up: retain this strict producer
+    attempt provenance and document/test the supported full-rerun path; do not
+    relax the check merely to make a partial retry pass.
 
 ## Final decision
 
 **NOT READY** — the exact tested candidate is deployed to FWS and its public
 canonical journey, backup verification, backend restart and persistence check
 passed. However, the independent second-admin recovery rehearsal has not yet
-been completed, the optional outbox remains unhealthy, FWS authenticated browser
-evidence and staged scale evidence are missing, and institutional
+been completed, the merge image's Trivy publication gate failed with an
+unresolved scan/report mismatch, its failed-job-only retry did not reach
+scanning, the optional outbox remains unhealthy, FWS
+authenticated browser evidence and staged scale evidence are missing, and institutional
 organization/workspace authorization remains unapproved and unimplemented.
 Keep the bounded cohort stopped until the independent rehearsal and explicit
 acceptance of the operational limitations are recorded. Keep broader #333
