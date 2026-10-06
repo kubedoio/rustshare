@@ -84,6 +84,15 @@ async fn cleanup_statement(
     }
 }
 
+fn record_cleanup_result(
+    result: Result<sqlx::postgres::PgQueryResult, sqlx::Error>,
+    first_error: &mut Option<sqlx::Error>,
+) {
+    if let Err(error) = result {
+        first_error.get_or_insert(error);
+    }
+}
+
 struct AdminUserLifecycleAttempt {
     response_status: axum::http::StatusCode,
     disabled_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -929,15 +938,29 @@ async fn user_lifecycle_audit_mutations_are_atomic_and_preserve_content() {
         &mut cleanup_error,
     )
     .await;
-    for statement in [
-        format!(
-            "DELETE FROM admin_actions WHERE actor_id = '{admin_id}' OR target_id = '{target_id}'"
-        ),
-        format!("DELETE FROM users WHERE id IN ('{admin_id}', '{target_id}')"),
-        format!("DELETE FROM tenants WHERE id = '{tenant_id}'"),
-    ] {
-        cleanup_statement(&pool, &statement, &mut cleanup_error).await;
-    }
+    record_cleanup_result(
+        sqlx::query("DELETE FROM admin_actions WHERE actor_id = $1 OR target_id = $2")
+            .bind(admin_id)
+            .bind(target_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM users WHERE id IN ($1, $2)")
+            .bind(admin_id)
+            .bind(target_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM tenants WHERE id = $1")
+            .bind(tenant_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
     let cleanup_result = cleanup_error.map_or(Ok(()), Err);
 
     cleanup_result.expect("clean up trigger, function, and isolated fixtures");
@@ -1364,16 +1387,36 @@ async fn group_membership_changes_and_audits_commit_or_roll_back_together() -> T
     ] {
         cleanup_statement(&pool, &statement, &mut cleanup_error).await;
     }
-    for statement in [
-        format!(
-            "DELETE FROM admin_actions WHERE target_id = '{group_id}' OR actor_id = '{actor_id}'"
-        ),
-        format!("DELETE FROM user_groups WHERE id = '{group_id}'"),
-        format!("DELETE FROM users WHERE id IN ('{actor_id}', '{member_id}')"),
-        format!("DELETE FROM tenants WHERE id = '{tenant_id}'"),
-    ] {
-        cleanup_statement(&pool, &statement, &mut cleanup_error).await;
-    }
+    record_cleanup_result(
+        sqlx::query("DELETE FROM admin_actions WHERE target_id = $1 OR actor_id = $2")
+            .bind(group_id)
+            .bind(actor_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM user_groups WHERE id = $1")
+            .bind(group_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM users WHERE id IN ($1, $2)")
+            .bind(actor_id)
+            .bind(member_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM tenants WHERE id = $1")
+            .bind(tenant_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
 
     attempt?;
     if let Some(error) = cleanup_error {
@@ -1664,20 +1707,37 @@ async fn group_lifecycle_changes_and_audits_commit_or_roll_back_together() -> Te
     ] {
         cleanup_statement(&pool, &statement, &mut cleanup_error).await;
     }
-    for statement in [
-        format!(
-            "DELETE FROM admin_actions WHERE actor_id = '{actor_id}' OR target_id = '{}'",
-            group_id.unwrap_or_default()
-        ),
-        format!(
-            "DELETE FROM user_groups WHERE created_by = '{actor_id}' OR id = '{}'",
-            group_id.unwrap_or_default()
-        ),
-        format!("DELETE FROM users WHERE id = '{actor_id}'"),
-        format!("DELETE FROM tenants WHERE id = '{tenant_id}'"),
-    ] {
-        cleanup_statement(&pool, &statement, &mut cleanup_error).await;
-    }
+    let cleanup_group_id = group_id.unwrap_or_default();
+    record_cleanup_result(
+        sqlx::query("DELETE FROM admin_actions WHERE actor_id = $1 OR target_id = $2")
+            .bind(actor_id)
+            .bind(cleanup_group_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM user_groups WHERE created_by = $1 OR id = $2")
+            .bind(actor_id)
+            .bind(cleanup_group_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(actor_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM tenants WHERE id = $1")
+            .bind(tenant_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
 
     attempt?;
     if let Some(error) = cleanup_error {
@@ -1947,13 +2007,28 @@ async fn admin_user_create_and_delete_audits_are_transactional() -> TestResult<(
     ] {
         cleanup_statement(&pool, &statement, &mut cleanup_error).await;
     }
-    for statement in [
-        format!("DELETE FROM admin_actions WHERE actor_id = '{actor_id}'"),
-        format!("DELETE FROM users WHERE id = '{actor_id}' OR username = '{username}'"),
-        format!("DELETE FROM tenants WHERE id = '{tenant_id}'"),
-    ] {
-        cleanup_statement(&pool, &statement, &mut cleanup_error).await;
-    }
+    record_cleanup_result(
+        sqlx::query("DELETE FROM admin_actions WHERE actor_id = $1")
+            .bind(actor_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM users WHERE id = $1 OR username = $2")
+            .bind(actor_id)
+            .bind(&username)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM tenants WHERE id = $1")
+            .bind(tenant_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
 
     attempt?;
     if let Some(error) = cleanup_error {
@@ -2243,14 +2318,34 @@ async fn admin_webhook_mutations_rollback_when_audit_insert_fails() -> TestResul
     ] {
         cleanup_statement(&pool, &statement, &mut cleanup_error).await;
     }
-    for statement in [
-        format!("DELETE FROM admin_actions WHERE actor_id = '{actor_id}'"),
-        format!("DELETE FROM webhook_configs WHERE created_by = '{actor_id}'"),
-        format!("DELETE FROM users WHERE id = '{actor_id}'"),
-        format!("DELETE FROM tenants WHERE id = '{tenant_id}'"),
-    ] {
-        cleanup_statement(&pool, &statement, &mut cleanup_error).await;
-    }
+    record_cleanup_result(
+        sqlx::query("DELETE FROM admin_actions WHERE actor_id = $1")
+            .bind(actor_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM webhook_configs WHERE created_by = $1")
+            .bind(actor_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(actor_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM tenants WHERE id = $1")
+            .bind(tenant_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
 
     attempt?;
     if let Some(error) = cleanup_error {
@@ -2554,14 +2649,35 @@ async fn admin_workflow_mutations_rollback_when_audit_insert_fails() -> TestResu
     ] {
         cleanup_statement(&pool, &statement, &mut cleanup_error).await;
     }
-    for statement in [
-        format!("DELETE FROM admin_actions WHERE actor_id = '{actor_id}' OR target_id = '{workflow_id}'"),
-        format!("DELETE FROM workflows WHERE id = '{workflow_id}'"),
-        format!("DELETE FROM users WHERE id = '{actor_id}'"),
-        format!("DELETE FROM tenants WHERE id = '{tenant_id}'"),
-    ] {
-        cleanup_statement(&pool, &statement, &mut cleanup_error).await;
-    }
+    record_cleanup_result(
+        sqlx::query("DELETE FROM admin_actions WHERE actor_id = $1 OR target_id = $2")
+            .bind(actor_id)
+            .bind(workflow_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM workflows WHERE id = $1")
+            .bind(workflow_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(actor_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
+    record_cleanup_result(
+        sqlx::query("DELETE FROM tenants WHERE id = $1")
+            .bind(tenant_id)
+            .execute(&pool)
+            .await,
+        &mut cleanup_error,
+    );
     if let Err(error) = sqlx::query(
         "UPDATE smtp_config
          SET enabled = $1, host = $2, port = $3, from_address = $4

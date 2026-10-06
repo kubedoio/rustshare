@@ -183,6 +183,16 @@ class PilotLogRedactionTests(unittest.TestCase):
 
 
 class PilotEvidenceWorkflowTests(unittest.TestCase):
+    def test_clean_install_start_time_is_exported_to_evidence_step(self) -> None:
+        identity_step = workflow_run("Record pilot identity")
+        evidence_step = workflow_run("Record clean-install evidence")
+
+        self.assertIn(
+            'echo "CLEAN_INSTALL_STARTED_AT=${CLEAN_INSTALL_STARTED_AT}" >> "$GITHUB_ENV"',
+            identity_step,
+        )
+        self.assertIn("STARTED_AT=${CLEAN_INSTALL_STARTED_AT}", evidence_step)
+
     def write_valid_summary_evidence(self, evidence_dir: Path) -> None:
         source_sha = "a" * 40
         previous_sha = "b" * 40

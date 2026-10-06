@@ -1250,3 +1250,33 @@ after reference checks under the shared blob lock. The follow-up run passed,
 and a post-run query confirmed zero matching fixture users. This is local
 uncommitted evidence, not a hosted revision-bound result. Phase 0 decisions
 and the institutional Phase 4 workflow remain open.
+
+Pilot Release exact-revision run follow-up (2026-10-06): workflow run
+[37432597909](https://github.com/kubedoio/rustshare/actions/runs/37432597909)
+ran against SHA `0bf8c9cfc395db193b8e953994ffc22630917b8c`. Image build,
+clean-volume deployment, readiness, migration verification, and the canonical
+smoke status gate completed, but the run correctly failed before evidence
+upload because the separate clean-install summary step referenced
+`CLEAN_INSTALL_STARTED_AT` without exporting it from the identity step through
+`GITHUB_ENV`. The push-only image publication was skipped. The workflow now
+exports that timestamp and the evidence regression checks the cross-step
+handoff; the redaction/evidence suite passes 32/32, YAML parses, all 30
+embedded shell blocks pass `bash -n`, and `git diff --check` passes. This
+failure is not a successful clean-install or revision-bound recovery result;
+rerun the full authoritative workflow on a new pushed SHA before accepting
+Phase 7 evidence.
+
+Security/CI follow-up to candidate SHA `0bf8c9c` (2026-10-06): CodeQL still
+reported a critical hard-coded-key finding because it did not recognize a
+zero-initialized byte array subsequently filled by the RNG, and a high
+cleartext-database finding because one generic cleanup helper received
+interpolated `DELETE` statements containing a generated username. SMTP tests
+now construct the key directly from `rand::random()`, and those cleanup
+deletes use static SQL with bound UUID/username parameters while preserving
+the existing cleanup-error propagation. The affected PostgreSQL/RustFS
+transaction suite passes 6/6, the SMTP suite passes 11/11 (one separately
+ignored rollback case), and scoped Clippy/compilation pass. Hosted CodeQL must
+confirm the alerts are resolved on the next revision. Separately, Buzz Live
+Conformance on this SHA failed before conformance execution because the runner
+timed out contacting `https://ghcr.io/v2/`; this is recorded as an external
+registry availability failure, not a product test pass or a code regression.
