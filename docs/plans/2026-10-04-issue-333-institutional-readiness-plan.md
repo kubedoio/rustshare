@@ -1280,3 +1280,16 @@ confirm the alerts are resolved on the next revision. Separately, Buzz Live
 Conformance on this SHA failed before conformance execution because the runner
 timed out contacting `https://ghcr.io/v2/`; this is recorded as an external
 registry availability failure, not a product test pass or a code regression.
+
+Pilot Release UI failure follow-up (2026-10-06): run
+[37435945619](https://github.com/kubedoio/rustshare/actions/runs/37435945619)
+on SHA `ab08a72176f932b86aa8eae8430c0a6ea99f0d37` passed image build,
+clean-volume deployment, readiness/migration checks, canonical journey, and
+clean-install evidence recording, then failed the browser test before backup,
+restore, and upgrade phases. Playwright showed the exact `Beta Smoke` text
+matched both the folder navigation control and the intended folder row. The
+browser test now asserts one `Beta Smoke` table row and clicks its exact
+folder button, retaining the folder/file journey while disambiguating the
+navigation label. Targeted Prettier, ESLint, and `npm run check` pass; the
+workflow must be rerun on a new pushed SHA before counting UI or later
+recovery phases as passed.

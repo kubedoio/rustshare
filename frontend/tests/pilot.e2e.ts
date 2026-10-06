@@ -22,12 +22,9 @@ test('pilot administrator uses Files and edits a Note name independently from it
 
 	await page.waitForURL('**/files', { timeout: 10_000 });
 	await expect(page.getByRole('heading', { name: 'My Files' })).toBeVisible();
-	await expect(page.getByText('Beta Smoke', { exact: true })).toBeVisible({ timeout: 10_000 });
-	await page
-		.locator('tbody tr')
-		.filter({ hasText: 'Beta Smoke' })
-		.getByRole('button', { name: 'Beta Smoke' })
-		.click();
+	const smokeFolderRow = page.locator('tbody tr').filter({ hasText: 'Beta Smoke' });
+	await expect(smokeFolderRow).toHaveCount(1, { timeout: 10_000 });
+	await smokeFolderRow.getByRole('button', { name: 'Beta Smoke', exact: true }).click();
 	await expect(page.getByRole('heading', { name: 'Beta Smoke' })).toBeVisible();
 	await expect(page.getByText(pilotFileName, { exact: true })).toBeVisible({ timeout: 10_000 });
 
