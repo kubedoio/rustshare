@@ -272,6 +272,16 @@
           "200": {
             "description": "Success"
           },
+          "400": {
+            "description": "Invalid audit query parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
