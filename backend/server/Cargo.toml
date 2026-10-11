@@ -296,6 +296,10 @@ name = "object_gc_test"
 path = "../tests/object_gc_test.rs"
 
 [[test]]
+name = "object_store_failure_atomicity_test"
+path = "../tests/object_store_failure_atomicity_test.rs"
+
+[[test]]
 name = "outbox_integration_test"
 path = "../tests/outbox_integration_test.rs"
 
