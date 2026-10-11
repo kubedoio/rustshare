@@ -36,6 +36,9 @@ jobs:
             # the queued batch. This validates every queued PR's commits for
             # any batch size; the push-event `before` field and `HEAD~1` do
             # not describe this range and must not be used here.
+            # Repo-level requirement: the merge queue must use the merge-commit
+            # or rebase merge method. Squash merges drop the `Signed-off-by:`
+            # trailers, and the push-triggered DCO check on main would then fail.
             BASE="${{ github.event.merge_group.base_sha }}"
             HEAD_COMMIT="${{ github.event.merge_group.head_sha }}"
             if ! git merge-base --is-ancestor "${BASE}" "${HEAD_COMMIT}"; then

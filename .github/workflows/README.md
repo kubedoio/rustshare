@@ -6,11 +6,13 @@ This directory contains the CI/CD workflows for RustShare.
 
 | Workflow | File | Trigger | Purpose |
 |----------|------|---------|---------|
-| CI | `ci.yml` | PR/push to `main`; manual dispatch | PR format, clippy, Cargo Deny, and compose checks; tests, release build, SQLx prepare, and coverage on push or manual dispatch |
-| Frontend CI | `frontend-ci.yml` | PR/push to `main` (frontend paths) | Typecheck, lint, tests, production build |
-| Integration Tests | `integration-tests.yml` | Push to `main` (backend paths); manual dispatch | End-to-end tests with PostgreSQL + RustFS |
+| CI | `ci.yml` | PR/merge queue/push to `main`; manual dispatch | Format, clippy, Cargo Deny, and compose checks, plus the OpenAPI Contract freshness gate on every PR; tests, release build, SQLx prepare, and coverage on merge-queue candidates, push, and manual dispatch |
+| Frontend CI | `frontend-ci.yml` | PR/merge queue/push to `main` | Typecheck, lint, tests, production build |
+| Integration Tests | `integration-tests.yml` | PR/merge queue/push to `main`; manual dispatch | End-to-end tests with PostgreSQL + RustFS, Buzz live conformance, and chat product acceptance |
+| DCO | `dco.yml` | PR/merge queue/push to `main` | Every non-merge commit must carry a `Signed-off-by:` trailer |
+| Vault Sync Compliance | `vault-sync-compliance.yml` | PR/push to `main` and `support-third-party-vault-v1` (merge queue: `main` only) | Terminology/trademark scan, retired-Module doc guard, and Obsidian plugin disclaimers, unit tests, and build |
 | Dependencies | `dependencies.yml` | Weekly + frontend package changes | Outdated npm dependency report, npm security audit (Rust advisories covered by `cargo deny` in `ci.yml`) |
-| CodeQL | `codeql.yml` | PR/push to `main`; weekly; manual dispatch | Static security analysis of the Rust workspace and frontend TypeScript (beta readiness item S-1) |
+| CodeQL | `codeql.yml` | PR/push to `main`; weekly; manual dispatch (no merge queue: not a required check) | Static security analysis of the Rust workspace and frontend TypeScript (beta readiness item S-1) |
 | Pilot Release | `pilot-release.yml` | Push to `main`; manual dispatch | Build and validate pilot backend image |
 | Release | `release.yml` | Tags / workflow dispatch | Build, sign, and publish release artifacts |
 

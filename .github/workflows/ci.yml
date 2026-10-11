@@ -113,9 +113,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-  # Fast PR-tier guard: the full Test job only runs post-merge (see merge_group
-  # trigger above), so release-critical contract checks that are cheap must run
-  # on every PR to keep regressions off main.
+  # Fast PR-tier guard: the full Test job is skipped on pull_request (PR #295
+  # cost tier) and otherwise runs on push to main, workflow_dispatch, and
+  # merge_group candidates. This job gives pull requests a fast freshness gate
+  # for release-critical contract checks that are cheap to run.
   openapi-contract:
     name: OpenAPI Contract
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'

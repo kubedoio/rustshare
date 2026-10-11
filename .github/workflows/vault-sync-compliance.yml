@@ -9,7 +9,7 @@ on:
   pull_request:
     branches: [main, support-third-party-vault-v1]
   merge_group:
-    branches: [main]
+    branches: [main, support-third-party-vault-v1]
 
 jobs:
 
