@@ -89,8 +89,10 @@ async fn pool() -> PgPool {
 /// Refuse to run the destructive offboarding regression outside a disposable
 /// test database on loopback. That test writes `users.disabled_at` and the
 /// offboarding trigger then revokes chat bindings/admissions, so a
-/// misconfigured `DATABASE_URL` would mutate real data. Same guard convention
-/// as `support::calendar_harness` and the credential-revocation regression.
+/// misconfigured `DATABASE_URL` would mutate real data. Stricter than
+/// `support::calendar_harness` and the credential-revocation regression: those
+/// accept a remote database behind an explicit opt-in, this guard has no
+/// override by design — loopback is always required here.
 fn assert_disposable_database(database_url: &str) {
     let parsed = url::Url::parse(database_url).expect("DATABASE_URL must be a PostgreSQL URL");
     let database_name = parsed.path().trim_start_matches('/');
@@ -99,9 +101,15 @@ fn assert_disposable_database(database_url: &str) {
         "refusing to disable principals: DATABASE_URL must name rustshare_test or \
          rustshare_test_* (got `{database_name}`)"
     );
-    let host = parsed.host_str().unwrap_or_default().to_string();
+    // `url::host_str()` renders IPv6 hosts in brackets (`[::1]`), so unwrap them
+    // before comparing against the loopback forms.
+    let host = parsed.host_str().unwrap_or_default();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
     assert!(
-        matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1"),
+        matches!(host, "localhost" | "127.0.0.1" | "::1"),
         "refusing to disable principals against non-loopback database host `{host}`"
     );
 }
@@ -144,6 +152,91 @@ async fn cleanup(pool: &PgPool, tenant_id: TenantId, principal_id: PrincipalId) 
         .execute(pool)
         .await
         .unwrap();
+}
+
+/// Deletes the fixtures a test registered here if it unwinds before the
+/// explicit [`cleanup`] calls run — an assertion failure or a panicking
+/// observation query would otherwise leak tenants, users, bindings, admissions,
+/// and outbox rows.
+///
+/// `Drop` cannot await, so the cleanup runs to completion on a dedicated thread
+/// with its own current-thread runtime and its own pool. Keeping it off the
+/// test's runtime means a panic inside the cleanup itself (a dead connection,
+/// for example) surfaces as a join error instead of a second panic that would
+/// abort the whole test binary mid-unwind.
+struct FixtureCleanupGuard {
+    database_url: String,
+    fixtures: Vec<(TenantId, PrincipalId)>,
+    armed: bool,
+}
+
+impl FixtureCleanupGuard {
+    fn new(database_url: &str) -> Self {
+        Self {
+            database_url: database_url.to_string(),
+            fixtures: Vec::new(),
+            armed: true,
+        }
+    }
+
+    fn track(&mut self, tenant: TenantId, principal: PrincipalId) {
+        self.fixtures.push((tenant, principal));
+    }
+
+    /// Disarm once the explicit cleanup has run, so the guard does not delete
+    /// the same fixtures twice on the way out.
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for FixtureCleanupGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let database_url = self.database_url.clone();
+        let fixtures = std::mem::take(&mut self.fixtures);
+        let handle = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build the panic-path cleanup runtime");
+            runtime.block_on(async move {
+                let Ok(pool) = PgPool::connect(&database_url).await else {
+                    return;
+                };
+                for (tenant, principal) in fixtures {
+                    cleanup(&pool, tenant, principal).await;
+                }
+            });
+        });
+        // Join so the fixtures are gone before the test process moves on; a
+        // panic on the cleanup thread is dropped here rather than propagated.
+        let _ = handle.join();
+    }
+}
+
+/// `url::Url` renders an IPv6 host in brackets, so the loopback check must
+/// accept `postgres://…@[::1]:5432/rustshare_test` rather than refusing the one
+/// IPv6 loopback form a real `DATABASE_URL` can take.
+#[test]
+fn disposable_database_guard_accepts_bracketed_ipv6_loopback() {
+    for loopback in [
+        "postgres://rustshare:pw@[::1]:15432/rustshare_test",
+        "postgres://rustshare:pw@localhost:15432/rustshare_test",
+        "postgres://rustshare:pw@127.0.0.1:15432/rustshare_test",
+    ] {
+        assert_disposable_database(loopback);
+    }
+
+    let rejected = std::panic::catch_unwind(|| {
+        assert_disposable_database("postgres://rustshare:pw@db.example.com:5432/rustshare_test");
+    });
+    assert!(
+        rejected.is_err(),
+        "a non-loopback database host must still be refused"
+    );
 }
 
 /// A unique 64-lowercase-hex message id (two UUIDs concatenated).
@@ -1774,6 +1867,12 @@ async fn disabling_principal_revokes_chat_admission_and_publishes_one_event() {
     let pool = pool().await;
 
     let env = setup_env(&pool).await;
+    // Safety net for the observation queries below: every one of them uses
+    // `.expect()`, and any of those panics (or a later assertion) would
+    // otherwise leave these fixtures behind. Dismissed once the explicit
+    // cleanup at the end of the test has run.
+    let mut fixture_guard = FixtureCleanupGuard::new(&database_url);
+    fixture_guard.track(env.tenant, env.principal);
     let mapping_id = mapping_id_for_tenant(&pool, env.tenant).await;
     let (binding_id, pubkey): (Uuid, String) = sqlx::query_as(
         "SELECT binding_id, buzz_pubkey FROM chat_identity_bindings
@@ -1818,6 +1917,7 @@ async fn disabling_principal_revokes_chat_admission_and_publishes_one_event() {
 
     // Control tenant: a disable must be tenant-scoped.
     let foreign = setup_env(&pool).await;
+    fixture_guard.track(foreign.tenant, foreign.principal);
 
     let revoked_before_disable = revoked_outbox_event_count(&pool, env.tenant).await;
 
@@ -1946,6 +2046,7 @@ async fn disabling_principal_revokes_chat_admission_and_publishes_one_event() {
     // users this test created.
     cleanup(&pool, env.tenant, env.principal).await;
     cleanup(&pool, foreign.tenant, foreign.principal).await;
+    fixture_guard.disarm();
 
     assert_eq!(
         revoked_before_disable, 0,
