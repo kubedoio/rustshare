@@ -16,7 +16,10 @@
 //! * `get_message` is existence-hiding (404 for deleted and cross-tenant
 //!   ids);
 //! * revoking the principal's binding/admission empties reads immediately
-//!   (proof #6 read half).
+//!   (proof #6 read half);
+//! * disabling the principal out of band (`UPDATE users SET disabled_at`)
+//!   revokes the Buzz admission and binding through the offboarding trigger
+//!   and publishes exactly one durable `buzz.admission.revoked.v1` event.
 //!
 //! DB-backed and `#[ignore]`d; run against the dev database (migrations
 //! applied) with `--test-threads=1`:
@@ -1684,6 +1687,280 @@ async fn revoke_principal_scope_and_timestamp_semantics() {
 
     cleanup(&pool, env_a.tenant, env_a.principal).await;
     cleanup(&pool, env_b.tenant, env_b.principal).await;
+}
+
+// ---------------------------------------------------------------------------
+// 7b. Principal disable at the database level: the `users_disable_revokes_chat`
+//     trigger (migration 20260810000003) must revoke the Buzz admission and
+//     binding and publish exactly one durable revocation event. This is the
+//     offboarding path that does NOT go through
+//     `ChatIdentityStore::revoke_principal` (covered above): admin/SCIM
+//     disable writes `users.disabled_at` only, so the row trigger is the sole
+//     writer. The event type/`data` shape below is the contract the Buzz
+//     bridge consumes, so it is asserted field by field.
+// ---------------------------------------------------------------------------
+
+/// Read the single `buzz.admission.revoked.v1` outbox row for `tenant`, with
+/// bounded retries. The trigger publishes inside the same transaction as the
+/// `UPDATE users`, so this succeeds on the first attempt; the bounded loop
+/// only keeps a future asynchronous publish from making the test flaky.
+async fn wait_for_revoked_outbox_event(
+    pool: &PgPool,
+    tenant: TenantId,
+) -> Option<(String, String, Uuid, Uuid, Uuid, serde_json::Value)> {
+    const REVOKED_EVENT: &str = "io.elembra.chat.buzz.admission.revoked.v1";
+    for _ in 0..40 {
+        let event = sqlx::query_as(
+            "SELECT source, application_id, event_id, tenant_id, workspace_id, event_json
+             FROM integration_outbox
+             WHERE tenant_id = $1 AND event_type = $2",
+        )
+        .bind(tenant.0)
+        .bind(REVOKED_EVENT)
+        .fetch_optional(pool)
+        .await
+        .unwrap();
+        if event.is_some() {
+            return event;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    None
+}
+
+async fn revoked_outbox_event_count(pool: &PgPool, tenant: TenantId) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM integration_outbox
+         WHERE tenant_id = $1 AND event_type = 'io.elembra.chat.buzz.admission.revoked.v1'",
+    )
+    .bind(tenant.0)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL"]
+async fn disabling_principal_revokes_chat_admission_and_publishes_one_event() {
+    let _guard = SERIAL.lock().await;
+    let pool = pool().await;
+
+    let env = setup_env(&pool).await;
+    let mapping_id = mapping_id_for_tenant(&pool, env.tenant).await;
+    let (binding_id, pubkey): (Uuid, String) = sqlx::query_as(
+        "SELECT binding_id, buzz_pubkey FROM chat_identity_bindings
+         WHERE tenant_id = $1 AND principal_id = $2",
+    )
+    .bind(env.tenant.0)
+    .bind(env.principal.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (admission_id,): (Uuid,) = sqlx::query_as(
+        "SELECT admission_id FROM chat_buzz_admissions
+         WHERE tenant_id = $1 AND binding_id = $2",
+    )
+    .bind(env.tenant.0)
+    .bind(binding_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Control principal in the same tenant: a disable must be principal-scoped.
+    let other = PrincipalId::from(Uuid::new_v4());
+    let other_keys = Keys::generate();
+    let other_binding =
+        insert_binding(&pool, env.tenant, other, &other_keys.public_key().to_hex()).await;
+    insert_admission(
+        &pool,
+        env.tenant,
+        mapping_id,
+        other_binding,
+        &other_keys.public_key().to_hex(),
+    )
+    .await;
+    insert_user(&pool, env.tenant, other).await;
+
+    // Control tenant: a disable must be tenant-scoped.
+    let foreign = setup_env(&pool).await;
+
+    assert_eq!(
+        revoked_outbox_event_count(&pool, env.tenant).await,
+        0,
+        "no revocation event exists before the principal is disabled"
+    );
+
+    // The out-of-band write every non-chat caller performs (admin + SCIM).
+    let before_disable = Utc::now();
+    let disabled_at: DateTime<Utc> = sqlx::query_scalar(
+        "UPDATE users SET disabled_at = now() WHERE id = $1 RETURNING disabled_at",
+    )
+    .bind(env.principal.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        disabled_at >= before_disable,
+        "the disable write stamps the new disabled_at"
+    );
+
+    // The admission is deactivated and stamped.
+    let (active, admission_revoked_at): (bool, Option<DateTime<Utc>>) = sqlx::query_as(
+        "SELECT active, revoked_at FROM chat_buzz_admissions WHERE admission_id = $1",
+    )
+    .bind(admission_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        !active,
+        "disabling the principal must deactivate the Buzz admission"
+    );
+    let admission_revoked_at = admission_revoked_at.expect("revocation stamps revoked_at");
+
+    // The binding is revoked.
+    let (binding_status, binding_revoked_at): (String, Option<DateTime<Utc>>) = sqlx::query_as(
+        "SELECT status, revoked_at FROM chat_identity_bindings WHERE binding_id = $1",
+    )
+    .bind(binding_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(binding_status, "revoked");
+    assert!(binding_revoked_at.is_some());
+
+    // Exactly one durable revocation event, shaped for the Buzz bridge.
+    let (source, application_id, event_id, event_tenant, event_workspace, payload) =
+        wait_for_revoked_outbox_event(&pool, env.tenant)
+            .await
+            .expect("disabling the principal must publish the revocation event");
+    assert_eq!(source, "elembra://io.elembra.chat");
+    assert_eq!(application_id, "io.elembra.chat");
+    assert_eq!(event_tenant, env.tenant.0);
+    assert_eq!(
+        event_workspace, env.tenant.0,
+        "tenant maps 1:1 to workspace"
+    );
+    assert_eq!(payload["specversion"], "1.0");
+    assert_eq!(payload["type"], "io.elembra.chat.buzz.admission.revoked.v1");
+    assert_eq!(payload["source"], "elembra://io.elembra.chat");
+    assert_eq!(payload["id"], event_id.to_string());
+    assert_eq!(payload["elembraTenant"], env.tenant.0.to_string());
+    assert_eq!(payload["elembraWorkspace"], env.tenant.0.to_string());
+    assert!(
+        payload["time"].as_str().is_some(),
+        "the envelope carries RFC 3339 time"
+    );
+    assert_eq!(payload["data"]["operation"], "revoke");
+    assert_eq!(payload["data"]["admission_id"], admission_id.to_string());
+    assert_eq!(payload["data"]["community_id"], env.community_id);
+    assert_eq!(payload["data"]["relay_url"], "wss://relay.example.test");
+    assert_eq!(payload["data"]["buzz_pubkey"], pubkey);
+    assert_eq!(
+        revoked_outbox_event_count(&pool, env.tenant).await,
+        1,
+        "exactly one revocation event per disable"
+    );
+
+    // The disable is audited exactly once for the chat identity.
+    let security_events: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM user_security_events
+         WHERE user_id = $1 AND event_type = 'chat.identity.revoked'",
+    )
+    .bind(env.principal.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(security_events, 1);
+
+    // Control principal and control tenant are untouched.
+    let (other_active, other_revoked_at): (bool, Option<DateTime<Utc>>) = sqlx::query_as(
+        "SELECT a.active, a.revoked_at FROM chat_buzz_admissions a
+         JOIN chat_identity_bindings b
+           ON b.tenant_id = a.tenant_id AND b.binding_id = a.binding_id
+         WHERE a.tenant_id = $1 AND b.principal_id = $2",
+    )
+    .bind(env.tenant.0)
+    .bind(other.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        other_active && other_revoked_at.is_none(),
+        "another principal in the same tenant must keep its admission"
+    );
+    let (foreign_status, foreign_active): (String, bool) = sqlx::query_as(
+        "SELECT b.status, a.active FROM chat_identity_bindings b
+         JOIN chat_buzz_admissions a
+           ON a.tenant_id = b.tenant_id AND a.binding_id = b.binding_id
+         WHERE b.tenant_id = $1 AND b.principal_id = $2",
+    )
+    .bind(foreign.tenant.0)
+    .bind(foreign.principal.0)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(foreign_status, "active");
+    assert!(foreign_active);
+    assert_eq!(revoked_outbox_event_count(&pool, foreign.tenant).await, 0);
+
+    // Repeating the disable write is not a second revocation: the trigger only
+    // fires on the NULL -> non-NULL transition, so the original stamps hold
+    // and no duplicate event reaches the bridge.
+    sqlx::query("UPDATE users SET disabled_at = now() WHERE id = $1")
+        .bind(env.principal.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(revoked_outbox_event_count(&pool, env.tenant).await, 1);
+    let (admission_revoked_at_again, binding_revoked_at_again): (
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+    ) = sqlx::query_as(
+        "SELECT a.revoked_at, b.revoked_at FROM chat_buzz_admissions a
+         JOIN chat_identity_bindings b
+           ON b.tenant_id = a.tenant_id AND b.binding_id = a.binding_id
+         WHERE a.admission_id = $1",
+    )
+    .bind(admission_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(admission_revoked_at_again, Some(admission_revoked_at));
+    assert_eq!(binding_revoked_at_again, binding_revoked_at);
+
+    // Re-enabling does not restore the revoked chat identity: a fresh Buzz
+    // admission requires a new binding, not the old one coming back.
+    sqlx::query("UPDATE users SET disabled_at = NULL WHERE id = $1")
+        .bind(env.principal.0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (active_after_reenable,): (bool,) =
+        sqlx::query_as("SELECT active FROM chat_buzz_admissions WHERE admission_id = $1")
+            .bind(admission_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        !active_after_reenable,
+        "re-enabling the principal must not reactivate the revoked Buzz admission"
+    );
+    let (status_after_reenable,): (String,) =
+        sqlx::query_as("SELECT status FROM chat_identity_bindings WHERE binding_id = $1")
+            .bind(binding_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status_after_reenable, "revoked");
+    assert_eq!(
+        revoked_outbox_event_count(&pool, env.tenant).await,
+        1,
+        "re-enabling must not publish a revocation event"
+    );
+
+    cleanup(&pool, env.tenant, env.principal).await;
+    cleanup(&pool, foreign.tenant, foreign.principal).await;
 }
 
 // ---------------------------------------------------------------------------

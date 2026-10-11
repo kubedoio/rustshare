@@ -1,5 +1,10 @@
 //! PostgreSQL regression for credential invalidation on account deactivation.
 //!
+//! Two paths: the SCIM-driven disable/delete flows (sessions deleted, device
+//! tokens and stale cookies rejected, content preserved) and a credential
+//! minted *before* an out-of-band `UPDATE users SET disabled_at`, which must
+//! stop authenticating without the credential itself being touched.
+//!
 //! Run against the explicitly configured disposable local PostgreSQL and
 //! RustFS services used by the integration workflow:
 //! `cargo test -p rustshare-server --test user_disable_credential_revocation_test -- --ignored --test-threads=1`
@@ -14,11 +19,28 @@ use axum::{
 };
 use bytes::Bytes;
 use sha2::{Digest, Sha256};
-use support::calendar_harness::{assert_local_database, setup_test_env, SERIAL};
+use support::calendar_harness::{assert_local_database, create_auth_token, setup_test_env, SERIAL};
 use tower::ServiceExt;
 use uuid::Uuid;
 
 type TestResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
+
+/// `GET /api/v1/me` authenticated with a bearer credential (JWT or device
+/// token) and no session cookie, i.e. the live-token path the extractor
+/// re-checks against `users.disabled_at` on every request.
+async fn get_me_with_bearer(app: &axum::Router, token: &str) -> TestResult<StatusCode> {
+    Ok(app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/me")
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())?,
+        )
+        .await?
+        .status())
+}
 
 struct CredentialRevocationResult {
     authenticated: StatusCode,
@@ -615,5 +637,189 @@ async fn disabling_user_revokes_credentials_and_stale_cookie_cannot_authenticate
     assert!(
         v2_delete_object_bytes_preserved,
         "SCIM v2 DELETE retains the exact owned object bytes"
+    );
+}
+
+struct LiveCredentialResult {
+    jwt_before_disable: StatusCode,
+    device_token_before_disable: StatusCode,
+    disabled: bool,
+    jwt_after_disable: StatusCode,
+    device_token_after_disable: StatusCode,
+    device_token_revoked_at: Option<chrono::DateTime<chrono::Utc>>,
+    jwt_after_reenable: StatusCode,
+    device_token_after_reenable: StatusCode,
+}
+
+/// A credential issued *before* the disable must stop working the moment
+/// `users.disabled_at` is set, without any credential-specific cleanup running
+/// on the credential itself: the extractor re-reads `disabled_at` per request
+/// (`server/src/handlers/extractors.rs::resolve_bearer_token`). Covers the
+/// live-token HTTP path that the SCIM-driven regression above does not: there
+/// the disabler and the credential check are the same incident, here the token
+/// is minted first and only the DB writes change.
+#[tokio::test]
+#[ignore = "requires explicitly configured disposable local PostgreSQL and RustFS"]
+async fn live_credentials_issued_before_disable_are_rejected_while_disabled() {
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL to an explicitly disposable local database");
+    assert_disposable_database(&database_url);
+    assert_local_database();
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE")
+            .ok()
+            .as_deref(),
+        Some("1"),
+        "set RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE=1 only for disposable local RustFS"
+    );
+
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let tenant_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    let device_token = format!("live-credential-test-{}", Uuid::new_v4());
+    let device_token_hash = hex::encode(Sha256::digest(device_token.as_bytes()));
+
+    let attempt: TestResult<LiveCredentialResult> = async {
+        sqlx::query(
+            "INSERT INTO tenants (id, name, created_at, updated_at)
+             VALUES ($1, $2, NOW(), NOW())",
+        )
+        .bind(tenant_id)
+        .bind(format!("Live credential test {tenant_id}"))
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO users
+                (id, username, email, password_hash, display_name,
+                 storage_quota, tenant_id)
+             VALUES ($1, $2, $3, 'test-password-hash', $2, 10737418240, $4)",
+        )
+        .bind(user_id)
+        .bind(format!("live_credential_{}", user_id.simple()))
+        .bind(format!("live-credential-{}@test.local", user_id.simple()))
+        .bind(tenant_id)
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO device_tokens (id, user_id, token_hash, device_name)
+             VALUES ($1, $2, $3, 'live credential regression')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(user_id)
+        .bind(&device_token_hash)
+        .execute(&pool)
+        .await?;
+
+        // Minted before the disable, valid for 24h: expiry is not what
+        // must reject it.
+        let jwt = create_auth_token(&state, user_id, tenant_id);
+        let app = rustshare_server::routes::user_routes().with_state(state.clone());
+
+        let jwt_before_disable = get_me_with_bearer(&app, &jwt).await?;
+        let device_token_before_disable = get_me_with_bearer(&app, &device_token).await?;
+
+        sqlx::query("UPDATE users SET disabled_at = NOW() WHERE id = $1")
+            .bind(user_id)
+            .execute(&pool)
+            .await?;
+
+        let disabled = sqlx::query_scalar::<_, bool>(
+            "SELECT disabled_at IS NOT NULL FROM users WHERE id = $1",
+        )
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await?;
+        let jwt_after_disable = get_me_with_bearer(&app, &jwt).await?;
+        let device_token_after_disable = get_me_with_bearer(&app, &device_token).await?;
+        let device_token_revoked_at =
+            sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+                "SELECT revoked_at FROM device_tokens
+                 WHERE user_id = $1 AND token_hash = $2",
+            )
+            .bind(user_id)
+            .bind(&device_token_hash)
+            .fetch_one(&pool)
+            .await?;
+
+        // Re-enable: the stateless JWT has no server-side revocation list,
+        // so it is honored again until its own `exp`. The device token is
+        // revoked for good. Asserting both documents the residual exposure
+        // window rather than endorsing it.
+        sqlx::query("UPDATE users SET disabled_at = NULL WHERE id = $1")
+            .bind(user_id)
+            .execute(&pool)
+            .await?;
+        let jwt_after_reenable = get_me_with_bearer(&app, &jwt).await?;
+        let device_token_after_reenable = get_me_with_bearer(&app, &device_token).await?;
+
+        Ok(LiveCredentialResult {
+            jwt_before_disable,
+            device_token_before_disable,
+            disabled,
+            jwt_after_disable,
+            device_token_after_disable,
+            device_token_revoked_at,
+            jwt_after_reenable,
+            device_token_after_reenable,
+        })
+    }
+    .await;
+
+    let mut cleanup_errors = Vec::new();
+    for (statement, id) in [
+        ("DELETE FROM users WHERE id = $1", user_id),
+        ("DELETE FROM tenants WHERE id = $1", tenant_id),
+    ] {
+        if let Err(error) = sqlx::query(statement).bind(id).execute(&pool).await {
+            cleanup_errors.push(format!("{statement}: {error}"));
+        }
+    }
+    if !cleanup_errors.is_empty() {
+        panic!(
+            "failed to clean up disposable live-credential fixtures: {}",
+            cleanup_errors.join("; ")
+        );
+    }
+
+    let LiveCredentialResult {
+        jwt_before_disable,
+        device_token_before_disable,
+        disabled,
+        jwt_after_disable,
+        device_token_after_disable,
+        device_token_revoked_at,
+        jwt_after_reenable,
+        device_token_after_reenable,
+    } = attempt.expect("complete live-credential regression");
+    assert_eq!(jwt_before_disable, StatusCode::OK);
+    assert_eq!(device_token_before_disable, StatusCode::OK);
+    assert!(disabled, "the disable write must stick");
+    assert_eq!(
+        jwt_after_disable,
+        StatusCode::UNAUTHORIZED,
+        "a JWT issued before the disable must be rejected while disabled_at is set"
+    );
+    assert_eq!(
+        device_token_after_disable,
+        StatusCode::UNAUTHORIZED,
+        "a device token issued before the disable must be rejected while disabled_at is set"
+    );
+    assert!(
+        device_token_revoked_at.is_some(),
+        "the disable trigger revokes the device token"
+    );
+    assert_eq!(
+        jwt_after_reenable,
+        StatusCode::OK,
+        "re-enabling restores the pre-disable JWT until its own expiry (no server-side JWT revocation list)"
+    );
+    assert_eq!(
+        device_token_after_reenable,
+        StatusCode::UNAUTHORIZED,
+        "a revoked device token stays revoked across re-enable"
     );
 }
