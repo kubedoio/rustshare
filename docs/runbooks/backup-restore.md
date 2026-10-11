@@ -207,6 +207,11 @@ Prove backups are recoverable without touching production:
 5. Tears down the drill stack (unless `DRILL_KEEP_STACK=true`).
 6. Writes a report to `./restore-drill-reports/`.
 
+The report records `RESTORE_DRILL_STATUS=passed` or `failed`. Failure
+paths — including pre-flight failures where the drill never started, such
+as another drill holding the project lock — also write a `failed` report
+with details, so interrupted or refused drills leave explicit evidence.
+
 The drill refuses to start if resources with the selected Compose project label already exist. It never clears a previous stack automatically: inspect those resources and explicitly remove them only after confirming they belong to this disposable drill project. This protects existing Docker data from an accidental `down -v`.
 
 ### Environment Overrides

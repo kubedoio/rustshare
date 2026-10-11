@@ -203,6 +203,8 @@ DRILL_LOCK_FILE="/tmp/rustshare-restore-drill-${DRILL_LOCK_KEY}.lock"
 exec {DRILL_LOCK_FD}>"${DRILL_LOCK_FILE}"
 if ! flock -n "${DRILL_LOCK_FD}"; then
 	echo "Another restore drill is already running for project '${DRILL_PROJECT_NAME}' (lock: ${DRILL_LOCK_FILE})." >&2
+	write_report "failed" "Restore drill did not start: another restore drill is already running for project '${DRILL_PROJECT_NAME}'."
+	trap - ERR EXIT
 	exit 1
 fi
 
@@ -285,6 +287,7 @@ fi
 
 if ! cleanup; then
 	write_report "failed" "Restore drill completed its checks but cleanup failed. Inspect the isolated compose project."
+	trap - ERR EXIT
 	exit 1
 fi
 write_report "passed" "Restore drill completed successfully in isolated Docker Compose project."
