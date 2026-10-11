@@ -6,6 +6,9 @@ permissions:
 on:
   pull_request:
     branches: [main]
+  # Merge-queue candidates must pass DCO before they can merge.
+  merge_group:
+    branches: [main]
   push:
     branches: [main]
 
@@ -27,6 +30,18 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="origin/${{ github.base_ref }}"
             HEAD_COMMIT="${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event_name }}" = "merge_group" ]; then
+            # The merge-group payload names the exact candidate range:
+            # base_sha is the target-branch base and head_sha is the tip of
+            # the queued batch. This validates every queued PR's commits for
+            # any batch size; the push-event `before` field and `HEAD~1` do
+            # not describe this range and must not be used here.
+            BASE="${{ github.event.merge_group.base_sha }}"
+            HEAD_COMMIT="${{ github.event.merge_group.head_sha }}"
+            if ! git merge-base --is-ancestor "${BASE}" "${HEAD_COMMIT}"; then
+              echo "Merge-group base ${BASE} is not an ancestor of ${HEAD_COMMIT}" >&2
+              exit 1
+            fi
           elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ] || ! git merge-base --is-ancestor "${{ github.event.before }}" HEAD >/dev/null 2>&1; then
             BASE="HEAD~1"
             HEAD_COMMIT="HEAD"
