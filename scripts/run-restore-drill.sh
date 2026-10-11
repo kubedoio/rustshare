@@ -184,7 +184,7 @@ cleanup() {
 on_error() {
 	local exit_code=$?
 	local cleanup_details=""
-	trap - ERR
+	trap - ERR EXIT
 	if ! cleanup; then
 		cleanup_details=" Cleanup failed; resources for '${DRILL_PROJECT_NAME}' may remain."
 		echo "Restore drill cleanup failed for project '${DRILL_PROJECT_NAME}'." >&2
@@ -193,7 +193,7 @@ on_error() {
 	exit "${exit_code}"
 }
 
-trap on_error ERR
+trap on_error ERR EXIT
 
 cd "${PROJECT_ROOT}"
 
@@ -203,6 +203,8 @@ DRILL_LOCK_FILE="/tmp/rustshare-restore-drill-${DRILL_LOCK_KEY}.lock"
 exec {DRILL_LOCK_FD}>"${DRILL_LOCK_FILE}"
 if ! flock -n "${DRILL_LOCK_FD}"; then
 	echo "Another restore drill is already running for project '${DRILL_PROJECT_NAME}' (lock: ${DRILL_LOCK_FILE})." >&2
+	write_report "failed" "Restore drill did not start: another restore drill is already running for project '${DRILL_PROJECT_NAME}'."
+	trap - ERR EXIT
 	exit 1
 fi
 
@@ -285,10 +287,11 @@ fi
 
 if ! cleanup; then
 	write_report "failed" "Restore drill completed its checks but cleanup failed. Inspect the isolated compose project."
+	trap - ERR EXIT
 	exit 1
 fi
 write_report "passed" "Restore drill completed successfully in isolated Docker Compose project."
-trap - ERR
+trap - ERR EXIT
 
 echo "Restore drill passed."
 echo "Report written to ${REPORT_PATH}"
