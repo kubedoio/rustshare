@@ -9,6 +9,7 @@ permissions:
   contents: read
   security-events: write
 
+# merge_group is deliberately omitted: CodeQL is not a required check (add it if it ever becomes one).
 on:
   pull_request:
     branches: [main]
