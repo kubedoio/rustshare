@@ -1347,25 +1347,57 @@ jobs:
         run: |
           set -euo pipefail
           source pilot-image-artifact/tested-image.env
-          [[ "${SOURCE_SHA}" == "${EXPECTED_SHA}" ]]
-          [[ "${IMAGE_REVISION}" == "${EXPECTED_SHA}" ]]
-          [[ "${WORKFLOW_RUN_ID}" == "${EXPECTED_RUN_ID}" ]]
-          [[ "${WORKFLOW_RUN_ATTEMPT}" == "${EXPECTED_RUN_ATTEMPT}" ]]
-          [[ "${IMAGE_VERSION}" == "pilot-${EXPECTED_SHA:0:12}" ]]
+
+          # Fail closed, but report exactly which provenance field mismatched:
+          # the previous silent `[[ ... ]]` chain made rerun failures
+          # undebuggable (see the publish-pilot-image investigation).
+          require_field() {
+            local field="$1" actual="$2" expected="$3"
+            if [[ "${actual}" != "${expected}" ]]; then
+              echo "Pilot image provenance mismatch for ${field}: expected '${expected}', got '${actual}'. Refusing to publish." >&2
+              exit 1
+            fi
+          }
+
+          require_field SOURCE_SHA "${SOURCE_SHA}" "${EXPECTED_SHA}"
+          require_field IMAGE_REVISION "${IMAGE_REVISION}" "${EXPECTED_SHA}"
+          require_field WORKFLOW_RUN_ID "${WORKFLOW_RUN_ID}" "${EXPECTED_RUN_ID}"
+          require_field IMAGE_VERSION "${IMAGE_VERSION}" "pilot-${EXPECTED_SHA:0:12}"
+
+          # Attempt semantics: when a workflow is re-run ("Re-run failed
+          # jobs"), this job executes at attempt N+1 while the tested-image
+          # artifact was produced by pilot-compose-smoke at attempt N. The
+          # attempt number is execution metadata, not content identity: content
+          # is bound by SOURCE_SHA/IMAGE_REVISION == github.sha and
+          # WORKFLOW_RUN_ID == github.run_id; ARCHIVE_SHA256 additionally proves
+          # transit integrity of the archive. Requiring exact
+          # attempt equality made every legitimate re-run die in this step
+          # (observed on run 37496000263). Accept any attempt of the same run
+          # id that is not newer than the current one.
+          if [[ ! "${WORKFLOW_RUN_ATTEMPT}" =~ ^[0-9]+$ ]] \
+            || [[ ! "${EXPECTED_RUN_ATTEMPT}" =~ ^[0-9]+$ ]] \
+            || (( 10#${WORKFLOW_RUN_ATTEMPT} > 10#${EXPECTED_RUN_ATTEMPT} )); then
+            echo "Pilot image provenance mismatch for WORKFLOW_RUN_ATTEMPT: recorded '${WORKFLOW_RUN_ATTEMPT}', current attempt '${EXPECTED_RUN_ATTEMPT}'. Refusing to publish." >&2
+            exit 1
+          fi
+
           ARCHIVE=pilot-image-artifact/rustshare-backend-pilot.tar
           ACTUAL_ARCHIVE_SHA256="$(sha256sum "${ARCHIVE}" | cut -d' ' -f1)"
-          [[ "${ACTUAL_ARCHIVE_SHA256}" == "${ARCHIVE_SHA256}" ]]
+          require_field ARCHIVE_SHA256 "${ACTUAL_ARCHIVE_SHA256}" "${ARCHIVE_SHA256}"
           docker load --input "${ARCHIVE}"
           ACTUAL_IMAGE_ID="$(docker image inspect rustshare-backend:pilot --format '{{.Id}}')"
           ACTUAL_IMAGE_REVISION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
           ACTUAL_IMAGE_VERSION="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
-          [[ "${ACTUAL_IMAGE_ID}" == "${IMAGE_ID}" ]]
-          [[ "${ACTUAL_IMAGE_REVISION}" == "${EXPECTED_SHA}" ]]
-          [[ "${ACTUAL_IMAGE_VERSION}" == "${IMAGE_VERSION}" ]]
+          require_field IMAGE_ID "${ACTUAL_IMAGE_ID}" "${IMAGE_ID}"
+          require_field IMAGE_REVISION "${ACTUAL_IMAGE_REVISION}" "${EXPECTED_SHA}"
+          require_field IMAGE_VERSION "${ACTUAL_IMAGE_VERSION}" "${IMAGE_VERSION}"
+          echo "Verified tested pilot image ${IMAGE_ID} from run ${WORKFLOW_RUN_ID} attempt ${WORKFLOW_RUN_ATTEMPT} (source ${EXPECTED_SHA}; publishing at attempt ${EXPECTED_RUN_ATTEMPT})."
           echo "image_id=${IMAGE_ID}" >> "$GITHUB_OUTPUT"
           echo "image_revision=${IMAGE_REVISION}" >> "$GITHUB_OUTPUT"
           echo "archive_sha256=${ARCHIVE_SHA256}" >> "$GITHUB_OUTPUT"
           echo "image_version=${IMAGE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tested_run_id=${WORKFLOW_RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "tested_run_attempt=${WORKFLOW_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -1446,6 +1478,8 @@ jobs:
           SOURCE_SHA=${GITHUB_SHA}
           WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
           WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
+          TESTED_WORKFLOW_RUN_ID=${{ steps.image.outputs.tested_run_id }}
+          TESTED_WORKFLOW_RUN_ATTEMPT=${{ steps.image.outputs.tested_run_attempt }}
           IMAGE_VERSION=${{ steps.image.outputs.image_version }}
           IMAGE_REVISION=${{ steps.image.outputs.image_revision }}
           IMAGE_ID=${{ steps.image.outputs.image_id }}
