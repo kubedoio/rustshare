@@ -160,8 +160,7 @@ pub async fn create_from_template(
         None,
         json!({
             "template_key": body.template_key,
-            "object_id": object.object_id.to_string(),
-            "path": object.path
+            "object_id": object.object_id.to_string()
         }),
     )
     .await;

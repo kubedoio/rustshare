@@ -8,7 +8,7 @@ use rustshare_core::{
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde_json::json;
-use sqlx::Row;
+use sqlx::{Postgres, Row, Transaction};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -680,6 +680,7 @@ rustshare:
         request: CreateTemplateRequest,
         created_by: Uuid,
         tenant_id: Uuid,
+        tx: &mut Transaction<'_, Postgres>,
     ) -> Result<Template, TemplateError> {
         // Validate uniqueness
         let exists = sqlx::query_scalar::<_, bool>(
@@ -687,7 +688,7 @@ rustshare:
         )
         .bind(&request.template_key)
         .bind(tenant_id)
-        .fetch_one(self.metadata_store.pool())
+        .fetch_one(&mut **tx)
         .await?;
 
         if exists {
@@ -776,7 +777,7 @@ rustshare:
         .bind(template.enabled)
         .bind(template.system_template)
         .bind(template.tenant_id)
-        .execute(self.metadata_store.pool())
+        .execute(&mut **tx)
         .await?;
 
         Ok(template)
@@ -912,8 +913,16 @@ rustshare:
         key: &str,
         request: UpdateTemplateRequest,
         tenant_id: Uuid,
+        tx: &mut Transaction<'_, Postgres>,
     ) -> Result<Template, TemplateError> {
-        let template = self.get_template(key, tenant_id).await?;
+        let template = sqlx::query_as::<_, Template>(
+            "SELECT * FROM templates WHERE template_key = $1 AND tenant_id = $2 FOR UPDATE",
+        )
+        .bind(key)
+        .bind(tenant_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(|| TemplateError::NotFound(key.to_string()))?;
 
         if let Some(folders) = request.folder_structure.as_ref() {
             for folder in folders {
@@ -994,15 +1003,34 @@ rustshare:
         .bind(application_config)
         .bind(key)
         .bind(tenant_id)
-        .execute(self.metadata_store.pool())
+        .execute(&mut **tx)
         .await?;
 
-        self.get_template(key, tenant_id).await
+        sqlx::query_as::<_, Template>(
+            "SELECT * FROM templates WHERE template_key = $1 AND tenant_id = $2",
+        )
+        .bind(key)
+        .bind(tenant_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(TemplateError::from)
     }
 
     /// Delete a template. Predefined templates cannot be deleted; they are disabled.
-    pub async fn delete_template(&self, key: &str, tenant_id: Uuid) -> Result<(), TemplateError> {
-        let template = self.get_template(key, tenant_id).await?;
+    pub async fn delete_template(
+        &self,
+        key: &str,
+        tenant_id: Uuid,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<Template, TemplateError> {
+        let template = sqlx::query_as::<_, Template>(
+            "SELECT * FROM templates WHERE template_key = $1 AND tenant_id = $2 FOR UPDATE",
+        )
+        .bind(key)
+        .bind(tenant_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(|| TemplateError::NotFound(key.to_string()))?;
 
         // Prevent deletion of predefined templates
         if template.system_template {
@@ -1011,15 +1039,12 @@ rustshare:
             ));
         }
 
-        sqlx::query!(
-            "DELETE FROM templates WHERE template_key = $1 AND tenant_id = $2",
-            key,
-            tenant_id
-        )
-        .execute(self.metadata_store.pool())
-        .await?;
+        sqlx::query("DELETE FROM templates WHERE id = $1")
+            .bind(template.id)
+            .execute(&mut **tx)
+            .await?;
 
-        Ok(())
+        Ok(template)
     }
 
     /// Instantiate an object from a template.

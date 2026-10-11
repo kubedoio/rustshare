@@ -796,6 +796,20 @@ mod tests {
     }
 
     #[test]
+    fn from_env_reports_short_jwt_secret_as_invalid_configuration() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::set_var("JWT_SECRET", "weak");
+
+        let errors = AppConfig::from_env().expect_err("short JWT secret must prevent startup");
+        std::env::set_var("JWT_SECRET", "test-jwt-secret-0123456789abcdef0123456789");
+
+        assert!(errors.iter().any(|error| {
+            error == "JWT_SECRET must be at least 32 characters. Generate one with: openssl rand -base64 32"
+        }));
+    }
+
+    #[test]
     fn chat_authority_defaults_to_local() {
         let _guard = ENV_LOCK.lock().unwrap();
         set_valid_base_env();

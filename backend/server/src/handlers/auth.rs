@@ -62,8 +62,11 @@ async fn check_ip_block(state: &AppState, ip: &str) -> Result<(), AppError> {
     match state.metadata_store.is_ip_blocked(ip).await {
         Ok(true) => Err(AppError::TooManyRequests),
         Ok(false) => Ok(()),
-        Err(e) => {
-            tracing::warn!("Failed to check IP block status: {}", e);
+        Err(_) => {
+            tracing::warn!(
+                stage = "password_login.ip_block_check",
+                "Password login dependency operation failed"
+            );
             Ok(())
         }
     }
@@ -78,10 +81,9 @@ async fn validate_credentials(
         Some(tenant_id) => metadata_store
             .find_user_by_email_and_tenant(&req.email, tenant_id)
             .await
-            .map_err(|e| AppError::internal(e.to_string()))?,
+            .map_err(|_| AppError::internal("password_login.user_lookup_tenant"))?,
         None => {
             tracing::warn!(
-                email = %req.email,
                 "Password login performed without tenant scoping; falling back to unscoped email lookup"
             );
             // After dropping the global email unique constraint, an unscoped
@@ -91,18 +93,20 @@ async fn validate_credentials(
             let count = metadata_store
                 .count_users_by_email(&req.email)
                 .await
-                .map_err(|e| AppError::internal(e.to_string()))?;
+                .map_err(|_| AppError::internal("password_login.user_count"))?;
             if count > 1 {
                 tracing::warn!(
-                    email = %req.email,
                     count,
                     "Rejecting unscoped login because email is ambiguous across tenants"
                 );
                 // Constant-time path: keep timing indistinguishable.
                 drop(PasswordHasher::verify("dummy", DUMMY_HASH));
                 if let Some(ip) = ip {
-                    if let Err(e) = metadata_store.record_login_failure(ip).await {
-                        tracing::warn!("Failed to record login failure: {}", e);
+                    if metadata_store.record_login_failure(ip).await.is_err() {
+                        tracing::warn!(
+                            stage = "password_login.record_failure",
+                            "Password login dependency operation failed"
+                        );
                     }
                 }
                 return Err(AppError::Unauthorized);
@@ -111,7 +115,7 @@ async fn validate_credentials(
             let user = metadata_store
                 .find_user_by_email(&req.email)
                 .await
-                .map_err(|e| AppError::internal(e.to_string()))?;
+                .map_err(|_| AppError::internal("password_login.user_lookup"))?;
             user
         }
     };
@@ -124,8 +128,11 @@ async fn validate_credentials(
             drop(PasswordHasher::verify("dummy", DUMMY_HASH));
 
             if let Some(ip) = ip {
-                if let Err(e) = metadata_store.record_login_failure(ip).await {
-                    tracing::warn!("Failed to record login failure: {}", e);
+                if metadata_store.record_login_failure(ip).await.is_err() {
+                    tracing::warn!(
+                        stage = "password_login.record_failure",
+                        "Password login dependency operation failed"
+                    );
                 }
             }
             return Err(AppError::Unauthorized);
@@ -133,20 +140,26 @@ async fn validate_credentials(
     };
 
     let is_valid = PasswordHasher::verify(&req.password, &user.password_hash)
-        .map_err(|e| AppError::internal(e.to_string()))?;
+        .map_err(|_| AppError::internal("password_login.password_hash_verify"))?;
 
     if !is_valid {
         if let Some(ip) = ip {
-            if let Err(e) = metadata_store.record_login_failure(ip).await {
-                tracing::warn!("Failed to record login failure: {}", e);
+            if metadata_store.record_login_failure(ip).await.is_err() {
+                tracing::warn!(
+                    stage = "password_login.record_failure",
+                    "Password login dependency operation failed"
+                );
             }
         }
         return Err(AppError::Unauthorized);
     }
 
     if let Some(ip) = ip {
-        if let Err(e) = metadata_store.clear_login_attempts(ip).await {
-            tracing::warn!("Failed to clear login attempts: {}", e);
+        if metadata_store.clear_login_attempts(ip).await.is_err() {
+            tracing::warn!(
+                stage = "password_login.clear_attempts",
+                "Password login dependency operation failed"
+            );
         }
     }
 
@@ -207,7 +220,7 @@ pub async fn login(
     let token = state
         .jwt_manager
         .generate(user.id, user.email.clone(), user.tenant_id)
-        .map_err(|e| AppError::internal(e.to_string()))?;
+        .map_err(|_| AppError::internal("password_login.jwt_generation"))?;
 
     let user_agent = headers
         .get(header::USER_AGENT)
@@ -222,9 +235,9 @@ pub async fn login(
         ip_address.clone(),
     )
     .await
-    .map_err(AppError::internal)?;
+    .map_err(|_| AppError::internal("password_login.session_creation"))?;
 
-    if let Err(error) = log_user_security_event(
+    if log_user_security_event(
         &state,
         rustshare_storage::UserSecurityEventRecord {
             user_id: user.id,
@@ -236,10 +249,11 @@ pub async fn login(
         },
     )
     .await
+    .is_err()
     {
         tracing::warn!(
-            "Failed to record password login security event: {:?}",
-            error
+            stage = "password_login.security_event",
+            "Password login dependency operation failed"
         );
     }
 
@@ -247,12 +261,12 @@ pub async fn login(
     response_headers.insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&build_session_cookie(&session_token))
-            .map_err(|e| AppError::internal(e.to_string()))?,
+            .map_err(|_| AppError::internal("password_login.session_cookie"))?,
     );
     response_headers.append(
         header::SET_COOKIE,
         HeaderValue::from_str(&build_csrf_cookie(&csrf_token))
-            .map_err(|e| AppError::internal(e.to_string()))?,
+            .map_err(|_| AppError::internal("password_login.csrf_cookie"))?,
     );
 
     Ok((response_headers, Json(build_login_response(token, user))).into_response())

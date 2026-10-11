@@ -3,12 +3,13 @@
 //! Extracted from the four calendar suites (api, import, google sync, outlook
 //! sync) so a new DB-backed test costs ~10 lines instead of ~350.
 //!
-//! Safety guard: every entry point asserts that `DATABASE_URL`'s host is
-//! `localhost`, `127.0.0.1`, `::1`, or the docker service name `postgres`,
-//! refusing to run otherwise. This blocks accidental fixture writes into a
-//! deployment database (leaked `@test.local` rows were previously found in the
-//! dev deployment DB). Set `RUSTSHARE_TEST_ALLOW_REMOTE_DB=1` to override, and
-//! only when you are certain the target is a throwaway database.
+//! Safety guards: every entry point asserts that `DATABASE_URL` names a
+//! `rustshare_test*` database on loopback and that object storage uses a
+//! loopback endpoint on the repository's test ports plus a `rustshare-test*`
+//! bucket. This blocks accidental fixture writes into deployment services.
+//! Set `RUSTSHARE_TEST_ALLOW_REMOTE_DB=1` only to permit a remote
+//! `rustshare_test*` database when you are certain it is disposable; the
+//! object-storage guard has no remote override.
 //!
 //! DB-backed tests remain `#[ignore]`d and must run with `--test-threads=1`;
 //! each binary's `SERIAL` guard serializes individual tests within the binary.
@@ -32,10 +33,11 @@ pub use super::mock_provider::{TEST_ACCESS_TOKEN, TEST_REFRESH_TOKEN};
 /// chat-bootstrap suite). Each calendar suite compiles its own instance.
 pub static SERIAL: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-/// The database URL the tests will use, defaulting to a local dev database.
+/// The database URL the tests will use, defaulting to a local test database.
 pub fn database_url() -> String {
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string())
+    std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgres://rustshare:changeme@localhost:5432/rustshare_test".to_string()
+    })
 }
 
 /// The host of a Postgres URL, tolerating a missing userinfo section.
@@ -60,7 +62,43 @@ fn database_host(url: &str) -> String {
 }
 
 fn is_local_host(host: &str) -> bool {
-    matches!(host, "localhost" | "127.0.0.1" | "::1" | "postgres")
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
+fn is_test_database_name(name: &str) -> bool {
+    name == "rustshare_test" || name.starts_with("rustshare_test_")
+}
+
+fn is_local_object_store_host(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
+}
+
+fn assert_local_object_store_with(endpoint: &str, bucket: &str) {
+    let Ok(parsed) = url::Url::parse(endpoint) else {
+        panic!("refusing object-store test endpoint: invalid URL");
+    };
+    let Some(host) = parsed.host_str() else {
+        panic!("refusing object-store test endpoint: missing host");
+    };
+    let authority_has_userinfo = endpoint
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split(['/', '?', '#']).next())
+        .is_some_and(|authority| authority.contains('@'));
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !is_local_object_store_host(host)
+        || !matches!(parsed.port_or_known_default(), Some(9000 | 19000))
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || authority_has_userinfo
+    {
+        panic!("refusing non-local object-store test endpoint host `{host}`");
+    }
+    if !(bucket == "rustshare-test"
+        || bucket.starts_with("rustshare-test-")
+        || bucket.starts_with("rustshare-test_"))
+    {
+        panic!("refusing object-store test bucket outside rustshare-test namespace");
+    }
 }
 
 /// Refuse to run DB-backed tests against a non-local database unless the
@@ -71,15 +109,21 @@ pub fn assert_local_database() {
 }
 
 fn assert_local_database_with(url: &str, override_enabled: bool) {
-    if override_enabled {
-        return;
+    let Ok(parsed) = url::Url::parse(url) else {
+        panic!("refusing calendar DB tests: DATABASE_URL is not a valid URL");
+    };
+    let database_name = parsed.path().trim_start_matches('/');
+    if !is_test_database_name(database_name) {
+        panic!(
+            "refusing calendar DB tests unless DATABASE_URL names rustshare_test or rustshare_test_*"
+        );
     }
     let host = database_host(url);
-    if !is_local_host(&host) {
+    if !override_enabled && !is_local_host(&host) {
         panic!(
             "refusing to run calendar DB tests against DATABASE_URL host `{host}`: \
              these tests write fixture rows (tenants, users, calendar sources). \
-             Point DATABASE_URL at a local/throwaway database, or set \
+             Point DATABASE_URL at a loopback rustshare_test database, or set \
              RUSTSHARE_TEST_ALLOW_REMOTE_DB=1 to override."
         );
     }
@@ -164,6 +208,8 @@ async fn setup_test_env_inner(calendar_outbox: bool, providers: TestProviders) -
     let s3_bucket = std::env::var("S3_BUCKET")
         .or_else(|_| std::env::var("RUSTFS_BUCKET"))
         .unwrap_or_else(|_| "rustshare".to_string());
+
+    assert_local_object_store_with(&s3_endpoint, &s3_bucket);
 
     let object_store = Arc::new(
         rustshare_storage::ObjectStore::new_with_options(
@@ -842,20 +888,20 @@ impl SyncHarness {
 
 #[cfg(test)]
 mod guard_tests {
-    use super::{assert_local_database, assert_local_database_with, database_host, is_local_host};
+    use super::{
+        assert_local_database_with, assert_local_object_store_with, database_host, is_local_host,
+    };
 
     #[test]
     fn host_parses_local_urls_with_and_without_credentials_or_port() {
         for url in [
-            "postgres://localhost/db",
-            "postgres://localhost:5432/db",
-            "postgres://u:p@localhost:5432/db",
-            "postgres://127.0.0.1/db",
-            "postgres://u:p@127.0.0.1:5432/db",
-            "postgres://[::1]/db",
-            "postgres://[::1]:5432/db",
-            "postgres://postgres/db",
-            "postgres://u:p@postgres:5432/db",
+            "postgres://localhost/rustshare_test",
+            "postgres://localhost:5432/rustshare_test",
+            "postgres://u:p@localhost:5432/rustshare_test",
+            "postgres://127.0.0.1/rustshare_test",
+            "postgres://u:p@127.0.0.1:5432/rustshare_test",
+            "postgres://[::1]/rustshare_test",
+            "postgres://[::1]:5432/rustshare_test",
         ] {
             let host = database_host(url);
             assert!(is_local_host(&host), "{url} parsed to host `{host}`");
@@ -881,10 +927,10 @@ mod guard_tests {
     #[test]
     fn guard_refuses_remote_hosts_with_and_without_credentials() {
         for url in [
-            "postgres://deploy.example.com/db",
-            "postgres://deploy.example.com:5432/db",
-            "postgres://u:p@deploy.example.com/db",
-            "postgres://u:p@deploy.example.com:5432/db",
+            "postgres://deploy.example.com/rustshare_test",
+            "postgres://deploy.example.com:5432/rustshare_test",
+            "postgres://u:p@deploy.example.com/rustshare_test",
+            "postgres://u:p@deploy.example.com:5432/rustshare_test",
         ] {
             let result = std::panic::catch_unwind(|| assert_local_database_with(url, false));
             assert!(result.is_err(), "{url} must be refused");
@@ -894,23 +940,73 @@ mod guard_tests {
     #[test]
     fn guard_allows_local_hosts_and_remote_override() {
         for url in [
-            "postgres://localhost/db",
-            "postgres://127.0.0.1:5432/db",
-            "postgres://[::1]/db",
-            "postgres://postgres:5432/db",
+            "postgres://localhost/rustshare_test",
+            "postgres://127.0.0.1:5432/rustshare_test",
+            "postgres://[::1]/rustshare_test",
         ] {
             assert_local_database_with(url, false);
         }
-        // The documented opt-out lets a remote URL through.
-        assert_local_database_with("postgres://deploy.example.com/db", true);
+        assert_local_database_with("postgres://deploy.example.com/rustshare_test", true);
     }
 
     #[test]
-    fn guard_env_override_is_honoured() {
-        std::env::set_var("DATABASE_URL", "postgres://deploy.example.com/db");
-        std::env::set_var("RUSTSHARE_TEST_ALLOW_REMOTE_DB", "1");
-        assert_local_database();
-        std::env::remove_var("RUSTSHARE_TEST_ALLOW_REMOTE_DB");
-        std::env::remove_var("DATABASE_URL");
+    fn database_guard_refuses_non_test_names_and_postgres_alias_without_override() {
+        for url in [
+            "postgres://localhost/rustshare",
+            "postgres://postgres/rustshare_test",
+            "postgres://deploy.example.com/rustshare",
+        ] {
+            let result = std::panic::catch_unwind(|| assert_local_database_with(url, false));
+            assert!(result.is_err(), "{url} must be refused without override");
+        }
+        for url in [
+            "postgres://localhost/rustshare",
+            "postgres://deploy.example.com/rustshare",
+        ] {
+            let result = std::panic::catch_unwind(|| assert_local_database_with(url, true));
+            assert!(result.is_err(), "{url} must be refused even with override");
+        }
+    }
+
+    #[test]
+    fn object_store_guard_allows_local_test_endpoints_and_buckets() {
+        for endpoint in [
+            "http://localhost:19000",
+            "http://127.0.0.1:9000",
+            "http://[::1]:9000",
+            "https://localhost:19000",
+        ] {
+            for bucket in ["rustshare-test", "rustshare-test-oidc", "rustshare-test_ci"] {
+                assert_local_object_store_with(endpoint, bucket);
+            }
+        }
+    }
+
+    #[test]
+    fn object_store_guard_refuses_remote_endpoints_and_non_test_buckets() {
+        for endpoint in [
+            "https://objects.example.com",
+            "http://192.168.1.10:9000",
+            "http://localhost.evil.example:9000",
+            "http://localhost@evil.example:9000",
+            "http://user:password@localhost:19000",
+            "http://@localhost:9000",
+            "http://localhost:9009",
+            "http://rustfs:9000",
+            "ftp://localhost:9000",
+            "not a URL",
+        ] {
+            let result = std::panic::catch_unwind(|| {
+                assert_local_object_store_with(endpoint, "rustshare-test")
+            });
+            assert!(result.is_err(), "endpoint `{endpoint}` must be refused");
+        }
+
+        for bucket in ["rustshare", "production", "rustshare-testevil"] {
+            let result = std::panic::catch_unwind(|| {
+                assert_local_object_store_with("http://localhost:19000", bucket)
+            });
+            assert!(result.is_err(), "bucket `{bucket}` must be refused");
+        }
     }
 }

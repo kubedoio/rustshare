@@ -2662,6 +2662,28 @@ impl MetadataStore {
         max_login_attempts: Option<i32>,
         login_block_duration_minutes: Option<i32>,
     ) -> Result<SecurityConfig> {
+        let mut tx = self.pool.begin().await?;
+        let config = self
+            .update_security_config_in_tx(
+                &mut tx,
+                login_protection_enabled,
+                max_login_attempts,
+                login_block_duration_minutes,
+            )
+            .await?;
+        tx.commit().await?;
+
+        Ok(config)
+    }
+
+    /// Update the security configuration within an existing transaction.
+    pub async fn update_security_config_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        login_protection_enabled: Option<bool>,
+        max_login_attempts: Option<i32>,
+        login_block_duration_minutes: Option<i32>,
+    ) -> Result<SecurityConfig> {
         let row = sqlx::query!(
             r#"
             UPDATE security_config
@@ -2677,7 +2699,7 @@ impl MetadataStore {
             max_login_attempts,
             login_block_duration_minutes
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut **tx)
         .await?;
 
         Ok(SecurityConfig {

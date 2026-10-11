@@ -1,10 +1,42 @@
 //! Shared validation and hashing utilities.
 
+#[cfg(test)]
+use std::ffi::OsString;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use bytes::Bytes;
 use sha2::{Digest, Sha256};
+
+/// Serializes unit tests that mutate environment-backed mail/chat security flags.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[cfg(test)]
+pub(crate) struct EnvVarRestore {
+    key: &'static str,
+    original: Option<OsString>,
+}
+
+#[cfg(test)]
+impl EnvVarRestore {
+    pub(crate) fn new(key: &'static str) -> Self {
+        Self {
+            key,
+            original: std::env::var_os(key),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvVarRestore {
+    fn drop(&mut self) {
+        match self.original.take() {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
 
 /// Returns true if the IPv4 address is unspecified, loopback, private, link-local,
 /// multicast, or part of the CGNAT range (100.64.0.0/10).
@@ -245,37 +277,6 @@ mod tests {
         assert_eq!(escape_ilike("a_b"), "a\\_b");
     }
 
-    /// Serializes tests that mutate the process-global
-    /// `RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS` and
-    /// `RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS` variables. Cargo runs unit tests
-    /// in parallel threads, so unsynchronized set/remove races make them flaky.
-    /// Using a tokio async mutex avoids holding a blocking `std::sync::MutexGuard`
-    /// across `.await` points.
-    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-    /// RAII helper that captures the original value of a process-global env var
-    /// and restores it (or removes it) when dropped, even on panic.
-    struct EnvVarRestore {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl EnvVarRestore {
-        fn new(key: &'static str) -> Self {
-            let original = std::env::var(key).ok();
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvVarRestore {
-        fn drop(&mut self) {
-            match self.original.take() {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
-            }
-        }
-    }
-
     #[tokio::test]
     async fn allow_internal_mail_servers_defaults_to_false() {
         let _guard = ENV_LOCK.lock().await;
@@ -291,6 +292,25 @@ mod tests {
         let _restore = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
         std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
         assert!(allow_internal_mail_servers());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn env_var_restore_preserves_non_unicode_values() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK.lock().await;
+        let original = std::env::var_os("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
+        let restore = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
+        std::env::set_var(
+            "RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS",
+            OsString::from_vec(vec![0xff]),
+        );
+        drop(restore);
+        assert_eq!(
+            std::env::var_os("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS"),
+            original
+        );
     }
 
     #[tokio::test]

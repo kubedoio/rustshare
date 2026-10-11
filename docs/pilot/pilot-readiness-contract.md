@@ -35,7 +35,15 @@ The existing pilot smoke must pass against the deployed candidate and cover:
 5. Notes create, read and save;
 6. explicit note rename independent of the first Markdown H1;
 7. a permitted internal share and a protected-resource negative check;
-8. audit activity visibility and permission-aware search where enabled.
+8. audit activity visibility and permission-aware search where enabled;
+9. user lifecycle: create a least-privileged account, reset its password as an
+   administrator, change it as the user, disable/offboard it, and prove reset
+   and disable revoke active sessions while a disabled account cannot log in.
+
+Initial and reset passwords must be handed to users over an approved secure
+channel separate from repository/evidence artifacts. RustShare does not enforce
+a first-login password change, so the operator must instruct the user to
+change the initial/reset password immediately.
 
 Chat and AI/Ask are conditional product areas: they are tested only when the
 deployment enables them and the run declares the requirement. Password login
@@ -56,6 +64,10 @@ acceptance item when FWS enables it.
 - Invalid configuration fails closed and does not produce false readiness.
 - Stopping PostgreSQL or RustFS makes readiness fail and restoring the service
   makes readiness recover.
+- A non-developer operator can create, reset, disable and offboard users using
+  the documented controls. Keep two independently controlled administrator
+  accounts available before cohort start; loss of every administrator
+  credential is not covered by the application-level recovery flow.
 
 ### Security acceptance
 

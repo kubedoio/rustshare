@@ -352,6 +352,112 @@ async fn foreign_event_id_returns_404() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
+async fn single_event_export_requires_enabled_calendar_and_event_ownership() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "calendar_export_owner", tenant_id).await;
+    let other = create_test_user(&state, "calendar_export_other", tenant_id).await;
+    configure_calendar(&state, tenant_id, owner.id, true).await;
+    configure_calendar(&state, tenant_id, other.id, true).await;
+
+    let event = state
+        .calendar_service
+        .create_event(
+            tenant_id,
+            owner.id,
+            rustshare_server::services::calendar_service::NewCalendarEvent {
+                title: "Export me".to_string(),
+                description: None,
+                location: None,
+                starts_at: "2026-10-05T14:00:00Z"
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .unwrap(),
+                ends_at: "2026-10-05T15:00:00Z"
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .unwrap(),
+                all_day: false,
+                timezone: "Europe/Berlin".to_string(),
+                rrule: None,
+            },
+        )
+        .await
+        .expect("create event");
+
+    let uri = format!("/api/v1/calendar/events/{}/export", event.id);
+    let app = build_app(state.clone());
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&uri)
+                .header(
+                    "Authorization",
+                    format!("Bearer {}", create_auth_token(&state, owner.id, tenant_id)),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/calendar; charset=utf-8"
+    );
+    assert_eq!(
+        response.headers()["content-disposition"],
+        format!("attachment; filename=\"{}.ics\"", event.id)
+    );
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .expect("read exported calendar");
+    let body = String::from_utf8(body.to_vec()).expect("calendar is UTF-8");
+    assert!(body.contains("BEGIN:VCALENDAR\r\n"));
+    assert!(body.contains("SUMMARY:Export me\r\n"));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&uri)
+                .header(
+                    "Authorization",
+                    format!("Bearer {}", create_auth_token(&state, other.id, tenant_id)),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    state
+        .application_service
+        .disable_application("io.elembra.calendar", owner.id, tenant_id)
+        .await
+        .expect("disable Calendar");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(&uri)
+                .header(
+                    "Authorization",
+                    format!("Bearer {}", create_auth_token(&state, owner.id, tenant_id)),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
 async fn range_window_over_366_days_returns_400() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env().await;
@@ -1610,10 +1716,31 @@ async fn cross_tenant_ids_are_not_visible() {
         .await
         .expect("create import job");
 
+    let token_a = create_auth_token(&state, user_a.id, tenant_a);
     let token_b = create_auth_token(&state, user_b.id, tenant_b);
     let app = build_app(state.clone());
 
-    // Tenant-B user cannot read tenant-A's event, source, or import job.
+    // The event list excludes resources owned by another tenant.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events?from=2026-10-01T00:00:00Z&to=2026-10-31T00:00:00Z")
+                .header("Authorization", format!("Bearer {token_b}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!body["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|listed| listed["id"] == event_a.id.to_string()));
+
+    // Tenant-B user cannot read or update tenant-A's event, source, or import job.
     let response = app
         .clone()
         .oneshot(
@@ -1630,6 +1757,26 @@ async fn cross_tenant_ids_are_not_visible() {
         status,
         StatusCode::NOT_FOUND,
         "cross-tenant event must be 404"
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{}", event_a.id))
+                .method("PATCH")
+                .header("Authorization", format!("Bearer {token_b}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(json!({"title": "Hijacked"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, _) = response_json(response).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "cross-tenant event update must be 404"
     );
 
     let response = app
@@ -1674,6 +1821,7 @@ async fn cross_tenant_ids_are_not_visible() {
     // ID — an idempotent success, never a 404 that would confirm existence in
     // another tenant.
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri(format!("/api/v1/calendar/events/{}", event_a.id))
@@ -1686,6 +1834,22 @@ async fn cross_tenant_ids_are_not_visible() {
         .unwrap();
     let (status, _) = response_json(response).await;
     assert_eq!(status, StatusCode::OK);
+
+    // The foreign-tenant delete was a no-op; the owner can still read it.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{}", event_a.id))
+                .header("Authorization", format!("Bearer {token_a}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["title"], "Tenant A private");
 
     cleanup_tenant(&state.db_pool, tenant_a).await;
     cleanup_tenant(&state.db_pool, tenant_b).await;

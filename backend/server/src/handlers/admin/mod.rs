@@ -9,7 +9,7 @@ pub mod users;
 pub mod webhooks;
 pub mod workflows;
 
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 /// Record an admin action in the `admin_actions` table.
@@ -44,6 +44,32 @@ pub async fn log_admin_action(
             "Failed to log admin action: {:?}", e
         );
     }
+}
+
+/// Insert an admin action in the same transaction as its corresponding mutation.
+pub async fn insert_admin_action(
+    tx: &mut Transaction<'_, Postgres>,
+    actor_id: Uuid,
+    action_type: &str,
+    target_type: Option<&str>,
+    target_id: Option<Uuid>,
+    detail: serde_json::Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        INSERT INTO admin_actions (actor_id, action_type, target_type, target_id, detail)
+        VALUES ($1, $2, $3, $4, $5)
+        "#,
+        actor_id,
+        action_type,
+        target_type,
+        target_id,
+        detail
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
 }
 
 use crate::handlers::AppError;

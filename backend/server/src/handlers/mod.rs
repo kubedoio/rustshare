@@ -572,7 +572,9 @@ impl From<crate::services::application_service::ApplicationError> for AppError {
         use crate::services::application_service::ApplicationError;
         match err {
             ApplicationError::NotFound(_) => AppError::NotFound(err.to_string()),
-            ApplicationError::AlreadyExists(_) => AppError::Conflict(err.to_string()),
+            ApplicationError::AlreadyExists(_) | ApplicationError::ConfigurationChanged => {
+                AppError::Conflict(err.to_string())
+            }
             ApplicationError::PermissionDenied => AppError::Forbidden(err.to_string()),
             ApplicationError::InvalidName(_) | ApplicationError::InvalidData(_) => {
                 AppError::BadRequest(err.to_string())

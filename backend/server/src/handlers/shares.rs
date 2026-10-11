@@ -443,9 +443,9 @@ pub async fn get_share_access_log(
             actor_type: entry.actor_type,
             actor_label: entry.actor_label,
             ip_address: entry.ip_address,
-            user_agent: entry.user_agent,
-            share_session_id: entry.share_session_id,
-            share_session_subject: entry.share_session_subject,
+            user_agent: None,
+            share_session_id: None,
+            share_session_subject: None,
         })
         .collect();
 

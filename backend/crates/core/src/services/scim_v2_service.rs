@@ -671,7 +671,7 @@ pub trait ScimV2Repository: Send + Sync {
         operations: &[ScimPatchOperation],
     ) -> Result<(), sqlx::Error>;
 
-    /// Delete a user.
+    /// Deprovision a user while retaining the account and its owned data.
     async fn delete_user(&self, id: Uuid) -> Result<(), sqlx::Error>;
 
     /// Get all groups with optional filtering and pagination.
@@ -869,7 +869,7 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
         self.get_user(id).await
     }
 
-    /// Delete a user.
+    /// Deprovision a user while retaining the account and its owned data.
     pub async fn delete_user(&self, id: Uuid) -> Result<(), ScimV2Error> {
         if self.repository.get_user(id).await?.is_none() {
             return Err(ScimV2Error::UserNotFound(id.to_string()));

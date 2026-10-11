@@ -1,11 +1,14 @@
 use axum::{
     extract::{Multipart, Path, State},
-    http::StatusCode,
+    http::{header, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
-use rustshare_core::domain::{CalendarImportJob, CalendarSource, CalendarSourceKind};
+use rustshare_core::domain::{
+    CalendarEvent, CalendarImportJob, CalendarSource, CalendarSourceKind,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -314,6 +317,429 @@ pub async fn get_calendar_event(
     Ok(Json(response))
 }
 
+/// `GET /api/v1/calendar/events/{id}/export` — export one caller-owned event
+/// as an iCalendar file. Timed values remain UTC instants; the calendar also
+/// carries the stored timezone as `X-WR-TIMEZONE` because this crate does not
+/// generate `VTIMEZONE` definitions.
+pub async fn export_calendar_event(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(event_id): Path<Uuid>,
+) -> Result<Response, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    let event = state
+        .calendar_service
+        .get_event(auth.tenant_id, auth.user_id, event_id)
+        .await?;
+
+    let calendar = serialize_calendar_event(&event).map_err(AppError::conflict)?;
+    let filename = format!("{}.ics", event.id);
+    let response = (
+        StatusCode::OK,
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/calendar; charset=utf-8"),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+                    .map_err(|err| AppError::internal(err.to_string()))?,
+            ),
+            (
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("private, no-store"),
+            ),
+        ],
+        calendar,
+    )
+        .into_response();
+    Ok(response)
+}
+
+fn serialize_calendar_event(event: &CalendarEvent) -> Result<String, &'static str> {
+    use icalendar::{Calendar, Component, Event, EventLike, EventStatus, Property};
+
+    if event.recurrence_id.is_some() {
+        return Err("Export of recurring event overrides is not supported");
+    }
+    if let Some(rrule) = event.rrule.as_deref() {
+        if rrule.contains(['\r', '\n']) {
+            return Err("Event recurrence rule is not safe to export");
+        }
+        if event.timezone != "UTC" {
+            return Err("Recurring export currently supports UTC events only");
+        }
+    }
+
+    // The iCalendar crate escapes LF in TEXT properties but not bare CR.
+    // Normalize both forms before passing user/provider text to its builder.
+    let sanitize_text = |value: &str| value.replace("\r\n", "\n").replace('\r', "\n");
+    let mut ical_event = Event::new();
+    let uid = event
+        .external_uid
+        .as_deref()
+        .filter(|uid| !uid.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("{}@rustshare", event.id));
+    ical_event
+        .uid(&sanitize_text(&uid))
+        .summary(&sanitize_text(&event.title))
+        .timestamp(event.updated_at)
+        .status(match event.status.as_str() {
+            "cancelled" => EventStatus::Cancelled,
+            "tentative" => EventStatus::Tentative,
+            _ => EventStatus::Confirmed,
+        });
+
+    if let Some(description) = event.description.as_deref() {
+        ical_event.description(&sanitize_text(description));
+    }
+    if let Some(location) = event.location.as_deref() {
+        ical_event.location(&sanitize_text(location));
+    }
+
+    if event.all_day {
+        let start = event
+            .original_date
+            .unwrap_or_else(|| event.starts_at.date_naive());
+        // All-day timestamps are stored as UTC-midnight boundaries. Convert
+        // neither exclusive endpoint through a local timezone: west-of-UTC
+        // zones would otherwise shift DTEND back onto DTSTART.
+        let end = event.ends_at.date_naive();
+        ical_event.starts(start).ends(end);
+    } else {
+        ical_event.starts(event.starts_at).ends(event.ends_at);
+    }
+
+    if let Some(rrule) = event.rrule.as_deref() {
+        // RRULE is a structured RFC 5545 value, not TEXT; Property preserves
+        // its validated syntax without applying TEXT escaping.
+        ical_event.append_property(Property::new("RRULE", rrule));
+    }
+
+    let mut calendar = Calendar::new();
+    if event.timezone.parse::<chrono_tz::Tz>().is_ok() {
+        calendar.timezone(event.timezone.clone());
+    }
+    calendar.push(ical_event);
+    Ok(calendar.to_string())
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::serialize_calendar_event;
+    use chrono::{DateTime, NaiveDate, Utc};
+    use rustshare_core::domain::CalendarEvent;
+    use std::io::BufReader;
+    use uuid::Uuid;
+
+    fn parse_export_independently(ics: &str) -> ical::parser::ical::component::IcalEvent {
+        let mut parser = ical::IcalParser::new(BufReader::new(ics.as_bytes()));
+        let calendar = parser
+            .next()
+            .expect("one VCALENDAR")
+            .expect("independent parser accepts VCALENDAR");
+        assert!(parser.next().is_none(), "exactly one VCALENDAR");
+        assert_eq!(calendar.events.len(), 1, "one VEVENT");
+        calendar.events.into_iter().next().expect("one VEVENT")
+    }
+
+    fn property_value<'a>(
+        event: &'a ical::parser::ical::component::IcalEvent,
+        name: &str,
+    ) -> &'a str {
+        event
+            .properties
+            .iter()
+            .find(|property| property.name == name)
+            .and_then(|property| property.value.as_deref())
+            .unwrap_or_else(|| panic!("missing {name} property"))
+    }
+
+    fn event() -> CalendarEvent {
+        let now = DateTime::<Utc>::UNIX_EPOCH;
+        CalendarEvent {
+            id: Uuid::from_u128(1),
+            tenant_id: Uuid::from_u128(2),
+            owner_id: Uuid::from_u128(3),
+            source_id: Uuid::from_u128(4),
+            external_uid: None,
+            external_etag: None,
+            recurrence_id: None,
+            title: "Review, plan; ship\\done\nnext".to_string(),
+            description: Some("A, B; C\\D\nE".to_string()),
+            location: Some("Room 1".to_string()),
+            starts_at: "2026-10-05T12:00:00Z".parse().unwrap(),
+            ends_at: "2026-10-05T13:30:00Z".parse().unwrap(),
+            all_day: false,
+            original_date: None,
+            timezone: "Europe/Berlin".to_string(),
+            rrule: Some("FREQ=WEEKLY;BYDAY=MO".to_string()),
+            status: "confirmed".to_string(),
+            read_only: false,
+            raw: None,
+            deleted_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn exports_a_calendar_event_with_escaped_text_stable_uid_and_recurrence() {
+        let mut event = event();
+        event.timezone = "UTC".to_string();
+        let ics = serialize_calendar_event(&event).unwrap();
+
+        assert!(ics.starts_with("BEGIN:VCALENDAR\r\n"));
+        assert!(ics.contains("BEGIN:VEVENT\r\n"));
+        assert!(ics.contains("END:VEVENT\r\nEND:VCALENDAR\r\n"));
+        assert!(ics.contains(&format!("UID:{}@rustshare\r\n", event.id)));
+        assert!(ics.contains("DTSTAMP:19700101T000000Z\r\n"));
+        assert!(ics.contains("SUMMARY:Review\\, plan\\; ship\\\\done\\nnext\r\n"));
+        assert!(ics.contains("DESCRIPTION:A\\, B\\; C\\\\D\\nE\r\n"));
+        assert!(ics.contains("DTSTART:20261005T120000Z\r\n"));
+        assert!(ics.contains("DTEND:20261005T133000Z\r\n"));
+        assert!(ics.contains("X-WR-TIMEZONE:UTC\r\n"));
+        assert!(ics.contains("RRULE:FREQ=WEEKLY;BYDAY=MO\r\n"));
+        assert!(ics.contains("LOCATION:Room 1\r\n"));
+    }
+
+    #[test]
+    fn export_preserves_imported_uid_and_escapes_line_breaks() {
+        let mut event = event();
+        event.external_uid = Some("partner-event\r\nSUMMARY:injected".to_string());
+        event.rrule = None;
+
+        let ics = serialize_calendar_event(&event).unwrap();
+
+        assert!(ics.contains("UID:partner-event\\nSUMMARY:injected\r\n"));
+        assert!(!ics.contains("\r\nSUMMARY:injected\r\n"));
+    }
+
+    #[test]
+    fn exported_utc_recurring_event_round_trips_through_icalendar_parser() {
+        let mut event = event();
+        event.timezone = "UTC".to_string();
+        let ics = serialize_calendar_event(&event).unwrap();
+
+        let calendar = icalendar::parser::read_calendar(&ics).expect("valid VCALENDAR");
+        assert_eq!(calendar.components.len(), 1);
+        let parsed = &calendar.components[0];
+        assert_eq!(parsed.name.as_ref(), "VEVENT");
+
+        assert_eq!(
+            parsed.find_prop("UID").expect("UID").val.as_str(),
+            format!("{}@rustshare", event.id)
+        );
+        assert_eq!(
+            parsed.find_prop("DTSTART").expect("DTSTART").val.as_str(),
+            "20261005T120000Z"
+        );
+        assert_eq!(
+            parsed.find_prop("DTEND").expect("DTEND").val.as_str(),
+            "20261005T133000Z"
+        );
+        assert_eq!(
+            parsed.find_prop("RRULE").expect("RRULE").val.as_str(),
+            "FREQ=WEEKLY;BYDAY=MO"
+        );
+        assert_eq!(
+            parsed
+                .find_prop("SUMMARY")
+                .expect("SUMMARY")
+                .val
+                .clone()
+                .unescape_text()
+                .as_str(),
+            event.title
+        );
+        assert_eq!(
+            parsed
+                .find_prop("DESCRIPTION")
+                .expect("DESCRIPTION")
+                .val
+                .clone()
+                .unescape_text()
+                .as_str(),
+            event.description.as_deref().expect("description")
+        );
+    }
+
+    #[test]
+    fn independent_ical_parser_accepts_utc_recurring_event_export() {
+        let mut event = event();
+        event.timezone = "UTC".to_string();
+        let ics = serialize_calendar_event(&event).unwrap();
+
+        let parsed = parse_export_independently(&ics);
+
+        assert_eq!(
+            property_value(&parsed, "UID"),
+            format!("{}@rustshare", event.id)
+        );
+        assert_eq!(property_value(&parsed, "DTSTART"), "20261005T120000Z");
+        assert_eq!(property_value(&parsed, "DTEND"), "20261005T133000Z");
+        assert_eq!(property_value(&parsed, "RRULE"), "FREQ=WEEKLY;BYDAY=MO");
+    }
+
+    #[test]
+    fn independent_ical_parser_unfolds_long_utf8_text_properties() {
+        let mut event = event();
+        event.timezone = "UTC".to_string();
+        event.title = "Résumé🚀東京".repeat(30);
+        event.description = Some("Meetingnotesnaïvefaçade東京🧭".repeat(12));
+        let ics = serialize_calendar_event(&event).unwrap();
+
+        let lines = ics.split("\r\n").collect::<Vec<_>>();
+        assert!(
+            lines
+                .windows(2)
+                .any(|pair| { pair[0].starts_with("SUMMARY:") && pair[1].starts_with(' ') }),
+            "long SUMMARY must be emitted using RFC 5545 folded content lines"
+        );
+        assert!(
+            lines
+                .windows(2)
+                .any(|pair| { pair[0].starts_with("DESCRIPTION:") && pair[1].starts_with(' ') }),
+            "long DESCRIPTION must be emitted using RFC 5545 folded content lines"
+        );
+        assert!(
+            lines.iter().all(|line| line.len() <= 75),
+            "RFC 5545 content lines must not exceed 75 octets"
+        );
+
+        let parsed = parse_export_independently(&ics);
+        assert_eq!(property_value(&parsed, "SUMMARY"), event.title);
+        assert_eq!(
+            property_value(&parsed, "DESCRIPTION"),
+            event.description.as_deref().expect("description")
+        );
+    }
+
+    #[test]
+    fn exported_all_day_event_round_trips_through_icalendar_parser() {
+        let mut event = event();
+        event.all_day = true;
+        event.rrule = None;
+        event.original_date = Some(NaiveDate::from_ymd_opt(2026, 10, 5).unwrap());
+        event.starts_at = "2026-10-05T00:00:00Z".parse().unwrap();
+        event.ends_at = "2026-10-06T00:00:00Z".parse().unwrap();
+        let ics = serialize_calendar_event(&event).unwrap();
+
+        let calendar = icalendar::parser::read_calendar(&ics).expect("valid VCALENDAR");
+        assert_eq!(calendar.components.len(), 1);
+        let parsed = &calendar.components[0];
+        assert_eq!(parsed.name.as_ref(), "VEVENT");
+
+        assert_eq!(
+            parsed.find_prop("UID").expect("UID").val.as_str(),
+            format!("{}@rustshare", event.id)
+        );
+        let start = parsed.find_prop("DTSTART").expect("DTSTART");
+        assert_eq!(start.val.as_str(), "20261005");
+        assert_eq!(start.params.len(), 1);
+        assert_eq!(start.params[0].key.as_str(), "VALUE");
+        assert_eq!(
+            start.params[0].val.as_ref().map(|value| value.as_str()),
+            Some("DATE")
+        );
+
+        let end = parsed.find_prop("DTEND").expect("DTEND");
+        assert_eq!(end.val.as_str(), "20261006");
+        assert_eq!(end.params.len(), 1);
+        assert_eq!(end.params[0].key.as_str(), "VALUE");
+        assert_eq!(
+            end.params[0].val.as_ref().map(|value| value.as_str()),
+            Some("DATE")
+        );
+    }
+
+    #[test]
+    fn independent_ical_parser_accepts_all_day_event_export() {
+        let mut event = event();
+        event.all_day = true;
+        event.rrule = None;
+        event.original_date = Some(NaiveDate::from_ymd_opt(2026, 10, 5).unwrap());
+        event.starts_at = "2026-10-05T00:00:00Z".parse().unwrap();
+        event.ends_at = "2026-10-06T00:00:00Z".parse().unwrap();
+        let ics = serialize_calendar_event(&event).unwrap();
+
+        let parsed = parse_export_independently(&ics);
+
+        assert_eq!(
+            property_value(&parsed, "UID"),
+            format!("{}@rustshare", event.id)
+        );
+        assert_eq!(property_value(&parsed, "DTSTART"), "20261005");
+        assert_eq!(property_value(&parsed, "DTEND"), "20261006");
+        let date_parameter = parsed
+            .properties
+            .iter()
+            .find(|property| property.name == "DTSTART")
+            .and_then(|property| property.params.as_ref())
+            .and_then(|parameters| parameters.iter().find(|(name, _)| name == "VALUE"))
+            .map(|(_, values)| values.as_slice());
+        assert_eq!(date_parameter, Some(["DATE".to_string()].as_slice()));
+    }
+
+    #[test]
+    fn all_day_export_uses_exclusive_date_end() {
+        let mut event = event();
+        event.all_day = true;
+        event.rrule = None;
+        event.original_date = Some(NaiveDate::from_ymd_opt(2026, 10, 5).unwrap());
+        event.starts_at = "2026-10-05T00:00:00Z".parse().unwrap();
+        event.ends_at = "2026-10-06T00:00:00Z".parse().unwrap();
+
+        let ics = serialize_calendar_event(&event).unwrap();
+
+        assert!(ics.contains("DTSTART;VALUE=DATE:20261005\r\n"));
+        assert!(ics.contains("DTEND;VALUE=DATE:20261006\r\n"));
+
+        event.timezone = "America/Los_Angeles".to_string();
+        let ics = serialize_calendar_event(&event).unwrap();
+        assert!(ics.contains("DTEND;VALUE=DATE:20261006\r\n"));
+    }
+
+    #[test]
+    fn missing_recurrence_is_not_exported() {
+        let mut event = event();
+        event.rrule = None;
+
+        assert!(!serialize_calendar_event(&event).unwrap().contains("RRULE:"));
+    }
+
+    #[test]
+    fn recurring_export_fails_closed_when_it_cannot_preserve_timezone_or_identity() {
+        let mut event = event();
+        event.timezone = "Europe/Berlin".to_string();
+        assert!(serialize_calendar_event(&event).is_err());
+
+        event.timezone = "UTC".to_string();
+        event.recurrence_id = Some("20261005T120000Z".to_string());
+        assert!(serialize_calendar_event(&event).is_err());
+    }
+
+    #[test]
+    fn recurrence_cannot_inject_an_icalendar_property_line() {
+        let mut event = event();
+        event.timezone = "UTC".to_string();
+        event.rrule = Some("FREQ=WEEKLY\r\nSUMMARY:injected".to_string());
+        assert!(serialize_calendar_event(&event).is_err());
+    }
+
+    #[test]
+    fn text_carriage_returns_are_escaped_as_text_not_content_lines() {
+        let mut event = event();
+        event.rrule = None;
+        event.title = "first\rsecond".to_string();
+        let ics = serialize_calendar_event(&event).unwrap();
+        assert!(ics.contains("SUMMARY:first\\nsecond\r\n"));
+        assert!(!ics.contains("SUMMARY:first\rsecond"));
+    }
+}
+
 /// `PATCH /api/v1/calendar/events/{id}` — partial update of an internal
 /// event; mirrored read-only events are rejected with 409.
 pub async fn update_calendar_event(
@@ -461,6 +887,11 @@ pub async fn import_calendar_file(
     let mut source_id: Option<Uuid> = None;
 
     while let Some(mut field) = multipart.next_field().await.map_err(|e| {
+        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            return AppError::payload_too_large(
+                "Calendar import request exceeds the maximum allowed size",
+            );
+        }
         tracing::error!("Failed to read multipart field: {}", e);
         AppError::internal(format!("Failed to read multipart field: {e}"))
     })? {

@@ -13,6 +13,7 @@ sequential numbers. New ADRs must pick the next unused number. Statuses used:
 | ADR | Title | Status |
 | --- | --- | --- |
 | `0037-calendar-application-and-external-sync.md` | Calendar Application and External Calendar Sync | Proposed |
+| `0038-institutional-organization-and-workspace-access.md` | Institutional Organization and Workspace Access | Proposed |
 
 ## Known duplicate numbers (documented cleanup — renumbering deferred)
 

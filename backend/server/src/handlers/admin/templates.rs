@@ -6,7 +6,7 @@ use axum::{
 };
 
 use crate::{
-    handlers::{admin::log_admin_action, extractors::AdminUser, AppError},
+    handlers::{admin::insert_admin_action, extractors::AdminUser, AppError},
     services::template_service::{CreateTemplateRequest, UpdateTemplateRequest},
     state::AppState,
 };
@@ -97,20 +97,30 @@ pub async fn create_template(
     State(state): State<AppState>,
     Json(body): Json<CreateTemplateRequest>,
 ) -> Result<Json<Template>, AppError> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|error| AppError::internal(error.to_string()))?;
     let template = state
         .template_service
-        .create_template(body.clone(), user_id, state.default_tenant_id)
+        .create_template(body, user_id, state.default_tenant_id, &mut tx)
         .await?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         user_id,
         "template.created",
         Some("template"),
         Some(template.id),
-        serde_json::to_value(&body).unwrap_or_default(),
+        template_audit_details(&template.template_key, &template.application_id),
     )
-    .await;
+    .await
+    .map_err(|error| AppError::internal(error.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|error| AppError::internal(error.to_string()))?;
 
     Ok(Json(template))
 }
@@ -130,20 +140,30 @@ pub async fn update_template(
     Path(key): Path<String>,
     Json(body): Json<UpdateTemplateRequest>,
 ) -> Result<Json<Template>, AppError> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|error| AppError::internal(error.to_string()))?;
     let template = state
         .template_service
-        .update_template(&key, body.clone(), state.default_tenant_id)
+        .update_template(&key, body, state.default_tenant_id, &mut tx)
         .await?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         user_id,
         "template.updated",
         Some("template"),
         Some(template.id),
-        serde_json::to_value(&body).unwrap_or_default(),
+        template_audit_details(&template.template_key, &template.application_id),
     )
-    .await;
+    .await
+    .map_err(|error| AppError::internal(error.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|error| AppError::internal(error.to_string()))?;
 
     Ok(Json(template))
 }
@@ -162,25 +182,30 @@ pub async fn delete_template(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Result<axum::http::StatusCode, AppError> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|error| AppError::internal(error.to_string()))?;
     let template = state
         .template_service
-        .get_template(&key, state.default_tenant_id)
+        .delete_template(&key, state.default_tenant_id, &mut tx)
         .await?;
 
-    state
-        .template_service
-        .delete_template(&key, state.default_tenant_id)
-        .await?;
-
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         user_id,
         "template.deleted",
         Some("template"),
         Some(template.id),
         serde_json::json!({ "key": key }),
     )
-    .await;
+    .await
+    .map_err(|error| AppError::internal(error.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|error| AppError::internal(error.to_string()))?;
 
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
@@ -230,20 +255,53 @@ pub async fn duplicate_template(
         application_config: Some(template.application_config),
     };
 
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|error| AppError::internal(error.to_string()))?;
     let new_template = state
         .template_service
-        .create_template(request.clone(), user_id, state.default_tenant_id)
+        .create_template(request, user_id, state.default_tenant_id, &mut tx)
         .await?;
 
-    log_admin_action(
-        &state.db_pool,
+    insert_admin_action(
+        &mut tx,
         user_id,
         "template.duplicated",
         Some("template"),
         Some(template.id),
         serde_json::json!({ "original_key": key, "new_key": new_template.template_key, "new_id": new_template.id }),
     )
-    .await;
+    .await
+    .map_err(|error| AppError::internal(error.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|error| AppError::internal(error.to_string()))?;
 
     Ok(Json(new_template))
+}
+
+fn template_audit_details(template_key: &str, application_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "template_key": template_key,
+        "application_id": application_id,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::template_audit_details;
+
+    #[test]
+    fn template_audit_details_contain_only_template_and_application_identifiers() {
+        assert_eq!(
+            template_audit_details("pilot-onboarding", "notes"),
+            serde_json::json!({
+                "template_key": "pilot-onboarding",
+                "application_id": "notes",
+            })
+        );
+    }
 }

@@ -75,8 +75,11 @@
 					<select
 						id="audit-type"
 						class="select-bordered select w-40 select-sm"
-						bind:value={typeFilter}
-						onchange={applyFilters}
+						value={typeFilter}
+						onchange={(event) => {
+							typeFilter = (event.currentTarget as HTMLSelectElement).value;
+							applyFilters();
+						}}
 					>
 						<option value="">All</option>
 						<option value="share_access">Share Access</option>
@@ -107,8 +110,11 @@
 						id="audit-from"
 						type="date"
 						class="input-bordered input input-sm"
-						bind:value={fromDate}
-						onchange={applyFilters}
+						value={fromDate}
+						onchange={(event) => {
+							fromDate = (event.currentTarget as HTMLInputElement).value;
+							applyFilters();
+						}}
 					/>
 				</div>
 
@@ -119,8 +125,11 @@
 						id="audit-to"
 						type="date"
 						class="input-bordered input input-sm"
-						bind:value={toDate}
-						onchange={applyFilters}
+						value={toDate}
+						onchange={(event) => {
+							toDate = (event.currentTarget as HTMLInputElement).value;
+							applyFilters();
+						}}
 					/>
 				</div>
 
