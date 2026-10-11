@@ -30,15 +30,40 @@ test('pilot administrator uses Files and edits a Note name independently from it
 	});
 
 	await test.step('Open pilot folder and verify its File', async () => {
-		const smokeFolderRow = page.locator('tbody tr').filter({ hasText: 'Beta Smoke' });
-		await expect(smokeFolderRow).toHaveCount(1, { timeout: 10_000 });
-		await smokeFolderRow.getByRole('button', { name: 'Beta Smoke', exact: true }).click();
-		await expect(page.getByRole('heading', { name: 'Beta Smoke' })).toBeVisible();
-		await expect(page.getByText(pilotFileName, { exact: true })).toBeVisible({ timeout: 10_000 });
+		const smokeFolderButtons = page
+			.locator('tbody tr')
+			.getByRole('button', { name: 'Beta Smoke', exact: true });
+		await expect(smokeFolderButtons.first()).toBeVisible({ timeout: 10_000 });
+		const folderCount = await smokeFolderButtons.count();
+		let pilotFolderOpened = false;
+
+		for (let index = 0; index < folderCount; index += 1) {
+			if (index > 0) {
+				await page.goto('/files');
+				await expect(smokeFolderButtons.nth(index)).toBeVisible({ timeout: 10_000 });
+			}
+
+			await smokeFolderButtons.nth(index).click();
+			await expect(page.getByRole('heading', { name: 'Beta Smoke' })).toBeVisible();
+			try {
+				await expect(page.getByText(pilotFileName, { exact: true })).toBeVisible({
+					timeout: 2_000
+				});
+				pilotFolderOpened = true;
+				break;
+			} catch {
+				// Repeated canonical smoke runs can leave folders with the same display name.
+			}
+		}
+
+		expect(pilotFolderOpened).toBe(true);
 	});
 
+	let noteOpened = false;
 	await test.step('Open pilot Note', async () => {
 		await page.goto(`/apps/notes/${encodeURIComponent(pilotNoteId)}`);
+		await expect(page.locator('h1.doc-title-wrapper')).toBeVisible({ timeout: 10_000 });
+		noteOpened = true;
 	});
 	const noteName = page.locator('h1.doc-title-wrapper');
 	const markdownH1 = page.locator('.doc-subtitle');
@@ -111,6 +136,6 @@ test('pilot administrator uses Files and edits a Note name independently from it
 			await expect(markdownH1).toHaveText(editedH1);
 		});
 	} finally {
-		await test.step('Restore pilot Note fixture', restoreSmokeNote);
+		if (noteOpened) await test.step('Restore pilot Note fixture', restoreSmokeNote);
 	}
 });

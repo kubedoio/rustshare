@@ -1400,8 +1400,8 @@ jobs:
           image-ref: '${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.sha }}'
           format: 'sarif'
           output: 'trivy-results.sarif'
-          severity: 'CRITICAL'
-          exit-code: '1'
+          limit-severities-for-sarif: 'false'
+          exit-code: '0'
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v4.37.3
@@ -1414,9 +1414,17 @@ jobs:
           if [ -f trivy-results.sarif ]; then
             COUNT=$(jq '.runs[0].results | length' trivy-results.sarif)
             if [ "$COUNT" -gt 0 ]; then
-              echo "Found $COUNT CRITICAL vulnerabilities"
+              echo "Found $COUNT Trivy SARIF findings (all severities)"
             fi
           fi
+
+      - name: Enforce critical image findings
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: '${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.sha }}'
+          format: 'table'
+          severity: 'CRITICAL'
+          exit-code: '1'
 
       - name: Push image
         id: push

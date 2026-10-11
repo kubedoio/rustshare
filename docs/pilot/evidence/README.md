@@ -60,3 +60,10 @@ For the FWS target-host exercise, the external evidence bundle is retained at
 deployment identity and Compose configuration hash. The bundle is external to
 Git because it contains environment-specific operational records; only
 redacted summaries belong in repository documentation.
+
+The 2026-10-06 candidate deployment, FWS backup reference, public canonical
+smoke and post-restart persistence reports are retained at
+`/var/backups/rustshare/fws-evidence-20261006` on the deployment host. See
+[`fws-deployment-2026-10-06.md`](fws-deployment-2026-10-06.md) for the redacted
+summary. That target-host exercise is not complete until an independent
+second administrator finishes the two-admin recovery rehearsal.

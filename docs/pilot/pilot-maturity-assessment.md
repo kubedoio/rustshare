@@ -81,8 +81,8 @@ exercise before the pilot can be called ready.
 
 ## FWS HOST EXECUTION UPDATE (2026-10-04)
 
-The target host is `10.5.199.85` and is reached publicly as
-`https://app.kubedo.io`; TLS terminates at the load balancer and the host
+The target is an Ubuntu host behind the load balancer and is reached publicly
+as `https://app.kubedo.io`; TLS terminates at the load balancer and the host
 serves private HTTP. The following results are machine-generated or directly
 captured under `/var/backups/rustshare/fws-evidence-20261004`.
 
