@@ -3998,3 +3998,184 @@ Description.
         assert_eq!(meta.activity, None);
     }
 }
+
+/// Compatibility contract tests for the YAML backend used by kanban card
+/// markdown (`serde_yaml`, provided by the maintained `yaml_serde` crate).
+/// They exercise the real private [`CardMarkdownFrontmatter`] shape through
+/// the plain `serde_yaml::{from_str, to_string}` entry points and
+/// [`parse_card_markdown`]. Hermetic: no I/O, no network, no database.
+#[cfg(test)]
+mod yaml_compat_contract {
+    use super::*;
+
+    #[test]
+    fn card_frontmatter_round_trip_with_nested_sequences() {
+        let yaml = r##"---
+id: 550e8400-e29b-41d4-a716-446655440000
+title: "Task: with # special"
+board: board-slug
+column: 01-ready
+slug: task-special
+status: ready
+priority: high
+labels:
+- id: label-1
+  name: Bug
+  color: "#ff0000"
+assignees:
+- id: user-1
+  display_name: Jane Doe
+  initials: JD
+position: 1000
+due_date: 2026-06-01T00:00:00Z
+created_at: 2026-05-11T18:53:00Z
+updated_at: 2026-05-11T18:53:00Z
+archived: false
+checklists:
+- id: chk-1
+  title: Checklist
+  items:
+  - id: item-1
+    text: "step: one"
+    done: true
+  - id: item-2
+    text: step two
+    done: false
+"##;
+        // Note: no closing `---` marker — this fixture feeds serde_yaml::from_str
+        // directly; the production splitter (parse_card_markdown) handles markers.
+        let fm: CardMarkdownFrontmatter = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(fm.title, "Task: with # special");
+        assert_eq!(fm.labels.as_ref().unwrap()[0].color, "#ff0000");
+        assert_eq!(fm.checklists.as_ref().unwrap()[0].items.len(), 2);
+
+        let out = serde_yaml::to_string(&fm).unwrap();
+        let restored: CardMarkdownFrontmatter = serde_yaml::from_str(&out).unwrap();
+        assert_eq!(fm.id, restored.id);
+        assert_eq!(fm.title, restored.title);
+        assert_eq!(fm.position, restored.position);
+        assert_eq!(fm.due_date, restored.due_date);
+        // Nested sequence content survives the round trip (compared field by
+        // field because the kanban types do not derive PartialEq).
+        let labels = fm.labels.as_ref().unwrap();
+        let restored_labels = restored.labels.as_ref().unwrap();
+        assert_eq!(labels.len(), restored_labels.len());
+        for (a, b) in labels.iter().zip(restored_labels.iter()) {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.name, b.name);
+            assert_eq!(a.color, b.color);
+        }
+        let items = &fm.checklists.as_ref().unwrap()[0].items;
+        let restored_items = &restored.checklists.as_ref().unwrap()[0].items;
+        assert_eq!(items.len(), restored_items.len());
+        for (a, b) in items.iter().zip(restored_items.iter()) {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.text, b.text);
+            assert_eq!(a.done, b.done);
+        }
+    }
+
+    #[test]
+    fn card_optional_fields_missing_vs_null() {
+        // Missing optional fields parse to None and are omitted on output.
+        let fm: CardMarkdownFrontmatter =
+            serde_yaml::from_str("id: c-1\ntitle: T\nboard: b\ncolumn: col").unwrap();
+        assert_eq!(fm.slug, None);
+        assert_eq!(fm.due_date, None);
+        assert!(fm.checklists.is_none());
+        let out = serde_yaml::to_string(&fm).unwrap();
+        assert!(!out.contains("slug:"));
+        assert!(!out.contains("due_date:"));
+        assert!(!out.contains("checklists:"));
+
+        // Explicit null parses to None as well.
+        let fm: CardMarkdownFrontmatter =
+            serde_yaml::from_str("id: c-1\ntitle: T\nboard: b\ncolumn: col\nslug: null").unwrap();
+        assert_eq!(fm.slug, None);
+    }
+
+    #[test]
+    fn card_malformed_yaml_rejected() {
+        let result: Result<CardMarkdownFrontmatter, _> =
+            serde_yaml::from_str("id: [unclosed\ntitle: T");
+        assert!(result.is_err(), "unclosed flow sequence must be rejected");
+
+        // The production parser surfaces the same failure as an error.
+        let content = "---\nid: [unclosed\n---\nbody";
+        assert!(parse_card_markdown(content, "any").is_err());
+    }
+
+    #[test]
+    fn card_golden_serialization() {
+        let fm = CardMarkdownFrontmatter {
+            id: "c-1".to_string(),
+            title: "My Card".to_string(),
+            board: "board-1".to_string(),
+            column: "col-1".to_string(),
+            slug: None,
+            status: Some("ready".to_string()),
+            priority: None,
+            labels: None,
+            assignees: None,
+            position: Some(7),
+            due_date: None,
+            created_at: Some("2026-05-11T18:53:00Z".parse::<DateTime<Utc>>().unwrap()),
+            updated_at: None,
+            archived: None,
+            attachments: None,
+            checklists: None,
+            activity: None,
+        };
+        let out = serde_yaml::to_string(&fm).unwrap();
+        let expected = concat!(
+            "id: c-1\n",
+            "title: My Card\n",
+            "board: board-1\n",
+            "column: col-1\n",
+            "status: ready\n",
+            "position: 7\n",
+            "created_at: 2026-05-11T18:53:00Z\n",
+        );
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn card_parse_and_write_path_stays_consistent() {
+        // The write path (to_string of from_metadata) must produce YAML the
+        // read path (parse_card_markdown) accepts unchanged.
+        let meta = CardMetadata {
+            id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
+            type_: "kanban.card".to_string(),
+            board_id: "board-1".to_string(),
+            column_id: "col-1".to_string(),
+            title: "Roundtrip".to_string(),
+            slug: "roundtrip".to_string(),
+            status: "ready".to_string(),
+            order: 42,
+            assignees: vec![],
+            labels: vec![],
+            due_date: None,
+            priority: "medium".to_string(),
+            attachments_count: 0,
+            checklist_done: 0,
+            checklist_total: 0,
+            checklists: vec![],
+            archived: false,
+            created_at: "2026-05-11T18:53:00Z".parse::<DateTime<Utc>>().unwrap(),
+            updated_at: "2026-05-11T18:53:00Z".parse::<DateTime<Utc>>().unwrap(),
+            description_preview: None,
+            schema_version: "2.0".to_string(),
+            attachments: None,
+            activity: None,
+        };
+        let fm = CardMarkdownFrontmatter::from_metadata(&meta);
+        let yaml = serde_yaml::to_string(&fm).unwrap();
+        let content = format!("---\n{}---\n\n## Description\n\nBody", yaml);
+        let (parsed, desc) =
+            parse_card_markdown(&content, "550e8400-e29b-41d4-a716-446655440000").unwrap();
+        assert_eq!(parsed.id, meta.id);
+        assert_eq!(parsed.title, meta.title);
+        assert_eq!(parsed.order, meta.order);
+        assert_eq!(desc, "Body");
+    }
+}

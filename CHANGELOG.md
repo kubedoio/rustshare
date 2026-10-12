@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Replaced the unmaintained `serde_yaml` 0.9 / `unsafe-libyaml` dependency
+  (RUSTSEC-2024-0449) with `yaml_serde` 0.10, the continuation maintained by
+  the YAML Organization, via Cargo's package-rename mechanism. All
+  `serde_yaml::` call sites compile unchanged and serialization output for
+  the production shapes (OKF note frontmatter, kanban card frontmatter,
+  application manifests) is byte-identical; new contract tests pin that
+  behavior. No `unsafe-libyaml` remains in the dependency graph.
+
 ### Added
 
 - Admin audit responses now allowlist typed action details, omit free-form

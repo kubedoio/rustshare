@@ -73,7 +73,7 @@ tokio-rustls = "0.26"
 webpki-roots = "1.0"
 slug = "0.1.6"
 regex = "1.12"
-serde_yaml = "0.9"
+serde_yaml = { package = "yaml_serde", version = "0.10" }
 validator = { workspace = true }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.18"

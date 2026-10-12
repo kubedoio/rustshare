@@ -1129,3 +1129,165 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
         assert_eq!(a.metadata.id, id);
     }
 }
+
+/// Compatibility contract tests for the YAML backend used to parse
+/// application manifests (`serde_yaml`, provided by the maintained
+/// `yaml_serde` crate). They exercise the real [`ApplicationManifest`]
+/// through the plain `serde_yaml::{from_str, to_string}` entry points.
+/// Hermetic: no I/O, no network, no database.
+#[cfg(test)]
+mod yaml_compat_contract {
+    use super::*;
+
+    /// The flow-style inline YAML shape used by the existing manifest tests.
+    const FLOW_STYLE: &str = r#"apiVersion: elembra.io/v1alpha1
+kind: Application
+metadata: { id: io.elembra.notes, name: Test, version: 1.0.0 }
+runtime: { kind: embedded }
+contracts: { provides: [{ id: io.elembra.notes.api, version: v1alpha1 }] }
+resources: [{ type: note, actions: [notes.read] }]
+contributions: { navigation: [{ id: notes, label: Home, route: /apps/test }] }
+configuration: { schema: config.json }
+data: { owner: io.elembra.notes, preserveOnDisable: true, exportSupported: true }
+"#;
+
+    /// The same manifest written in block style with nested maps/sequences.
+    const BLOCK_STYLE: &str = r#"apiVersion: elembra.io/v1alpha1
+kind: Application
+metadata:
+  id: io.elembra.notes
+  name: Test
+  version: 1.0.0
+  description: "Notes: a # module"
+runtime:
+  kind: embedded
+contracts:
+  provides:
+  - id: io.elembra.notes.api
+    version: v1alpha1
+  requires: []
+resources:
+- type: note
+  actions:
+  - notes.read
+contributions:
+  navigation:
+  - id: notes
+    label: Home
+    route: /apps/test
+configuration:
+  schema: config.json
+data:
+  owner: io.elembra.notes
+  preserveOnDisable: true
+  exportSupported: true
+"#;
+
+    #[test]
+    fn flow_style_manifest_parses_and_validates() {
+        let manifest: ApplicationManifest = serde_yaml::from_str(FLOW_STYLE).unwrap();
+        assert_eq!(
+            manifest.metadata.id,
+            ApplicationId::from("io.elembra.notes")
+        );
+        assert!(validate_manifest(&manifest).is_ok());
+    }
+
+    #[test]
+    fn block_style_manifest_round_trips() {
+        let manifest: ApplicationManifest = serde_yaml::from_str(BLOCK_STYLE).unwrap();
+        assert_eq!(manifest.metadata.description, "Notes: a # module");
+        assert_eq!(manifest.resources.len(), 1);
+        assert_eq!(manifest.resources[0].actions.len(), 1);
+        assert!(validate_manifest(&manifest).is_ok());
+
+        let out = serde_yaml::to_string(&manifest).unwrap();
+        let restored: ApplicationManifest = serde_yaml::from_str(&out).unwrap();
+        assert_eq!(manifest, restored);
+    }
+
+    #[test]
+    fn manifest_optional_fields_default_when_missing() {
+        // memory and health are Option; resources/contributions/etc. default.
+        let minimal = r#"apiVersion: elembra.io/v1alpha1
+kind: Application
+metadata: { id: io.elembra.min, name: Min, version: 0.1.0 }
+runtime: { kind: embedded }
+contracts: { provides: [] }
+configuration: { schema: config.json }
+data: { owner: io.elembra.min, preserveOnDisable: false, exportSupported: false }
+"#;
+        let manifest: ApplicationManifest = serde_yaml::from_str(minimal).unwrap();
+        assert_eq!(manifest.resources, Vec::new());
+        assert_eq!(manifest.contributions, ApplicationContributions::default());
+        assert_eq!(manifest.memory, None);
+        assert_eq!(manifest.health, None);
+    }
+
+    #[test]
+    fn manifest_malformed_yaml_rejected() {
+        let result: Result<ApplicationManifest, _> = serde_yaml::from_str("apiVersion: [unclosed");
+        assert!(result.is_err(), "unclosed flow sequence must be rejected");
+    }
+
+    #[test]
+    fn manifest_golden_serialization() {
+        let manifest: ApplicationManifest = serde_yaml::from_str(FLOW_STYLE).unwrap();
+        let out = serde_yaml::to_string(&manifest).unwrap();
+        // Goldens pin the yaml_serde emitter format. Note the manifest
+        // struct intentionally does NOT skip default fields, so empty
+        // strings/sequences and null Option fields are all emitted, matching
+        // serde_yaml 0.9 byte-for-byte.
+        assert_eq!(
+            out,
+            concat!(
+                "apiVersion: elembra.io/v1alpha1\n",
+                "kind: Application\n",
+                "metadata:\n",
+                "  id: io.elembra.notes\n",
+                "  name: Test\n",
+                "  version: 1.0.0\n",
+                "  description: ''\n",
+                "runtime:\n",
+                "  kind: embedded\n",
+                "contracts:\n",
+                "  provides:\n",
+                "  - id: io.elembra.notes.api\n",
+                "    version: v1alpha1\n",
+                "  requires: []\n",
+                "resources:\n",
+                "- type: note\n",
+                "  actions:\n",
+                "  - notes.read\n",
+                "contributions:\n",
+                "  navigation:\n",
+                "  - id: notes\n",
+                "    label: Home\n",
+                "    icon: null\n",
+                "    route: /apps/test\n",
+                "    renderer: null\n",
+                "    action: null\n",
+                "    template: null\n",
+                "    order: null\n",
+                "  routes: []\n",
+                "  commands: []\n",
+                "  dashboard: []\n",
+                "  settings: []\n",
+                "  searchProviders: []\n",
+                "  renderers: []\n",
+                "  admin: []\n",
+                "integrationEvents:\n",
+                "  publishes: []\n",
+                "  subscribes: []\n",
+                "memory: null\n",
+                "configuration:\n",
+                "  schema: config.json\n",
+                "data:\n",
+                "  owner: io.elembra.notes\n",
+                "  preserveOnDisable: true\n",
+                "  exportSupported: true\n",
+                "health: null\n",
+            )
+        );
+    }
+}

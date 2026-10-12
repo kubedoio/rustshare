@@ -486,3 +486,207 @@ mod tests {
         assert!(doc.contains("title: Existing"));
     }
 }
+
+/// Compatibility contract tests for the YAML backend.
+///
+/// `serde_yaml` is provided by `yaml_serde` (the maintained continuation of
+/// the original `serde_yaml` crate). These tests pin the serialization
+/// behavior production OKF note documents rely on, using the real
+/// [`OkfNoteFrontmatter`] struct and the plain `serde_yaml::{from_str,
+/// to_string}` entry points. Everything here is hermetic: no I/O, no
+/// network, no database.
+#[cfg(test)]
+mod yaml_compat_contract {
+    use super::*;
+
+    const NOTE_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+    fn round_trip(fm: &OkfNoteFrontmatter) -> OkfNoteFrontmatter {
+        let yaml = serialize_frontmatter(fm).unwrap();
+        serde_yaml::from_str(&yaml).unwrap()
+    }
+
+    #[test]
+    fn nested_maps_and_sequences_round_trip() {
+        let fm = OkfNoteFrontmatter {
+            okf_type: Some("Note".to_string()),
+            title: Some("Nested".to_string()),
+            tags: vec!["alpha".to_string(), "beta".to_string()],
+            rustshare: Some(RustshareFrontmatter {
+                id: Some(NOTE_ID.parse().unwrap()),
+                module: Some("notes".to_string()),
+                source_id: Some("src-1".to_string()),
+                visibility: Some("private".to_string()),
+                extra: serde_json::json!({"custom_nested": {"deep": [1, 2, 3]}}),
+                ..Default::default()
+            }),
+            extra: serde_json::json!({"custom_top": {"inner": {"list": ["x", "y"]}}}),
+            ..Default::default()
+        };
+
+        let yaml = serialize_frontmatter(&fm).unwrap();
+        // Nested maps indent by two spaces; sequences stay at the parent level.
+        assert!(yaml.contains("custom_top:\n  inner:\n    list:\n    - x\n    - y"));
+        assert!(yaml.contains("custom_nested:\n    deep:\n    - 1\n    - 2\n    - 3"));
+
+        let restored = round_trip(&fm);
+        assert_eq!(fm, restored);
+    }
+
+    #[test]
+    fn missing_and_explicit_null_option_fields_are_omitted() {
+        // Missing optional fields parse to None.
+        let fm: OkfNoteFrontmatter = serde_yaml::from_str("type: Note\ntitle: T").unwrap();
+        assert_eq!(fm.description, None);
+        assert_eq!(fm.timestamp, None);
+        assert_eq!(fm.rustshare, None);
+
+        // Explicit null also parses to None for Option fields.
+        let fm: OkfNoteFrontmatter =
+            serde_yaml::from_str("type: Note\ntitle: null\nrustshare: null").unwrap();
+        assert_eq!(fm.title, None);
+        assert_eq!(fm.rustshare, None);
+
+        // None fields are omitted on serialize (skip_serializing_if).
+        let yaml = serialize_frontmatter(&fm).unwrap();
+        assert!(!yaml.contains("title:"));
+        assert!(!yaml.contains("rustshare:"));
+        assert!(yaml.contains("type: Note"));
+    }
+
+    #[test]
+    fn explicit_null_in_unknown_key_survives_as_json_null() {
+        let doc = "---\ntype: Note\nempty_null: null\n---\nbody";
+        let (fm, _) = parse_frontmatter(doc).unwrap();
+        assert_eq!(fm.extra.get("empty_null"), Some(&serde_json::Value::Null));
+
+        let yaml = serialize_frontmatter(&fm).unwrap();
+        assert!(yaml.contains("empty_null: null"));
+        let restored = round_trip(&fm);
+        assert_eq!(fm, restored);
+    }
+
+    #[test]
+    fn special_characters_and_block_scalars_round_trip_byte_stable() {
+        let fm = OkfNoteFrontmatter {
+            okf_type: Some("Note".to_string()),
+            title: Some("a: b # c".to_string()),
+            description: Some("line one\nline two".to_string()),
+            tags: vec!["with: colon".to_string(), "hash # tag".to_string()],
+            extra: serde_json::json!({"quoted": "a: b # c"}),
+            ..Default::default()
+        };
+
+        let yaml = serialize_frontmatter(&fm).unwrap();
+        // Colon/hash-containing scalars are quoted; multiline strings use a
+        // literal block scalar.
+        assert!(yaml.contains("title: 'a: b # c'"));
+        assert!(yaml.contains("description: |-\n  line one\n  line two"));
+
+        let restored = round_trip(&fm);
+        assert_eq!(fm, restored);
+        // Byte-stable: a second serialization of the parsed value is identical.
+        let yaml2 = serialize_frontmatter(&restored).unwrap();
+        assert_eq!(yaml, yaml2);
+    }
+
+    #[test]
+    fn timestamp_field_parses_and_serializes_back_equivalent() {
+        let stamp = "2026-05-11T18:53:00Z";
+        let fm: OkfNoteFrontmatter =
+            serde_yaml::from_str(&format!("type: Note\ntimestamp: {stamp}")).unwrap();
+        let parsed = fm.timestamp.expect("timestamp must parse");
+
+        let yaml = serialize_frontmatter(&fm).unwrap();
+        let restored: OkfNoteFrontmatter = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(restored.timestamp, Some(parsed));
+        // The serialized form is directly parseable as a timestamp again.
+        assert!(yaml.contains("timestamp: 2026-05-11T18:53:00Z"));
+    }
+
+    #[test]
+    fn unquoted_date_like_unknown_key_stays_a_string() {
+        // An unquoted date-like scalar in an unknown flattened key must come
+        // through as a plain string (serde_json::Value::String), not be
+        // coerced into a timestamp type by the YAML backend.
+        let doc = "---\ntype: Note\ncustom_date: 2026-10-12\n---\nbody";
+        let (fm, _) = parse_frontmatter(doc).unwrap();
+        assert_eq!(
+            fm.extra.get("custom_date"),
+            Some(&serde_json::Value::String("2026-10-12".to_string()))
+        );
+
+        let restored = round_trip(&fm);
+        assert_eq!(fm, restored);
+    }
+
+    #[test]
+    fn malformed_yaml_rejected_with_error() {
+        let result: Result<OkfNoteFrontmatter, _> = serde_yaml::from_str("type: [unclosed");
+        assert!(result.is_err(), "unclosed flow sequence must be rejected");
+    }
+
+    #[test]
+    fn golden_serialized_output() {
+        let fm = OkfNoteFrontmatter {
+            okf_type: Some("Note".to_string()),
+            title: Some("My Note".to_string()),
+            tags: vec!["alpha".to_string(), "beta".to_string()],
+            rustshare: Some(RustshareFrontmatter {
+                id: Some(NOTE_ID.parse().unwrap()),
+                module: Some("notes".to_string()),
+                source_id: Some("src-1".to_string()),
+                main: Some("note.md".to_string()),
+                visibility: Some("private".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let yaml = serialize_frontmatter(&fm).unwrap();
+        // Goldens pin the yaml_serde emitter format: plain scalars where
+        // safe, sequences at parent level, two-space map nesting.
+        let expected = concat!(
+            "type: Note\n",
+            "title: My Note\n",
+            "tags:\n",
+            "- alpha\n",
+            "- beta\n",
+            "rustshare:\n",
+            "  id: 550e8400-e29b-41d4-a716-446655440000\n",
+            "  module: notes\n",
+            "  source_id: src-1\n",
+            "  main: note.md\n",
+            "  visibility: private",
+        );
+        assert_eq!(yaml, expected);
+    }
+
+    #[test]
+    fn document_body_preserved_byte_identical() {
+        let body = "# Heading\n\nSome text with --- inline.\n\n- list item\n";
+        let fm = OkfNoteFrontmatter {
+            okf_type: Some("Note".to_string()),
+            title: Some("T".to_string()),
+            extra: serde_json::json!({"unknown_key": {"nested": ["a"]}}),
+            ..Default::default()
+        };
+
+        let doc = to_document(&fm, body).unwrap();
+        let (fm2, body2) = parse_frontmatter(&doc).unwrap();
+
+        assert_eq!(
+            body2, body,
+            "non-frontmatter body must survive byte-identical"
+        );
+        assert_eq!(
+            fm, fm2,
+            "frontmatter must round-trip through a full document"
+        );
+
+        // Unknown flattened keys survive a second parse→serialize→parse cycle.
+        let doc2 = to_document(&fm2, &body2).unwrap();
+        let (fm3, body3) = parse_frontmatter(&doc2).unwrap();
+        assert_eq!(fm3, fm2);
+        assert_eq!(body3, body);
+    }
+}
