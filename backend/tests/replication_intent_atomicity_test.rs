@@ -1174,10 +1174,9 @@ async fn h_inserted_job_satisfies_worker_lease_predicate() {
         .expect("upload must succeed");
     let version_id = latest_version_id(&ctx, file.id).await;
 
-    let lease_token = Uuid::new_v4();
     let leased = ctx
         .metadata_store
-        .lease_replication_jobs(5, 300, lease_token)
+        .lease_replication_jobs(5, 300)
         .await
         .expect("leasing must succeed");
     let ours: Vec<_> = leased

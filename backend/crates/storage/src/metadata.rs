@@ -3394,6 +3394,39 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Update a version's replication state only when it still holds one of
+    /// `expected_states` (compare-and-swap guard for worker-side transitions).
+    ///
+    /// Returns `false` when the current state is not in `expected_states`
+    /// (another job advanced the version concurrently), in which case the
+    /// caller must treat the write as a version-level lease conflict and skip
+    /// any further authoritative writes for its job.
+    pub async fn update_file_version_replication_state_if_current(
+        &self,
+        version_id: Uuid,
+        expected_states: &[ReplicationState],
+        new_state: ReplicationState,
+    ) -> Result<bool> {
+        let expected: Vec<String> = expected_states
+            .iter()
+            .map(|state| state.as_str().to_string())
+            .collect();
+        let result = sqlx::query!(
+            r#"
+            UPDATE file_versions
+            SET replication_state = $3
+            WHERE id = $1 AND replication_state = ANY($2)
+            "#,
+            version_id,
+            &expected,
+            new_state.as_str(),
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     /// List enabled replication targets that workers should copy into.
     pub async fn list_enabled_replication_targets(&self) -> Result<Vec<ReplicationTarget>> {
         let rows = sqlx::query!(
@@ -3447,22 +3480,41 @@ impl MetadataStore {
     }
 
     /// Lease due replication jobs for background processing.
+    ///
+    /// Reclaims rows whose lease expired while still `syncing` (worker crash or
+    /// stall), so a replacement worker can finish them. Recovery leases count
+    /// toward `attempt_count` like any other claim: retry exhaustion therefore
+    /// includes recovered attempts, which is intended.
+    ///
+    /// A `syncing` row with NULL `leased_at` is never reclaimed: its lease age
+    /// is unknown and expiry cannot be proven, so it is left for manual or
+    /// observability follow-up rather than risk double-processing.
     pub async fn lease_replication_jobs(
         &self,
         limit: i64,
         lease_timeout_secs: i64,
-        lease_token: Uuid,
     ) -> Result<Vec<ReplicationJob>> {
+        // Reclaiming `syncing` rows silently depends on `next_attempt_at <=
+        // NOW()`; workers never schedule syncing rows into the future today.
         let rows = sqlx::query!(
             r#"
             WITH candidates AS (
                 SELECT id
                 FROM replication_jobs
-                WHERE status IN ('queued', 'retrying')
-                  AND next_attempt_at <= NOW()
+                WHERE next_attempt_at <= NOW()
                   AND (
-                    leased_at IS NULL
-                    OR leased_at < NOW() - make_interval(secs => $2)
+                    (
+                      status IN ('queued', 'retrying')
+                      AND (
+                        leased_at IS NULL
+                        OR leased_at < NOW() - make_interval(secs => $2)
+                      )
+                    )
+                    OR (
+                      status = 'syncing'
+                      AND leased_at IS NOT NULL
+                      AND leased_at < NOW() - make_interval(secs => $2)
+                    )
                   )
                 ORDER BY next_attempt_at ASC, created_at ASC
                 LIMIT $1
@@ -3472,7 +3524,7 @@ impl MetadataStore {
             SET
                 status = 'syncing',
                 leased_at = NOW(),
-                lease_token = $3,
+                lease_token = gen_random_uuid(),
                 last_attempt_at = NOW(),
                 attempt_count = attempt_count + 1,
                 updated_at = NOW()
@@ -3494,7 +3546,6 @@ impl MetadataStore {
             "#,
             limit,
             lease_timeout_secs as f64,
-            lease_token,
         )
         .fetch_all(&self.pool)
         .await?;
@@ -3523,8 +3574,16 @@ impl MetadataStore {
     }
 
     /// Mark a replication job as completed and release its lease.
-    pub async fn mark_replication_job_completed(&self, job_id: Uuid) -> Result<()> {
-        sqlx::query!(
+    ///
+    /// Fenced by `(id, lease_token, status = 'syncing')`: returns `false` when
+    /// the lease was lost or the job was reclaimed (lease conflict), in which
+    /// case the caller must not commit any further authoritative writes.
+    pub async fn mark_replication_job_completed(
+        &self,
+        job_id: Uuid,
+        lease_token: Uuid,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
             r#"
             UPDATE replication_jobs
             SET
@@ -3533,65 +3592,157 @@ impl MetadataStore {
                 lease_token = NULL,
                 last_error = NULL,
                 updated_at = NOW()
-            WHERE id = $1
+            WHERE id = $1 AND lease_token = $2 AND status = 'syncing'
             "#,
             job_id,
+            lease_token,
         )
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     /// Mark a replication job for retry after a transient failure.
+    ///
+    /// Returns `false` on a lease conflict (stale token or no longer
+    /// `syncing`); the caller must not commit any further authoritative writes.
     pub async fn mark_replication_job_retrying(
         &self,
         job_id: Uuid,
+        lease_token: Uuid,
         last_error: &str,
         next_attempt_at: DateTime<Utc>,
-    ) -> Result<()> {
-        sqlx::query!(
+    ) -> Result<bool> {
+        let result = sqlx::query!(
             r#"
             UPDATE replication_jobs
             SET
                 status = 'retrying',
                 leased_at = NULL,
                 lease_token = NULL,
-                last_error = $2,
-                next_attempt_at = $3,
+                last_error = $3,
+                next_attempt_at = $4,
                 updated_at = NOW()
-            WHERE id = $1
+            WHERE id = $1 AND lease_token = $2 AND status = 'syncing'
             "#,
             job_id,
+            lease_token,
             last_error,
             next_attempt_at,
         )
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     /// Mark a replication job as terminally failed.
-    pub async fn mark_replication_job_failed(&self, job_id: Uuid, last_error: &str) -> Result<()> {
-        sqlx::query!(
+    ///
+    /// Returns `false` on a lease conflict (stale token or no longer
+    /// `syncing`); the caller must not commit any further authoritative writes.
+    pub async fn mark_replication_job_failed(
+        &self,
+        job_id: Uuid,
+        lease_token: Uuid,
+        last_error: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
             r#"
             UPDATE replication_jobs
             SET
                 status = 'failed',
                 leased_at = NULL,
                 lease_token = NULL,
-                last_error = $2,
+                last_error = $3,
                 updated_at = NOW()
-            WHERE id = $1
+            WHERE id = $1 AND lease_token = $2 AND status = 'syncing'
             "#,
             job_id,
+            lease_token,
             last_error,
         )
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Refresh a job's lease before processing it.
+    ///
+    /// Batch peers are leased as a whole, so a job picked late in the batch
+    /// may already be near expiry; renewing keeps a second worker from
+    /// reclaiming it mid-batch. The lease timeout is applied by the leaser
+    /// when comparing lease age, so only `leased_at` is bumped here.
+    ///
+    /// Returns `false` when the lease is no longer held (stale token or the
+    /// job was reclaimed); the caller must skip the job without any further
+    /// authoritative writes.
+    pub async fn renew_replication_job_lease(
+        &self,
+        job_id: Uuid,
+        lease_token: Uuid,
+    ) -> Result<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE replication_jobs
+            SET leased_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND lease_token = $2 AND status = 'syncing'
+            "#,
+            job_id,
+            lease_token,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Load a single replication job by id (plain SELECT).
+    pub async fn get_replication_job(&self, job_id: Uuid) -> Result<Option<ReplicationJob>> {
+        let row = sqlx::query!(
+            r#"
+            SELECT
+                id,
+                file_id,
+                file_version_id,
+                storage_key,
+                status as "status!",
+                attempt_count,
+                next_attempt_at,
+                last_attempt_at,
+                leased_at,
+                lease_token,
+                last_error,
+                created_at,
+                updated_at
+            FROM replication_jobs
+            WHERE id = $1
+            "#,
+            job_id,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let status: String = row.status;
+        Ok(Some(ReplicationJob {
+            id: row.id,
+            file_id: row.file_id,
+            file_version_id: row.file_version_id,
+            storage_key: row.storage_key,
+            status: Self::parse_replication_job_status(&status)?,
+            attempt_count: row.attempt_count,
+            next_attempt_at: row.next_attempt_at,
+            last_attempt_at: row.last_attempt_at,
+            leased_at: row.leased_at,
+            lease_token: row.lease_token,
+            last_error: row.last_error,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }))
     }
 
     /// Record the result of a single target replication attempt.
