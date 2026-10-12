@@ -161,6 +161,28 @@ pub trait MetadataStoreOps: Send + Sync {
         version_id: uuid::Uuid,
         state: ReplicationState,
     ) -> Result<()>;
+
+    /// Count enabled replication targets inside a transaction.
+    ///
+    /// The default returns zero (no replication concept) so lightweight impls
+    /// keep compiling; the real store overrides it.
+    async fn count_enabled_replication_targets_in_tx(&self, _tx: &mut Self::Tx) -> Result<i64> {
+        Ok(0)
+    }
+
+    /// Queue a new replication job inside a transaction.
+    ///
+    /// The default errors because this is only reached when the in-transaction
+    /// target count is nonzero, which the default count prevents.
+    async fn create_replication_job_in_tx(
+        &self,
+        _tx: &mut Self::Tx,
+        _job: &ReplicationJob,
+    ) -> Result<()> {
+        Err(anyhow::anyhow!(
+            "replication jobs not supported by this metadata store"
+        ))
+    }
 }
 
 /// Trait for object store operations needed by FileService.
@@ -654,7 +676,7 @@ where
             existing.current_version += 1;
             existing.modified_at = chrono::Utc::now();
 
-            let version = FileVersion::new(
+            let mut version = FileVersion::new(
                 existing.id,
                 existing.current_version,
                 content_hash.clone(),
@@ -698,11 +720,9 @@ where
                 .update_file_in_tx(&mut tx, &existing)
                 .await
                 .map_err(|e| FileError::Database(e.to_string()))?;
-            let persisted_version_id = self
-                .metadata_store
-                .create_file_version_in_tx(&mut tx, &version)
-                .await
-                .map_err(|e| FileError::Database(e.to_string()))?;
+            let (_, replication_job) = self
+                .persist_version_with_replication_intent(&mut tx, &mut version)
+                .await?;
             self.publish_file_integration_event(
                 &mut tx,
                 "io.elembra.files.file.updated.v1",
@@ -720,13 +740,8 @@ where
                 .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
             self.broadcaster.publish(event);
 
-            self.queue_replication_if_needed(
-                existing.id,
-                file_owner_id,
-                persisted_version_id,
-                &version.storage_key(),
-            )
-            .await?;
+            self.notify_replication_queued(file_owner_id, replication_job.as_ref())
+                .await;
 
             return Ok(existing);
         }
@@ -772,7 +787,7 @@ where
         );
 
         // 6. Insert into files and file_versions tables atomically with the event
-        let version = FileVersion::new(
+        let mut version = FileVersion::new(
             file.id,
             1,
             content_hash,
@@ -803,11 +818,9 @@ where
             .create_file_in_tx(&mut tx, &file)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
-        let persisted_version_id = self
-            .metadata_store
-            .create_file_version_in_tx(&mut tx, &version)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
+        let (_, replication_job) = self
+            .persist_version_with_replication_intent(&mut tx, &mut version)
+            .await?;
         self.publish_file_integration_event(
             &mut tx,
             "io.elembra.files.file.created.v1",
@@ -825,13 +838,8 @@ where
             .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
         self.broadcaster.publish(event);
 
-        self.queue_replication_if_needed(
-            file.id,
-            file_owner_id,
-            persisted_version_id,
-            &version.storage_key(),
-        )
-        .await?;
+        self.notify_replication_queued(file_owner_id, replication_job.as_ref())
+            .await;
 
         // 7. Return File
         Ok(file)
@@ -997,7 +1005,7 @@ where
         file.modified_at = chrono::Utc::now();
 
         // 6. Create FileVersion snapshot
-        let version = FileVersion::new(
+        let mut version = FileVersion::new(
             file.id,
             file.current_version,
             new_content_hash.clone(),
@@ -1043,11 +1051,9 @@ where
             .update_file_in_tx(&mut tx, &file)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
-        let persisted_version_id = self
-            .metadata_store
-            .create_file_version_in_tx(&mut tx, &version)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
+        let (_, replication_job) = self
+            .persist_version_with_replication_intent(&mut tx, &mut version)
+            .await?;
         self.publish_file_integration_event(
             &mut tx,
             "io.elembra.files.file.updated.v1",
@@ -1062,13 +1068,8 @@ where
             .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
         self.broadcaster.publish(event);
 
-        self.queue_replication_if_needed(
-            file.id,
-            user_id,
-            persisted_version_id,
-            &version.storage_key(),
-        )
-        .await?;
+        self.notify_replication_queued(user_id, replication_job.as_ref())
+            .await;
 
         // 8. Return updated file
         Ok(file)
@@ -1167,7 +1168,7 @@ where
         file.modified_at = chrono::Utc::now();
 
         // 5. Create FileVersion snapshot
-        let version = FileVersion::new(
+        let mut version = FileVersion::new(
             file.id,
             new_version_number,
             old_file_version.content_hash.clone(),
@@ -1211,11 +1212,9 @@ where
             .update_file_in_tx(&mut tx, &file)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
-        let persisted_version_id = self
-            .metadata_store
-            .create_file_version_in_tx(&mut tx, &version)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
+        let (_, replication_job) = self
+            .persist_version_with_replication_intent(&mut tx, &mut version)
+            .await?;
         self.publish_file_integration_event(
             &mut tx,
             "io.elembra.files.file.updated.v1",
@@ -1230,13 +1229,8 @@ where
             .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
         self.broadcaster.publish(event);
 
-        self.queue_replication_if_needed(
-            file.id,
-            user_id,
-            persisted_version_id,
-            &version.storage_key(),
-        )
-        .await?;
+        self.notify_replication_queued(user_id, replication_job.as_ref())
+            .await;
 
         // 7. Return updated file
         // Note: content is already in RustFS, we just needed to read it to verify it exists
@@ -1598,7 +1592,7 @@ where
         file.modified_at = chrono::Utc::now();
 
         // 7. Create FileVersion snapshot
-        let version = FileVersion::new(
+        let mut version = FileVersion::new(
             file.id,
             file.current_version,
             new_content_hash.clone(),
@@ -1650,11 +1644,9 @@ where
             .update_file_in_tx(&mut tx, &file)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
-        let persisted_version_id = self
-            .metadata_store
-            .create_file_version_in_tx(&mut tx, &version)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
+        let (_, replication_job) = self
+            .persist_version_with_replication_intent(&mut tx, &mut version)
+            .await?;
         self.publish_file_integration_event(
             &mut tx,
             "io.elembra.files.file.updated.v1",
@@ -1669,13 +1661,8 @@ where
             .map_err(|e| FileError::Storage(format!("Failed to commit transaction: {}", e)))?;
         self.broadcaster.publish(event);
 
-        self.queue_replication_if_needed(
-            file.id,
-            user_id,
-            persisted_version_id,
-            &version.storage_key(),
-        )
-        .await?;
+        self.notify_replication_queued(user_id, replication_job.as_ref())
+            .await;
 
         // 9. Return updated file
         Ok(file)
@@ -1854,48 +1841,82 @@ where
         Ok((hex::encode(hasher.finalize()), total_size))
     }
 
-    async fn queue_replication_if_needed(
+    /// Persist the file version and, atomically in the same transaction, the
+    /// durable replication intent for it (job row plus the version's
+    /// `queued` state).
+    ///
+    /// Snapshot semantics: the enabled-target count is read inside the
+    /// mutation transaction. A target enabled concurrently after the count is
+    /// not part of this mutation's obligations; it is reconciled by future
+    /// uploads (documented limitation — the primary write is already durable
+    /// and subsequent mutations queue their own intent).
+    ///
+    /// Returns the persisted version id and, when at least one target is
+    /// enabled, the queued replication job for the post-commit notification.
+    async fn persist_version_with_replication_intent(
         &self,
-        file_id: uuid::Uuid,
-        owner_id: UserId,
-        persisted_version_id: uuid::Uuid,
-        storage_key: &str,
-    ) -> Result<(), FileError> {
+        tx: &mut E::Tx,
+        version: &mut FileVersion,
+    ) -> Result<(uuid::Uuid, Option<ReplicationJob>), FileError> {
         let target_count = self
             .metadata_store
-            .count_enabled_replication_targets()
+            .count_enabled_replication_targets_in_tx(tx)
+            .await
+            .map_err(|e| FileError::Database(e.to_string()))?;
+
+        if target_count > 0 {
+            version.replication_state = ReplicationState::Queued;
+        }
+        let version_id = self
+            .metadata_store
+            .create_file_version_in_tx(tx, version)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
 
         if target_count == 0 {
-            return Ok(());
+            return Ok((version_id, None));
         }
 
-        let job = ReplicationJob::new(file_id, persisted_version_id, storage_key.to_string());
-
+        let job = ReplicationJob::new(version.file_id, version_id, version.storage_key());
         self.metadata_store
-            .create_replication_job(&job)
+            .create_replication_job_in_tx(tx, &job)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
 
-        self.metadata_store
-            .update_file_version_replication_state(persisted_version_id, ReplicationState::Queued)
-            .await
-            .map_err(|e| FileError::Database(e.to_string()))?;
+        Ok((version_id, Some(job)))
+    }
 
-        self.publish_replication_state_event(ReplicationEventContext {
-            file_id,
+    /// Best-effort post-commit notification that replication was queued.
+    ///
+    /// The durable replication intent (job row plus version state) committed
+    /// inside the file-mutation transaction, so this notification is
+    /// deliberately non-authoritative: any failure is logged and swallowed and
+    /// must never turn an already-committed mutation into a reported failure.
+    async fn notify_replication_queued(&self, owner_id: UserId, job: Option<&ReplicationJob>) {
+        let Some(job) = job else {
+            return;
+        };
+
+        let context = ReplicationEventContext {
+            file_id: job.file_id,
             owner_id,
-            file_version_id: persisted_version_id,
+            file_version_id: job.file_version_id,
             replication_state: ReplicationState::Queued,
             job_status: Some(job.status.as_str().to_string()),
             attempt_count: job.attempt_count,
             next_attempt_at: Some(job.next_attempt_at),
             last_error: None,
-        })
-        .await?;
+        };
 
-        Ok(())
+        if let Err(error) = self.publish_replication_state_event(context).await {
+            tracing::warn!(
+                file_id = %job.file_id,
+                file_version_id = %job.file_version_id,
+                error = %error,
+                "best-effort replication-state notification failed after commit; \
+                 the committed replication_jobs row is the authoritative intent"
+            );
+        }
     }
 
     async fn publish_replication_state_event(

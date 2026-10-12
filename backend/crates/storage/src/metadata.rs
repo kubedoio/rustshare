@@ -3273,6 +3273,19 @@ impl MetadataStore {
         .map_err(Into::into)
     }
 
+    /// Count enabled replication targets inside a transaction.
+    pub async fn count_enabled_replication_targets_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    ) -> Result<i64> {
+        sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "count!" FROM replication_targets WHERE enabled = TRUE"#
+        )
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(Into::into)
+    }
+
     /// Create a durable replication job for asynchronous workers.
     pub async fn create_replication_job(&self, job: &ReplicationJob) -> Result<()> {
         sqlx::query!(
@@ -3309,6 +3322,52 @@ impl MetadataStore {
             job.updated_at,
         )
         .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Create a durable replication job for asynchronous workers inside a
+    /// transaction, so the intent commits atomically with the file mutation.
+    pub async fn create_replication_job_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        job: &ReplicationJob,
+    ) -> Result<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO replication_jobs (
+                id,
+                file_id,
+                file_version_id,
+                storage_key,
+                status,
+                attempt_count,
+                next_attempt_at,
+                last_attempt_at,
+                leased_at,
+                lease_token,
+                last_error,
+                created_at,
+                updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            "#,
+            job.id,
+            job.file_id,
+            job.file_version_id,
+            &job.storage_key,
+            job.status.as_str(),
+            job.attempt_count,
+            job.next_attempt_at,
+            job.last_attempt_at,
+            job.leased_at,
+            job.lease_token,
+            job.last_error.as_deref(),
+            job.created_at,
+            job.updated_at,
+        )
+        .execute(&mut **tx)
         .await?;
 
         Ok(())
@@ -7901,6 +7960,21 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStore {
         job: &rustshare_core::domain::ReplicationJob,
     ) -> anyhow::Result<()> {
         self.create_replication_job(job).await
+    }
+
+    async fn count_enabled_replication_targets_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+    ) -> anyhow::Result<i64> {
+        self.count_enabled_replication_targets_in_tx(tx).await
+    }
+
+    async fn create_replication_job_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        job: &rustshare_core::domain::ReplicationJob,
+    ) -> anyhow::Result<()> {
+        self.create_replication_job_in_tx(tx, job).await
     }
 
     async fn update_file_version_replication_state(
