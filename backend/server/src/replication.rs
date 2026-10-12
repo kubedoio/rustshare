@@ -113,6 +113,17 @@ pub fn spawn_replication_worker(
     });
 }
 
+/// Version states that may (re-)enter or finish replication. A
+/// `fully_replicated` version refuses, which fences a stale worker from
+/// clobbering a version another job already finished.
+const REPLICATABLE_STATES: [ReplicationState; 5] = [
+    ReplicationState::Queued,
+    ReplicationState::PrimaryWritten,
+    ReplicationState::Syncing,
+    ReplicationState::Degraded,
+    ReplicationState::Failed,
+];
+
 async fn tick_replication_worker(
     metadata_store: &MetadataStore,
     object_store: &ObjectStore,
@@ -120,9 +131,8 @@ async fn tick_replication_worker(
     broadcaster: &EventBroadcaster,
     config: &ReplicationWorkerConfig,
 ) -> Result<()> {
-    let lease_token = Uuid::new_v4();
     let jobs = metadata_store
-        .lease_replication_jobs(config.batch_size, config.lease_timeout_secs, lease_token)
+        .lease_replication_jobs(config.batch_size, config.lease_timeout_secs)
         .await
         .context("failed to lease replication jobs")?;
 
@@ -137,14 +147,36 @@ async fn tick_replication_worker(
         .context("failed to load replication targets")?;
 
     for job in jobs {
+        let Some(lease_token) = job.lease_token else {
+            warn!(job_id = %job.id, "Replication job missing lease token; skipping");
+            continue;
+        };
+
+        // Renew before any work: batch peers leased earlier may already be near
+        // expiry, and a false return means another worker holds the lease now,
+        // so the job must be skipped without any authoritative writes.
+        if !metadata_store
+            .renew_replication_job_lease(job.id, lease_token)
+            .await
+            .with_context(|| format!("failed to renew lease for job {}", job.id))?
+        {
+            warn!(job_id = %job.id, "Replication job lease lost before processing; skipping");
+            continue;
+        }
+
         if targets.is_empty() {
-            metadata_store
-                .mark_replication_job_completed(job.id)
+            if !metadata_store
+                .mark_replication_job_completed(job.id, lease_token)
                 .await
-                .with_context(|| format!("failed to complete job {} with zero targets", job.id))?;
-            metadata_store
-                .update_file_version_replication_state(
+                .with_context(|| format!("failed to complete job {} with zero targets", job.id))?
+            {
+                warn!(job_id = %job.id, "Replication job lease conflict completing zero-target job");
+                continue;
+            }
+            if !metadata_store
+                .update_file_version_replication_state_if_current(
                     job.file_version_id,
+                    &REPLICATABLE_STATES,
                     ReplicationState::FullyReplicated,
                 )
                 .await
@@ -153,7 +185,15 @@ async fn tick_replication_worker(
                         "failed to mark file version {} fully replicated",
                         job.file_version_id
                     )
-                })?;
+                })?
+            {
+                warn!(
+                    job_id = %job.id,
+                    file_version_id = %job.file_version_id,
+                    "Replication version state conflict completing zero-target job"
+                );
+                continue;
+            }
             publish_replication_event(
                 metadata_store,
                 event_store,
@@ -179,6 +219,7 @@ async fn tick_replication_worker(
             config,
             &job,
             &targets,
+            lease_token,
         )
         .await?;
     }
@@ -186,6 +227,7 @@ async fn tick_replication_worker(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_replication_job(
     metadata_store: &MetadataStore,
     object_store: &ObjectStore,
@@ -194,11 +236,64 @@ async fn process_replication_job(
     config: &ReplicationWorkerConfig,
     job: &ReplicationJob,
     targets: &[ReplicationTarget],
+    lease_token: Uuid,
 ) -> Result<()> {
-    metadata_store
-        .update_file_version_replication_state(job.file_version_id, ReplicationState::Syncing)
+    // Any state other than `fully_replicated` may re-enter `syncing` (a retry
+    // leaves the version `degraded`); only an already-replicated version
+    // refuses, which fences a stale worker from clobbering it.
+    if !metadata_store
+        .update_file_version_replication_state_if_current(
+            job.file_version_id,
+            &REPLICATABLE_STATES,
+            ReplicationState::Syncing,
+        )
         .await
-        .with_context(|| format!("failed to mark version {} syncing", job.file_version_id))?;
+        .with_context(|| format!("failed to mark version {} syncing", job.file_version_id))?
+    {
+        warn!(
+            job_id = %job.id,
+            file_version_id = %job.file_version_id,
+            "Replication version state conflict; completing job"
+        );
+        // The expected set covers every state except `fully_replicated`, so a
+        // rejection proves the version is already replicated. Finish the job
+        // terminally instead of cycling reclaim -> renew -> guard-reject.
+        if !metadata_store
+            .mark_replication_job_completed(job.id, lease_token)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to complete job {} after version state conflict",
+                    job.id
+                )
+            })?
+        {
+            warn!(
+                job_id = %job.id,
+                "Replication job lease conflict completing after version state conflict"
+            );
+            return Ok(());
+        }
+        publish_replication_event(
+            metadata_store,
+            event_store,
+            broadcaster,
+            ReplicationEventContext {
+                job,
+                replication_state: ReplicationState::FullyReplicated,
+                job_status: Some("completed".to_string()),
+                attempt_count: job.attempt_count,
+                next_attempt_at: None,
+                last_error: None,
+            },
+        )
+        .await?;
+        info!(
+            job_id = %job.id,
+            "Replication job completed after version state conflict"
+        );
+        return Ok(());
+    }
     publish_replication_event(
         metadata_store,
         event_store,
@@ -223,6 +318,9 @@ async fn process_replication_job(
 
     for target in targets {
         let started_at = Utc::now();
+        // A started remote PUT is not aborted on lease loss: it may complete
+        // after another worker reclaimed the job. Remote writes are at-least-
+        // once by design and safe because replicas are content-addressed.
         let attempt_result = replicate_to_target(target, &job.storage_key, blob.clone()).await;
         let completed_at = Utc::now();
 
@@ -302,13 +400,18 @@ async fn process_replication_job(
     }
 
     if required_failures.is_empty() {
-        metadata_store
-            .mark_replication_job_completed(job.id)
+        if !metadata_store
+            .mark_replication_job_completed(job.id, lease_token)
             .await
-            .with_context(|| format!("failed to mark job {} completed", job.id))?;
-        metadata_store
-            .update_file_version_replication_state(
+            .with_context(|| format!("failed to mark job {} completed", job.id))?
+        {
+            warn!(job_id = %job.id, "Replication job lease conflict on completion");
+            return Ok(());
+        }
+        if !metadata_store
+            .update_file_version_replication_state_if_current(
                 job.file_version_id,
+                &[ReplicationState::Syncing],
                 ReplicationState::FullyReplicated,
             )
             .await
@@ -317,7 +420,15 @@ async fn process_replication_job(
                     "failed to mark file version {} fully replicated",
                     job.file_version_id
                 )
-            })?;
+            })?
+        {
+            warn!(
+                job_id = %job.id,
+                file_version_id = %job.file_version_id,
+                "Replication version state conflict on completion"
+            );
+            return Ok(());
+        }
         publish_replication_event(
             metadata_store,
             event_store,
@@ -342,19 +453,35 @@ async fn process_replication_job(
         let backoff = retry_backoff_secs(job.attempt_count);
         let next_attempt_at = Utc::now() + chrono::Duration::seconds(i64::from(backoff));
 
-        metadata_store
-            .mark_replication_job_retrying(job.id, &error_text, next_attempt_at)
+        if !metadata_store
+            .mark_replication_job_retrying(job.id, lease_token, &error_text, next_attempt_at)
             .await
-            .with_context(|| format!("failed to mark job {} retrying", job.id))?;
-        metadata_store
-            .update_file_version_replication_state(job.file_version_id, ReplicationState::Degraded)
+            .with_context(|| format!("failed to mark job {} retrying", job.id))?
+        {
+            warn!(job_id = %job.id, "Replication job lease conflict scheduling retry");
+            return Ok(());
+        }
+        if !metadata_store
+            .update_file_version_replication_state_if_current(
+                job.file_version_id,
+                &[ReplicationState::Syncing],
+                ReplicationState::Degraded,
+            )
             .await
             .with_context(|| {
                 format!(
                     "failed to mark file version {} degraded",
                     job.file_version_id
                 )
-            })?;
+            })?
+        {
+            warn!(
+                job_id = %job.id,
+                file_version_id = %job.file_version_id,
+                "Replication version state conflict scheduling retry"
+            );
+            return Ok(());
+        }
         publish_replication_event(
             metadata_store,
             event_store,
@@ -379,14 +506,30 @@ async fn process_replication_job(
         return Ok(());
     }
 
-    metadata_store
-        .mark_replication_job_failed(job.id, &error_text)
+    if !metadata_store
+        .mark_replication_job_failed(job.id, lease_token, &error_text)
         .await
-        .with_context(|| format!("failed to mark job {} failed", job.id))?;
-    metadata_store
-        .update_file_version_replication_state(job.file_version_id, ReplicationState::Failed)
+        .with_context(|| format!("failed to mark job {} failed", job.id))?
+    {
+        warn!(job_id = %job.id, "Replication job lease conflict marking failed");
+        return Ok(());
+    }
+    if !metadata_store
+        .update_file_version_replication_state_if_current(
+            job.file_version_id,
+            &[ReplicationState::Syncing],
+            ReplicationState::Failed,
+        )
         .await
-        .with_context(|| format!("failed to mark file version {} failed", job.file_version_id))?;
+        .with_context(|| format!("failed to mark file version {} failed", job.file_version_id))?
+    {
+        warn!(
+            job_id = %job.id,
+            file_version_id = %job.file_version_id,
+            "Replication version state conflict marking failed"
+        );
+        return Ok(());
+    }
     publish_replication_event(
         metadata_store,
         event_store,

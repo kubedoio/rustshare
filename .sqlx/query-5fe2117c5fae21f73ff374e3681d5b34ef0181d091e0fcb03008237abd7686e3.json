@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            WITH candidates AS (\n                SELECT id\n                FROM replication_jobs\n                WHERE status IN ('queued', 'retrying')\n                  AND next_attempt_at <= NOW()\n                  AND (\n                    leased_at IS NULL\n                    OR leased_at < NOW() - make_interval(secs => $2)\n                  )\n                ORDER BY next_attempt_at ASC, created_at ASC\n                LIMIT $1\n                FOR UPDATE SKIP LOCKED\n            )\n            UPDATE replication_jobs\n            SET\n                status = 'syncing',\n                leased_at = NOW(),\n                lease_token = $3,\n                last_attempt_at = NOW(),\n                attempt_count = attempt_count + 1,\n                updated_at = NOW()\n            WHERE id IN (SELECT id FROM candidates)\n            RETURNING\n                id,\n                file_id,\n                file_version_id,\n                storage_key,\n                status as \"status!\",\n                attempt_count,\n                next_attempt_at,\n                last_attempt_at,\n                leased_at,\n                lease_token,\n                last_error,\n                created_at,\n                updated_at\n            ",
+  "query": "\n            SELECT\n                id,\n                file_id,\n                file_version_id,\n                storage_key,\n                status as \"status!\",\n                attempt_count,\n                next_attempt_at,\n                last_attempt_at,\n                leased_at,\n                lease_token,\n                last_error,\n                created_at,\n                updated_at\n            FROM replication_jobs\n            WHERE id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -71,8 +71,6 @@
     ],
     "parameters": {
       "Left": [
-        "Int8",
-        "Float8",
         "Uuid"
       ]
     },
@@ -92,5 +90,5 @@
       false
     ]
   },
-  "hash": "0aa2a3e94a83b5c40b7e7dd954372f587becf55511f79169962864cde3d0c70b"
+  "hash": "5fe2117c5fae21f73ff374e3681d5b34ef0181d091e0fcb03008237abd7686e3"
 }

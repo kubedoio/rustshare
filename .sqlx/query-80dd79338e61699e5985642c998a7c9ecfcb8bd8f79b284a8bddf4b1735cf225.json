@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE file_versions\n            SET replication_state = $3\n            WHERE id = $1 AND replication_state = ANY($2)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray",
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "80dd79338e61699e5985642c998a7c9ecfcb8bd8f79b284a8bddf4b1735cf225"
+}

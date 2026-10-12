@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE replication_jobs\n            SET leased_at = NOW(), updated_at = NOW()\n            WHERE id = $1 AND lease_token = $2 AND status = 'syncing'\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1efe3c0a4a09e85459d2781dd95d2c0a0fdf0573db95fb1f05ddc48a2608e886"
+}
