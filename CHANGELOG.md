@@ -129,6 +129,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- File uploads, re-uploads, updates, version restores and edits now record
+  their replication intent (the `replication_jobs` row and the file version's
+  `queued` state) inside the file-mutation transaction, instead of queueing
+  replication after the transaction committed. A replication-queueing failure
+  can no longer report an already-committed mutation as failed, and the intent
+  can no longer be half-recorded; the post-commit `ReplicationStateChanged`
+  event publication is now explicitly best-effort and never fails the request.
 - Disabling a user through SCIM now revokes persisted browser sessions and
   device tokens in the same database transaction as the account-state change;
   cookie authentication also rejects stale sessions for disabled or missing

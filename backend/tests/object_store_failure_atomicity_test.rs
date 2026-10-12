@@ -42,10 +42,13 @@
 //!   assertion is proven able to detect an enqueue rather than being vacuously
 //!   true. Deciding whether a queued key is still referenced is the GC worker's
 //!   job (it re-checks the database before deleting), not the trigger's.
-//! * Post-commit `queue_replication_if_needed` failures propagate to the caller
-//!   *after* a successful commit, so a returning error does not imply the
-//!   mutation was rolled back (false-error ambiguity). This is flagged for a
-//!   separate PR and is not asserted here beyond the zero-target early return.
+//! * Post-commit replication queueing used to propagate failures to the caller
+//!   *after* a successful commit (false-error ambiguity). That defect is fixed
+//!   by recording the replication intent inside the mutation transaction; the
+//!   remaining post-commit step is a best-effort event publication that never
+//!   fails the request. The dedicated contract suite is
+//!   `replication_intent_atomicity_test`; it is not re-asserted here beyond the
+//!   zero-target early return.
 //!
 //! Each test arms a [`FixtureCleanupGuard`] alongside its explicit cleanup, so
 //! an assertion that panics still removes the tenant rows and S3 objects it
@@ -1433,21 +1436,21 @@ async fn e_failure_after_blob_write_rolls_back_and_retry_succeeds() {
 // F. post-commit contract (documented, not fault-injected)
 // ---------------------------------------------------------------------------
 
-/// **Invariant F** — post-commit contract, pinned without fault injection.
+/// **Invariant F** — zero-target contract, pinned without fault injection.
 ///
-/// With zero enabled replication targets, `queue_replication_if_needed`
-/// returns `Ok` early after the transaction has committed, so a successful
-/// create yields exactly one committed `file_versions` row, exactly one
-/// `io.elembra.files.file.created.v1` outbox row, and `Ok` to the caller.
+/// With zero enabled replication targets, the in-transaction replication
+/// intent step is a no-op, so a successful create yields exactly one committed
+/// `file_versions` row (`primary_written`), exactly one
+/// `io.elembra.files.file.created.v1` outbox row, no `replication_jobs` row,
+/// and `Ok` to the caller.
 ///
-/// Known limitation (documented, deliberately not asserted): the replication
-/// queueing happens *after* `commit_transaction`. If it ever fails, the service
-/// returns `Err` even though the mutation is durably committed — a caller
-/// cannot distinguish "nothing happened" from "committed but replication
-/// queueing failed". The error is a false-error ambiguity for the commit path.
-/// It cannot be triggered deterministically through the public API while there
-/// are zero enabled replication targets (the early return skips it entirely),
-/// so no assertion is made here; changing it is a separate PR.
+/// Historical note: this test once documented (without asserting) that
+/// replication queueing ran *after* `commit_transaction` and could report a
+/// committed mutation as failed. That defect is now fixed — the intent is
+/// recorded inside the mutation transaction and the post-commit
+/// `ReplicationStateChanged` publication is best-effort — and the full
+/// fault-injected contract lives in `replication_intent_atomicity_test`. This
+/// test deliberately pins only the zero-target behavior.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires DATABASE_URL and S3-compatible object storage"]
 async fn f_successful_create_commits_one_version_one_outbox_event() {
@@ -1501,6 +1504,16 @@ async fn f_successful_create_commits_one_version_one_outbox_event() {
 
     assert_eq!(file_version_count(&ctx, file.id).await, 1);
     let version_id = latest_version_id(&ctx, file.id).await;
+    let version_state: String =
+        sqlx::query_scalar("SELECT replication_state FROM file_versions WHERE id = $1")
+            .bind(version_id)
+            .fetch_one(&ctx.pool)
+            .await
+            .expect("version row must be readable");
+    assert_eq!(
+        version_state, "primary_written",
+        "zero-target create must leave the version in primary_written"
+    );
     assert_eq!(
         replication_job_count(&ctx, version_id).await,
         0,
