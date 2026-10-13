@@ -32,7 +32,9 @@ use rustshare_server::object_gc_scan::{
 };
 use rustshare_storage::{BucketVersioningState, MetadataStore, ObjectStore, ObjectStoreOptions};
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{
+    postgres::PgConnection, postgres::PgPoolOptions, Executor, PgPool, Postgres, Transaction,
+};
 use uuid::Uuid;
 
 static TEST_LOCK: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
@@ -432,6 +434,38 @@ impl BlobInspector for FakeInspector {
 fn fake_locks(env: &TestEnv) -> PgLockProvider {
     PgLockProvider {
         pool: env.pool.clone(),
+    }
+}
+
+/// Boxed future handed to the pool's `after_connect` machinery.
+type ConnectFuture<'a> = Pin<Box<dyn Future<Output = Result<(), sqlx::Error>> + Send + 'a>>;
+
+/// Runs the privilege downgrade on one physical connection. A generic helper
+/// (rather than an `async move` block inside the higher-ranked closure) keeps
+/// the connection borrow's lifetime an explicit early-bound parameter, which
+/// the closure's `for<'c>` bound then forwards; rustc cannot infer that shape
+/// through a captured `&mut` inside the closure body itself.
+fn set_role_future<'c>(conn: &'c mut PgConnection, role: String) -> ConnectFuture<'c> {
+    Box::pin(async move {
+        let statement = format!("SET ROLE {role}");
+        conn.execute(statement.as_str()).await?;
+        Ok(())
+    })
+}
+
+/// Builds the `after_connect` callback that downgrades every physical
+/// connection of the m2 denied-role pool to the restricted role (see
+/// `m2_reference_check_error_never_enqueues`). A named constructor with
+/// explicit closure parameter and return types keeps the higher-ranked
+/// signature inferable, which an unannotated capturing closure is not.
+fn set_role_on_connect(
+    role: String,
+) -> impl Fn(&mut PgConnection, sqlx::pool::PoolConnectionMetadata) -> ConnectFuture<'_>
+       + Send
+       + Sync
+       + 'static {
+    move |conn: &mut PgConnection, _meta: sqlx::pool::PoolConnectionMetadata| -> ConnectFuture<'_> {
+        Box::pin(set_role_future(conn, role.clone()))
     }
 }
 
@@ -1510,21 +1544,23 @@ async fn m2_reference_check_error_never_enqueues() {
     let key = blob(&content);
     store.put(&key, content.into()).await.expect("put blob");
 
-    // A dedicated role whose only privilege gap is SELECT on mail_attachments,
-    // one of the seven tables count_blob_references reads: the reference
-    // query fails with a permission error while the enqueue path (INSERT and
-    // SELECT on object_gc_queue) stays fully functional. This models a
-    // partial metadata outage — the queue writable, the reference snapshot
-    // unreadable — which a uniformly closed pool cannot model. The table is
-    // chosen from the non-RLS reference tables so a missing grant is a hard
-    // error, not a silently empty RLS-filtered count.
+    // A dedicated NOLOGIN role whose only privilege gap is SELECT on
+    // mail_attachments, one of the seven tables count_blob_references reads:
+    // the reference query fails with a permission error while the enqueue
+    // path (INSERT and SELECT on object_gc_queue) stays fully functional.
+    // This models a partial metadata outage — the queue writable, the
+    // reference snapshot unreadable — which a uniformly closed pool cannot
+    // model. The table is chosen from the non-RLS reference tables so a
+    // missing grant is a hard error, not a silently empty RLS-filtered count.
+    // The pool below connects as the test superuser and every physical
+    // connection runs `SET ROLE` to the restricted role via after_connect, so
+    // no credential for the role ever exists: NOLOGIN roles cannot
+    // authenticate at all, and a superuser may SET ROLE to any role without
+    // membership or a password. An after_connect error hard-closes that
+    // connection and is never handed out by the pool, so a connection can
+    // never silently skip the SET ROLE.
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    let host_port = database_url
-        .split_once("://")
-        .and_then(|(_, rest)| rest.split('/').next())
-        .and_then(|authority| authority.rsplit('@').next())
-        .expect("DATABASE_URL host:port");
     let database_name = database_url
         .rsplit('/')
         .next()
@@ -1532,8 +1568,7 @@ async fn m2_reference_check_error_never_enqueues() {
     let database_name = database_name.replace('"', "\"\"");
     // Hex-only identifiers keep the interpolated DDL free of quoting hazards.
     let role = format!("ogc_ref_denied_{}", Uuid::new_v4().simple());
-    let password = Uuid::new_v4().simple().to_string();
-    sqlx::query(&format!("CREATE ROLE {role} LOGIN PASSWORD '{password}'"))
+    sqlx::query(&format!("CREATE ROLE {role} NOLOGIN"))
         .execute(&env.pool)
         .await
         .expect("create denied role");
@@ -1561,11 +1596,12 @@ async fn m2_reference_check_error_never_enqueues() {
     .await
     .expect("grant queue writes");
 
-    let denied_pool = PgPool::connect(&format!(
-        "postgresql://{role}:{password}@{host_port}/{database_name}"
-    ))
-    .await
-    .expect("connect as denied role");
+    let denied_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .after_connect(set_role_on_connect(role.clone()))
+        .connect(&database_url)
+        .await
+        .expect("connect with SET ROLE pool");
     let denied_metadata = MetadataStore::new(denied_pool.clone());
 
     // The permission gap must be real before it can mean anything in the
