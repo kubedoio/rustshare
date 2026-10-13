@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::get_object::GetObjectError;
+use aws_sdk_s3::operation::head_object::HeadObjectError;
+use aws_sdk_s3::types::BucketVersioningStatus;
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
@@ -45,6 +47,24 @@ pub struct ObjectStoreOptions {
     /// Production deployments should provision buckets outside the application
     /// and leave this disabled.
     pub auto_create_bucket: bool,
+}
+
+/// Versioning state of the object-store bucket, as reported by
+/// [`ObjectStore::bucket_versioning`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BucketVersioningState {
+    /// The bucket has never been versioned: the store reports no versioning
+    /// status at all.
+    Unversioned,
+    /// Versioning is currently enabled; deletes create delete markers and
+    /// previous versions remain retrievable.
+    Enabled,
+    /// Versioning was enabled in the past and is now suspended; existing
+    /// versions are retained even though new writes are unversioned.
+    Suspended,
+    /// The store reported a versioning status this SDK version does not
+    /// recognize, so the bucket's history is unproven.
+    Unknown,
 }
 
 impl ObjectStore {
@@ -235,16 +255,70 @@ impl ObjectStore {
         {
             Ok(_) => Ok(true),
             Err(error) => {
-                let code = error
-                    .as_service_error()
-                    .and_then(|service_error| service_error.meta().code());
-                if matches!(code, Some("NoSuchKey") | Some("NotFound")) {
+                if head_object_error_is_missing(&error) {
                     Ok(false)
                 } else {
                     Err(error.into())
                 }
             }
         }
+    }
+
+    /// Report the bucket's versioning state.
+    ///
+    /// **Fail-closed contract:** only `Ok(BucketVersioningState::Unversioned)`
+    /// is evidence that the bucket has never been versioned. Every other
+    /// outcome — `Enabled`, `Suspended`, `Unknown`, or `Err` (transport
+    /// failure, access denied, unsupported operation) — must be treated as
+    /// unsafe for automatic reclamation of objects, because previously
+    /// versioned objects may still exist even when the current key is absent.
+    pub async fn bucket_versioning(&self) -> Result<BucketVersioningState> {
+        let output = self
+            .client
+            .get_bucket_versioning()
+            .bucket(&self.bucket)
+            .send()
+            .await?;
+        Ok(map_versioning_status(output.status.as_ref()))
+    }
+
+    /// Return the object's `last_modified` timestamp via HeadObject, or
+    /// `Ok(None)` when the object does not exist.
+    ///
+    /// Errors other than a confirmed-missing object (S3 `NoSuchKey` /
+    /// `NotFound`) propagate as `Err`, and a successful response without a
+    /// `last_modified` also returns `Err`, so callers can distinguish "object
+    /// is gone" from "timestamp unknown" and fail closed on the latter.
+    pub async fn head_object_last_modified(
+        &self,
+        key: &str,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+        let output = match self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(output) => output,
+            Err(error) => {
+                if head_object_error_is_missing(&error) {
+                    return Ok(None);
+                }
+                return Err(error.into());
+            }
+        };
+
+        let last_modified = output
+            .last_modified
+            .ok_or_else(|| anyhow::anyhow!("head_object response missing last_modified"))?;
+        let timestamp =
+            chrono::DateTime::from_timestamp(last_modified.secs(), last_modified.subsec_nanos())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("head_object returned out-of-range last_modified")
+                })?;
+        Ok(Some(timestamp))
     }
 
     /// Read-only listing of one page of objects under a key prefix.
@@ -376,6 +450,34 @@ pub fn is_missing_object_error(error: &anyhow::Error) -> bool {
 
 fn is_missing_get_object_error(error: &GetObjectError) -> bool {
     error.is_no_such_key() || matches!(error.meta().code(), Some("NoSuchKey") | Some("NotFound"))
+}
+
+/// Whether a HeadObject failure confirms the object is absent. The SDK maps
+/// HTTP 404 to `HeadObjectError::NotFound` whose error code is `"NotFound"`
+/// (S3-compatible stores that answer a bare, unmodeled 404 surface no code at
+/// all); only those two codes count as missing — everything else fails
+/// closed. Mirrors the code matching previously inlined in
+/// [`ObjectStore::exists`].
+fn head_object_error_is_missing(error: &SdkError<HeadObjectError>) -> bool {
+    let code = error
+        .as_service_error()
+        .and_then(|service_error| service_error.meta().code());
+    matches!(code, Some("NoSuchKey") | Some("NotFound"))
+}
+
+/// Map the SDK's bucket versioning status to the fail-closed
+/// [`BucketVersioningState`]. An absent status means the bucket was never
+/// versioned; any status other than the two known variants is `Unknown`
+/// because the bucket's history cannot be proven either way.
+fn map_versioning_status(status: Option<&BucketVersioningStatus>) -> BucketVersioningState {
+    match status {
+        None => BucketVersioningState::Unversioned,
+        Some(BucketVersioningStatus::Enabled) => BucketVersioningState::Enabled,
+        Some(BucketVersioningStatus::Suspended) => BucketVersioningState::Suspended,
+        // The SDK's `Unknown` variant is deprecated to match directly, so the
+        // catch-all covers both it and any future variants.
+        Some(_) => BucketVersioningState::Unknown,
+    }
 }
 
 fn expected_blob_sha256(key: &str) -> Option<&str> {
@@ -934,6 +1036,42 @@ mod tests {
         assert!(
             results[0].is_err(),
             "the single yielded item should be an error"
+        );
+    }
+
+    #[test]
+    fn map_versioning_status_none_means_never_versioned() {
+        assert_eq!(
+            super::map_versioning_status(None),
+            super::BucketVersioningState::Unversioned
+        );
+    }
+
+    #[test]
+    fn map_versioning_status_enabled_maps_to_enabled() {
+        assert_eq!(
+            super::map_versioning_status(Some(&BucketVersioningStatus::Enabled)),
+            super::BucketVersioningState::Enabled
+        );
+    }
+
+    #[test]
+    fn map_versioning_status_suspended_maps_to_suspended() {
+        assert_eq!(
+            super::map_versioning_status(Some(&BucketVersioningStatus::Suspended)),
+            super::BucketVersioningState::Suspended
+        );
+    }
+
+    #[test]
+    fn map_versioning_status_unknown_for_unrecognized_sdk_variant() {
+        // The SDK's `Unknown` variant is deprecated to match directly, so
+        // build it the same way deserialization does: an unrecognized string.
+        let status = BucketVersioningStatus::from("SomeFutureStatus");
+
+        assert_eq!(
+            super::map_versioning_status(Some(&status)),
+            super::BucketVersioningState::Unknown
         );
     }
 

@@ -16,6 +16,7 @@ pub mod memory_projection;
 pub mod metrics;
 pub mod middleware;
 pub mod object_gc;
+pub mod object_gc_reconcile;
 pub mod object_gc_scan;
 pub mod oidc;
 pub mod oidc_runtime;

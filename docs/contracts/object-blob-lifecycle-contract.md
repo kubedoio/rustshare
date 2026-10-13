@@ -88,7 +88,8 @@ Reasons are bounded operator-safe identifiers:
 - `metadata_write_failure_after_blob_put`;
 - `reference_replaced`;
 - `retention_expired`;
-- `manual_reconciliation`.
+- `manual_reconciliation`;
+- `orphan_reconciliation` (reconciliation producer, Phase 3.4B; insert-only).
 
 Candidate persistence contains keys and operational metadata only—never object
 content, credentials, presigned URLs, or document metadata.
@@ -158,6 +159,45 @@ each key without mutating anything:
 Discovery never deletes, never enqueues, and never takes the writer/collector
 advisory lock. Its reports carry aggregate counts only. `potential_orphan`
 is a point-in-time observation, is NOT deletion-safe, and must never be
-promoted to deletion without the existing eligibility path: only the
-enqueue path described above (`enqueue_object_gc_candidate`) may create a
-durable candidate, and only the existing worker may delete.
+promoted to deletion without the existing eligibility path: a durable
+candidate may be created only by the writer/trigger enqueue path
+(`enqueue_object_gc_candidate`) or by the reconciliation producer's
+insert-only path (`enqueue_object_gc_candidate_if_absent`, reason
+`orphan_reconciliation`, see below), and only the existing worker may
+delete.
+
+## Reconciliation producer (3.4B)
+
+Phase 3.4B adds an operator-gated producer that turns discovery observations
+into durable candidates through the existing queue, without weakening any
+rule above. It is disabled by default
+(`RUSTSHARE_ORPHAN_RECONCILIATION_ENABLED=false`); enabling is an explicit
+operator action, and rollback is disabling the flag again.
+
+Discovery-to-enqueue contract:
+
+- Each listed key passes the canonical-key and age-floor filters, then the
+  producer takes the same per-key advisory lock the writers and the GC
+  worker hold, revalidates the object by `HeadObject` (existence,
+  whole-second `LastModified` match against the listing, age re-check), and
+  counts the global seven-table references. Any failure degrades to an
+  uncertainty counter; failure is never read as zero references.
+- Only an aged, still-present, zero-referenced key from a bucket confirmed
+  `Unversioned` by a `GetBucketVersioning` probe (any other state, an
+  unknown state, or a probe failure blocks the run) is enqueued, with
+  reason `orphan_reconciliation`, through
+  `MetadataStore::enqueue_object_gc_candidate_if_absent`:
+  `INSERT ... ON CONFLICT (object_key) DO NOTHING`, reporting whether a
+  fresh `pending` row was inserted. An existing row in any state —
+  including `operator_hold` — is left completely untouched: holds, worker
+  leases, attempt history, `not_before`, and terminal states are never
+  reset, and grace is never shortened for an existing row.
+- Runs are bounded like the scanner (key budget, listing-call cap,
+  resumable continuation token) plus a per-run enqueue cap
+  (`RUSTSHARE_ORPHAN_RECONCILE_MAX_ENQUEUE`, default 100, never above the
+  scan key budget), and reports carry aggregate counts only.
+
+The producer never deletes and has no object-storage mutation seam.
+Deletion authority remains solely with the GC worker: every
+`orphan_reconciliation` candidate still passes the full eligibility path
+above before any delete.

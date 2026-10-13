@@ -4664,6 +4664,51 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Enqueue an object GC candidate only when the queue has no row for the
+    /// key yet. Returns `true` when a fresh `pending` row was inserted and
+    /// `false` when a row already existed and was left completely untouched.
+    ///
+    /// Unlike [`Self::enqueue_object_gc_candidate`], the insert-only variant
+    /// never overrides `operator_hold`, never resets worker leases, attempt
+    /// history, `not_before`, or terminal states, and never bumps `updated_at`
+    /// on an existing row. It exists for reconciliation producers (for example
+    /// orphan-blob discovery) that must record a durable candidate without
+    /// disturbing holds or backoff schedules an operator or earlier worker
+    /// already established.
+    pub async fn enqueue_object_gc_candidate_if_absent(
+        &self,
+        object_key: &str,
+        reason: &str,
+        grace_period_hours: i64,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO object_gc_queue (
+                object_key, reason, first_seen_at, last_seen_at, not_before,
+                state, created_at, updated_at
+            ) VALUES (
+                $1, $2, NOW(), NOW(), NOW() + ($3 * INTERVAL '1 hour'),
+                'pending', NOW(), NOW()
+            )
+            ON CONFLICT (object_key) DO NOTHING
+            "#,
+        )
+        .bind(object_key)
+        .bind(reason)
+        .bind(grace_period_hours)
+        .execute(&self.pool)
+        .await?;
+        let inserted = result.rows_affected() == 1;
+        if inserted {
+            metrics::counter!(
+                "object_gc_candidates_enqueued_total",
+                "reason" => reason.to_string()
+            )
+            .increment(1);
+        }
+        Ok(inserted)
+    }
+
     pub async fn lease_object_gc_candidates(
         &self,
         limit: i64,

@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It never deletes, never enqueues, and never mutates; `potential_orphan` is a
   point-in-time observation, not deletion-safe. A listing failure aborts the
   invocation with a bounded 503 error and no partial report. See ADR-0039.
+- Disabled-by-default orphan-blob reconciliation producer (Phase 3.4B): the
+  read-only dry-run scanner gains an operator-gated enqueue path
+  (`POST /api/admin/object-gc/orphan-reconcile`) with insert-only queue
+  semantics, a bucket-versioning gate, and per-key advisory-lock rechecks.
+  Deletion authority unchanged (GC worker only). Disabled unless
+  `RUSTSHARE_ORPHAN_RECONCILIATION_ENABLED=true`. See ADR-0039.
 
 ### Security
 
