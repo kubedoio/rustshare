@@ -134,3 +134,30 @@ can disable GC with `RUSTSHARE_OBJECT_GC_ENABLED=false` and inspect backlog,
 age, outcomes, and failures through metrics. This phase exposes no manual
 delete endpoint. A later reconciliation scan or manual retry must reuse the
 same eligibility path.
+
+## Discovery (read-only dry-run)
+
+Orphan *discovery* is separate from deletion. An operator-only dry-run scan
+(`POST /api/admin/object-gc/orphan-scan`, admin-gated, `dry_run=true`
+required) lists content-addressed blob keys in bounded pages and classifies
+each key without mutating anything:
+
+- `referenced` — one or more durable references exist;
+- `queued_<state>` — zero references and an `object_gc_queue` row in that
+  state;
+- `potential_orphan` — zero references observed at inspection time and no
+  queue row;
+- `recent` — younger than the scan's minimum age floor (never considered
+  for orphanhood);
+- `excluded_invalid_key` — outside the canonical `blobs/<64 hex>` shape;
+- `uncertain_db_error` — a database query failed for this key; the failure
+  is never read as zero references. A listing failure is different: it
+  aborts the whole invocation with a bounded error (HTTP 503) and no
+  partial report.
+
+Discovery never deletes, never enqueues, and never takes the writer/collector
+advisory lock. Its reports carry aggregate counts only. `potential_orphan`
+is a point-in-time observation, is NOT deletion-safe, and must never be
+promoted to deletion without the existing eligibility path: only the
+enqueue path described above (`enqueue_object_gc_candidate`) may create a
+durable candidate, and only the existing worker may delete.

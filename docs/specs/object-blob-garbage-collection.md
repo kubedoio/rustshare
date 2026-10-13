@@ -22,7 +22,9 @@ blob-before-metadata write order or deleting shared data.
 8. Zero references on both checks permits idempotent S3 deletion; referenced,
    missing, invalid, and retry outcomes are recorded explicitly.
 
-No request path deletes blobs. No bucket scan is used. Database or object-store
+No request path deletes blobs. The deletion path uses no bucket scan;
+read-only orphan discovery (Phase 3.4A) lists `blobs/` pages in bounded,
+budgeted invocations and never mutates. Database or object-store
 uncertainty schedules retry and leaves the object intact.
 
 ## Concurrency and recovery

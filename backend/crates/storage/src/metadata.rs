@@ -56,6 +56,28 @@ pub struct ObjectGcCandidate {
     pub locked_by: Option<String>,
 }
 
+/// Full queue row for one object GC candidate. Read-only scans use this to
+/// classify a key without claiming or modifying the queue.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ObjectGcCandidateRow {
+    pub id: Uuid,
+    pub object_key: String,
+    pub reason: String,
+    pub not_before: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub first_seen_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    pub attempt_count: i32,
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub state: String,
+    pub locked_at: Option<DateTime<Utc>>,
+    pub locked_by: Option<String>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+    pub operator_hold: bool,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, sqlx::FromRow)]
 pub struct BlobReferenceSummary {
     pub files: i64,
@@ -4574,6 +4596,29 @@ impl MetadataStore {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
+    }
+
+    /// Read the queue row for one object key without claiming or modifying it.
+    ///
+    /// Used by the read-only orphan-discovery scan to distinguish keys that
+    /// already have a durable candidate from keys the queue has never seen.
+    pub async fn get_object_gc_candidate(
+        &self,
+        object_key: &str,
+    ) -> Result<Option<ObjectGcCandidateRow>> {
+        sqlx::query_as::<_, ObjectGcCandidateRow>(
+            r#"
+            SELECT id, object_key, reason, not_before, created_at, first_seen_at,
+                last_seen_at, attempt_count, last_attempt_at, last_error, state,
+                locked_at, locked_by, completed_at, updated_at, operator_hold
+            FROM object_gc_queue
+            WHERE object_key = $1
+            "#,
+        )
+        .bind(object_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(Into::into)
     }
 
     pub async fn enqueue_object_gc_candidate(

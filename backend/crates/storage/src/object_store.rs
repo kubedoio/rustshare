@@ -23,6 +23,20 @@ pub struct ObjectStore {
     blob_lock_pool: Option<PgPool>,
 }
 
+/// One object observed by a read-only listing page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedObject {
+    pub key: String,
+    pub last_modified: chrono::DateTime<chrono::Utc>,
+}
+
+/// One page of a read-only object listing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ObjectListPage {
+    pub objects: Vec<ListedObject>,
+    pub next_continuation_token: Option<String>,
+}
+
 /// Object store startup options.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ObjectStoreOptions {
@@ -231,6 +245,54 @@ impl ObjectStore {
                 }
             }
         }
+    }
+
+    /// Read-only listing of one page of objects under a key prefix.
+    ///
+    /// This never mutates object storage. It exists for the orphan-discovery
+    /// scanner; the deletion path intentionally does not use bucket listing.
+    pub async fn list_page(
+        &self,
+        prefix: &str,
+        continuation_token: Option<&str>,
+        max_keys: u32,
+    ) -> Result<ObjectListPage> {
+        let mut request = self
+            .client
+            .list_objects_v2()
+            .bucket(&self.bucket)
+            .prefix(prefix)
+            .max_keys(i32::try_from(max_keys).unwrap_or(i32::MAX));
+        if let Some(token) = continuation_token {
+            request = request.continuation_token(token);
+        }
+        let output = request.send().await?;
+
+        let contents = output.contents.unwrap_or_default();
+        let mut objects = Vec::with_capacity(contents.len());
+        for object in &contents {
+            let Some(last_modified) = object.last_modified() else {
+                continue;
+            };
+            let Some(last_modified) = chrono::DateTime::from_timestamp(
+                last_modified.secs(),
+                last_modified.subsec_nanos(),
+            ) else {
+                continue;
+            };
+            let Some(key) = object.key().filter(|key| key.starts_with(prefix)) else {
+                continue;
+            };
+            objects.push(ListedObject {
+                key: key.to_string(),
+                last_modified,
+            });
+        }
+
+        Ok(ObjectListPage {
+            objects,
+            next_continuation_token: output.next_continuation_token,
+        })
     }
 
     /// Generate a presigned URL for downloading an object

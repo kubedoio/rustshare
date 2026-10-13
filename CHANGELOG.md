@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Admin-only, read-only orphan-blob discovery: `POST /api/admin/object-gc/orphan-scan`
+  (requires `dry_run: true`) lists content-addressed blobs in budgeted pages and
+  reports aggregate classifications (`referenced`, `queued_<state>`,
+  `potential_orphan`, `recent`, `excluded_invalid_key`, `uncertain_db_error`).
+  It never deletes, never enqueues, and never mutates; `potential_orphan` is a
+  point-in-time observation, not deletion-safe. A listing failure aborts the
+  invocation with a bounded 503 error and no partial report. See ADR-0039.
+
 ### Security
 
 - Replaced the unmaintained `serde_yaml` 0.9 / `unsafe-libyaml` dependency

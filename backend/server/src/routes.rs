@@ -237,6 +237,14 @@ pub fn replication_routes() -> Router<AppState> {
         )
 }
 
+pub fn object_gc_routes() -> Router<AppState> {
+    use axum::routing::post;
+    Router::new().route(
+        "/api/admin/object-gc/orphan-scan",
+        post(crate::object_gc_scan::post_orphan_scan),
+    )
+}
+
 pub fn application_routes() -> Router<AppState> {
     use axum::routing::{get, post};
     Router::new()

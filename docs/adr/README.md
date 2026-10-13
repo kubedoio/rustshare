@@ -14,6 +14,7 @@ sequential numbers. New ADRs must pick the next unused number. Statuses used:
 | --- | --- | --- |
 | `0037-calendar-application-and-external-sync.md` | Calendar Application and External Calendar Sync | Proposed |
 | `0038-institutional-organization-and-workspace-access.md` | Institutional Organization and Workspace Access | Proposed |
+| `0039-orphan-blob-discovery-and-reconciliation.md` | Orphan Blob Discovery and Reconciliation | Accepted (3.4A); 3.4B Proposed |
 
 ## Known duplicate numbers (documented cleanup — renumbering deferred)
 
