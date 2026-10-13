@@ -29,6 +29,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Deletion authority unchanged (GC worker only). Disabled unless
   `RUSTSHARE_ORPHAN_RECONCILIATION_ENABLED=true`. See ADR-0039.
 
+### Documentation
+
+- Phase 4.0 institutional authorization decision gate (design and evidence only —
+  no schema migration, no authorization change, object GC and orphan
+  reconciliation remain disabled). Four decision-ready ADRs: ADR-0040
+  (organization, tenant and workspace identity), ADR-0041 (groups and
+  authorization), ADR-0042 (PostgreSQL tenant isolation and RLS staging),
+  ADR-0043 (legacy nil-tenant compatibility). Supporting evidence under
+  `docs/audits/2026-10-13-phase4-0-*`: a verified tenant-isolation evidence
+  matrix, five baseline audits, and an executed negative-test run against a
+  disposable PostgreSQL 16. Planning artifacts: the nil-tenant inventory plan
+  (`docs/migrations/2026-10-13-phase4-0-nil-tenant-inventory-plan.md`), the
+  dependency-ordered implementation roadmap
+  (`docs/plans/2026-10-13-phase4-0-institutional-implementation-roadmap.md`),
+  and the Gate A/B/C institutional acceptance checklist
+  (`docs/pilot/2026-10-13-institutional-acceptance-gates.md`).
+
 ### Security
 
 - Replaced the unmaintained `serde_yaml` 0.9 / `unsafe-libyaml` dependency

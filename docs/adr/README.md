@@ -15,6 +15,10 @@ sequential numbers. New ADRs must pick the next unused number. Statuses used:
 | `0037-calendar-application-and-external-sync.md` | Calendar Application and External Calendar Sync | Proposed |
 | `0038-institutional-organization-and-workspace-access.md` | Institutional Organization and Workspace Access | Proposed |
 | `0039-orphan-blob-discovery-and-reconciliation.md` | Orphan Blob Discovery and Reconciliation | Accepted (3.4A); 3.4B Implemented (disabled by default, not activated) |
+| `0040-organization-tenant-and-workspace-identity.md` | Organization, Tenant and Workspace Identity | Proposed (Phase 4.0 decision gate) |
+| `0041-groups-and-authorization.md` | Groups and Organization Authorization | Proposed (Phase 4.0 decision gate) |
+| `0042-postgresql-tenant-isolation-rls-staging.md` | PostgreSQL Tenant Isolation — Staged RLS Hardening and Least-Privilege Roles | Proposed (Phase 4.0 decision gate) |
+| `0043-legacy-nil-tenant-compatibility.md` | Legacy Nil-Tenant Compatibility, Quarantine, and the Non-Destructive Migration Policy | Proposed (Phase 4.0 decision gate) |
 
 ## Known duplicate numbers (documented cleanup — renumbering deferred)
 

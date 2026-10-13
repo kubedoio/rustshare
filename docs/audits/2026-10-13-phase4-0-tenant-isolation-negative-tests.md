@@ -7,7 +7,7 @@
 
 ## 1. What this report adds
 
-The sibling audits are source-derived; the consolidated matrix `docs/audits/2026-10-13-phase4-0-tenant-isolation-evidence-matrix.md` records that **no row carried an `API reachability test` or `Service test` tag** and that the reproduction harness "was not executed". This report is that run report:
+The sibling audits are source-derived; the consolidated matrix `docs/audits/2026-10-13-phase4-0-tenant-isolation-evidence-matrix.md` recorded, when it was written, that **no row carried an `API reachability test` or `Service test` tag** and that the reproduction harness "was not executed" — a limitation it now marks superseded by this report. This report is that run report:
 
 1. the harness `scripts/phase40-tenant-isolation-negative-tests.sql` was **executed** (36 probes, all `AS-ASSERTED`) against a migrated disposable PostgreSQL 16;
 2. the repository's existing end-to-end suites that exercise the real `add_member` and real credential paths were **executed** against the same disposable stack;
@@ -123,14 +123,14 @@ The reported chain is: *nil-tenant user in a nil-tenant group reaches a tenant-A
   - probe 14 `NULL` — keyed on the nil tenant instead, `find_file_by_id(f_a2, nil)` finds nothing, so the tenant-A file is still invisible.
 - **Observed (executed) — what the collapse actually is:**
   - probe 15 `GroupShare:View` — within the nil tenant the principals collapse among themselves: nil reader + nil group + nil share + nil file. In a default deployment (`RUSTSHARE_DEFAULT_TENANT_ID` unset ⇒ nil, `bootstrap.rs:715-718`) these rows are manufactured by the API, so this arm is DIRECT, not synthetic.
-  - probe 16 `DirectShare:View` — the reverse (and genuinely cross-tenant) direction: a **tenant-A** user reaches a **nil-tenant** file through a nil-tenant share row. Same root cause as (f): the recipient's own tenant is never compared to the share's tenant. API-reachability is SYNTHETIC here (user-share creation resolves the recipient inside the creator's tenant, `user_share_service.rs`), but the equivalent nil-tenant *public-link* path (ADR-0031) is live for legacy data.
+  - probe 16 `DirectShare:View` — the reverse (and genuinely cross-tenant) direction: a **tenant-A** user reaches a **nil-tenant** file through a nil-tenant share row. Same root cause as (f): the recipient's own tenant is never compared to the share's tenant. API-reachability is SYNTHETIC here (user-share creation resolves the recipient inside the creator's tenant, `user_share_service.rs`), but the equivalent nil-tenant *public-link* path (`0031-tenant-isolation-share-links-and-rls.md`) is live for legacy data.
   - probe 17 `1` — the nil-tenant group's share row on the tenant-A file exists, which is why the inventory reports it as a mismatch that resolution then ignores.
 - **Reachability:** the reachable part is DIRECT (nil tenant), the refuted part was SYNTHETIC. **Classification: Correctness defect** (`Legacy compatibility concern` for the nil-tenant collapse itself).
 
 ### (f) Cross-tenant resource/share mismatch (C3)
 
 - **Setup:** share `e0000000-…-f1` with `tenant_id = A` (the file's tenant), `recipient_user_id` = the tenant-B user, on the tenant-A file.
-- **Observed:** probe 18 `DirectShare:View` — `get_file`'s keying (lookup tenant = the file's tenant, `file_service.rs:872`) grants View; probe 19 `NULL` — the ADR-0032 source authorizer's keying (requester tenant, `backend/server/src/authz/files_owner.rs:237-246`) denies / returns not-found; probe 20 `1` — the mismatched row exists exactly as described.
+- **Observed:** probe 18 `DirectShare:View` — `get_file`'s keying (lookup tenant = the file's tenant, `file_service.rs:872`) grants View; probe 19 `NULL` — the `0032-resource-refs-and-authorization.md` source authorizer's keying (requester tenant, `backend/server/src/authz/files_owner.rs:237-246`) denies / returns not-found; probe 20 `1` — the mismatched row exists exactly as described.
 - **Code confirmation that it is not API-reachable:** user-share creation resolves the recipient within the creator's tenant, and group-share creation rejects `resource_tenant != requester tenant` (`backend/crates/core/src/services/share_service.rs:953-956`) and stamps the share with the caller's tenant (`:1032`).
 - **Reachability:** SYNTHETIC database-state. **Classification: Correctness defect** (two evaluators implement different tenant keys for the same database state).
 
