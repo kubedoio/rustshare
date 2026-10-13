@@ -27,6 +27,29 @@ read-only orphan discovery (Phase 3.4A) lists `blobs/` pages in bounded,
 budgeted invocations and never mutates. Database or object-store
 uncertainty schedules retry and leaves the object intact.
 
+## Orphan reconciliation producer (Phase 3.4B)
+
+A blob written by a mutation whose transaction rolls back (or whose
+acknowledgement is lost) has no committed reference and no trigger-fired
+queue row, so the flow above never sees it. The discovery scan (3.4A)
+measures this population read-only; the reconciliation producer (3.4B)
+closes the loop by enqueueing proven orphans as ordinary candidates through
+the same queue.
+
+The producer is disabled by default
+(`RUSTSHARE_ORPHAN_RECONCILIATION_ENABLED=false`,
+`RUSTSHARE_ORPHAN_RECONCILE_MAX_ENQUEUE=100`, grace from
+`RUSTSHARE_OBJECT_GC_GRACE_PERIOD_HOURS`, listing budgets reused from
+`RUSTSHARE_ORPHAN_SCAN_*`). Each listed key is canonical-filtered,
+age-floored, then revalidated under the per-key advisory lock
+(HeadObject existence and whole-second `LastModified` match, then the
+global reference count) before an insert-only enqueue with reason
+`orphan_reconciliation`; existing queue rows are never modified. A
+`GetBucketVersioning` probe gates the run: only a confirmed unversioned
+bucket proceeds. Non-goals: no deletion outside the worker flow above, no
+support for versioned buckets (they block the run), no per-key detail in
+any API response, and no automatic activation.
+
 ## Concurrency and recovery
 
 Candidate leases prevent concurrent processing. The per-key advisory lock

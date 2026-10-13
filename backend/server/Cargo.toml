@@ -300,6 +300,10 @@ name = "object_gc_orphan_scan_test"
 path = "../tests/object_gc_orphan_scan_test.rs"
 
 [[test]]
+name = "object_gc_orphan_reconcile_test"
+path = "../tests/object_gc_orphan_reconcile_test.rs"
+
+[[test]]
 name = "object_store_failure_atomicity_test"
 path = "../tests/object_store_failure_atomicity_test.rs"
 
