@@ -266,6 +266,107 @@ async fn delete_bucket_best_effort(bucket: &str) {
     let _ = client.delete_bucket().bucket(bucket).send().await;
 }
 
+/// Best-effort emptying of a scratch bucket so `delete_bucket` can succeed:
+/// S3-compatible stores refuse to delete a bucket that still holds objects
+/// (or versioned delete markers), and a versioned scratch bucket may hold
+/// versions that a plain listing does not show.
+async fn empty_bucket_best_effort(bucket: &str) {
+    let client = raw_s3_client().await;
+
+    let mut continuation = None;
+    loop {
+        let mut request = client.list_objects_v2().bucket(bucket);
+        if let Some(token) = continuation.take() {
+            request = request.continuation_token(token);
+        }
+        let Ok(page) = request.send().await else {
+            return;
+        };
+        let objects: Vec<_> = page
+            .contents()
+            .iter()
+            .map(|object| {
+                aws_sdk_s3::types::ObjectIdentifier::builder()
+                    .key(object.key().expect("listed object has a key"))
+                    .build()
+                    .expect("object identifier")
+            })
+            .collect();
+        if !objects.is_empty() {
+            let _ = client
+                .delete_objects()
+                .bucket(bucket)
+                .delete(
+                    aws_sdk_s3::types::Delete::builder()
+                        .set_objects(Some(objects))
+                        .build()
+                        .expect("delete request"),
+                )
+                .send()
+                .await;
+        }
+        match page.next_continuation_token().map(str::to_string) {
+            Some(token) => continuation = Some(token),
+            None => break,
+        }
+    }
+
+    // A versioned bucket can hold versions and delete markers that the plain
+    // listing above does not report; either keeps DeleteBucket from
+    // succeeding on a store that enforces emptiness.
+    let mut key_marker = None;
+    let mut version_id_marker = None;
+    loop {
+        let mut request = client.list_object_versions().bucket(bucket);
+        if let Some(marker) = key_marker.take() {
+            request = request.key_marker(marker);
+        }
+        if let Some(marker) = version_id_marker.take() {
+            request = request.version_id_marker(marker);
+        }
+        let Ok(page) = request.send().await else {
+            return;
+        };
+        let mut removals: Vec<_> = page
+            .versions()
+            .iter()
+            .map(|version| {
+                aws_sdk_s3::types::ObjectIdentifier::builder()
+                    .key(version.key().expect("versioned object has a key"))
+                    .version_id(version.version_id().expect("version has an id"))
+                    .build()
+                    .expect("object identifier")
+            })
+            .collect();
+        removals.extend(page.delete_markers().iter().map(|marker| {
+            aws_sdk_s3::types::ObjectIdentifier::builder()
+                .key(marker.key().expect("delete marker has a key"))
+                .version_id(marker.version_id().expect("delete marker has an id"))
+                .build()
+                .expect("object identifier")
+        }));
+        if !removals.is_empty() {
+            let _ = client
+                .delete_objects()
+                .bucket(bucket)
+                .delete(
+                    aws_sdk_s3::types::Delete::builder()
+                        .set_objects(Some(removals))
+                        .build()
+                        .expect("delete request"),
+                )
+                .send()
+                .await;
+        }
+        if page.is_truncated().unwrap_or(false) {
+            key_marker = page.next_key_marker().map(str::to_string);
+            version_id_marker = page.next_version_id_marker().map(str::to_string);
+        } else {
+            break;
+        }
+    }
+}
+
 /// Advisory-lock guard backed by a real open transaction, exactly like
 /// `ObjectStore::acquire_blob_lock` implements it.
 struct PgTransactionLock {
@@ -1536,6 +1637,18 @@ async fn m_database_outage_produces_no_candidate() {
 #[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn m2_reference_check_error_never_enqueues() {
     let env = setup().await;
+    // Fail fast: the denied-role pool downgrades via SET ROLE, which only the
+    // connecting superuser may do. Without this the pool would retry the
+    // failing after_connect with backoff until its acquire timeout.
+    let is_superuser: bool = sqlx::query_scalar("SELECT current_setting('is_superuser')::bool")
+        .fetch_one(&env.pool)
+        .await
+        .expect("read is_superuser");
+    assert!(
+        is_superuser,
+        "m2 requires a superuser DATABASE_URL (SET ROLE downgrade)"
+    );
+
     // A dedicated bucket keeps the run hermetic: the denied role sees exactly
     // our one aged (min_age zero), unreferenced blob.
     let bucket = format!("rustshare-test-refdenied-{}", Uuid::new_v4());
@@ -1604,13 +1717,37 @@ async fn m2_reference_check_error_never_enqueues() {
         .expect("connect with SET ROLE pool");
     let denied_metadata = MetadataStore::new(denied_pool.clone());
 
+    // Collect every outcome first, clean up, and only then assert: a failed
+    // assertion must not leak the role, the pool, or the scratch bucket.
     // The permission gap must be real before it can mean anything in the
     // report: the reference query errors, and the error is a permission
     // denial (not a transport artifact).
-    let error = denied_metadata
-        .count_blob_references(&key)
+    let sanity_error = denied_metadata.count_blob_references(&key).await.err();
+    let reconcile_result = reconcile_orphan_blobs(
+        &reconcile_config(10, Duration::ZERO),
+        store.as_ref() as &dyn BlobInspector,
+        &fake_locks(&env),
+        &denied_metadata,
+        None,
+    )
+    .await;
+    let candidate = candidate_row(&env.pool, &key).await;
+    let reason_rows = count_reason_rows_for_key(&env.pool, &key).await;
+
+    // Cleanup always runs before the assertions above can fail.
+    denied_pool.close().await;
+    let _ = sqlx::query(&format!("DROP OWNED BY {role}"))
+        .execute(&env.pool)
+        .await;
+    sqlx::query(&format!("DROP ROLE IF EXISTS {role}"))
+        .execute(&env.pool)
         .await
-        .expect_err("SELECT on mail_attachments must be denied for the test role");
+        .expect("drop denied role");
+    // Best-effort cleanup of the scratch bucket.
+    let _ = store.delete(&key).await;
+    delete_bucket_best_effort(&bucket).await;
+
+    let error = sanity_error.expect("SELECT on mail_attachments must be denied for the test role");
     assert!(
         error
             .to_string()
@@ -1619,16 +1756,7 @@ async fn m2_reference_check_error_never_enqueues() {
         "expected a permission-denied error, got {error}"
     );
 
-    let report = reconcile_orphan_blobs(
-        &reconcile_config(10, Duration::ZERO),
-        store.as_ref() as &dyn BlobInspector,
-        &fake_locks(&env),
-        &denied_metadata,
-        None,
-    )
-    .await
-    .expect("reconcile survives a reference-check outage");
-
+    let report = reconcile_result.expect("reconcile survives a reference-check outage");
     assert_eq!(
         report.enqueued, 0,
         "a reference-check error must never be read as zero references"
@@ -1643,28 +1771,13 @@ async fn m2_reference_check_error_never_enqueues() {
     );
     assert!(!report.db_reachable);
     assert!(
-        candidate_row(&env.pool, &key).await.is_none(),
+        candidate.is_none(),
         "a blob whose references cannot be read must never get a queue row"
     );
     assert_eq!(
-        count_reason_rows_for_key(&env.pool, &key).await,
-        0,
+        reason_rows, 0,
         "the producer must never record its own reason for an unreadable key"
     );
-
-    // Cleanup: close the role's sessions so the role can be dropped.
-    denied_pool.close().await;
-    let _ = sqlx::query(&format!("DROP OWNED BY {role}"))
-        .execute(&env.pool)
-        .await;
-    sqlx::query(&format!("DROP ROLE IF EXISTS {role}"))
-        .execute(&env.pool)
-        .await
-        .expect("drop denied role");
-
-    // Best-effort cleanup of the scratch bucket.
-    let _ = store.delete(&key).await;
-    delete_bucket_best_effort(&bucket).await;
 }
 
 #[tokio::test]
@@ -1743,7 +1856,9 @@ async fn p2_versioned_bucket_blocks_reconciliation_real_store() {
         }
     }
 
-    // Best-effort cleanup of the scratch bucket.
+    // Best-effort cleanup of the scratch bucket: empty it first so the
+    // best-effort bucket delete can actually succeed.
+    empty_bucket_best_effort(&bucket).await;
     delete_bucket_best_effort(&bucket).await;
 }
 
