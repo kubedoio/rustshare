@@ -276,11 +276,11 @@ async fn scim_v2_is_scoped_to_the_configured_organization() {
     let names = usernames(&body);
     assert!(
         names.iter().any(|n| n.contains("scim-user-a1")),
-        "{names:?}"
+        "expected the first org A fixture user in the scoped list"
     );
     assert!(
         names.iter().any(|n| n.contains("scim-user-a2")),
-        "{names:?}"
+        "expected the second org A fixture user in the scoped list"
     );
 
     let (status, _) = scim_request(
