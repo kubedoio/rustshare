@@ -1507,3 +1507,152 @@ async fn test_list_my_groups_member_count_excludes_foreign_members() {
     ar03_delete_tenant(&pool, home_tenant).await;
     ar03_delete_tenant(&pool, foreign_tenant).await;
 }
+
+/// AR-03: the not-found paths of both membership handlers are locked in.
+/// A missing group now returns 404 (it previously raised `RowNotFound` → 500
+/// in `remove_member`) and an unknown target user returns 404, in both cases
+/// without writing anything.
+#[ignore = "requires an explicitly configured disposable local PostgreSQL database and S3-compatible storage"]
+#[tokio::test]
+async fn test_admin_membership_handlers_not_found_paths() {
+    use support::calendar_harness::{
+        assert_local_database, create_auth_token, setup_test_env, SERIAL,
+    };
+
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL explicitly to a disposable local database");
+    ar03_assert_disposable_database(&database_url);
+    assert_local_database();
+
+    let mut state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let actor_id = Uuid::new_v4();
+    let configured_tenant = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin,
+                            storage_quota, tenant_id)
+         VALUES ($1, $2, $3, 'test-password-hash', $2, true, 10737418240, $4)",
+    )
+    .bind(actor_id)
+    .bind(format!("ar03_nf_admin_{}", actor_id.simple()))
+    .bind(format!("ar03_nf_admin_{}@test.local", actor_id.simple()))
+    .bind(configured_tenant)
+    .execute(&pool)
+    .await
+    .expect("create admin actor");
+    let token = create_auth_token(&state, actor_id, configured_tenant);
+    state.default_tenant_config =
+        rustshare_server::config::DefaultTenantConfig::Set(configured_tenant);
+
+    let group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, created_by, tenant_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(group_id)
+    .bind(format!("ar03_nf_group_{}", group_id.simple()))
+    .bind(actor_id)
+    .bind(configured_tenant)
+    .execute(&pool)
+    .await
+    .expect("create group in default tenant");
+
+    let missing_group_id = Uuid::new_v4();
+    let unknown_user_id = Uuid::new_v4();
+
+    let app = rustshare_server::routes::admin_routes().with_state(state.clone());
+    let add_to_missing_group = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/admin/groups/{missing_group_id}/members"))
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(format!(
+                    r#"{{"user_id":"{actor_id}"}}"#
+                )))
+                .expect("build add-member-to-missing-group request"),
+        )
+        .await
+        .expect("add-member-to-missing-group request");
+    assert_eq!(
+        add_to_missing_group.status(),
+        axum::http::StatusCode::NOT_FOUND,
+        "adding to a missing group must be a client-visible 404, not a 500"
+    );
+
+    let add_unknown_user = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/admin/groups/{group_id}/members"))
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(format!(
+                    r#"{{"user_id":"{unknown_user_id}"}}"#
+                )))
+                .expect("build add-unknown-user request"),
+        )
+        .await
+        .expect("add-unknown-user request");
+    assert_eq!(
+        add_unknown_user.status(),
+        axum::http::StatusCode::NOT_FOUND,
+        "adding an unknown user must return 404"
+    );
+
+    let remove_from_missing_group = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/api/v1/admin/groups/{missing_group_id}/members/{actor_id}"
+                ))
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .expect("build remove-from-missing-group request"),
+        )
+        .await
+        .expect("remove-from-missing-group request");
+    assert_eq!(
+        remove_from_missing_group.status(),
+        axum::http::StatusCode::NOT_FOUND,
+        "removing from a missing group must be a client-visible 404, not a 500"
+    );
+
+    let remove_unknown_user = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/api/v1/admin/groups/{group_id}/members/{unknown_user_id}"
+                ))
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .expect("build remove-unknown-user request"),
+        )
+        .await
+        .expect("remove-unknown-user request");
+    assert_eq!(
+        remove_unknown_user.status(),
+        axum::http::StatusCode::NOT_FOUND,
+        "removing an unknown user must return 404"
+    );
+
+    let membership_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM group_members WHERE group_id = $1")
+            .bind(group_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count memberships");
+    assert_eq!(
+        membership_count, 0,
+        "none of the not-found paths may write a membership row"
+    );
+
+    cleanup_group(&pool, group_id).await;
+    cleanup_users(&pool, &[actor_id]).await;
+}

@@ -538,7 +538,7 @@
         "summary": "POST /api/v1/admin/groups/:id/members",
         "operationId": "add_member",
         "responses": {
-          "200": {
+          "204": {
             "description": "Success"
           },
           "401": {

@@ -803,15 +803,19 @@ async fn test_public_link_for_foreign_resource_refused_no_share_row() {
     ctx.cleanup().await;
 }
 
-/// G-01-16: The group roster query must not disclose foreign-organization
-/// principals. The query text below replicates the tenant-join form of the
-/// roster query in `rustshare_server::handlers::groups::get_my_group` — the
-/// contract suite cannot import the handler's private SQL, so the text is
-/// kept in sync verbatim; a drift in the handler will fail the HTTP-level
-/// regression tests in admin_groups_test.
+/// G-01-16: Query-text register for the tenant-scoped group roster.
+///
+/// This case pins the *shape* of the roster query: the SQL below replicates
+/// the tenant-join form used by `rustshare_server::handlers::groups::get_my_group`
+/// (the contract suite cannot import a handler's private SQL). It is a
+/// register case, not behavioural coverage — it would still pass if the
+/// handler's predicate were deleted, because the handler is not mounted here.
+/// Behavioural coverage for the roster lives in
+/// `backend/tests/admin_groups_test.rs::test_my_group_roster_excludes_foreign_organization_members`,
+/// which drives the real route and is mutation-verified.
 #[tokio::test]
 #[ignore] // Requires database and S3
-async fn test_group_roster_query_excludes_foreign_principals() {
+async fn test_group_roster_query_text_is_tenant_scoped() {
     let ctx = setup_test_env().await;
 
     let tenant_a = ctx.tenant_id;

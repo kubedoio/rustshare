@@ -50,6 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   user's `users.tenant_id` with the group's `user_groups.tenant_id` and
   rejects the request with HTTP 400 when they differ, deleting no
   `group_members` row.
+- Group membership endpoints report a missing group as HTTP 404 (AR-03):
+  `POST /api/v1/admin/groups/{id}/members` previously raised a `RowNotFound`
+  database error for an unknown group id (HTTP 500) and `DELETE
+  /api/v1/admin/groups/{id}/members/{user_id}` now distinguishes a missing
+  group (404) from an unknown user (404) instead of conflating them. The
+  `POST …/members` OpenAPI response is corrected from `200` to `204`, which
+  is the status the handler has always returned.
 - Cross-organization group shares refused (AR-03; ADR-0041 D2 grant
   equality): `create_group_share` now loads the recipient group's
   `user_groups.tenant_id` before any share row is written and requires it
