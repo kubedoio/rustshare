@@ -6,7 +6,10 @@
 //!
 //! Run with: cargo test --test admin_users_test -- --ignored
 
+mod support;
+
 use sqlx::Row;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -311,4 +314,150 @@ async fn test_disabled_user_has_disabled_at_set() {
     );
 
     cleanup(&pool, &[user_id]).await;
+}
+
+// ---------------------------------------------------------------------------
+// AR-01: organization-explicit principal creation (ADR-0040 D4, ADR-0043 D-D2 I1)
+// ---------------------------------------------------------------------------
+
+fn assert_disposable_database(database_url: &str) {
+    let parsed = url::Url::parse(database_url).expect("DATABASE_URL must be a PostgreSQL URL");
+    let database_name = parsed.path().trim_start_matches('/');
+    assert!(
+        database_name == "rustshare_test" || database_name.starts_with("rustshare_test_"),
+        "refusing to mutate database outside rustshare_test or rustshare_test_*"
+    );
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB")
+            .ok()
+            .as_deref(),
+        Some("1"),
+        "set RUSTSHARE_TEST_DISPOSABLE_DB=1 only for the disposable test database"
+    );
+}
+
+async fn insert_admin_actor(pool: &sqlx::PgPool, actor_id: Uuid, tenant_id: Uuid) {
+    sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin,
+                            storage_quota, tenant_id)
+         VALUES ($1, $2, $3, 'test-password-hash', $2, true, 10737418240, $4)",
+    )
+    .bind(actor_id)
+    .bind(format!("ar01_admin_{}", actor_id.simple()))
+    .bind(format!("ar01_admin_{}@test.local", actor_id.simple()))
+    .bind(tenant_id)
+    .execute(pool)
+    .await
+    .expect("create admin actor");
+}
+
+async fn post_admin_user(
+    app: &axum::Router,
+    token: &str,
+    username: &str,
+) -> (axum::http::StatusCode, Option<Uuid>) {
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/v1/admin/users")
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(format!(
+                    r#"{{"username":"{username}","email":"{username}@test.local","password":"ar01-password-123","display_name":"{username}"}}"#
+                )))
+                .expect("build admin user create request"),
+        )
+        .await
+        .expect("admin user create request");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1_000_000)
+        .await
+        .expect("read admin user create response");
+    let id = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("id")
+                .and_then(|id| id.as_str())
+                .map(str::to_string)
+        })
+        .and_then(|id| Uuid::parse_str(&id).ok());
+    (status, id)
+}
+
+/// The admin creation handler writes the explicitly resolved organization on
+/// the INSERT: with a non-nil default configured, the stored row carries that
+/// organization (nil-default behaviour is unreachable), and with the default
+/// unset the stored row carries nil — the resolved default organization.
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable local PostgreSQL database and S3-compatible storage"]
+async fn test_admin_user_creation_writes_resolved_organization() {
+    use support::calendar_harness::{assert_local_database, setup_test_env, SERIAL};
+
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL explicitly to a disposable local database");
+    assert_disposable_database(&database_url);
+    assert_local_database();
+
+    let mut state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let actor_id = Uuid::new_v4();
+    let configured_tenant = Uuid::new_v4();
+    insert_admin_actor(&pool, actor_id, configured_tenant).await;
+
+    // Non-nil default organization: the stored row must carry it.
+    state.default_tenant_config =
+        rustshare_server::config::DefaultTenantConfig::Set(configured_tenant);
+    let app = rustshare_server::routes::admin_routes().with_state(state.clone());
+    let token = support::calendar_harness::create_auth_token(&state, actor_id, configured_tenant);
+
+    let (status, user_id) = post_admin_user(&app, &token, "ar01_scoped_user").await;
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    let user_id = user_id.expect("create response must carry the new user id");
+    let stored_tenant: Uuid = sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch created user tenant");
+    assert_eq!(
+        stored_tenant, configured_tenant,
+        "the stored row must carry the resolved organization, not the column default"
+    );
+    assert_ne!(
+        stored_tenant,
+        Uuid::nil(),
+        "nil-default behaviour must be unreachable when a default organization is configured"
+    );
+    let audit_actions: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM admin_actions WHERE action_type = 'user.created' AND target_id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count user.created audit rows");
+    assert_eq!(audit_actions, 1, "user.created audit row must be written");
+
+    // Unset default: nil *is* the resolved default organization (ADR-0043).
+    state.default_tenant_config = rustshare_server::config::DefaultTenantConfig::Unset;
+    let app = rustshare_server::routes::admin_routes().with_state(state.clone());
+    let (status, nil_default_user_id) =
+        post_admin_user(&app, &token, "ar01_nil_default_user").await;
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    let nil_default_user_id =
+        nil_default_user_id.expect("create response must carry the new user id");
+    let stored_tenant: Uuid = sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1")
+        .bind(nil_default_user_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch nil-default user tenant");
+    assert_eq!(
+        stored_tenant,
+        Uuid::nil(),
+        "with the default unset the resolved organization is the nil default organization"
+    );
+
+    cleanup(&pool, &[user_id, nil_default_user_id, actor_id]).await;
 }

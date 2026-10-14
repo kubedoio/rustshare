@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 use super::scim::resolve_scim_tenant_scope;
 use super::ErrorResponse;
+use crate::user_disable::{set_user_disabled_at, DisableUserTarget};
 use crate::AppState;
 
 // ---------------------------------------------------------------------------
@@ -388,36 +389,29 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                     if path.as_str() == "active" {
                         if let Some(ref value) = op.value {
                             let active = value.as_bool().unwrap_or(true);
-                            sqlx::query!(
-                                "UPDATE users SET disabled_at = $2, updated_at = NOW() \
-                                 WHERE id = $1 AND tenant_id = $3",
-                                id,
-                                if active {
-                                    None::<DateTime<Utc>>
-                                } else {
-                                    Some(Utc::now())
-                                },
-                                tenant_id
+                            // AR-01 disable parity: shared disable/enable
+                            // write (see `crate::user_disable` for which
+                            // entry points share it); the
+                            // `users_disable_revokes_credentials` trigger
+                            // performs credential revocation.
+                            set_user_disabled_at(
+                                &self.pool,
+                                DisableUserTarget::Id(id),
+                                Some(tenant_id),
+                                if active { None } else { Some(Utc::now()) },
                             )
-                            .execute(&self.pool)
                             .await?;
                         }
                     }
                 } else if let Some(ref value) = op.value {
                     // Handle value object with multiple attributes
                     if let Some(active) = value.get("active").and_then(|v| v.as_bool()) {
-                        sqlx::query!(
-                            "UPDATE users SET disabled_at = $2, updated_at = NOW() \
-                             WHERE id = $1 AND tenant_id = $3",
-                            id,
-                            if active {
-                                None::<DateTime<Utc>>
-                            } else {
-                                Some(Utc::now())
-                            },
-                            tenant_id
+                        set_user_disabled_at(
+                            &self.pool,
+                            DisableUserTarget::Id(id),
+                            Some(tenant_id),
+                            if active { None } else { Some(Utc::now()) },
                         )
-                        .execute(&self.pool)
                         .await?;
                     }
                 }

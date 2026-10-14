@@ -12,9 +12,11 @@ use uuid::Uuid;
 
 use super::{
     admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, insert_admin_action,
+    resolve_creation_tenant,
 };
 use crate::{
     handlers::{AdminUser, AppError},
+    user_disable::{set_user_disabled_at, DisableUserTarget},
     AppState,
 };
 
@@ -365,12 +367,16 @@ pub async fn create_admin_user(
         .to_string();
     let is_admin = req.is_admin.unwrap_or(false);
     let storage_quota = req.storage_quota_bytes.unwrap_or(10_737_418_240_i64);
+    // AR-01 (ADR-0040 D4, ADR-0043 D-D2 I1): the organization is resolved
+    // explicitly and bound on the INSERT; the nil column default is never the
+    // effective source of a new row.
+    let tenant_id = resolve_creation_tenant(&state)?;
 
     let cols = "id, username, email, display_name, is_admin, storage_quota, disabled_at, created_at, updated_at";
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let row = sqlx::query_as::<_, UserRow>(&format!(
-        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING {cols}"
     ))
     .bind(new_id)
@@ -380,6 +386,7 @@ pub async fn create_admin_user(
     .bind(&display_name)
     .bind(is_admin)
     .bind(storage_quota)
+    .bind(tenant_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(db_error)?;
@@ -623,30 +630,21 @@ pub async fn disable_admin_user(
 
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
 
-    let updated = sqlx::query!(
-        "UPDATE users SET disabled_at = NOW() WHERE id = $1",
-        user_id
+    // Shared write (AR-01 disable parity). Session deletion and device-token
+    // revocation for this and every other writer are guaranteed by the
+    // `users_disable_revokes_credentials` trigger, so no explicit cleanup
+    // happens here.
+    let updated = set_user_disabled_at(
+        &mut *tx,
+        DisableUserTarget::Id(user_id),
+        None,
+        Some(chrono::Utc::now()),
     )
-    .execute(&mut *tx)
     .await
     .map_err(db_error)?;
-    if updated.rows_affected() == 0 {
+    if updated == 0 {
         return Err(admin_not_found("User not found"));
     }
-
-    sqlx::query!("DELETE FROM user_sessions WHERE user_id = $1", user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_error)?;
-
-    // Revoke all device tokens for the disabled user
-    sqlx::query!(
-        "UPDATE device_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL",
-        user_id
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(db_error)?;
 
     insert_admin_action(
         &mut tx,
@@ -680,11 +678,10 @@ pub async fn enable_admin_user(
     Path(user_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
-    let updated = sqlx::query!("UPDATE users SET disabled_at = NULL WHERE id = $1", user_id)
-        .execute(&mut *tx)
+    let updated = set_user_disabled_at(&mut *tx, DisableUserTarget::Id(user_id), None, None)
         .await
         .map_err(db_error)?;
-    if updated.rows_affected() == 0 {
+    if updated == 0 {
         return Err(admin_not_found("User not found"));
     }
 

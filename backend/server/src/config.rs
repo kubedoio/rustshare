@@ -679,6 +679,62 @@ impl AppConfig {
     }
 }
 
+/// Startup-visible state of `RUSTSHARE_DEFAULT_TENANT_ID` — the default
+/// organization of the deployment (AR-01; ADR-0040 D4, ADR-0043).
+///
+/// The variable is *not* part of [`AppConfig`]: it predates the envy-based
+/// config (bootstrap resolves it directly) and an unset value is a normal,
+/// supported single-organization state, not a configuration error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DefaultTenantConfig {
+    /// Explicitly configured, valid organization identifier.
+    Set(uuid::Uuid),
+    /// Not configured: the nil organization — the default organization of a
+    /// fresh single-organization deployment — is the default.
+    Unset,
+    /// Configured but not a valid UUID.
+    Unparsable(String),
+}
+
+impl DefaultTenantConfig {
+    pub fn from_env() -> Self {
+        match std::env::var("RUSTSHARE_DEFAULT_TENANT_ID") {
+            Err(_) => Self::Unset,
+            Ok(raw) => match raw.trim().parse::<uuid::Uuid>() {
+                Ok(id) => Self::Set(id),
+                Err(_) => Self::Unparsable(raw),
+            },
+        }
+    }
+
+    /// The organization new principals are attributed to.
+    ///
+    /// Both an unset and an unparsable variable resolve to the nil
+    /// organization, matching the documented runtime semantics ("defaults to
+    /// the zero UUID when unset or unparsable", ADR-0043). `None` means no
+    /// organization could be resolved at all; creation paths must then fail
+    /// closed with a client error and write nothing (ADR-0040 D4) — the nil
+    /// column default must never become the effective source of a new row.
+    pub fn resolved_tenant(&self) -> Option<uuid::Uuid> {
+        match self {
+            Self::Set(id) => Some(*id),
+            Self::Unset | Self::Unparsable(_) => Some(uuid::Uuid::nil()),
+        }
+    }
+
+    /// One-line, operator-facing description of the configuration state for
+    /// the startup log.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Set(id) => format!("set to organization {id}"),
+            Self::Unset => "unset; using the nil default organization".to_string(),
+            Self::Unparsable(raw) => {
+                format!("unparsable value {raw:?}; using the nil default organization")
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -687,6 +743,59 @@ mod tests {
     /// cannot clobber each other's variables.
     static ENV_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
         std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+
+    #[test]
+    fn default_tenant_config_reports_set_unset_and_unparsable_states() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        std::env::remove_var("RUSTSHARE_DEFAULT_TENANT_ID");
+        assert_eq!(DefaultTenantConfig::from_env(), DefaultTenantConfig::Unset);
+
+        std::env::set_var("RUSTSHARE_DEFAULT_TENANT_ID", "not-a-uuid");
+        assert_eq!(
+            DefaultTenantConfig::from_env(),
+            DefaultTenantConfig::Unparsable("not-a-uuid".to_string())
+        );
+
+        let id = uuid::Uuid::new_v4();
+        std::env::set_var("RUSTSHARE_DEFAULT_TENANT_ID", id.to_string());
+        assert_eq!(
+            DefaultTenantConfig::from_env(),
+            DefaultTenantConfig::Set(id)
+        );
+
+        std::env::remove_var("RUSTSHARE_DEFAULT_TENANT_ID");
+    }
+
+    #[test]
+    fn default_tenant_config_resolves_unset_and_unparsable_to_nil_default() {
+        // Documented runtime semantics (ADR-0043): the variable defaults to
+        // the zero UUID when unset or unparsable. Every state resolves to an
+        // organization today; the Option keeps creation paths fail-closed if
+        // resolution ever stops producing one (ADR-0040 D4).
+        let id = uuid::Uuid::new_v4();
+        assert_eq!(DefaultTenantConfig::Set(id).resolved_tenant(), Some(id));
+        assert_eq!(
+            DefaultTenantConfig::Unset.resolved_tenant(),
+            Some(uuid::Uuid::nil())
+        );
+        assert_eq!(
+            DefaultTenantConfig::Unparsable("junk".to_string()).resolved_tenant(),
+            Some(uuid::Uuid::nil())
+        );
+    }
+
+    #[test]
+    fn default_tenant_config_describe_reports_the_state_for_startup_log() {
+        let id = uuid::Uuid::new_v4();
+        assert!(DefaultTenantConfig::Set(id)
+            .describe()
+            .contains(&id.to_string()));
+        assert!(DefaultTenantConfig::Unset.describe().contains("unset"));
+        assert!(DefaultTenantConfig::Unparsable("junk".to_string())
+            .describe()
+            .contains("unparsable"));
+    }
 
     const OUTBOX_ENV_VARS: [&str; 10] = [
         "RUSTSHARE_OUTBOX_WORKER_ENABLED",

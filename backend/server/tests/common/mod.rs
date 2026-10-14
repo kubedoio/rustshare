@@ -281,6 +281,7 @@ pub async fn setup_test_server() -> (AppState, String) {
         oidc_runtime_cache: rustshare_server::oidc_runtime::OidcRuntimeCache::new(),
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
         default_tenant_id: Uuid::nil(),
+        default_tenant_config: rustshare_server::config::DefaultTenantConfig::Unset,
         note_service,
         decision_service,
         meeting_service,

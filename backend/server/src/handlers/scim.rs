@@ -14,6 +14,7 @@ use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::user_disable::{set_user_disabled_at, DisableUserTarget};
 use crate::AppState;
 
 // ---------------------------------------------------------------------------
@@ -485,24 +486,23 @@ impl ScimRepository for ScimRepositoryImpl {
         external_id: &str,
         disabled: bool,
     ) -> Result<(), sqlx::Error> {
-        let disabled_at: Option<chrono::DateTime<chrono::Utc>> = if disabled {
-            Some(chrono::Utc::now())
-        } else {
-            None
-        };
-
-        sqlx::query!(
-            r#"
-            UPDATE users
-            SET disabled_at = $2,
-                updated_at = NOW()
-            WHERE external_id = $1 AND tenant_id = $3
-            "#,
-            external_id,
-            disabled_at,
-            tenant_id
+        // AR-01 disable parity: shared disable/enable write (see
+        // `crate::user_disable` for which entry points share it); the
+        // `users_disable_revokes_credentials` trigger performs credential
+        // revocation.
+        set_user_disabled_at(
+            &self.pool,
+            DisableUserTarget::ExternalId {
+                external_id,
+                tenant_id,
+            },
+            None,
+            if disabled {
+                Some(chrono::Utc::now())
+            } else {
+                None
+            },
         )
-        .execute(&self.pool)
         .await?;
 
         Ok(())
