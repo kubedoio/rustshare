@@ -10,4 +10,5 @@
 #![allow(dead_code)]
 
 pub mod calendar_harness;
+pub mod env_guard;
 pub mod mock_provider;

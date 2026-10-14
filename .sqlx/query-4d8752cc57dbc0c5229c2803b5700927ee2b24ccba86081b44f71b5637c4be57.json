@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at \n            FROM users WHERE id = $1\n            ",
+  "query": "\n            SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at\n            FROM users WHERE external_id = $1 AND tenant_id = $2\n            ",
   "describe": {
     "columns": [
       {
@@ -56,6 +56,7 @@
     ],
     "parameters": {
       "Left": [
+        "Text",
         "Uuid"
       ]
     },
@@ -72,5 +73,5 @@
       false
     ]
   },
-  "hash": "4a549c6b884423f45324e169960c023e0e4f2fac45454d91d95137caba5709af"
+  "hash": "4d8752cc57dbc0c5229c2803b5700927ee2b24ccba86081b44f71b5637c4be57"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT g.id, g.name \n            FROM user_groups g\n            JOIN group_members gm ON g.id = gm.group_id\n            WHERE gm.user_id = $1\n            ",
+  "query": "\n            SELECT id, external_id, name\n            FROM user_groups\n            WHERE external_id = $1 AND tenant_id = $2\n            ",
   "describe": {
     "columns": [
       {
@@ -10,19 +10,26 @@
       },
       {
         "ordinal": 1,
+        "name": "external_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
         "name": "name",
         "type_info": "Text"
       }
     ],
     "parameters": {
       "Left": [
+        "Text",
         "Uuid"
       ]
     },
     "nullable": [
       false,
+      true,
       false
     ]
   },
-  "hash": "33aa48312552f5553cf62d28ef420f8598490fa9030c314573f93d743d8fd3d4"
+  "hash": "b42a9a0fcc64b2239d9650fc7af5188eadb730f2829756a066b2174a7fbfa31f"
 }

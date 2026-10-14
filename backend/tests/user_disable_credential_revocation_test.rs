@@ -108,6 +108,14 @@ async fn disabling_user_revokes_credentials_and_stale_cookie_cannot_authenticate
     let scim_token = std::env::var("RUSTSHARE_SCIM_BEARER_TOKEN")
         .expect("set RUSTSHARE_SCIM_BEARER_TOKEN to a disposable test token");
     assert!(!scim_token.is_empty(), "SCIM test token must not be empty");
+    // The SCIM integration is bound to exactly one organization (ADR-0040 D5):
+    // pin the scope to this test's tenant so the same-organization SCIM
+    // disable/delete flows under test remain reachable. The guard restores
+    // the previous value when the test ends.
+    let _scim_scope_guard = support::env_guard::EnvGuard::set(vec![(
+        "RUSTSHARE_SCIM_TENANT_ID",
+        Some(tenant_id.to_string()),
+    )]);
     let session_id = Uuid::new_v4();
     let session_token = rustshare_auth::generate_web_session_token();
     let session_hash = rustshare_auth::hash_web_session_token(&session_token);
