@@ -16,11 +16,7 @@ use uuid::Uuid;
 // ---------------------------------------------------------------------------
 
 async fn test_pool() -> sqlx::PgPool {
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    sqlx::PgPool::connect(&url)
-        .await
-        .expect("DB connect failed")
+    support::calendar_harness::connect_pool().await
 }
 
 async fn create_test_user(pool: &sqlx::PgPool, suffix: &str) -> Uuid {

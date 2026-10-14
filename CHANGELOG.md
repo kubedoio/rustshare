@@ -56,7 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   /api/v1/admin/groups/{id}/members/{user_id}` now distinguishes a missing
   group (404) from an unknown user (404) instead of conflating them. The
   `POST …/members` OpenAPI response is corrected from `200` to `204`, which
-  is the status the handler has always returned.
+  is the status the handler has always returned. Group and share OpenAPI
+  responses also document organization-boundary refusals and the existing
+  `201` success status for public and group share creation.
 - Cross-organization group shares refused (AR-03; ADR-0041 D2 grant
   equality): `create_group_share` now loads the recipient group's
   `user_groups.tenant_id` before any share row is written and requires it

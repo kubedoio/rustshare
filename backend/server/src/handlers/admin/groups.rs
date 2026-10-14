@@ -437,7 +437,9 @@ pub async fn delete_group(
     tag = "Groups",
     responses(
         (status = 204, description = "Success"),
+        (status = 400, description = "User and group belong to different organizations", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Group or user not found", body = crate::handlers::ErrorResponse),
     ),
 )]
 pub async fn add_member(
@@ -520,7 +522,9 @@ pub async fn add_member(
     tag = "Groups",
     responses(
         (status = 204, description = "Deleted"),
+        (status = 400, description = "User and group belong to different organizations", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Group, user, or membership not found", body = crate::handlers::ErrorResponse),
     ),
 )]
 pub async fn remove_member(
@@ -540,8 +544,8 @@ pub async fn remove_member(
     // Verify the target user exists and belongs to the group's organization
     // (ADR-0040: organization = tenant, strict equality). The AdminUser
     // extractor is installation-wide, so the membership itself must enforce
-    // the organization boundary; a mismatched legacy row must not be
-    // "repaired" into a privilege by deleting it.
+    // the organization boundary. Mismatched legacy rows are left for the
+    // separately scoped reconciliation work.
     let user_tenant: Option<Uuid> =
         sqlx::query_scalar!("SELECT tenant_id FROM users WHERE id = $1", user_id)
             .fetch_optional(&state.db_pool)

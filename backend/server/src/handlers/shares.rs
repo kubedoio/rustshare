@@ -48,8 +48,9 @@ pub struct ShareResponse {
     params(("file_id" = Uuid, Path, description = "File Id")),
     request_body = CreateShareRequest,
     responses(
-        (status = 200, description = "Success"),
+        (status = 201, description = "Created", body = ShareResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Insufficient permission or cross-organization sharing", body = crate::handlers::ErrorResponse),
         (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
     ),
 )]
@@ -125,8 +126,9 @@ pub async fn create_public_file_share(
     params(("folder_id" = Uuid, Path, description = "Folder Id")),
     request_body = CreateShareRequest,
     responses(
-        (status = 200, description = "Success"),
+        (status = 201, description = "Created", body = ShareResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Insufficient permission or cross-organization sharing", body = crate::handlers::ErrorResponse),
         (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
     ),
 )]
