@@ -461,17 +461,20 @@ pub async fn add_member(
         .1
         .ok_or_else(|| admin_internal_error("Group missing tenant_id"))?;
 
-    // Verify user exists
-    let user_exists_row = sqlx::query!(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1) as exists",
-        req.user_id
-    )
-    .fetch_one(&state.db_pool)
-    .await
-    .map_err(db_error)?;
-    let user_exists = user_exists_row.exists.unwrap_or(false);
-    if !user_exists {
-        return Err(admin_not_found("User not found"));
+    // Verify the target user exists and belongs to the group's organization
+    // (ADR-0040: organization = tenant, strict equality). The AdminUser
+    // extractor is installation-wide, so the membership itself must enforce
+    // the organization boundary.
+    let user_tenant: Option<Uuid> =
+        sqlx::query_scalar!("SELECT tenant_id FROM users WHERE id = $1", req.user_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(db_error)?;
+    let user_tenant = user_tenant.ok_or_else(|| admin_not_found("User not found"))?;
+    if user_tenant != tenant_id {
+        return Err(admin_bad_request(
+            "User belongs to a different organization than the group",
+        ));
     }
 
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
