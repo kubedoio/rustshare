@@ -213,6 +213,8 @@ pub enum NoteError {
     InvalidName(String),
     #[error("Invalid ACL metadata: {0}")]
     InvalidAcl(String),
+    #[error("Conflicting resource identity: {0}")]
+    Conflict(String),
 }
 
 impl From<rustshare_core::services::FileError> for NoteError {
@@ -660,7 +662,7 @@ impl NoteService {
                     %indexed_file_id,
                     "refusing to remove public share index entry owned by another note"
                 );
-                Err(NoteError::InvalidAcl(
+                Err(NoteError::Conflict(
                     "public share id is registered to a different note".to_string(),
                 ))
             }

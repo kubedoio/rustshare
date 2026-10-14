@@ -586,7 +586,7 @@ async fn contract_notes_crafted_sidecar_cannot_unpublish_another_notes_public_ur
         .toggle_visibility(note_b.id, attacker.id, tenant_id)
         .await;
     assert!(
-        matches!(result, Err(NoteError::InvalidAcl(_))),
+        matches!(result, Err(NoteError::Conflict(_))),
         "toggle must refuse a public share id registered to another note, got {:?}",
         result
     );

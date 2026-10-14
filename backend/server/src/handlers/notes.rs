@@ -454,6 +454,7 @@ pub struct VisibilityResponse {
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
         (status = 403, description = "Forbidden: ownership or an Admin-level share permission is required", body = crate::handlers::ErrorResponse),
         (status = 404, description = "Not found", body = crate::handlers::ErrorResponse),
+        (status = 409, description = "Conflict: the public share id is registered to a different note", body = crate::handlers::ErrorResponse),
     ),
 )]
 pub async fn toggle_visibility(
