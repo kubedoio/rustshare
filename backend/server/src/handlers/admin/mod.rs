@@ -12,6 +12,21 @@ pub mod workflows;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
+/// Resolve the organization a new principal is created in (AR-01; ADR-0040 D4,
+/// ADR-0043 D-D2 I1).
+///
+/// The organization is always derived from configuration — never supplied by
+/// the request. An unset or unparsable `RUSTSHARE_DEFAULT_TENANT_ID` resolves
+/// to the nil default organization (ADR-0043). Where no organization can be
+/// resolved at all, creation fails closed and writes nothing rather than
+/// letting the column default become the source of the row.
+pub(crate) fn resolve_creation_tenant(state: &crate::AppState) -> Result<Uuid, AppError> {
+    state
+        .default_tenant_config
+        .resolved_tenant()
+        .ok_or_else(|| admin_internal_error("No default organization could be resolved"))
+}
+
 /// Record an admin action in the `admin_actions` table.
 /// Errors are logged as warnings — audit failures must not block the admin operation.
 pub async fn log_admin_action(

@@ -5,7 +5,10 @@
 //!
 //! Run with: cargo test --test admin_groups_test -- --ignored
 
+mod support;
+
 use sqlx::Row;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -321,4 +324,149 @@ async fn test_delete_group_cascades_members() {
     );
 
     cleanup_users(&pool, &[actor_id, user1_id, user2_id]).await;
+}
+
+// ---------------------------------------------------------------------------
+// AR-01: organization-explicit principal creation (ADR-0040 D4, ADR-0043 D-D2 I1)
+// ---------------------------------------------------------------------------
+
+fn ar01_assert_disposable_database(database_url: &str) {
+    let parsed = url::Url::parse(database_url).expect("DATABASE_URL must be a PostgreSQL URL");
+    let database_name = parsed.path().trim_start_matches('/');
+    assert!(
+        database_name == "rustshare_test" || database_name.starts_with("rustshare_test_"),
+        "refusing to mutate database outside rustshare_test or rustshare_test_*"
+    );
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB")
+            .ok()
+            .as_deref(),
+        Some("1"),
+        "set RUSTSHARE_TEST_DISPOSABLE_DB=1 only for the disposable test database"
+    );
+}
+
+/// The admin group creation handler writes the explicitly resolved
+/// organization on the INSERT: with a non-nil default configured, the stored
+/// row carries that organization (nil-default behaviour is unreachable), and
+/// with the default unset the stored row carries nil — the resolved default
+/// organization.
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable local PostgreSQL database and S3-compatible storage"]
+async fn test_admin_group_creation_writes_resolved_organization() {
+    use support::calendar_harness::{
+        assert_local_database, create_auth_token, setup_test_env, SERIAL,
+    };
+
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL explicitly to a disposable local database");
+    ar01_assert_disposable_database(&database_url);
+    assert_local_database();
+
+    let mut state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let actor_id = Uuid::new_v4();
+    let configured_tenant = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin,
+                            storage_quota, tenant_id)
+         VALUES ($1, $2, $3, 'test-password-hash', $2, true, 10737418240, $4)",
+    )
+    .bind(actor_id)
+    .bind(format!("ar01_admin_{}", actor_id.simple()))
+    .bind(format!("ar01_admin_{}@test.local", actor_id.simple()))
+    .bind(configured_tenant)
+    .execute(&pool)
+    .await
+    .expect("create admin actor");
+    let token = create_auth_token(&state, actor_id, configured_tenant);
+
+    // Non-nil default organization: the stored row must carry it.
+    state.default_tenant_config =
+        rustshare_server::config::DefaultTenantConfig::Set(configured_tenant);
+    let app = rustshare_server::routes::admin_routes().with_state(state.clone());
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/v1/admin/groups")
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(r#"{"name":"ar01-scoped-group"}"#))
+                .expect("build group create request"),
+        )
+        .await
+        .expect("group create request");
+    assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+    let body = axum::body::to_bytes(response.into_body(), 1_000_000)
+        .await
+        .expect("read group create response");
+    let group_id = Uuid::parse_str(
+        serde_json::from_slice::<serde_json::Value>(&body)
+            .expect("group create response must be JSON")
+            .get("id")
+            .and_then(|id| id.as_str())
+            .expect("group create response must carry the group id"),
+    )
+    .expect("group id must be a UUID");
+    let stored_tenant: Uuid = sqlx::query_scalar("SELECT tenant_id FROM user_groups WHERE id = $1")
+        .bind(group_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch created group tenant");
+    assert_eq!(
+        stored_tenant, configured_tenant,
+        "the stored row must carry the resolved organization, not the column default"
+    );
+    assert_ne!(
+        stored_tenant,
+        Uuid::nil(),
+        "nil-default behaviour must be unreachable when a default organization is configured"
+    );
+
+    // Unset default: nil *is* the resolved default organization (ADR-0043).
+    state.default_tenant_config = rustshare_server::config::DefaultTenantConfig::Unset;
+    let app = rustshare_server::routes::admin_routes().with_state(state.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/v1/admin/groups")
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"name":"ar01-nil-default-group"}"#,
+                ))
+                .expect("build nil-default group create request"),
+        )
+        .await
+        .expect("nil-default group create request");
+    assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+    let body = axum::body::to_bytes(response.into_body(), 1_000_000)
+        .await
+        .expect("read nil-default group create response");
+    let nil_default_group_id = Uuid::parse_str(
+        serde_json::from_slice::<serde_json::Value>(&body)
+            .expect("nil-default group create response must be JSON")
+            .get("id")
+            .and_then(|id| id.as_str())
+            .expect("nil-default group create response must carry the group id"),
+    )
+    .expect("group id must be a UUID");
+    let stored_tenant: Uuid = sqlx::query_scalar("SELECT tenant_id FROM user_groups WHERE id = $1")
+        .bind(nil_default_group_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch nil-default group tenant");
+    assert_eq!(
+        stored_tenant,
+        Uuid::nil(),
+        "with the default unset the resolved organization is the nil default organization"
+    );
+
+    cleanup_group(&pool, group_id).await;
+    cleanup_group(&pool, nil_default_group_id).await;
+    cleanup_users(&pool, &[actor_id]).await;
 }

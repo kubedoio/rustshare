@@ -88,6 +88,14 @@ RustShare supports any S3-compatible store (RustFS, AWS S3, etc.).
 
 ---
 
+## Organizations / Tenancy
+
+| Variable | Description | Default | Required? |
+|----------|-------------|---------|-----------|
+| `RUSTSHARE_DEFAULT_TENANT_ID` | UUID of the deployment's default organization. Principal-creating paths (admin user/group creation, seed, OIDC binding) resolve it explicitly and bind it on the INSERT; the column default is never the source of a new row. Unset or unparsable resolves to the nil UUID, which *is* the default organization of a fresh single-organization deployment (ADR-0040 D4, ADR-0043). The resolved state is logged at startup as `set to <uuid>` / `unset` / `unparsable`. | nil UUID | No |
+
+---
+
 ## Rate Limiting
 
 All rates are **per IP address per minute** using a token-bucket algorithm.

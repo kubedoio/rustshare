@@ -854,3 +854,580 @@ async fn live_credentials_issued_before_disable_are_rejected_while_disabled() {
         "a revoked device token stays revoked across re-enable"
     );
 }
+
+/// AR-01 / ADR-0040 D8: disabling through the admin handler produces
+/// identical credential revocation to the SCIM-shaped `UPDATE users SET
+/// disabled_at`: the shared `set_user_disabled_at` write lets the
+/// `users_disable_revokes_credentials` trigger delete the web session and
+/// revoke the device token, and re-enable does not resurrect them. This is a
+/// coverage/parity and handler-consistency property — the trigger, not any
+/// handler code, performs the revocation.
+#[tokio::test]
+#[ignore = "requires explicitly configured disposable local PostgreSQL and RustFS"]
+async fn admin_disable_produces_identical_credential_revocation() {
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL to an explicitly disposable local database");
+    assert_disposable_database(&database_url);
+    assert_local_database();
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE")
+            .ok()
+            .as_deref(),
+        Some("1"),
+        "set RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE=1 only for disposable local RustFS"
+    );
+
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let tenant_id = Uuid::new_v4();
+    let admin_id = Uuid::new_v4();
+    let target_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    let session_token = rustshare_auth::generate_web_session_token();
+    let session_hash = rustshare_auth::hash_web_session_token(&session_token);
+    let device_token = format!("admin-disable-parity-{}", Uuid::new_v4());
+    let device_token_hash = hex::encode(Sha256::digest(device_token.as_bytes()));
+
+    sqlx::query(
+        "INSERT INTO tenants (id, name, created_at, updated_at)
+         VALUES ($1, $2, NOW(), NOW())",
+    )
+    .bind(tenant_id)
+    .bind(format!("Admin disable parity test {tenant_id}"))
+    .execute(&pool)
+    .await
+    .expect("insert test tenant");
+
+    for (user_id, username, is_admin) in [
+        (admin_id, format!("ar01_admin_{}", admin_id.simple()), true),
+        (
+            target_id,
+            format!("ar01_target_{}", target_id.simple()),
+            false,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO users
+                (id, username, email, password_hash, display_name, is_admin,
+                 storage_quota, tenant_id)
+             VALUES ($1, $2, $3, 'test-password-hash', $2, $4, 10737418240, $5)",
+        )
+        .bind(user_id)
+        .bind(&username)
+        .bind(format!("{username}@test.local"))
+        .bind(is_admin)
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .expect("insert test user");
+    }
+
+    sqlx::query(
+        "INSERT INTO user_sessions (id, user_id, session_token_hash, expires_at, tenant_id)
+         VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour', $4)",
+    )
+    .bind(session_id)
+    .bind(target_id)
+    .bind(&session_hash)
+    .bind(tenant_id)
+    .execute(&pool)
+    .await
+    .expect("insert live web session");
+
+    sqlx::query(
+        "INSERT INTO device_tokens (id, user_id, token_hash, device_name)
+         VALUES ($1, $2, $3, 'admin disable parity')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(target_id)
+    .bind(&device_token_hash)
+    .execute(&pool)
+    .await
+    .expect("insert live device token");
+
+    let app = rustshare_server::routes::admin_routes()
+        .merge(rustshare_server::routes::user_routes())
+        .with_state(state.clone());
+    let admin_bearer = create_auth_token(&state, admin_id, tenant_id);
+
+    let disable_status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/admin/users/{target_id}/disable"))
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {admin_bearer}"),
+                )
+                .body(Body::empty())
+                .expect("build disable request"),
+        )
+        .await
+        .expect("disable request")
+        .status();
+    assert_eq!(disable_status, StatusCode::NO_CONTENT);
+
+    let disabled_at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT disabled_at FROM users WHERE id = $1")
+            .bind(target_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch disabled_at");
+    assert!(disabled_at.is_some(), "disable must set disabled_at");
+    let session_row_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM user_sessions
+            WHERE user_id = $1 AND session_token_hash = $2 AND expires_at > NOW()
+        )",
+    )
+    .bind(target_id)
+    .bind(&session_hash)
+    .fetch_one(&pool)
+    .await
+    .expect("check session rows");
+    assert!(
+        !session_row_exists,
+        "disable must leave no user_sessions row — identical to the SCIM-shaped UPDATE"
+    );
+    let device_revoked_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT revoked_at FROM device_tokens WHERE user_id = $1 AND token_hash = $2",
+    )
+    .bind(target_id)
+    .bind(&device_token_hash)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch device token revocation");
+    assert!(
+        device_revoked_at.is_some(),
+        "disable must revoke the device token — identical to the SCIM-shaped UPDATE"
+    );
+    assert_eq!(
+        get_me_with_bearer(&app, &device_token)
+            .await
+            .expect("device probe"),
+        StatusCode::UNAUTHORIZED,
+        "the revoked device token must stop authenticating"
+    );
+    let stale_cookie_status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/me/sessions")
+                .header(
+                    axum::http::header::COOKIE,
+                    format!(
+                        "{}={session_token}",
+                        rustshare_auth::WEB_SESSION_COOKIE_NAME
+                    ),
+                )
+                .body(Body::empty())
+                .expect("build stale cookie request"),
+        )
+        .await
+        .expect("stale cookie request")
+        .status();
+    assert_eq!(
+        stale_cookie_status,
+        StatusCode::UNAUTHORIZED,
+        "a session deleted by the disable trigger must not authenticate"
+    );
+
+    // Re-enable: server-side credentials must stay revoked (A6).
+    let enable_status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/admin/users/{target_id}/enable"))
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {admin_bearer}"),
+                )
+                .body(Body::empty())
+                .expect("build enable request"),
+        )
+        .await
+        .expect("enable request")
+        .status();
+    assert_eq!(enable_status, StatusCode::NO_CONTENT);
+    let device_revoked_after_reenable: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT revoked_at FROM device_tokens WHERE user_id = $1 AND token_hash = $2",
+    )
+    .bind(target_id)
+    .bind(&device_token_hash)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch device token revocation after re-enable");
+    assert!(
+        device_revoked_after_reenable.is_some(),
+        "a revoked device token must stay revoked across re-enable"
+    );
+    let session_row_after_reenable: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM user_sessions
+            WHERE user_id = $1 AND session_token_hash = $2 AND expires_at > NOW()
+        )",
+    )
+    .bind(target_id)
+    .bind(&session_hash)
+    .fetch_one(&pool)
+    .await
+    .expect("check session rows after re-enable");
+    assert!(
+        !session_row_after_reenable,
+        "deleted sessions must not come back on re-enable"
+    );
+
+    // Cleanup (mirror the suites' disposable-data hygiene).
+    sqlx::query("DELETE FROM admin_actions WHERE target_id = $1 OR actor_id = $1")
+        .bind(target_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM admin_actions WHERE actor_id = $1")
+        .bind(admin_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM device_tokens WHERE user_id = $1")
+        .bind(target_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM user_sessions WHERE user_id = $1")
+        .bind(target_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2")
+        .bind(target_id)
+        .bind(admin_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM tenants WHERE id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+}
+
+/// ADR-0040 negative test 6 / invariant A7: tenant drift fails closed.
+///
+/// - A web session whose `tenant_id` disagrees with the user's row is
+///   invalidated at resolution (deleted, not honoured).
+/// - A WebSocket credential whose JWT `tenant_id` claim disagrees with the
+///   user's row is rejected; a matching claim resolves to the row's
+///   organization, never the claim's.
+#[tokio::test]
+#[ignore = "requires explicitly configured disposable local PostgreSQL and RustFS"]
+async fn tenant_drift_fails_closed_for_sessions_and_websockets() {
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL to an explicitly disposable local database");
+    assert_disposable_database(&database_url);
+    assert_local_database();
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE")
+            .ok()
+            .as_deref(),
+        Some("1"),
+        "set RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE=1 only for disposable local RustFS"
+    );
+
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let user_tenant = Uuid::new_v4();
+    let foreign_tenant = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    let session_token = rustshare_auth::generate_web_session_token();
+    let session_hash = rustshare_auth::hash_web_session_token(&session_token);
+
+    sqlx::query(
+        "INSERT INTO users
+            (id, username, email, password_hash, display_name, is_admin,
+             storage_quota, tenant_id)
+         VALUES ($1, $2, $3, 'test-password-hash', $2, false, 10737418240, $4)",
+    )
+    .bind(user_id)
+    .bind(format!("ar01_drift_{}", user_id.simple()))
+    .bind(format!("ar01-drift-{}@test.local", user_id.simple()))
+    .bind(user_tenant)
+    .execute(&pool)
+    .await
+    .expect("insert test user");
+
+    // The drifted session: recorded organization differs from the user's row.
+    sqlx::query(
+        "INSERT INTO user_sessions (id, user_id, session_token_hash, expires_at, tenant_id)
+         VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour', $4)",
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .bind(&session_hash)
+    .bind(foreign_tenant)
+    .execute(&pool)
+    .await
+    .expect("insert drifted web session");
+
+    // Session resolution must fail closed and invalidate the session.
+    let resolved = rustshare_server::web_session::resolve_user_session(&state, &session_token)
+        .await
+        .expect("session resolution must not error");
+    assert_eq!(
+        resolved, None,
+        "a session whose tenant disagrees with the user's row must be invalidated"
+    );
+    let session_row_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_sessions WHERE id = $1)")
+            .bind(session_id)
+            .fetch_one(&pool)
+            .await
+            .expect("check invalidated session row");
+    assert!(
+        !session_row_exists,
+        "the drifted session must be deleted, not merely refused"
+    );
+
+    // WebSocket: a foreign tenant claim must be rejected (A7).
+    let foreign_claim_token = state
+        .jwt_manager
+        .generate(user_id, "drift@test.local", foreign_tenant)
+        .expect("mint foreign-claim JWT");
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::AUTHORIZATION,
+        format!("Bearer {foreign_claim_token}").parse().unwrap(),
+    );
+    let rejected = rustshare_server::handlers::ws_auth::resolve_ws_client_identity(
+        &state,
+        &headers,
+        &rustshare_server::handlers::ws_auth::WsAuthQuery { token: None },
+    )
+    .await;
+    assert!(
+        matches!(rejected, Err((StatusCode::UNAUTHORIZED, _))),
+        "a WebSocket credential with a foreign tenant claim must be rejected, got {:?}",
+        rejected.map(|identity| format!("{identity:?}"))
+    );
+
+    // Control: a matching claim resolves to the row's organization.
+    let matching_claim_token = state
+        .jwt_manager
+        .generate(user_id, "match@test.local", user_tenant)
+        .expect("mint matching-claim JWT");
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::AUTHORIZATION,
+        format!("Bearer {matching_claim_token}").parse().unwrap(),
+    );
+    let identity = rustshare_server::handlers::ws_auth::resolve_ws_client_identity(
+        &state,
+        &headers,
+        &rustshare_server::handlers::ws_auth::WsAuthQuery { token: None },
+    )
+    .await
+    .expect("matching-claim credential must resolve");
+    match identity {
+        rustshare_server::handlers::ws_auth::ClientIdentity::User {
+            user_id: resolved_user,
+            tenant_id,
+        } => {
+            assert_eq!(resolved_user, user_id);
+            assert_eq!(
+                tenant_id, user_tenant,
+                "the WebSocket identity's organization must come from the users row"
+            );
+        }
+        other => panic!("expected a user identity, got {other:?}"),
+    }
+
+    // Cleanup.
+    sqlx::query("DELETE FROM user_sessions WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .ok();
+}
+
+/// AR-01 review regression: a *valid* user JWT whose principal is rejected
+/// (disabled account, or tenant drift) must fail fast on the WebSocket path.
+/// A second credential presented in the same request — here another user's
+/// valid session cookie — must not be honoured as a side channel: resolution
+/// must not fall through to it.
+#[tokio::test]
+#[ignore = "requires explicitly configured disposable local PostgreSQL and RustFS"]
+async fn ws_identity_rejected_principal_fails_fast_despite_a_valid_session_cookie() {
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL to an explicitly disposable local database");
+    assert_disposable_database(&database_url);
+    assert_local_database();
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE")
+            .ok()
+            .as_deref(),
+        Some("1"),
+        "set RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE=1 only for disposable local RustFS"
+    );
+
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let tenant_id = Uuid::new_v4();
+    let foreign_tenant = Uuid::new_v4();
+    let disabled_id = Uuid::new_v4();
+    let drifted_id = Uuid::new_v4();
+    let cookie_user_id = Uuid::new_v4();
+    let cookie_session_id = Uuid::new_v4();
+    let cookie_session_token = rustshare_auth::generate_web_session_token();
+    let cookie_session_hash = rustshare_auth::hash_web_session_token(&cookie_session_token);
+
+    for (user_id, username, disabled) in [
+        (
+            disabled_id,
+            format!("ar01_ws_disabled_{}", disabled_id.simple()),
+            true,
+        ),
+        (
+            drifted_id,
+            format!("ar01_ws_drift_{}", drifted_id.simple()),
+            false,
+        ),
+        (
+            cookie_user_id,
+            format!("ar01_ws_cookie_{}", cookie_user_id.simple()),
+            false,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO users
+                (id, username, email, password_hash, display_name, is_admin,
+                 storage_quota, tenant_id, disabled_at)
+             VALUES ($1, $2, $3, 'test-password-hash', $2, false, 10737418240, $4, $5)",
+        )
+        .bind(user_id)
+        .bind(&username)
+        .bind(format!("{username}@test.local"))
+        .bind(tenant_id)
+        .bind(if disabled {
+            Some(chrono::Utc::now())
+        } else {
+            None
+        })
+        .execute(&pool)
+        .await
+        .expect("insert test user");
+    }
+
+    sqlx::query(
+        "INSERT INTO user_sessions (id, user_id, session_token_hash, expires_at, tenant_id)
+         VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour', $4)",
+    )
+    .bind(cookie_session_id)
+    .bind(cookie_user_id)
+    .bind(&cookie_session_hash)
+    .bind(tenant_id)
+    .execute(&pool)
+    .await
+    .expect("insert cookie user's session");
+
+    let headers_with_cookie = |bearer: &str| {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {bearer}").parse().unwrap(),
+        );
+        headers.insert(
+            axum::http::header::COOKIE,
+            format!(
+                "{}={cookie_session_token}",
+                rustshare_auth::WEB_SESSION_COOKIE_NAME
+            )
+            .parse()
+            .unwrap(),
+        );
+        headers
+    };
+
+    // Case 1: valid JWT for a *disabled* user + another user's live cookie.
+    let disabled_user_token = create_auth_token(&state, disabled_id, tenant_id);
+    let rejected = rustshare_server::handlers::ws_auth::resolve_ws_client_identity(
+        &state,
+        &headers_with_cookie(&disabled_user_token),
+        &rustshare_server::handlers::ws_auth::WsAuthQuery { token: None },
+    )
+    .await;
+    assert!(
+        matches!(rejected, Err((StatusCode::FORBIDDEN, _))),
+        "a disabled user's JWT must fail fast (403) and must not fall through \
+         to another user's session cookie, got {:?}",
+        rejected.map(|identity| format!("{identity:?}"))
+    );
+
+    // Case 2: valid JWT with a *foreign tenant claim* + the same live cookie.
+    let drifted_user_token = state
+        .jwt_manager
+        .generate(drifted_id, "drift@test.local", foreign_tenant)
+        .expect("mint foreign-claim JWT");
+    let rejected = rustshare_server::handlers::ws_auth::resolve_ws_client_identity(
+        &state,
+        &headers_with_cookie(&drifted_user_token),
+        &rustshare_server::handlers::ws_auth::WsAuthQuery { token: None },
+    )
+    .await;
+    assert!(
+        matches!(rejected, Err((StatusCode::UNAUTHORIZED, _))),
+        "a tenant-drifted JWT must fail fast (401) and must not fall through \
+         to another user's session cookie, got {:?}",
+        rejected.map(|identity| format!("{identity:?}"))
+    );
+
+    // Control: the cookie alone still authenticates its own user, so the
+    // rejections above are due to fail-fast and not to a broken cookie.
+    let mut cookie_only = axum::http::HeaderMap::new();
+    cookie_only.insert(
+        axum::http::header::COOKIE,
+        format!(
+            "{}={cookie_session_token}",
+            rustshare_auth::WEB_SESSION_COOKIE_NAME
+        )
+        .parse()
+        .unwrap(),
+    );
+    let identity = rustshare_server::handlers::ws_auth::resolve_ws_client_identity(
+        &state,
+        &cookie_only,
+        &rustshare_server::handlers::ws_auth::WsAuthQuery { token: None },
+    )
+    .await
+    .expect("the cookie user's own session must still authenticate");
+    match identity {
+        rustshare_server::handlers::ws_auth::ClientIdentity::User { user_id, .. } => {
+            assert_eq!(user_id, cookie_user_id)
+        }
+        other => panic!("expected the cookie user's identity, got {other:?}"),
+    }
+
+    // Cleanup.
+    sqlx::query("DELETE FROM user_sessions WHERE id = $1")
+        .bind(cookie_session_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM users WHERE id = $1 OR id = $2 OR id = $3")
+        .bind(disabled_id)
+        .bind(drifted_id)
+        .bind(cookie_user_id)
+        .execute(&pool)
+        .await
+        .ok();
+}

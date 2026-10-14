@@ -29,6 +29,7 @@ pub mod routes;
 pub mod services;
 pub mod state;
 pub mod trash_cleanup;
+pub mod user_disable;
 pub mod web_session;
 
 pub use bootstrap::default_storage_quota_bytes;

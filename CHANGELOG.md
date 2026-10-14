@@ -48,6 +48,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Organization-explicit principal creation and credential consistency
+  (AR-01; ADR-0040 D3/D4/A3/A7, ADR-0043 D-D2 I1): `POST /api/v1/admin/users`
+  and `POST /api/v1/admin/groups` resolve the organization explicitly from
+  `RUSTSHARE_DEFAULT_TENANT_ID` and bind `tenant_id` on the INSERT — the nil
+  column default is never the effective source of a new row; where no
+  organization can be resolved, creation fails closed and writes nothing.
+  The resolved configuration state (`set to <uuid>` / `unset` / `unparsable`)
+  is logged at startup with no new failure mode or readiness change, and is
+  documented in `docs/configuration.md`. A web session whose `tenant_id`
+  disagrees with the user's row is now invalidated at resolution, and the
+  WebSocket path validates the JWT `tenant_id` claim against `users.tenant_id`,
+  rejecting foreign-claim credentials immediately instead of trusting the
+  claim or falling through to another presented credential. Admin user
+  disable/enable and the SCIM v1 `set_user_disabled` / SCIM v2 `active` patch
+  now share one disable/enable write; session deletion and device-token
+  revocation remain guaranteed for every writer by the
+  `users_disable_revokes_credentials` trigger (parity and handler
+  consistency, not a new revocation mechanism).
 - Fixed SCIM endpoint authorization to enforce a single configured
   organization scope: the SCIM v1/v2 bearer token is now bound to one
   organization via `RUSTSHARE_SCIM_TENANT_ID` (falling back to an explicitly
