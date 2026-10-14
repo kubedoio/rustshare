@@ -1169,6 +1169,18 @@ async fn test_list_my_groups_excludes_foreign_tenant_groups() {
         .await
         .expect("add foreign-organization member");
 
+    // Seed a mismatched legacy membership row directly — the requester
+    // belongs to the group even though the group belongs to another
+    // organization. The unscoped pre-AR-03 query would list the foreign
+    // group through this row; the tenant predicate must exclude it.
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(foreign_group_id)
+        .bind(user_a)
+        .bind(user_b)
+        .execute(&pool)
+        .await
+        .expect("seed mismatched legacy group_members row");
+
     let token = create_auth_token(&state, user_a, home_tenant);
     let app = rustshare_server::routes::group_routes().with_state(state);
     let response = app
