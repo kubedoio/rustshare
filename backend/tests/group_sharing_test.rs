@@ -385,6 +385,148 @@ async fn test_cross_tenant_sharing_blocked() {
     cleanup_group_share_fixture(&pool, &f, None).await;
 }
 
+/// Test that a group share presented from another organization is refused
+/// (AR-03 grant equality: group organization must equal resource and
+/// requester organization).
+#[tokio::test]
+async fn test_group_share_group_from_other_tenant_refused() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let share_service = create_test_share_service(pool.clone());
+
+    let other_tenant_id = Uuid::new_v4();
+
+    // File and group are both fixtured in f.tenant_id, but the caller
+    // presents another organization.
+    let result = share_service
+        .create_group_share(
+            Resource::File(f.file_id),
+            f.group_id,
+            SharePermissions::View,
+            f.owner_id,
+            other_tenant_id,
+        )
+        .await;
+
+    assert!(
+        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        "Group share presented from another tenant should be refused"
+    );
+
+    let share_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM shares WHERE recipient_group_id = $1")
+            .bind(f.group_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(share_count, 0, "No share row should be written");
+
+    cleanup_group_share_fixture(&pool, &f, None).await;
+}
+
+/// Test that sharing with a nonexistent group returns GroupNotFound and
+/// writes no share row.
+#[tokio::test]
+async fn test_group_share_nonexistent_group_returns_group_not_found() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let share_service = create_test_share_service(pool.clone());
+
+    let bogus_group_id = Uuid::new_v4();
+
+    let result = share_service
+        .create_group_share(
+            Resource::File(f.file_id),
+            bogus_group_id,
+            SharePermissions::View,
+            f.owner_id,
+            f.tenant_id,
+        )
+        .await;
+
+    assert!(
+        matches!(result, Err(ShareError::GroupNotFound(id)) if id == bogus_group_id),
+        "Nonexistent group should return GroupNotFound"
+    );
+
+    let share_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM shares WHERE recipient_group_id = $1")
+            .bind(bogus_group_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(share_count, 0, "No share row should be written");
+
+    cleanup_group_share_fixture(&pool, &f, None).await;
+}
+
+/// Test that the resource-owner bypass (owners skip the membership check)
+/// still enforces organization equality on the recipient group (AR-03).
+#[tokio::test]
+async fn test_group_share_owner_bypass_still_tenant_checked() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let share_service = create_test_share_service(pool.clone());
+
+    // A second organization holding a group the resource owner is NOT a
+    // member of.
+    let foreign_tenant_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+        .bind(foreign_tenant_id)
+        .bind(format!("Foreign Tenant {}", foreign_tenant_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let foreign_group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, tenant_id, created_by) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(foreign_group_id)
+    .bind(format!("Foreign Group {}", foreign_group_id))
+    .bind(foreign_tenant_id)
+    .bind(f.owner_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Resource owner (not a member of the foreign group) attempts the share.
+    let result = share_service
+        .create_group_share(
+            Resource::File(f.file_id),
+            foreign_group_id,
+            SharePermissions::View,
+            f.owner_id,
+            f.tenant_id,
+        )
+        .await;
+
+    assert!(
+        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        "Owner sharing with a foreign-tenant group should be refused"
+    );
+
+    let share_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM shares WHERE recipient_group_id = $1")
+            .bind(foreign_group_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(share_count, 0, "No share row should be written");
+
+    sqlx::query("DELETE FROM user_groups WHERE id = $1")
+        .bind(foreign_group_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM tenants WHERE id = $1")
+        .bind(foreign_tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    cleanup_group_share_fixture(&pool, &f, None).await;
+}
+
 /// Test duplicate group share prevention
 #[tokio::test]
 async fn test_duplicate_group_share_prevented() {

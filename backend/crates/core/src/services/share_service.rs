@@ -159,6 +159,11 @@ pub trait MetadataStoreOps: Send + Sync {
 
     /// Check if a user is a member of a group.
     async fn is_user_in_group(&self, user_id: UserId, group_id: uuid::Uuid) -> Result<bool>;
+
+    /// Find the organization (tenant) a group belongs to.
+    ///
+    /// Returns `Ok(None)` when no group with that ID exists.
+    async fn find_group_tenant_id(&self, group_id: uuid::Uuid) -> Result<Option<Uuid>>;
 }
 
 /// Trait for share notification tracking operations needed by ShareService.
@@ -908,6 +913,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
     /// Create a group share for a resource
     ///
+    /// The group must exist and its organization (`user_groups.tenant_id`)
+    /// must equal both the resource's organization and the requester's
+    /// organization (`tenant_id`) — grant equality (ADR-0041 D2). This
+    /// check applies to every caller, including resource owners bypassing
+    /// the membership requirement below.
+    ///
     /// # Arguments
     /// * `resource` - File or Folder to share
     /// * `group_id` - Group to share with
@@ -916,9 +927,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     /// * `tenant_id` - Tenant ID for boundary checking
     ///
     /// # Errors
-    /// * CrossTenantSharingNotAllowed - if group is in different tenant
-    /// * NotGroupMember - if user is not admin and not group member
-    /// * GroupShareAlreadyExists - if group already has access
+    /// * `FileNotFound` / `FolderNotFound` - if the resource does not exist
+    /// * `GroupNotFound` - if the group does not exist
+    /// * `CrossTenantSharingNotAllowed` - if the resource or the group is in
+    ///   a different tenant than `tenant_id`
+    /// * `PermissionDenied` - if the user does not hold the granted
+    ///   permission on the resource
+    /// * `NotGroupMember` - if user is not admin and not group member
+    /// * `GroupShareAlreadyExists` - if group already has access
     pub async fn create_group_share(
         &self,
         resource: Resource,
@@ -952,6 +968,21 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         // Tenant boundary check
         if resource_tenant != tenant_id {
+            return Err(ShareError::CrossTenantSharingNotAllowed);
+        }
+
+        // Group boundary check (ADR-0041 D2, grant equality): the group must
+        // exist and live in the same organization as the resource and the
+        // requester. This runs before any branch that can create the share,
+        // including the owner bypass below, which skips the membership check
+        // but not this check.
+        let group_tenant = self
+            .metadata_store
+            .find_group_tenant_id(group_id)
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?
+            .ok_or(ShareError::GroupNotFound(group_id))?;
+        if group_tenant != tenant_id {
             return Err(ShareError::CrossTenantSharingNotAllowed);
         }
 
@@ -1763,6 +1794,12 @@ mod tests {
             // Mock implementation - in tests, users are not group members by default
             // Tests can override this by using a custom mock if needed
             Ok(false)
+        }
+
+        async fn find_group_tenant_id(&self, _group_id: Uuid) -> Result<Option<Uuid>> {
+            // Mock implementation - groups are treated as nonexistent by default.
+            // Integration tests exercise the real MetadataStore.
+            Ok(None)
         }
 
         async fn list_files_by_parent(

@@ -43,6 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   user's `users.tenant_id` with the group's `user_groups.tenant_id` and
   rejects the request with HTTP 400 when they differ, deleting no
   `group_members` row.
+- Cross-organization group shares refused (AR-03; ADR-0041 D2 grant
+  equality): `create_group_share` now loads the recipient group's
+  `user_groups.tenant_id` before any share row is written and requires it
+  to equal both the resource's and the requester's organization. A missing
+  group returns HTTP 404 (`GroupNotFound`) and a foreign-organization group
+  returns HTTP 403 (`CrossTenantSharingNotAllowed`), with no `shares` row
+  written in either case. The check also applies to resource owners, who
+  bypass the membership requirement but not organization equality.
 - Organization-explicit principal creation and credential consistency
   (AR-01; ADR-0040 D3/D4/A3/A7, ADR-0043 D-D2 I1): `POST /api/v1/admin/users`
   and `POST /api/v1/admin/groups` resolve the organization explicitly from
