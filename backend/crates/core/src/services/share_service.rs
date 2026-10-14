@@ -287,6 +287,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     ///
     /// Verifies that:
     /// - The file exists
+    /// - The requester's organization matches the file's organization
     /// - The user owns the file
     /// - Password is hashed if provided
     ///
@@ -307,6 +308,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FileNotFound(file_id))?;
+
+        // Tenant boundary check (ADR-0041 D2): the requester's organization
+        // must equal the file's organization.
+        if file.tenant_id != tenant_id {
+            return Err(ShareError::CrossTenantSharingNotAllowed);
+        }
 
         // Verify user owns the file
         if file.owner_id != user_id {
@@ -368,6 +375,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     }
 
     /// Create a new share link for a folder.
+    ///
+    /// Verifies that the folder exists, the requester's organization matches
+    /// the folder's organization (ADR-0041 D2), and the user owns the folder
+    /// or holds Admin permission on it.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_folder_share(
         &self,
@@ -385,6 +396,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FolderNotFound(folder_id))?;
+
+        // Tenant boundary check (ADR-0041 D2): the requester's organization
+        // must equal the folder's organization.
+        if folder.tenant_id != tenant_id {
+            return Err(ShareError::CrossTenantSharingNotAllowed);
+        }
 
         let is_owner = folder.owner_id == user_id;
         let has_admin = if is_owner {

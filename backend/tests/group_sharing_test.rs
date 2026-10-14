@@ -962,3 +962,132 @@ async fn test_compat_layer_group_membership_sql() {
         .await
         .ok();
 }
+
+/// Test that public file link creation is refused when the requester's
+/// organization (`tenant_id`) differs from the file's organization (AR-03,
+/// ADR-0041 D2).
+#[tokio::test]
+async fn test_public_file_share_cross_tenant_refused() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let share_service = create_test_share_service(pool.clone());
+
+    let foreign_tenant_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+        .bind(foreign_tenant_id)
+        .bind(format!("Foreign Tenant {}", foreign_tenant_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Owner requester presents a different organization than the file's.
+    let result = share_service
+        .create_share(
+            f.file_id,
+            f.owner_id,
+            SharePermissions::View,
+            None,
+            None,
+            foreign_tenant_id,
+        )
+        .await;
+
+    assert!(
+        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        "Cross-tenant public file share should be refused"
+    );
+
+    let share_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM shares WHERE file_id = $1")
+        .bind(f.file_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(share_count, 0, "No share row should be written");
+
+    sqlx::query("DELETE FROM tenants WHERE id = $1")
+        .bind(foreign_tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    cleanup_group_share_fixture(&pool, &f, None).await;
+}
+
+/// Test that public folder link creation is refused when the requester's
+/// organization (`tenant_id`) differs from the folder's organization (AR-03,
+/// ADR-0041 D2).
+#[tokio::test]
+async fn test_public_folder_share_cross_tenant_refused() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let share_service = create_test_share_service(pool.clone());
+
+    let foreign_tenant_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+        .bind(foreign_tenant_id)
+        .bind(format!("Foreign Tenant {}", foreign_tenant_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Owner requester presents a different organization than the folder's.
+    let result = share_service
+        .create_folder_share(
+            f.folder_id,
+            f.owner_id,
+            SharePermissions::View,
+            None,
+            None,
+            false,
+            foreign_tenant_id,
+        )
+        .await;
+
+    assert!(
+        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        "Cross-tenant public folder share should be refused"
+    );
+
+    let share_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM shares WHERE folder_id = $1")
+        .bind(f.folder_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(share_count, 0, "No share row should be written");
+
+    sqlx::query("DELETE FROM tenants WHERE id = $1")
+        .bind(foreign_tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    cleanup_group_share_fixture(&pool, &f, None).await;
+}
+
+/// Same-tenant regression: public file link creation with matching
+/// organization must keep working.
+#[tokio::test]
+async fn test_public_file_share_same_tenant_allowed() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let share_service = create_test_share_service(pool.clone());
+
+    let share = share_service
+        .create_share(
+            f.file_id,
+            f.owner_id,
+            SharePermissions::View,
+            None,
+            None,
+            f.tenant_id,
+        )
+        .await
+        .expect("Same-tenant public file share should succeed");
+
+    let share_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM shares WHERE file_id = $1")
+        .bind(f.file_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(share_count, 1, "Exactly one share row should be written");
+
+    cleanup_group_share_fixture(&pool, &f, Some(share.id)).await;
+}
