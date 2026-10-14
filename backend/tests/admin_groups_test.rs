@@ -713,3 +713,241 @@ async fn test_admin_add_member_same_organization_allowed() {
     cleanup_group(&pool, group_id).await;
     cleanup_users(&pool, &[actor_id, member_user_id]).await;
 }
+
+/// Removing a user whose organization differs from the group's
+/// (users.tenant_id != user_groups.tenant_id) must be rejected with HTTP 400
+/// and must not delete the seeded group_members row: a mismatched legacy row
+/// must not be "repaired" into a privilege by deleting it.
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable local PostgreSQL database and S3-compatible storage"]
+async fn test_admin_remove_member_cross_organization_refused_no_mutation() {
+    use support::calendar_harness::{
+        assert_local_database, create_auth_token, setup_test_env, SERIAL,
+    };
+
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL explicitly to a disposable local database");
+    ar03_assert_disposable_database(&database_url);
+    assert_local_database();
+
+    let mut state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let actor_id = Uuid::new_v4();
+    let configured_tenant = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin,
+                            storage_quota, tenant_id)
+         VALUES ($1, $2, $3, 'test-password-hash', $2, true, 10737418240, $4)",
+    )
+    .bind(actor_id)
+    .bind(format!("ar03_admin_{}", actor_id.simple()))
+    .bind(format!("ar03_admin_{}@test.local", actor_id.simple()))
+    .bind(configured_tenant)
+    .execute(&pool)
+    .await
+    .expect("create admin actor");
+    let token = create_auth_token(&state, actor_id, configured_tenant);
+
+    state.default_tenant_config =
+        rustshare_server::config::DefaultTenantConfig::Set(configured_tenant);
+
+    // Second organization and a user that belongs to it.
+    let foreign_tenant = Uuid::new_v4();
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+        .bind(foreign_tenant)
+        .bind(format!("ar03_foreign_tenant_{}", foreign_tenant.simple()))
+        .execute(&pool)
+        .await
+        .expect("create foreign tenant");
+    let foreign_user_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin,
+                            storage_quota, tenant_id)
+         VALUES ($1, $2, $3, 'test-password-hash', $2, false, 10737418240, $4)",
+    )
+    .bind(foreign_user_id)
+    .bind(format!("ar03_foreign_{}", foreign_user_id.simple()))
+    .bind(format!(
+        "ar03_foreign_{}@test.local",
+        foreign_user_id.simple()
+    ))
+    .bind(foreign_tenant)
+    .execute(&pool)
+    .await
+    .expect("create foreign user");
+
+    // Group owned by the default organization.
+    let group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, created_by, tenant_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(group_id)
+    .bind(format!("ar03_group_{}", group_id.simple()))
+    .bind(actor_id)
+    .bind(configured_tenant)
+    .execute(&pool)
+    .await
+    .expect("create group in default tenant");
+
+    // Seed the mismatched membership row directly, as a legacy row would exist.
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(foreign_user_id)
+        .bind(actor_id)
+        .execute(&pool)
+        .await
+        .expect("seed mismatched group_members row");
+
+    let app = rustshare_server::routes::admin_routes().with_state(state.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/api/v1/admin/groups/{group_id}/members/{foreign_user_id}"
+                ))
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .expect("build cross-organization remove-member request"),
+        )
+        .await
+        .expect("cross-organization remove-member request");
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::BAD_REQUEST,
+        "cross-organization membership removal must be refused"
+    );
+
+    let membership_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND user_id = $2",
+    )
+    .bind(group_id)
+    .bind(foreign_user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count cross-organization memberships");
+    assert_eq!(
+        membership_count, 1,
+        "mismatched legacy membership row must not be deleted"
+    );
+
+    cleanup_group(&pool, group_id).await;
+    cleanup_users(&pool, &[actor_id, foreign_user_id]).await;
+    sqlx::query("DELETE FROM tenants WHERE id = $1")
+        .bind(foreign_tenant)
+        .execute(&pool)
+        .await
+        .expect("remove foreign tenant");
+}
+
+/// Removing a member whose organization matches the group's succeeds and
+/// deletes the membership row.
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable local PostgreSQL database and S3-compatible storage"]
+async fn test_admin_remove_member_same_organization_allowed() {
+    use support::calendar_harness::{
+        assert_local_database, create_auth_token, setup_test_env, SERIAL,
+    };
+
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL explicitly to a disposable local database");
+    ar03_assert_disposable_database(&database_url);
+    assert_local_database();
+
+    let mut state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let actor_id = Uuid::new_v4();
+    let configured_tenant = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin,
+                            storage_quota, tenant_id)
+         VALUES ($1, $2, $3, 'test-password-hash', $2, true, 10737418240, $4)",
+    )
+    .bind(actor_id)
+    .bind(format!("ar03_admin_{}", actor_id.simple()))
+    .bind(format!("ar03_admin_{}@test.local", actor_id.simple()))
+    .bind(configured_tenant)
+    .execute(&pool)
+    .await
+    .expect("create admin actor");
+    let token = create_auth_token(&state, actor_id, configured_tenant);
+
+    state.default_tenant_config =
+        rustshare_server::config::DefaultTenantConfig::Set(configured_tenant);
+
+    // Member user in the same organization as the group.
+    let member_user_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin,
+                            storage_quota, tenant_id)
+         VALUES ($1, $2, $3, 'test-password-hash', $2, false, 10737418240, $4)",
+    )
+    .bind(member_user_id)
+    .bind(format!("ar03_member_{}", member_user_id.simple()))
+    .bind(format!(
+        "ar03_member_{}@test.local",
+        member_user_id.simple()
+    ))
+    .bind(configured_tenant)
+    .execute(&pool)
+    .await
+    .expect("create same-organization user");
+
+    let group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, created_by, tenant_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(group_id)
+    .bind(format!("ar03_group_{}", group_id.simple()))
+    .bind(actor_id)
+    .bind(configured_tenant)
+    .execute(&pool)
+    .await
+    .expect("create group in default tenant");
+
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(member_user_id)
+        .bind(actor_id)
+        .execute(&pool)
+        .await
+        .expect("seed same-organization group_members row");
+
+    let app = rustshare_server::routes::admin_routes().with_state(state.clone());
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/api/v1/admin/groups/{group_id}/members/{member_user_id}"
+                ))
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .expect("build same-organization remove-member request"),
+        )
+        .await
+        .expect("same-organization remove-member request");
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::NO_CONTENT,
+        "same-organization membership removal must be accepted"
+    );
+
+    let membership_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND user_id = $2",
+    )
+    .bind(group_id)
+    .bind(member_user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count same-organization memberships");
+    assert_eq!(
+        membership_count, 0,
+        "same-organization membership must be deleted"
+    );
+
+    cleanup_group(&pool, group_id).await;
+    cleanup_users(&pool, &[actor_id, member_user_id]).await;
+}
