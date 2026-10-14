@@ -76,3 +76,10 @@ Phase 4.1 (the first implementation milestone of the Phase 4.0 program) may open
 ## 7. What this record does not do
 
 This record authorizes nothing. It does not change any ADR status, does not approve any migration or enforcement step, does not waive any roadmap dependency, and does not close any acceptance gate. It restates decisions and evidence so that the owners named in section 3 can decide on the record.
+
+## 8. Post-merge status update (2026-10-14)
+
+- **Hotfix A (SCIM organization isolation, PR #361)** is merged to main as merge commit `3c27353c10165d7e6194e4484ac3ceec34609a31` (head `59f165a9d1c567605e21024d1c3391225a449839`), with human approval at the merged head and all checks green.
+- **Hotfix B (note publication authorization, PR #362)** was rebased onto updated main (`aef0ff7b`) after the #361 merge; the only conflict was CHANGELOG ordering, resolved by keeping both security entries. Renewal of the (auto-dismissed) approval at the new head was requested; merge waits on that approval and green CI.
+- **A third private draft advisory** was filed during review for the crafted-sidecar public-URL hijack/unpublish defect closed by Hotfix B's index-hardening commit: GHSA-2c2h-xc2x-mcf2. All three advisories remain unpublished drafts gated on security-owner approval.
+- This record, and ADR-0040 through ADR-0043, remain **Proposed / pending**; nothing in this update authorizes AR-03+, DB-*, or LG-01.
