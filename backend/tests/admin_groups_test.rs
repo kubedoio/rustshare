@@ -1332,3 +1332,178 @@ async fn test_get_my_group_foreign_tenant_group_not_found() {
     ar03_delete_tenant(&pool, home_tenant).await;
     ar03_delete_tenant(&pool, foreign_tenant).await;
 }
+
+/// A user from the same organization who is NOT a member of the group must
+/// get 403 (not 404, not 200) on GET /api/v1/groups/my/{id}: the group exists
+/// in the requester's organization, so existence is not a secret, but the
+/// roster is.
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable local PostgreSQL database and S3-compatible storage"]
+async fn test_get_my_group_same_org_non_member_forbidden() {
+    use support::calendar_harness::{
+        assert_local_database, create_auth_token, setup_test_env, SERIAL,
+    };
+
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL explicitly to a disposable local database");
+    ar03_assert_disposable_database(&database_url);
+    assert_local_database();
+
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+
+    let home_tenant = Uuid::new_v4();
+    ar03_create_tenant(&pool, home_tenant, "home").await;
+    let user_a = ar03_create_user_in_tenant(&pool, home_tenant, "member").await;
+    let user_c = ar03_create_user_in_tenant(&pool, home_tenant, "nonmember").await;
+
+    let group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, created_by, tenant_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(group_id)
+    .bind(format!("ar03_sameorg_{}", group_id.simple()))
+    .bind(user_a)
+    .bind(home_tenant)
+    .execute(&pool)
+    .await
+    .expect("create group in home tenant");
+
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(user_a)
+        .bind(user_a)
+        .execute(&pool)
+        .await
+        .expect("add same-organization member");
+
+    let token = create_auth_token(&state, user_c, home_tenant);
+    let app = rustshare_server::routes::group_routes().with_state(state);
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/groups/my/{group_id}"))
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .expect("build same-organization non-member request"),
+        )
+        .await
+        .expect("same-organization non-member request");
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::FORBIDDEN,
+        "a same-organization non-member must be refused with 403"
+    );
+
+    cleanup_group(&pool, group_id).await;
+    cleanup_users(&pool, &[user_a, user_c]).await;
+    ar03_delete_tenant(&pool, home_tenant).await;
+}
+
+/// The member_count of GET /api/v1/groups/my must count only members whose
+/// organization matches the group's: a legacy mismatched membership row
+/// (foreign-tenant user) must not inflate the count.
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable local PostgreSQL database and S3-compatible storage"]
+async fn test_list_my_groups_member_count_excludes_foreign_members() {
+    use support::calendar_harness::{
+        assert_local_database, create_auth_token, setup_test_env, SERIAL,
+    };
+
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL explicitly to a disposable local database");
+    ar03_assert_disposable_database(&database_url);
+    assert_local_database();
+
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+
+    let home_tenant = Uuid::new_v4();
+    ar03_create_tenant(&pool, home_tenant, "home").await;
+    let user_a = ar03_create_user_in_tenant(&pool, home_tenant, "member").await;
+
+    let foreign_tenant = Uuid::new_v4();
+    ar03_create_tenant(&pool, foreign_tenant, "foreign").await;
+    let user_b = ar03_create_user_in_tenant(&pool, foreign_tenant, "foreign").await;
+
+    let group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, created_by, tenant_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(group_id)
+    .bind(format!("ar03_count_{}", group_id.simple()))
+    .bind(user_a)
+    .bind(home_tenant)
+    .execute(&pool)
+    .await
+    .expect("create group in home tenant");
+
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(user_a)
+        .bind(user_a)
+        .execute(&pool)
+        .await
+        .expect("add same-organization member");
+
+    // Seed the mismatched legacy row directly, as a pre-AR-03 row would
+    // exist: the raw group_members table now holds 2 rows, but only 1 must
+    // be counted.
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(user_b)
+        .bind(user_a)
+        .execute(&pool)
+        .await
+        .expect("seed mismatched group_members row");
+
+    let token = create_auth_token(&state, user_a, home_tenant);
+    let app = rustshare_server::routes::group_routes().with_state(state);
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/api/v1/groups/my")
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .expect("build list-my-groups request"),
+        )
+        .await
+        .expect("list-my-groups request");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1_000_000)
+        .await
+        .expect("read list-my-groups response");
+    let groups = serde_json::from_slice::<serde_json::Value>(&body)
+        .expect("list-my-groups response must be JSON")
+        .as_array()
+        .cloned()
+        .expect("list-my-groups response must be a JSON array");
+
+    let home_group = groups
+        .iter()
+        .find(|group| {
+            group
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id == group_id.to_string())
+        })
+        .expect("the requester's own-organization group must be listed");
+    let member_count = home_group
+        .get("member_count")
+        .and_then(serde_json::Value::as_i64)
+        .expect("group entry must carry a numeric member_count");
+    assert_eq!(
+        member_count, 1,
+        "the tenant-scoped member count must exclude the foreign-organization member"
+    );
+
+    cleanup_group(&pool, group_id).await;
+    cleanup_users(&pool, &[user_a, user_b]).await;
+    ar03_delete_tenant(&pool, home_tenant).await;
+    ar03_delete_tenant(&pool, foreign_tenant).await;
+}

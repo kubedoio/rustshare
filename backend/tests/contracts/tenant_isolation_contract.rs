@@ -6,7 +6,7 @@
 use crate::common::*;
 use rustshare_core::domain::SharePermissions;
 use rustshare_core::services::{
-    FileError, FolderError, NotificationError, PermissionResolverOps, ShareError,
+    FileError, FolderError, NotificationError, PermissionResolverOps, Resource, ShareError,
 };
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use sqlx::PgPool;
@@ -672,6 +672,200 @@ async fn test_notifications_do_not_leak_across_tenants() {
         "User B should not be able to retrieve a tenant A notification"
     );
 
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
+}
+
+// ---------------------------------------------------------------------------
+// AR-03: tenant-safe groups and sharing
+// ---------------------------------------------------------------------------
+
+/// G-01-14: Group-share creation with a group from another organization fails
+/// closed and writes no share row. This is the service-level analogue of the
+/// cross-organization add-member refusal: the grant (group membership) must
+/// not bridge organizations.
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_group_share_with_foreign_group_refused_no_share_row() {
+    let ctx = setup_test_env().await;
+
+    let tenant_a = ctx.tenant_id;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+
+    let user_a = create_test_user(&ctx.metadata_store, "tenant_a_user", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "tenant_b_user", tenant_b).await;
+
+    // Resource owned by tenant A's user.
+    let file_service = ctx.file_service();
+    let file = create_test_file(
+        &file_service,
+        user_a.id,
+        tenant_a,
+        None,
+        "tenant_a_secret.txt",
+        b"Tenant A secret",
+    )
+    .await;
+
+    // Group that belongs to organization B only.
+    let foreign_group_id =
+        create_test_group(&ctx.pool, "foreign_org_group", tenant_b, user_b.id).await;
+
+    let share_service = create_test_share_service(&ctx, Arc::new(MockJwtManager));
+    let result = share_service
+        .create_group_share(
+            Resource::File(file.id),
+            foreign_group_id,
+            SharePermissions::View,
+            user_a.id,
+            tenant_a,
+        )
+        .await;
+
+    assert!(
+        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        "Group-share creation with a foreign-organization group must be refused; got {:?}",
+        result
+    );
+
+    let share_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM shares WHERE file_id = $1")
+        .bind(file.id)
+        .fetch_one(&ctx.pool)
+        .await
+        .expect("Failed to count share rows");
+    assert_eq!(
+        share_count, 0,
+        "A refused cross-organization group share must not write a share row"
+    );
+
+    // Cleanup
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
+}
+
+/// G-01-15: Public-link creation (create_share) for a resource of another
+/// organization is refused and writes no share row.
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_public_link_for_foreign_resource_refused_no_share_row() {
+    let ctx = setup_test_env().await;
+
+    let tenant_a = ctx.tenant_id;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+
+    let user_a = create_test_user(&ctx.metadata_store, "tenant_a_user", tenant_a).await;
+    let _user_b = create_test_user(&ctx.metadata_store, "tenant_b_user", tenant_b).await;
+
+    // Resource owned by tenant A's user, in organization A.
+    let file_service = ctx.file_service();
+    let file = create_test_file(
+        &file_service,
+        user_a.id,
+        tenant_a,
+        None,
+        "tenant_a_only.txt",
+        b"Tenant A only",
+    )
+    .await;
+
+    // The owner requests a public link while presenting another organization:
+    // the link targets a foreign-tenant resource and must fail closed.
+    let share_service = create_test_share_service(&ctx, Arc::new(MockJwtManager));
+    let result = share_service
+        .create_share(
+            file.id,
+            user_a.id,
+            SharePermissions::View,
+            None,
+            None,
+            tenant_b,
+        )
+        .await;
+
+    assert!(
+        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        "Public-link creation for a foreign-organization resource must be refused; got {:?}",
+        result
+    );
+
+    let share_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM shares WHERE file_id = $1")
+        .bind(file.id)
+        .fetch_one(&ctx.pool)
+        .await
+        .expect("Failed to count share rows");
+    assert_eq!(
+        share_count, 0,
+        "A refused cross-organization public link must not write a share row"
+    );
+
+    // Cleanup
+    cleanup_tenant(&ctx.pool, tenant_b).await;
+    ctx.cleanup().await;
+}
+
+/// G-01-16: The group roster query must not disclose foreign-organization
+/// principals. The query text below replicates the tenant-join form of the
+/// roster query in `rustshare_server::handlers::groups::get_my_group` — the
+/// contract suite cannot import the handler's private SQL, so the text is
+/// kept in sync verbatim; a drift in the handler will fail the HTTP-level
+/// regression tests in admin_groups_test.
+#[tokio::test]
+#[ignore] // Requires database and S3
+async fn test_group_roster_query_excludes_foreign_principals() {
+    let ctx = setup_test_env().await;
+
+    let tenant_a = ctx.tenant_id;
+    let tenant_b = setup_test_tenant(&ctx.pool).await;
+
+    let user_a = create_test_user(&ctx.metadata_store, "tenant_a_user", tenant_a).await;
+    let user_b = create_test_user(&ctx.metadata_store, "tenant_b_user", tenant_b).await;
+
+    let group_id = create_test_group(&ctx.pool, "roster_scope_group", tenant_a, user_a.id).await;
+    add_user_to_group(&ctx.pool, group_id, user_a.id).await;
+    // Seed the mismatched legacy membership row directly, as a pre-AR-03 row
+    // would exist: the raw group_members table now holds 2 rows.
+    add_user_to_group(&ctx.pool, group_id, user_b.id).await;
+
+    let raw_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM group_members WHERE group_id = $1")
+            .bind(group_id)
+            .fetch_one(&ctx.pool)
+            .await
+            .expect("Failed to count raw membership rows");
+    assert_eq!(raw_count, 2, "fixture must seed both membership rows");
+
+    let roster: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
+        r#"
+        SELECT u.id AS user_id, u.username, u.email
+        FROM group_members m
+        JOIN users u ON u.id = m.user_id
+        WHERE m.group_id = $1
+          AND u.tenant_id = $2
+        ORDER BY m.added_at ASC
+        "#,
+    )
+    .bind(group_id)
+    .bind(tenant_a)
+    .fetch_all(&ctx.pool)
+    .await
+    .expect("Failed to run the tenant-scoped roster query");
+
+    let roster_ids: Vec<uuid::Uuid> = roster.iter().map(|row| row.0).collect();
+    assert!(
+        roster_ids.contains(&user_a.id),
+        "roster must include the same-organization member"
+    );
+    assert!(
+        !roster_ids.contains(&user_b.id),
+        "roster must not disclose the foreign-organization principal"
+    );
+    assert_eq!(
+        roster_ids.len(),
+        1,
+        "the tenant-scoped roster must return exactly one principal"
+    );
+
+    // Cleanup
     cleanup_tenant(&ctx.pool, tenant_b).await;
     ctx.cleanup().await;
 }
