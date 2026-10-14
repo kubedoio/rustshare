@@ -10947,6 +10947,16 @@
               }
             }
           },
+          "403": {
+            "description": "Forbidden: ownership or an Admin-level share permission is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {

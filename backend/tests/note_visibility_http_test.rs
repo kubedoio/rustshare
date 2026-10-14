@@ -12,7 +12,6 @@
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use rustshare_core::domain::{Share, SharePermissions};
 use rustshare_server::middleware;
 use rustshare_server::routes;
 use rustshare_server::state::AppState;
@@ -22,6 +21,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower::ServiceExt;
 use uuid::Uuid;
+
+mod contracts;
+use contracts::common::share_file_to_user;
+use rustshare_core::domain::SharePermissions;
 
 async fn setup_test_env() -> AppState {
     let database_url = std::env::var("DATABASE_URL")
@@ -376,40 +379,6 @@ async fn create_test_user(
     user
 }
 
-/// Create a user-to-user share on a file, mirroring what the share
-/// repository's `create_user_share` persists.
-async fn share_file_to_user(
-    state: &AppState,
-    file_id: Uuid,
-    owner_id: Uuid,
-    recipient_id: Uuid,
-    permissions: SharePermissions,
-    tenant_id: Uuid,
-) {
-    let share = Share {
-        id: Uuid::new_v4(),
-        file_id: Some(file_id),
-        folder_id: None,
-        share_token: None,
-        permissions,
-        password_hash: None,
-        expires_at: None,
-        upload_only: false,
-        access_count: 0,
-        recipient_user_id: Some(recipient_id),
-        recipient_group_id: None,
-        created_by: owner_id,
-        created_at: chrono::Utc::now(),
-        revoked_at: None,
-        tenant_id,
-    };
-    state
-        .metadata_store
-        .create_share(&share)
-        .await
-        .expect("Failed to create user share");
-}
-
 fn auth_token(state: &AppState, user_id: Uuid, tenant_id: Uuid) -> String {
     state
         .jwt_manager
@@ -493,7 +462,7 @@ async fn test_view_share_recipient_cannot_publish_note_via_http() {
     let viewer = create_test_user(&state, "http_vis_viewer_v", tenant_id).await;
     let note_id = seed_note(&state, owner.id, tenant_id, "HttpVisView").await;
     share_file_to_user(
-        &state,
+        &state.metadata_store,
         note_id,
         owner.id,
         viewer.id,
@@ -566,6 +535,17 @@ async fn test_view_share_recipient_cannot_publish_note_via_http() {
         "denied unpublish must not remove the note from the public index"
     );
 
+    // Owner unpublishes so no public index object is left behind in the
+    // shared test bucket.
+    let response = app
+        .clone()
+        .oneshot(visibility_request(note_id, &owner_token))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = response_json(response).await;
+    assert_eq!(json["visibility"], "private");
+
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
 
@@ -578,7 +558,7 @@ async fn test_edit_share_recipient_cannot_toggle_visibility_via_http() {
     let editor = create_test_user(&state, "http_vis_editor_e", tenant_id).await;
     let note_id = seed_note(&state, owner.id, tenant_id, "HttpVisEdit").await;
     share_file_to_user(
-        &state,
+        &state.metadata_store,
         note_id,
         owner.id,
         editor.id,
@@ -652,7 +632,7 @@ async fn test_admin_share_recipient_can_publish_via_http() {
     let admin = create_test_user(&state, "http_vis_admin_a", tenant_id).await;
     let note_id = seed_note(&state, owner.id, tenant_id, "HttpVisAdmin").await;
     share_file_to_user(
-        &state,
+        &state.metadata_store,
         note_id,
         owner.id,
         admin.id,
@@ -663,6 +643,7 @@ async fn test_admin_share_recipient_can_publish_via_http() {
 
     let app = build_app(state.clone());
     let admin_token = auth_token(&state, admin.id, tenant_id);
+    let owner_token = auth_token(&state, owner.id, tenant_id);
 
     let response = app
         .clone()
@@ -684,6 +665,17 @@ async fn test_admin_share_recipient_can_publish_via_http() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+
+    // Owner unpublishes so no public index object is left behind in the
+    // shared test bucket.
+    let response = app
+        .clone()
+        .oneshot(visibility_request(note_id, &owner_token))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = response_json(response).await;
+    assert_eq!(json["visibility"], "private");
 
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }

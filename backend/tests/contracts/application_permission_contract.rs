@@ -5,7 +5,7 @@
 //! and must not be accessible by unauthorized users within the same tenant.
 
 use crate::common::*;
-use rustshare_core::domain::{Share, SharePermissions};
+use rustshare_core::domain::SharePermissions;
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{FileService, FolderService, PermissionResolver};
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
@@ -468,37 +468,367 @@ async fn contract_notes_shared_resource_only_through_intended_path() {
     ctx.cleanup().await;
 }
 
-/// Create a user-to-user share on a file, mirroring what the share
-/// repository's `create_user_share` persists.
-async fn share_file_to_user(
-    metadata_store: &MetadataStore,
-    file_id: Uuid,
-    owner_id: Uuid,
-    recipient_id: Uuid,
-    permissions: SharePermissions,
+/// Plant a crafted visible sidecar `{note_name}.rustshare.json` by editing
+/// the EXISTING sidecar file (create_note already writes one via
+/// save_metadata). A note owner can do this over the regular files API:
+/// nothing seals bundle folders or validates sidecar content. The sidecar
+/// fields under test (`visibility`, `public_share_id`) must therefore be
+/// treated as untrusted input by toggle_visibility.
+async fn plant_crafted_sidecar(
+    ctx: &TestContext,
+    planter_id: Uuid,
+    note: &rustshare_server::services::note_service::Note,
     tenant_id: Uuid,
+    visibility: &str,
+    public_share_id: Option<&str>,
 ) {
-    let share = Share {
-        id: Uuid::new_v4(),
-        file_id: Some(file_id),
-        folder_id: None,
-        share_token: None,
-        permissions,
-        password_hash: None,
-        expires_at: None,
-        upload_only: false,
-        access_count: 0,
-        recipient_user_id: Some(recipient_id),
-        recipient_group_id: None,
-        created_by: owner_id,
-        created_at: chrono::Utc::now(),
-        revoked_at: None,
-        tenant_id,
-    };
-    metadata_store
-        .create_share(&share)
+    let parent = note.parent_folder_id.expect("folder-backed note");
+    let siblings = ctx
+        .metadata_store
+        .list_files(Some(parent), note.owner_id, tenant_id)
         .await
-        .expect("Failed to create user share");
+        .expect("list bundle folder");
+    let sidecar_name = format!("{}.rustshare.json", note.name);
+    let sidecar = siblings
+        .into_iter()
+        .find(|f| f.name == sidecar_name)
+        .expect("existing sidecar written by create_note/save_metadata");
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut json = serde_json::json!({
+        "kind": "note",
+        "title": note.metadata.title,
+        "visibility": visibility,
+        "created_at": now,
+        "updated_at": now,
+        "excerpt": "",
+        "mime_type": "text/markdown",
+        "extension": "md",
+    });
+    if let Some(sid) = public_share_id {
+        json["public_share_id"] = serde_json::Value::String(sid.to_string());
+    }
+    ctx.file_service()
+        .edit_file(
+            sidecar.id,
+            planter_id,
+            bytes::Bytes::from(json.to_string()),
+            "overwrite",
+            None,
+        )
+        .await
+        .expect("plant crafted sidecar content");
+}
+
+/// Regression (GHSA-rvj5-hgxh-w7m7 review): the visibility sidecar is
+/// client-writable, so an attacker owning note B can plant
+/// `visibility: "public"` with a VICTIM's share id (disclosed to any share
+/// recipient via note metadata) and unpublish the victim's note by toggling
+/// their own. The unpublish branch must verify index ownership and refuse.
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_notes_crafted_sidecar_cannot_unpublish_another_notes_public_url() {
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+    let victim = ctx.create_test_user("note_adv_victim_u").await;
+    let attacker = ctx.create_test_user("note_adv_attacker_u").await;
+    let service = create_note_service(
+        ctx.event_store.clone(),
+        ctx.metadata_store.clone(),
+        ctx.object_store.clone(),
+        &ctx.pool,
+    );
+
+    // Victim's note, published. The share id is disclosed to every View/Edit
+    // share holder via GET /api/v1/notes/{id} (metadata.public_share_id).
+    let note_a = service
+        .create_note(
+            victim.id,
+            tenant_id,
+            Some("VictimNote".to_string()),
+            None,
+            Some("victim content".to_string()),
+        )
+        .await
+        .unwrap();
+    let public = service
+        .toggle_visibility(note_a.id, victim.id, tenant_id)
+        .await
+        .unwrap();
+    let share_id = public.metadata.public_share_id.clone().unwrap();
+    assert!(service.get_public_note(&share_id).await.is_ok());
+
+    // Attacker creates their OWN note and plants a sidecar claiming
+    // visibility=public with the VICTIM's share id.
+    let note_b = service
+        .create_note(
+            attacker.id,
+            tenant_id,
+            Some("AttackerNote".to_string()),
+            None,
+            Some("attacker content".to_string()),
+        )
+        .await
+        .unwrap();
+    plant_crafted_sidecar(
+        &ctx,
+        attacker.id,
+        &note_b,
+        tenant_id,
+        "public",
+        Some(&share_id),
+    )
+    .await;
+
+    // Toggling the attacker's own note must be refused: the index entry for
+    // the claimed share id belongs to the victim's note.
+    let result = service
+        .toggle_visibility(note_b.id, attacker.id, tenant_id)
+        .await;
+    assert!(
+        matches!(result, Err(NoteError::InvalidAcl(_))),
+        "toggle must refuse a public share id registered to another note, got {:?}",
+        result
+    );
+
+    // The victim's public URL must be intact and still serve victim content.
+    let still_public = service.get_public_note(&share_id).await;
+    assert!(
+        still_public.is_ok(),
+        "crafted sidecar must not unpublish the victim's note: {:?}",
+        still_public.err()
+    );
+    assert_eq!(still_public.unwrap().title, "VictimNote");
+
+    // The same forged share id must not be removable through delete_note
+    // either: deleting the attacker's own note must leave the victim's
+    // public index entry untouched.
+    service
+        .delete_note(note_b.id, attacker.id, tenant_id)
+        .await
+        .expect("attacker deletes own note");
+
+    let after_delete = service.get_public_note(&share_id).await;
+    assert!(
+        after_delete.is_ok(),
+        "crafted sidecar must not leak into delete_note's index cleanup: {:?}",
+        after_delete.err()
+    );
+    assert_eq!(after_delete.unwrap().title, "VictimNote");
+
+    // Owner unpublishes the victim note to leave no public residue.
+    let _ = service
+        .toggle_visibility(note_a.id, victim.id, tenant_id)
+        .await
+        .unwrap();
+
+    ctx.cleanup().await;
+}
+
+/// Regression (GHSA-rvj5-hgxh-w7m7 review): a forged
+/// `visibility: "private"` sidecar carrying the victim's share id made the
+/// publish branch reuse that id and clobber the victim's index entry, so the
+/// victim's public URL served attacker content. Publishing must always
+/// allocate a fresh share id instead of trusting the sidecar.
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_notes_crafted_sidecar_cannot_hijack_another_notes_public_url() {
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+    let victim = ctx.create_test_user("note_adv_victim_h").await;
+    let attacker = ctx.create_test_user("note_adv_attacker_h").await;
+    let service = create_note_service(
+        ctx.event_store.clone(),
+        ctx.metadata_store.clone(),
+        ctx.object_store.clone(),
+        &ctx.pool,
+    );
+
+    let note_a = service
+        .create_note(
+            victim.id,
+            tenant_id,
+            Some("VictimNote".to_string()),
+            None,
+            Some("victim content".to_string()),
+        )
+        .await
+        .unwrap();
+    let public = service
+        .toggle_visibility(note_a.id, victim.id, tenant_id)
+        .await
+        .unwrap();
+    let share_id = public.metadata.public_share_id.clone().unwrap();
+
+    let note_b = service
+        .create_note(
+            attacker.id,
+            tenant_id,
+            Some("AttackerNote".to_string()),
+            None,
+            Some("ATTACKER-CONTROLLED CONTENT".to_string()),
+        )
+        .await
+        .unwrap();
+    plant_crafted_sidecar(
+        &ctx,
+        attacker.id,
+        &note_b,
+        tenant_id,
+        "private",
+        Some(&share_id),
+    )
+    .await;
+
+    // The attacker's own publish succeeds, but with a FRESH share id.
+    let toggled = service
+        .toggle_visibility(note_b.id, attacker.id, tenant_id)
+        .await;
+    assert!(
+        toggled.is_ok(),
+        "attacker publishing their own note should succeed: {:?}",
+        toggled.err()
+    );
+    let attacker_share_id = toggled
+        .unwrap()
+        .metadata
+        .public_share_id
+        .expect("publish allocates a share id");
+    assert_ne!(
+        attacker_share_id, share_id,
+        "publish must never reuse a sidecar-supplied share id"
+    );
+
+    // The victim's public URL still serves the victim's content.
+    let victim_read = service.get_public_note(&share_id).await;
+    assert!(
+        victim_read.is_ok(),
+        "victim's public URL must not be clobbered: {:?}",
+        victim_read.err()
+    );
+    let victim_read = victim_read.unwrap();
+    assert_eq!(victim_read.title, "VictimNote");
+    assert!(victim_read.content.contains("victim content"));
+
+    // The attacker's fresh URL serves attacker content under the new id.
+    let attacker_read = service.get_public_note(&attacker_share_id).await;
+    assert!(
+        attacker_read.is_ok(),
+        "attacker's fresh public URL should work: {:?}",
+        attacker_read.err()
+    );
+    assert_eq!(attacker_read.unwrap().title, "AttackerNote");
+
+    // Both parties unpublish to leave no public residue.
+    let _ = service
+        .toggle_visibility(note_b.id, attacker.id, tenant_id)
+        .await
+        .unwrap();
+    let _ = service
+        .toggle_visibility(note_a.id, victim.id, tenant_id)
+        .await
+        .unwrap();
+
+    ctx.cleanup().await;
+}
+
+/// Coverage: a group-derived Admin share must allow toggle_visibility, the
+/// same as a direct user Admin share.
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_notes_group_admin_share_can_toggle_visibility() {
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+    let owner = ctx.create_test_user("note_pub_owner_g").await;
+    let member = ctx.create_test_user("note_pub_member_g").await;
+    let service = create_note_service(
+        ctx.event_store.clone(),
+        ctx.metadata_store.clone(),
+        ctx.object_store.clone(),
+        &ctx.pool,
+    );
+
+    let note = service
+        .create_note(
+            owner.id,
+            tenant_id,
+            Some("GroupAdminNote".to_string()),
+            None,
+            Some("content".to_string()),
+        )
+        .await
+        .unwrap();
+    let group_id = create_test_group(&ctx.pool, "note-pub-g", tenant_id, owner.id).await;
+    add_user_to_group(&ctx.pool, group_id, member.id).await;
+    share_file_to_group(
+        &ctx.metadata_store,
+        note.id,
+        owner.id,
+        group_id,
+        SharePermissions::Admin,
+        tenant_id,
+    )
+    .await;
+
+    let res = service
+        .toggle_visibility(note.id, member.id, tenant_id)
+        .await;
+    assert!(
+        res.is_ok(),
+        "group-Admin recipient should be able to publish: {:?}",
+        res.err()
+    );
+    assert_eq!(res.unwrap().metadata.visibility, NoteVisibility::Public);
+
+    ctx.cleanup().await;
+}
+
+/// Coverage: an Admin share inherited through folder ancestry (the note's
+/// bundle folder) must allow toggle_visibility.
+#[tokio::test]
+#[ignore = "Requires database and S3"]
+async fn contract_notes_folder_ancestry_admin_can_toggle_visibility() {
+    let ctx = setup_test_env().await;
+    let tenant_id = ctx.tenant_id;
+    let owner = ctx.create_test_user("note_pub_owner_f").await;
+    let user = ctx.create_test_user("note_pub_user_f").await;
+    let service = create_note_service(
+        ctx.event_store.clone(),
+        ctx.metadata_store.clone(),
+        ctx.object_store.clone(),
+        &ctx.pool,
+    );
+
+    let note = service
+        .create_note(
+            owner.id,
+            tenant_id,
+            Some("FolderAdminNote".to_string()),
+            None,
+            Some("content".to_string()),
+        )
+        .await
+        .unwrap();
+    let bundle_folder = note.parent_folder_id.expect("folder-backed note");
+    share_folder_to_user(
+        &ctx.metadata_store,
+        bundle_folder,
+        owner.id,
+        user.id,
+        SharePermissions::Admin,
+        tenant_id,
+    )
+    .await;
+
+    let res = service.toggle_visibility(note.id, user.id, tenant_id).await;
+    assert!(
+        res.is_ok(),
+        "inherited folder-Admin should be able to publish: {:?}",
+        res.err()
+    );
+    assert_eq!(res.unwrap().metadata.visibility, NoteVisibility::Public);
+
+    ctx.cleanup().await;
 }
 
 #[tokio::test]
@@ -855,6 +1185,30 @@ async fn contract_notes_owner_toggle_visibility_publish_unpublish() {
         result.is_err(),
         "unpublished note must not be readable through the public route"
     );
+
+    // Republishing allocates a FRESH share id: the sidecar is client-writable,
+    // so a previously used id must never be trusted again (the old URL stays
+    // dead). Callers receive the new id/public_url in the toggle response.
+    let republished = service
+        .toggle_visibility(note.id, owner.id, tenant_id)
+        .await
+        .unwrap();
+    let new_share_id = republished
+        .metadata
+        .public_share_id
+        .clone()
+        .expect("republish allocates a share id");
+    assert_ne!(
+        new_share_id, share_id,
+        "republish must rotate the public share id"
+    );
+    assert!(service.get_public_note(&share_id).await.is_err());
+    let republished_note = service.get_public_note(&new_share_id).await;
+    assert!(
+        republished_note.is_ok(),
+        "republished note must be readable under the fresh share id"
+    );
+    assert_eq!(republished_note.unwrap().title, "PublicNote");
 
     ctx.cleanup().await;
 }

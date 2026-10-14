@@ -632,6 +632,42 @@ impl NoteService {
         Ok(())
     }
 
+    /// Remove a public share index entry only if it belongs to `file_id`.
+    ///
+    /// The sidecar that carries `public_share_id` is client-writable, so the
+    /// share id must be treated as untrusted input: removing an entry that
+    /// belongs to a different note would unpublish (or, combined with the
+    /// publish branch's old id-reuse, hijack) another note's public URL.
+    /// Entries owned by another note are refused with an error; a missing
+    /// entry (e.g. already removed) is a no-op.
+    ///
+    /// Follow-up: the index key layout (`meta/notes/public/{share_id}.json`)
+    /// is a flat, tenant-less namespace; scoping it per tenant is deferred to
+    /// avoid breaking already-published notes.
+    async fn remove_public_share_index_for_note(
+        &self,
+        share_id: &str,
+        file_id: Uuid,
+    ) -> Result<(), NoteError> {
+        match self.load_public_share_index(share_id).await? {
+            Some(indexed_file_id) if indexed_file_id == file_id => {
+                self.delete_public_share_index(share_id).await
+            }
+            Some(indexed_file_id) => {
+                tracing::error!(
+                    share_id,
+                    %file_id,
+                    %indexed_file_id,
+                    "refusing to remove public share index entry owned by another note"
+                );
+                Err(NoteError::InvalidAcl(
+                    "public share id is registered to a different note".to_string(),
+                ))
+            }
+            None => Ok(()),
+        }
+    }
+
     async fn load_public_share_index(&self, share_id: &str) -> Result<Option<Uuid>, NoteError> {
         let key = Self::public_share_key(share_id);
         match self.object_store.get(&key).await {
@@ -2149,10 +2185,24 @@ impl NoteService {
         let meta = self.load_metadata(file_id, user_id, file.tenant_id).await?;
         let note_id = meta.as_ref().and_then(|m| m.okf_id).unwrap_or(file_id);
 
-        // If public, invalidate share index
+        // If public, invalidate the share index — but only the entry this
+        // note actually owns: the sidecar is client-writable and may claim
+        // a share id registered to another note. Deletion continues without
+        // the cleanup (best-effort, like the steps below) so a crafted
+        // sidecar cannot block the owner from deleting their own note.
         if let Some(ref meta) = meta {
             if let Some(ref share_id) = meta.public_share_id {
-                let _ = self.delete_public_share_index(share_id).await;
+                if let Err(e) = self
+                    .remove_public_share_index_for_note(share_id, file_id)
+                    .await
+                {
+                    tracing::error!(
+                        share_id,
+                        %file_id,
+                        error = %e,
+                        "skipping public share index cleanup during note delete"
+                    );
+                }
             }
 
             // Delete attachment files
@@ -2668,8 +2718,29 @@ impl NoteService {
     /// group, and inherited shares). View and Edit shares grant read/content
     /// access only and do NOT qualify. This mirrors `FileService::delete_file`,
     /// the existing Admin-tier operation of comparable sensitivity. A
-    /// dedicated publication-capable permission is deferred to the
-    /// PermissionResolver roadmap (AR-05).
+    /// dedicated publication-capable permission is deferred to the Phase 4.0
+    /// permission-architecture track.
+    ///
+    /// Sidecar trust boundary: `visibility` and `public_share_id` are read
+    /// from the client-writable `{note}.rustshare.json` sidecar, so they are
+    /// untrusted input. Two consequences:
+    ///
+    /// - Publishing ALWAYS allocates a fresh share id; a `public_share_id`
+    ///   found on a Private note is never reused (legitimate unpublish clears
+    ///   it, so reuse could only serve a crafted sidecar). Republishing after
+    ///   unpublish therefore rotates the public URL; the new id is returned
+    ///   in the response.
+    /// - Unpublishing removes the public share index entry only after
+    ///   verifying the entry belongs to this note (see
+    ///   [`Self::remove_public_share_index_for_note`]).
+    ///
+    /// Known availability limitation (intentionally not changed here): an
+    /// owner-side Edit holder can plant `visibility: "private"` in the
+    /// sidecar, which makes `get_public_note` fail closed (404) without any
+    /// toggle call — the public route re-checks the sidecar visibility and
+    /// refuses to serve. This is fail-closed for exposure (a forged `public`
+    /// sidecar cannot publish anything without an index entry) and is kept as
+    /// a defense-in-depth check in case an index entry is ever orphaned.
     pub async fn toggle_visibility(
         &self,
         file_id: Uuid,
@@ -2699,20 +2770,24 @@ impl NoteService {
 
         match meta.visibility {
             NoteVisibility::Private => {
-                // Make public
-                let share_id = meta
-                    .public_share_id
-                    .clone()
-                    .unwrap_or_else(generate_share_id);
+                // Make public. Always allocate a fresh share id: the sidecar
+                // is client-writable, so a public_share_id found here is
+                // untrusted and reusing it could clobber another note's
+                // public index entry. Legitimate flows never carry one on a
+                // Private note (unpublish clears it).
+                let share_id = generate_share_id();
                 meta.visibility = NoteVisibility::Public;
                 meta.public_share_id = Some(share_id.clone());
                 meta.updated_at = Utc::now();
                 self.save_public_share_index(&share_id, file_id).await?;
             }
             NoteVisibility::Public => {
-                // Make private
+                // Make private. Only remove the index entry if it actually
+                // belongs to this note; a crafted sidecar may claim a share
+                // id registered to someone else's note.
                 if let Some(ref share_id) = meta.public_share_id {
-                    let _ = self.delete_public_share_index(share_id).await;
+                    self.remove_public_share_index_for_note(share_id, file_id)
+                        .await?;
                 }
                 meta.visibility = NoteVisibility::Private;
                 meta.public_share_id = None;
@@ -2767,6 +2842,15 @@ impl NoteService {
             .await?
             .ok_or(NoteError::NotFound(file_id))?;
 
+        // Re-check visibility from the (client-writable) sidecar. This
+        // check intentionally stays even though the public share index is
+        // the primary gate: it fails CLOSED for exposure — a forged
+        // `visibility: "public"` sidecar cannot publish anything without an
+        // index entry, and the check still guards against serving content if
+        // an index entry is ever orphaned. The known trade-off is an
+        // availability one: an Edit holder can plant
+        // `visibility: "private"` and 404 the public route without a toggle
+        // call; see `toggle_visibility`'s docstring.
         if meta.visibility != NoteVisibility::Public {
             return Err(NoteError::NotFound(file_id));
         }

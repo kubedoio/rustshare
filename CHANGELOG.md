@@ -45,7 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now requires ownership or an Admin-level share permission. Read-only and
   Edit share recipients can no longer publish (or unpublish) a note they do
   not own, and denied requests leave the note's visibility, public share
-  index, and search index unchanged. Reported via GHSA-rvj5-hgxh-w7m7.
+  index, and search index unchanged. Publishing also allocates a fresh
+  public share id every time, so unpublishing and republishing rotates the
+  public URL instead of reusing the previous one. Reported via
+  GHSA-rvj5-hgxh-w7m7.
 - Replaced the unmaintained `serde_yaml` 0.9 / `unsafe-libyaml` dependency
   (RUSTSEC-2024-0449) with `yaml_serde` 0.10, the continuation maintained by
   the YAML Organization, via Cargo's package-rename mechanism. All
