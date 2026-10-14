@@ -20,46 +20,12 @@ use axum::{
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use support::calendar_harness::{assert_local_database, setup_test_env, SERIAL};
+use support::env_guard::EnvGuard;
 use tower::ServiceExt;
 use uuid::Uuid;
 
 const TEST_TOKEN: &str = "scim-org-scope-test-token";
 const RETRY_ATTEMPTS: usize = 3;
-
-/// Saves and restores process environment around a test. SCIM scope
-/// configuration is read per request from the environment, so each test
-/// installs its own configuration and restores the previous values on drop.
-/// Tests in this binary are serialized with `SERIAL`.
-struct EnvGuard {
-    saved: Vec<(&'static str, Option<String>)>,
-}
-
-impl EnvGuard {
-    fn set(vars: Vec<(&'static str, Option<String>)>) -> Self {
-        let saved = vars
-            .iter()
-            .map(|(name, _)| (*name, std::env::var(name).ok()))
-            .collect();
-        for (name, value) in &vars {
-            match value {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
-            }
-        }
-        EnvGuard { saved }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (name, value) in &self.saved {
-            match value {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
-            }
-        }
-    }
-}
 
 fn scope_env(scope: Uuid) -> EnvGuard {
     EnvGuard::set(vec![
@@ -77,9 +43,12 @@ struct Fixture {
     user_b1: Uuid,
     group_a: Uuid,
     group_b: Uuid,
+    username_a1: String,
     user_a1_external: String,
     user_a2_external: String,
     user_b1_external: String,
+    group_a_name: String,
+    group_a_external: String,
     group_b_external: String,
     username_b1: String,
     display_b1: String,
@@ -97,9 +66,12 @@ async fn seed_two_organizations(pool: &PgPool) -> Fixture {
     let group_a = Uuid::new_v4();
     let group_b = Uuid::new_v4();
     let run = Uuid::new_v4();
+    let username_a1 = format!("scim-user-a1-{run}");
     let user_a1_external = format!("scim-a1-{run}");
     let user_a2_external = format!("scim-a2-{run}");
     let user_b1_external = format!("scim-b1-{run}");
+    let group_a_name = format!("scim-group-a-{run}");
+    let group_a_external = format!("scim-ga-{run}");
     let group_b_external = format!("scim-gb-{run}");
     let username_b1 = format!("scim-user-b1-{run}");
     let display_b1 = format!("SCIM Org B User {run}");
@@ -143,7 +115,7 @@ async fn seed_two_organizations(pool: &PgPool) -> Fixture {
 
     insert_user(
         user_a1,
-        &format!("scim-user-a1-{run}"),
+        &username_a1,
         &format!("SCIM Org A User One {run}"),
         org_a,
         &user_a1_external,
@@ -163,8 +135,8 @@ async fn seed_two_organizations(pool: &PgPool) -> Fixture {
         "INSERT INTO user_groups (id, name, external_id, tenant_id) VALUES ($1, $2, $3, $4)",
     )
     .bind(group_a)
-    .bind(format!("scim-group-a-{run}"))
-    .bind(format!("scim-ga-{run}"))
+    .bind(group_a_name.clone())
+    .bind(group_a_external.clone())
     .bind(org_a)
     .execute(pool)
     .await
@@ -197,9 +169,12 @@ async fn seed_two_organizations(pool: &PgPool) -> Fixture {
         user_b1,
         group_a,
         group_b,
+        username_a1,
         user_a1_external,
         user_a2_external,
         user_b1_external,
+        group_a_name,
+        group_a_external,
         group_b_external,
         username_b1,
         display_b1,
@@ -1031,6 +1006,38 @@ async fn scim_fails_closed_without_a_valid_organization_scope() {
         );
     }
 
+    // Misconfiguration details (e.g. the raw invalid env value) are logged
+    // server-side but must not be returned to token holders.
+    let _env = EnvGuard::set(vec![
+        ("RUSTSHARE_SCIM_BEARER_TOKEN", Some(TEST_TOKEN.to_string())),
+        ("RUSTSHARE_SCIM_TENANT_ID", Some("not-a-uuid".to_string())),
+        ("RUSTSHARE_DEFAULT_TENANT_ID", None),
+    ]);
+    let (status, body) = scim_request(&app, "GET", "/scim/v2/Users", None).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let body_text = body.to_string();
+    assert!(
+        !body_text.contains("not-a-uuid"),
+        "v2 fail-closed body must not leak the invalid configuration value: {body_text}"
+    );
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/api/v1/scim/users",
+        Some(json!({
+            "externalId": format!("scim-v1-leak-{}", Uuid::new_v4()),
+            "userName": format!("scim-v1-leak-{}", Uuid::new_v4()),
+            "active": true
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let body_text = body.to_string();
+    assert!(
+        !body_text.contains("not-a-uuid"),
+        "v1 fail-closed body must not leak the invalid configuration value: {body_text}"
+    );
+
     // ADR-0040 D5 defaulting: an explicitly configured default tenant supplies
     // the scope when RUSTSHARE_SCIM_TENANT_ID is unset.
     let _env = EnvGuard::set(vec![
@@ -1059,5 +1066,571 @@ async fn scim_fails_closed_without_a_valid_organization_scope() {
         status,
         StatusCode::NOT_FOUND,
         "default-tenant fallback must not expose org B"
+    );
+}
+
+/// Asserts a 409 Conflict whose body does not disclose the database
+/// constraint, the colliding value, or the organization owning it.
+fn assert_generic_conflict(status: StatusCode, body: &Value, context: &str) {
+    assert_eq!(status, StatusCode::CONFLICT, "{context}: {body}");
+    let text = body.to_string().to_lowercase();
+    for needle in [
+        "duplicate",
+        "23505",
+        "unique constraint",
+        "violates",
+        "pkey",
+        "_key",
+        "users_",
+        "user_groups",
+    ] {
+        assert!(
+            !text.contains(needle),
+            "{context}: conflict body leaks internals ({needle}): {body}"
+        );
+    }
+}
+
+fn encode_query(pairs: &[(&str, &str)]) -> String {
+    url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(pairs)
+        .finish()
+}
+
+/// Unique-violation collisions on the globally unique directory identifiers
+/// (username, external_id, group name) must surface as a generic 409 that
+/// reveals nothing about other organizations — never a 500 naming the
+/// constraint, and never an update of the other organization's row.
+#[tokio::test]
+#[ignore = "requires explicitly configured disposable local PostgreSQL and RustFS"]
+async fn scim_creates_fail_with_generic_conflict_on_unique_violation() {
+    let _serial = SERIAL.lock().await;
+    assert_local_database();
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let app = rustshare_server::routes::scim_routes().with_state(state.clone());
+    let fixture = seed_two_organizations(&pool).await;
+    let _env = scope_env(fixture.org_a);
+
+    // Identifiers owned by org B (cross-org collisions).
+    let b_user_external = fixture.user_b1_external.clone();
+    let b_username = fixture.username_b1.clone();
+    let b_group_name = fixture.group_b_name.clone();
+    let b_group_external = fixture.group_b_external.clone();
+
+    // --- SCIM v2 user creates ---
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/scim/v2/Users",
+        Some(json!({
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+            "userName": format!("scim-v2-xext-{}", Uuid::new_v4()),
+            "externalId": b_user_external,
+            "active": true
+        })),
+    )
+    .await;
+    assert_generic_conflict(status, &body, "v2 create with cross-org externalId");
+
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/scim/v2/Users",
+        Some(json!({
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+            "userName": b_username,
+            "externalId": format!("scim-v2-xname-{}", Uuid::new_v4()),
+            "active": true
+        })),
+    )
+    .await;
+    assert_generic_conflict(status, &body, "v2 create with cross-org username");
+
+    // In-scope username collision via a different externalId (not the update path).
+    let dup_name = format!("scim-v2-dup-{}", Uuid::new_v4());
+    let (status, _) = scim_request(
+        &app,
+        "POST",
+        "/scim/v2/Users",
+        Some(json!({
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+            "userName": dup_name,
+            "active": true
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/scim/v2/Users",
+        Some(json!({
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+            "userName": dup_name,
+            "externalId": format!("scim-v2-dupext-{}", Uuid::new_v4()),
+            "active": true
+        })),
+    )
+    .await;
+    assert_generic_conflict(status, &body, "v2 create with in-scope username duplicate");
+
+    // --- SCIM v2 group creates ---
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/scim/v2/Groups",
+        Some(json!({
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+            "displayName": format!("scim-v2-gxext-{}", Uuid::new_v4()),
+            "externalId": b_group_external
+        })),
+    )
+    .await;
+    assert_generic_conflict(status, &body, "v2 group create with cross-org externalId");
+
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/scim/v2/Groups",
+        Some(json!({
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+            "displayName": b_group_name,
+            "externalId": format!("scim-v2-gxname-{}", Uuid::new_v4())
+        })),
+    )
+    .await;
+    assert_generic_conflict(status, &body, "v2 group create with cross-org name");
+
+    let dup_group = format!("scim-v2-gdup-{}", Uuid::new_v4());
+    let (status, _) = scim_request(
+        &app,
+        "POST",
+        "/scim/v2/Groups",
+        Some(json!({
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+            "displayName": dup_group
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/scim/v2/Groups",
+        Some(json!({
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+            "displayName": dup_group,
+            "externalId": format!("scim-v2-gdupext-{}", Uuid::new_v4())
+        })),
+    )
+    .await;
+    assert_generic_conflict(
+        status,
+        &body,
+        "v2 group create with in-scope name duplicate",
+    );
+
+    // --- SCIM v1 user creates ---
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/api/v1/scim/users",
+        Some(json!({
+            "externalId": fixture.user_b1_external,
+            "userName": format!("scim-v1-xext-{}", Uuid::new_v4()),
+            "active": true
+        })),
+    )
+    .await;
+    assert_generic_conflict(status, &body, "v1 create with cross-org externalId");
+
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/api/v1/scim/users",
+        Some(json!({
+            "externalId": format!("scim-v1-xname-{}", Uuid::new_v4()),
+            "userName": fixture.username_b1,
+            "active": true
+        })),
+    )
+    .await;
+    assert_generic_conflict(status, &body, "v1 create with cross-org username");
+
+    let dup_v1_name = format!("scim-v1-dup-{}", Uuid::new_v4());
+    let (status, _) = scim_request(
+        &app,
+        "POST",
+        "/api/v1/scim/users",
+        Some(json!({
+            "externalId": format!("scim-v1-dupext-{}", Uuid::new_v4()),
+            "userName": dup_v1_name.clone(),
+            "active": true
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/api/v1/scim/users",
+        Some(json!({
+            "externalId": format!("scim-v1-dup2-{}", Uuid::new_v4()),
+            "userName": dup_v1_name,
+            "active": true
+        })),
+    )
+    .await;
+    assert_generic_conflict(status, &body, "v1 create with in-scope username duplicate");
+
+    // --- SCIM v1 group creates ---
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/api/v1/scim/groups",
+        Some(json!({
+            "externalId": fixture.group_b_external,
+            "displayName": format!("scim-v1-gxext-{}", Uuid::new_v4())
+        })),
+    )
+    .await;
+    assert_generic_conflict(status, &body, "v1 group create with cross-org externalId");
+
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/api/v1/scim/groups",
+        Some(json!({
+            "externalId": format!("scim-v1-gxname-{}", Uuid::new_v4()),
+            "displayName": fixture.group_b_name
+        })),
+    )
+    .await;
+    assert_generic_conflict(status, &body, "v1 group create with cross-org name");
+
+    let dup_v1_group = format!("scim-v1-gdup-{}", Uuid::new_v4());
+    let (status, _) = scim_request(
+        &app,
+        "POST",
+        "/api/v1/scim/groups",
+        Some(json!({
+            "externalId": format!("scim-v1-gdupext-{}", Uuid::new_v4()),
+            "displayName": dup_v1_group.clone()
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, body) = scim_request(
+        &app,
+        "POST",
+        "/api/v1/scim/groups",
+        Some(json!({
+            "externalId": format!("scim-v1-gdup2-{}", Uuid::new_v4()),
+            "displayName": dup_v1_group
+        })),
+    )
+    .await;
+    assert_generic_conflict(
+        status,
+        &body,
+        "v1 group create with in-scope name duplicate",
+    );
+}
+
+/// Filtered v2 lists must respect the configured organization even with
+/// filter and pagination binds in the query (the tenant scope is bind $1;
+/// filters and pagination follow). SCIM v1 webhook endpoints take no filter
+/// parameter, so these are v2-only.
+#[tokio::test]
+#[ignore = "requires explicitly configured disposable local PostgreSQL and RustFS"]
+async fn scim_v2_filtered_lists_stay_within_scope() {
+    let _serial = SERIAL.lock().await;
+    assert_local_database();
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let app = rustshare_server::routes::scim_routes().with_state(state.clone());
+    let fixture = seed_two_organizations(&pool).await;
+    let _env = scope_env(fixture.org_a);
+
+    // userName filter inside the scope.
+    let query = encode_query(&[(
+        "filter",
+        &format!("userName eq \"{}\"", fixture.username_a1),
+    )]);
+    let (status, body) = scim_request(&app, "GET", &format!("/scim/v2/Users?{query}"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "filtered in-scope user list: {body}"
+    );
+    assert_eq!(
+        body["totalResults"].as_i64(),
+        Some(1),
+        "in-scope userName filter must match exactly one row: {body}"
+    );
+    let names = usernames(&body);
+    assert_eq!(names, vec![fixture.username_a1.clone()]);
+
+    // userName filter targeting the other organization.
+    let query = encode_query(&[(
+        "filter",
+        &format!("userName eq \"{}\"", fixture.username_b1),
+    )]);
+    let (status, body) = scim_request(&app, "GET", &format!("/scim/v2/Users?{query}"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "filtered cross-org user list: {body}"
+    );
+    assert_eq!(
+        body["totalResults"].as_i64(),
+        Some(0),
+        "cross-org userName filter must match nothing: {body}"
+    );
+
+    // Filter plus pagination binds (startIndex/count).
+    let query = encode_query(&[
+        ("filter", "userName co \"scim-user\""),
+        ("startIndex", "1"),
+        ("count", "5"),
+    ]);
+    let (status, body) = scim_request(&app, "GET", &format!("/scim/v2/Users?{query}"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "filtered+paginated user list: {body}"
+    );
+    assert_eq!(
+        body["totalResults"].as_i64(),
+        Some(2),
+        "scope predicate must keep the cross-org user out of filtered counts: {body}"
+    );
+    assert_eq!(usernames(&body).len(), 2);
+
+    // externalId filters.
+    let query = encode_query(&[(
+        "filter",
+        &format!("externalId eq \"{}\"", fixture.user_a1_external),
+    )]);
+    let (status, body) = scim_request(&app, "GET", &format!("/scim/v2/Users?{query}"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "filtered in-scope externalId list: {body}"
+    );
+    assert_eq!(body["totalResults"].as_i64(), Some(1));
+
+    let query = encode_query(&[(
+        "filter",
+        &format!("externalId eq \"{}\"", fixture.user_b1_external),
+    )]);
+    let (status, body) = scim_request(&app, "GET", &format!("/scim/v2/Users?{query}"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "filtered cross-org externalId list: {body}"
+    );
+    assert_eq!(
+        body["totalResults"].as_i64(),
+        Some(0),
+        "cross-org externalId filter must match nothing: {body}"
+    );
+
+    // Group displayName filters.
+    let query = encode_query(&[(
+        "filter",
+        &format!("displayName eq \"{}\"", fixture.group_a_name),
+    )]);
+    let (status, body) = scim_request(&app, "GET", &format!("/scim/v2/Groups?{query}"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "filtered in-scope group list: {body}"
+    );
+    assert_eq!(
+        body["totalResults"].as_i64(),
+        Some(1),
+        "in-scope displayName filter must match exactly one group: {body}"
+    );
+
+    let query = encode_query(&[(
+        "filter",
+        &format!("displayName eq \"{}\"", fixture.group_b_name),
+    )]);
+    let (status, body) = scim_request(&app, "GET", &format!("/scim/v2/Groups?{query}"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "filtered cross-org group list: {body}"
+    );
+    assert_eq!(
+        body["totalResults"].as_i64(),
+        Some(0),
+        "cross-org displayName filter must match nothing: {body}"
+    );
+
+    // Group externalId filters.
+    let query = encode_query(&[(
+        "filter",
+        &format!("externalId eq \"{}\"", fixture.group_a_external),
+    )]);
+    let (status, body) = scim_request(&app, "GET", &format!("/scim/v2/Groups?{query}"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "filtered in-scope group externalId: {body}"
+    );
+    assert_eq!(body["totalResults"].as_i64(), Some(1));
+
+    let query = encode_query(&[(
+        "filter",
+        &format!("externalId eq \"{}\"", fixture.group_b_external),
+    )]);
+    let (status, body) = scim_request(&app, "GET", &format!("/scim/v2/Groups?{query}"), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "filtered cross-org group externalId: {body}"
+    );
+    assert_eq!(
+        body["totalResults"].as_i64(),
+        Some(0),
+        "cross-org group externalId filter must match nothing: {body}"
+    );
+}
+
+/// Membership reads and membership removals must check BOTH legs of a
+/// membership (group in scope AND user in scope), so cross-organization
+/// membership rows that already exist cannot be observed or mutated through
+/// an integration scoped to the other organization.
+#[tokio::test]
+#[ignore = "requires explicitly configured disposable local PostgreSQL and RustFS"]
+async fn scim_membership_queries_enforce_both_scope_legs() {
+    use rustshare_core::services::{ScimRepository, ScimV2Repository};
+
+    let _serial = SERIAL.lock().await;
+    assert_local_database();
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let fixture = seed_two_organizations(&pool).await;
+
+    // Legacy-shaped data: cross-tenant membership rows not writable through
+    // any scoped API path anymore, but still present in the table.
+    for (group, user) in [
+        (fixture.group_a, fixture.user_b1),
+        (fixture.group_b, fixture.user_a2),
+    ] {
+        sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)")
+            .bind(group)
+            .bind(user)
+            .execute(&pool)
+            .await
+            .expect("failed to seed cross-tenant membership");
+    }
+
+    let v2_repo = rustshare_server::handlers::scim_v2::ScimV2RepositoryImpl::new(pool.clone());
+    let v1_repo = rustshare_server::handlers::scim::ScimRepositoryImpl::new(pool.clone());
+
+    // v2 get_group_members: a cross-org GROUP with an in-scope user must not
+    // disclose the user (group leg), and a cross-org USER in an in-scope
+    // group must not be listed either (user leg).
+    let members = ScimV2Repository::get_group_members(&v2_repo, fixture.org_a, fixture.group_b)
+        .await
+        .expect("v2 get_group_members failed");
+    let member_ids: Vec<Uuid> = members.iter().map(|(id, _)| *id).collect();
+    assert!(
+        !member_ids.contains(&fixture.user_a2),
+        "cross-org group must not disclose in-scope users: {member_ids:?}"
+    );
+
+    let members = ScimV2Repository::get_group_members(&v2_repo, fixture.org_a, fixture.group_a)
+        .await
+        .expect("v2 get_group_members failed");
+    let member_ids: Vec<Uuid> = members.iter().map(|(id, _)| *id).collect();
+    assert!(
+        member_ids.contains(&fixture.user_a1),
+        "in-scope membership must remain visible: {member_ids:?}"
+    );
+    assert!(
+        !member_ids.contains(&fixture.user_b1),
+        "cross-org member must not be listed in an in-scope group: {member_ids:?}"
+    );
+
+    // v2 get_user_groups: a group in scope joined to a cross-org user must
+    // not be returned (user leg).
+    let user_groups = ScimV2Repository::get_user_groups(&v2_repo, fixture.org_a, fixture.user_b1)
+        .await
+        .expect("v2 get_user_groups failed");
+    assert!(
+        user_groups.is_empty(),
+        "cross-org user must not resolve in-scope groups: {user_groups:?}"
+    );
+
+    // v1 get_group_members: both legs.
+    let v1_members = ScimRepository::get_group_members(&v1_repo, fixture.org_a, fixture.group_a)
+        .await
+        .expect("v1 get_group_members failed");
+    assert!(
+        v1_members.contains(&fixture.user_a1),
+        "in-scope membership must remain visible: {v1_members:?}"
+    );
+    assert!(
+        !v1_members.contains(&fixture.user_b1),
+        "cross-org member must not be listed in an in-scope group: {v1_members:?}"
+    );
+
+    // remove_group_member: removing a cross-org user from an in-scope group
+    // is a no-op on both implementations.
+    ScimV2Repository::remove_group_member(
+        &v2_repo,
+        fixture.org_a,
+        fixture.group_a,
+        fixture.user_b1,
+    )
+    .await
+    .expect("v2 remove_group_member failed");
+    assert!(
+        group_member_exists(&pool, fixture.group_a, fixture.user_b1).await,
+        "v2 remove of a cross-org member must be a no-op"
+    );
+    ScimRepository::remove_group_member(&v1_repo, fixture.org_a, fixture.group_a, fixture.user_b1)
+        .await
+        .expect("v1 remove_group_member failed");
+    assert!(
+        group_member_exists(&pool, fixture.group_a, fixture.user_b1).await,
+        "v1 remove of a cross-org member must be a no-op"
+    );
+
+    // clear_group_members: in-scope memberships are cleared, cross-org
+    // memberships survive (per-row user leg).
+    ScimV2Repository::clear_group_members(&v2_repo, fixture.org_a, fixture.group_a)
+        .await
+        .expect("v2 clear_group_members failed");
+    assert!(
+        !group_member_exists(&pool, fixture.group_a, fixture.user_a1).await,
+        "v2 clear must remove in-scope memberships"
+    );
+    assert!(
+        group_member_exists(&pool, fixture.group_a, fixture.user_b1).await,
+        "v2 clear must preserve cross-org memberships"
+    );
+
+    sqlx::query("INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)")
+        .bind(fixture.group_a)
+        .bind(fixture.user_a1)
+        .execute(&pool)
+        .await
+        .expect("failed to re-seed in-scope membership");
+    ScimRepository::clear_group_members(&v1_repo, fixture.org_a, fixture.group_a)
+        .await
+        .expect("v1 clear_group_members failed");
+    assert!(
+        !group_member_exists(&pool, fixture.group_a, fixture.user_a1).await,
+        "v1 clear must remove in-scope memberships"
+    );
+    assert!(
+        group_member_exists(&pool, fixture.group_a, fixture.user_b1).await,
+        "v1 clear must preserve cross-org memberships"
     );
 }

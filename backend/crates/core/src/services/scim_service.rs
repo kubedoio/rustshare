@@ -111,13 +111,6 @@ pub trait ScimRepository: Send + Sync {
         external_id: &str,
     ) -> Result<Option<User>, sqlx::Error>;
 
-    /// Find user by email (case-insensitive) within the organization.
-    async fn find_user_by_email(
-        &self,
-        tenant_id: Uuid,
-        email: &str,
-    ) -> Result<Option<User>, sqlx::Error>;
-
     /// Create a new user in the organization.
     async fn create_user(&self, user: &User, external_id: &str) -> Result<(), sqlx::Error>;
 
@@ -201,6 +194,20 @@ pub trait ScimRepository: Send + Sync {
     /// Clear all members from a group within the organization.
     async fn clear_group_members(&self, tenant_id: Uuid, group_id: Uuid)
         -> Result<(), sqlx::Error>;
+}
+
+/// Map a collision with the installation-wide unique directory identifiers
+/// (SQLSTATE 23505) to a generic conflict that does not name the database
+/// constraint or reveal which organization owns the existing row.
+fn directory_conflict(resource: &str, e: sqlx::Error) -> ScimError {
+    if let sqlx::Error::Database(db) = &e {
+        if db.code().as_deref() == Some("23505") {
+            return ScimError::Conflict(format!(
+                "a {resource} with the same identifying value already exists in the directory"
+            ));
+        }
+    }
+    ScimError::Database(e)
 }
 
 /// Group record for SCIM operations.
@@ -346,7 +353,8 @@ impl<R: ScimRepository> ScimService<R> {
 
                 self.repository
                     .create_user(&user, &scim_user.external_id)
-                    .await?;
+                    .await
+                    .map_err(|e| directory_conflict("user", e))?;
 
                 // If user should be disabled, set that now
                 if !scim_user.active {
@@ -438,7 +446,8 @@ impl<R: ScimRepository> ScimService<R> {
                         &scim_group.external_id,
                         &scim_group.display_name,
                     )
-                    .await?;
+                    .await
+                    .map_err(|e| directory_conflict("group", e))?;
 
                 // Add members if provided
                 if let Some(members) = scim_group.members {

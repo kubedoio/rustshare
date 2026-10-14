@@ -55,7 +55,8 @@ pub(crate) fn resolve_scim_tenant_scope() -> Result<Uuid, String> {
 }
 
 /// Resolve the SCIM organization scope or map the misconfiguration to a
-/// fail-closed 500 response.
+/// fail-closed 500 response. The specific misconfiguration is logged
+/// server-side; the response body stays generic.
 fn scim_scope_or_error() -> Result<Uuid, (StatusCode, Json<serde_json::Value>)> {
     resolve_scim_tenant_scope().map_err(|detail| {
         tracing::error!("SCIM organization scope misconfigured: {}", detail);
@@ -63,7 +64,7 @@ fn scim_scope_or_error() -> Result<Uuid, (StatusCode, Json<serde_json::Value>)> 
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
                 "error": "SCIM misconfigured",
-                "detail": detail
+                "detail": "SCIM organization scope is not configured correctly"
             })),
         )
     })
@@ -175,6 +176,13 @@ pub async fn provision_user(
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "error": "Bad Request",
+                "detail": detail
+            })),
+        )),
+        Err(rustshare_core::services::ScimError::Conflict(detail)) => Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "Conflict",
                 "detail": detail
             })),
         )),
@@ -296,6 +304,13 @@ pub async fn provision_group(
                 "detail": detail
             })),
         )),
+        Err(rustshare_core::services::ScimError::Conflict(detail)) => Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": "Conflict",
+                "detail": detail
+            })),
+        )),
         Err(e) => {
             tracing::error!("SCIM provision_group error: {:?}", e);
             Err((
@@ -386,32 +401,6 @@ impl ScimRepository for ScimRepositoryImpl {
             WHERE external_id = $1 AND tenant_id = $2
             "#,
             external_id,
-            tenant_id
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(row)
-    }
-
-    async fn find_user_by_email(
-        &self,
-        tenant_id: Uuid,
-        email: &str,
-    ) -> Result<Option<User>, sqlx::Error> {
-        let email_lower = email.trim().to_lowercase();
-
-        let row = sqlx::query_as!(
-            User,
-            r#"
-            SELECT id, username, display_name, password_hash, email, is_admin,
-                   storage_quota, theme as "theme: _", created_at, updated_at, disabled_at,
-                   name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id,
-                   dashboard_config as "dashboard_config: _"
-            FROM users
-            WHERE LOWER(email) = $1 AND tenant_id = $2
-            "#,
-            email_lower,
             tenant_id
         )
         .fetch_optional(&self.pool)
@@ -624,9 +613,12 @@ impl ScimRepository for ScimRepositoryImpl {
         tenant_id: Uuid,
         group_id: uuid::Uuid,
     ) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
+        // Both legs of the membership must belong to the organization: the
+        // group (defense in depth) and the member user.
         let members: Vec<uuid::Uuid> = sqlx::query_scalar!(
-            "SELECT user_id FROM group_members WHERE group_id = $1 AND EXISTS \
-                (SELECT 1 FROM user_groups g WHERE g.id = $1 AND g.tenant_id = $2)",
+            "SELECT gm.user_id FROM group_members gm WHERE gm.group_id = $1 \
+                AND EXISTS (SELECT 1 FROM user_groups g WHERE g.id = gm.group_id AND g.tenant_id = $2) \
+                AND EXISTS (SELECT 1 FROM users u WHERE u.id = gm.user_id AND u.tenant_id = $2)",
             group_id,
             tenant_id
         )
@@ -673,8 +665,9 @@ impl ScimRepository for ScimRepositoryImpl {
         user_id: Uuid,
     ) -> Result<(), sqlx::Error> {
         sqlx::query!(
-            "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2 AND EXISTS \
-                (SELECT 1 FROM user_groups g WHERE g.id = $1 AND g.tenant_id = $3)",
+            "DELETE FROM group_members gm WHERE gm.group_id = $1 AND gm.user_id = $2 \
+                AND EXISTS (SELECT 1 FROM user_groups g WHERE g.id = gm.group_id AND g.tenant_id = $3) \
+                AND EXISTS (SELECT 1 FROM users u WHERE u.id = gm.user_id AND u.tenant_id = $3)",
             group_id,
             user_id,
             tenant_id
@@ -690,9 +683,12 @@ impl ScimRepository for ScimRepositoryImpl {
         tenant_id: Uuid,
         group_id: Uuid,
     ) -> Result<(), sqlx::Error> {
+        // Per-row user leg: in-scope memberships are cleared, cross-tenant
+        // member rows survive.
         sqlx::query!(
-            "DELETE FROM group_members WHERE group_id = $1 AND EXISTS \
-                (SELECT 1 FROM user_groups g WHERE g.id = $1 AND g.tenant_id = $2)",
+            "DELETE FROM group_members gm WHERE gm.group_id = $1 \
+                AND EXISTS (SELECT 1 FROM user_groups g WHERE g.id = gm.group_id AND g.tenant_id = $2) \
+                AND EXISTS (SELECT 1 FROM users u WHERE u.id = gm.user_id AND u.tenant_id = $2)",
             group_id,
             tenant_id
         )

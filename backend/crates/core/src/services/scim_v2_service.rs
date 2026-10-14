@@ -796,6 +796,20 @@ pub struct ScimPatchRequest {
     pub operations: Vec<ScimPatchOperation>,
 }
 
+/// Map a collision with the installation-wide unique directory identifiers
+/// (SQLSTATE 23505) to a generic conflict that does not name the database
+/// constraint or reveal which organization owns the existing row.
+fn directory_conflict(resource: &str, e: sqlx::Error) -> ScimV2Error {
+    if let sqlx::Error::Database(db) = &e {
+        if db.code().as_deref() == Some("23505") {
+            return ScimV2Error::Conflict(format!(
+                "a {resource} with the same identifying value already exists in the directory"
+            ));
+        }
+    }
+    ScimV2Error::Database(e)
+}
+
 /// SCIM v2 Service.
 ///
 /// `tenant_scope` is the single organization this integration is bound to
@@ -903,7 +917,8 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
         let id = self
             .repository
             .create_user(&user, self.tenant_scope, self.default_storage_quota)
-            .await?;
+            .await
+            .map_err(|e| directory_conflict("user", e))?;
 
         self.get_user(id).await
     }
@@ -1036,7 +1051,8 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
         let id = self
             .repository
             .create_group(self.tenant_scope, &group)
-            .await?;
+            .await
+            .map_err(|e| directory_conflict("group", e))?;
 
         // Add members if provided
         if let Some(ref members) = group.members {

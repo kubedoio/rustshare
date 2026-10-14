@@ -82,6 +82,22 @@ fn verify_scim_token(headers: &HeaderMap) -> Result<(), ScimV2ErrorResponse> {
     Ok(())
 }
 
+/// Resolve the SCIM organization scope or map the misconfiguration to a
+/// fail-closed 500 response. The specific misconfiguration is logged
+/// server-side; the response body stays generic.
+fn scim_scope_or_response() -> Result<Uuid, Box<Response>> {
+    resolve_scim_tenant_scope().map_err(|detail| {
+        tracing::error!("SCIM organization scope misconfigured: {}", detail);
+        Box::new(scim_json_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ScimV2ErrorResponse::new(
+                500,
+                "SCIM organization scope is not configured correctly".to_string(),
+            ),
+        ))
+    })
+}
+
 /// Create a SCIM JSON response.
 fn scim_json_response<T: serde::Serialize>(status: StatusCode, body: T) -> Response {
     let json = match serde_json::to_string(&body) {
@@ -652,12 +668,18 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         group_id: Uuid,
     ) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+        // Both legs of the membership must belong to the organization: the
+        // member user and the group (defense in depth).
         let rows = sqlx::query!(
             r#"
             SELECT u.id, u.display_name
             FROM users u
             JOIN group_members gm ON u.id = gm.user_id
             WHERE gm.group_id = $1 AND u.tenant_id = $2
+              AND EXISTS (
+                  SELECT 1 FROM user_groups g
+                  WHERE g.id = gm.group_id AND g.tenant_id = $2
+              )
             "#,
             group_id,
             tenant_id
@@ -673,12 +695,18 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         user_id: Uuid,
     ) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+        // Both legs of the membership must belong to the organization: the
+        // group and the user (defense in depth).
         let rows = sqlx::query!(
             r#"
             SELECT g.id, g.name
             FROM user_groups g
             JOIN group_members gm ON g.id = gm.group_id
             WHERE gm.user_id = $1 AND g.tenant_id = $2
+              AND EXISTS (
+                  SELECT 1 FROM users u
+                  WHERE u.id = gm.user_id AND u.tenant_id = $2
+              )
             "#,
             user_id,
             tenant_id
@@ -726,8 +754,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         user_id: Uuid,
     ) -> Result<(), sqlx::Error> {
         sqlx::query!(
-            "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2 AND EXISTS \
-                (SELECT 1 FROM user_groups g WHERE g.id = $1 AND g.tenant_id = $3)",
+            "DELETE FROM group_members gm WHERE gm.group_id = $1 AND gm.user_id = $2 \
+                AND EXISTS (SELECT 1 FROM user_groups g WHERE g.id = gm.group_id AND g.tenant_id = $3) \
+                AND EXISTS (SELECT 1 FROM users u WHERE u.id = gm.user_id AND u.tenant_id = $3)",
             group_id,
             user_id,
             tenant_id
@@ -759,9 +788,12 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         group_id: Uuid,
     ) -> Result<(), sqlx::Error> {
+        // Per-row user leg: in-scope memberships are cleared, cross-tenant
+        // member rows survive.
         sqlx::query!(
-            "DELETE FROM group_members WHERE group_id = $1 AND EXISTS \
-                (SELECT 1 FROM user_groups g WHERE g.id = $1 AND g.tenant_id = $2)",
+            "DELETE FROM group_members gm WHERE gm.group_id = $1 \
+                AND EXISTS (SELECT 1 FROM user_groups g WHERE g.id = gm.group_id AND g.tenant_id = $2) \
+                AND EXISTS (SELECT 1 FROM users u WHERE u.id = gm.user_id AND u.tenant_id = $2)",
             group_id,
             tenant_id
         )
@@ -836,15 +868,9 @@ pub async fn list_users(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -875,15 +901,9 @@ pub async fn get_user(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -911,15 +931,9 @@ pub async fn create_user(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -948,15 +962,9 @@ pub async fn update_user(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -985,15 +993,9 @@ pub async fn patch_user(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -1021,15 +1023,9 @@ pub async fn delete_user(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -1061,15 +1057,9 @@ pub async fn list_groups(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -1100,15 +1090,9 @@ pub async fn get_group(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -1136,15 +1120,9 @@ pub async fn create_group(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -1173,15 +1151,9 @@ pub async fn update_group(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -1210,15 +1182,9 @@ pub async fn patch_group(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -1246,15 +1212,9 @@ pub async fn delete_group(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -1285,15 +1245,9 @@ pub async fn get_service_provider_config(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -1315,15 +1269,9 @@ pub async fn get_resource_types(State(state): State<AppState>, headers: HeaderMa
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,
@@ -1348,15 +1296,9 @@ pub async fn get_schemas(State(state): State<AppState>, headers: HeaderMap) -> R
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let scope = match resolve_scim_tenant_scope() {
+    let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
-        Err(detail) => {
-            tracing::error!("SCIM organization scope misconfigured: {}", detail);
-            return scim_json_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ScimV2ErrorResponse::new(500, format!("SCIM misconfigured: {detail}")),
-            );
-        }
+        Err(response) => return *response,
     };
     let service = ScimV2Service::new(
         repository,

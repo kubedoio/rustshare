@@ -33,7 +33,10 @@ RUSTSHARE_SCIM_BEARER_TOKEN=your-secure-random-token
 - Use a cryptographically secure random token (at least 32 bytes)
 - Store the token securely in your secrets manager
 - Tokens are compared using constant-time comparison to prevent timing attacks
-- SCIM endpoints return `503 Service Unavailable` if the token is not configured
+- If the token is not configured, SCIM v1 endpoints return HTTP
+  `503 Service Unavailable`; SCIM v2 endpoints return HTTP `401` with a SCIM
+  error body carrying status `503` (the error mapping is kept for client
+  compatibility).
 
 ## Organization Scope (Single Organization)
 
@@ -68,9 +71,16 @@ Scope behavior:
 - **Fail closed:** if the token is set but no valid organization scope is
   configured (`RUSTSHARE_SCIM_TENANT_ID` unset or invalid and no explicit
   `RUSTSHARE_DEFAULT_TENANT_ID`), every SCIM endpoint returns
-  `500 Internal Server Error`. SCIM never falls back to installation-wide
-  access. Unsetting `RUSTSHARE_SCIM_BEARER_TOKEN` disables the integration
-  outright (`503 Service Unavailable`).
+  `500 Internal Server Error` with a generic body (details are logged
+  server-side). SCIM never falls back to installation-wide access. Unsetting
+  `RUSTSHARE_SCIM_BEARER_TOKEN` disables the integration outright (v1: HTTP
+  `503`; v2: HTTP `401` with `503` in the SCIM error body).
+- Directory uniqueness is installation-wide (`username`, `externalId`, group
+  `name`): if one of these identifiers already exists in another
+  organization, a scoped create fails with a generic `409 Conflict` that
+  names no constraint and reveals nothing about the other organization. Set
+  the scope to the organization where previously provisioned users and
+  groups live; per-organization uniqueness is a deferred schema change.
 - For a default single-organization deployment (all users in the nil/default
   tenant), set `RUSTSHARE_SCIM_TENANT_ID=00000000-0000-0000-0000-000000000000`.
 
