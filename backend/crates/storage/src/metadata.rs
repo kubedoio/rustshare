@@ -5555,6 +5555,20 @@ impl MetadataStore {
         Ok(files)
     }
 
+    /// Find the organization (tenant) a group belongs to, if the group exists.
+    pub async fn find_group_tenant_id(&self, group_id: Uuid) -> Result<Option<Uuid>> {
+        let tenant_id = sqlx::query_scalar!(
+            r#"
+            SELECT tenant_id FROM user_groups WHERE id = $1
+            "#,
+            group_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(tenant_id)
+    }
+
     /// Check if a user is a member of a group.
     pub async fn is_user_in_group(&self, user_id: Uuid, group_id: Uuid) -> Result<bool> {
         let exists = sqlx::query_scalar!(
@@ -8496,6 +8510,13 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStore {
         group_id: uuid::Uuid,
     ) -> anyhow::Result<bool> {
         self.is_user_in_group(user_id, group_id).await
+    }
+
+    async fn find_group_tenant_id(
+        &self,
+        group_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<uuid::Uuid>> {
+        self.find_group_tenant_id(group_id).await
     }
 }
 

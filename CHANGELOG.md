@@ -31,6 +31,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Group rosters scoped to the requester's organization (AR-03; ADR-0041
+  D3): `GET /api/v1/groups/my` and `GET /api/v1/groups/my/{id}` now filter
+  groups, members, and `member_count` by the requester's organization, so a
+  roster can no longer contain a principal from another organization. A
+  group outside the requester's organization returns the same 404 as a
+  missing one; 403 is returned only for a same-organization group the
+  requester is not a member of.
+- Cross-organization group membership refused (AR-03; ADR-0040 D4 strict
+  organization equality): `POST /api/v1/admin/groups/{id}/members` now
+  compares the target user's `users.tenant_id` with the group's
+  `user_groups.tenant_id` and rejects the request with HTTP 400 when they
+  differ, writing no `group_members` row. Unknown target users still return
+  HTTP 404 and nothing is written.
+- Cross-organization group membership removals refused (AR-03; ADR-0040
+  D4 strict organization equality): `DELETE
+  /api/v1/admin/groups/{id}/members/{user_id}` now compares the target
+  user's `users.tenant_id` with the group's `user_groups.tenant_id` and
+  rejects the request with HTTP 400 when they differ, deleting no
+  `group_members` row.
+- Group membership endpoints report a missing group as HTTP 404 (AR-03):
+  `POST /api/v1/admin/groups/{id}/members` previously raised a `RowNotFound`
+  database error for an unknown group id (HTTP 500) and `DELETE
+  /api/v1/admin/groups/{id}/members/{user_id}` now distinguishes a missing
+  group (404) from an unknown user (404) instead of conflating them. The
+  `POST …/members` OpenAPI response is corrected from `200` to `204`, which
+  is the status the handler has always returned. Group and share OpenAPI
+  responses also document organization-boundary refusals and the existing
+  `201` success status for public and group share creation.
+- Cross-organization group shares refused (AR-03; ADR-0041 D2 grant
+  equality): `create_group_share` now loads the recipient group's
+  `user_groups.tenant_id` before any share row is written and requires it
+  to equal both the resource's and the requester's organization. A missing
+  group returns HTTP 404 (`GroupNotFound`) and a foreign-organization group
+  returns HTTP 403 (`CrossTenantSharingNotAllowed`), with no `shares` row
+  written in either case. The check also applies to resource owners, who
+  bypass the membership requirement but not organization equality.
+- Cross-organization public-link creation refused (AR-03; ADR-0041 D2):
+  `create_share` (file links) and `create_folder_share` (folder links) now
+  compare the resource's `tenant_id` with the requester's organization
+  before any share row is written and reject with HTTP 403
+  (`CrossTenantSharingNotAllowed`), writing no `shares` row. The check
+  applies to every caller, including resource owners and holders of Admin
+  permission.
 - Organization-explicit principal creation and credential consistency
   (AR-01; ADR-0040 D3/D4/A3/A7, ADR-0043 D-D2 I1): `POST /api/v1/admin/users`
   and `POST /api/v1/admin/groups` resolve the organization explicitly from
