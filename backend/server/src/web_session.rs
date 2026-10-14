@@ -44,14 +44,25 @@ pub async fn resolve_user_session(
         return Ok(None);
     }
 
-    let user_is_enabled =
-        sqlx::query_scalar::<_, bool>("SELECT disabled_at IS NULL FROM users WHERE id = $1")
-            .bind(session.user_id)
-            .fetch_optional(&state.db_pool)
-            .await
-            .map_err(|error| error.to_string())?;
+    // ADR-0040 D3 / invariant A7: a session whose recorded organization no
+    // longer matches the user's row is drifted (e.g. the principal's
+    // organization changed after the session was minted). Invalidate it
+    // rather than honouring it. The row is already loaded for the disabled
+    // check, so this comparison costs nothing extra.
+    let user_row = sqlx::query_as::<_, (bool, uuid::Uuid)>(
+        "SELECT disabled_at IS NULL, tenant_id FROM users WHERE id = $1",
+    )
+    .bind(session.user_id)
+    .fetch_optional(&state.db_pool)
+    .await
+    .map_err(|error| error.to_string())?;
 
-    if user_is_enabled != Some(true) {
+    let user_is_enabled_and_current = match user_row {
+        Some((is_enabled, user_tenant_id)) => is_enabled && user_tenant_id == session.tenant_id,
+        None => false,
+    };
+
+    if !user_is_enabled_and_current {
         state
             .metadata_store
             .delete_user_session_by_token_hash(&token_hash)

@@ -919,6 +919,7 @@ async fn setup_app_state(
         oidc_runtime_cache: OidcRuntimeCache::new(),
         poll_rate_limiter: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         default_tenant_id: Uuid::nil(),
+        default_tenant_config: rustshare_server::config::DefaultTenantConfig::Unset,
         note_service,
         decision_service,
         meeting_service,

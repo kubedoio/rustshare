@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use super::{
     admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, insert_admin_action,
+    resolve_creation_tenant,
 };
 use crate::{
     handlers::{AdminUser, AppError},
@@ -176,12 +177,16 @@ pub async fn create_group(
     }
 
     let new_id = Uuid::new_v4();
+    // AR-01 (ADR-0040 D4, ADR-0043 D-D2 I1): the organization is resolved
+    // explicitly and bound on the INSERT; the nil column default is never the
+    // effective source of a new row.
+    let tenant_id = resolve_creation_tenant(&state)?;
 
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let row = sqlx::query_as::<_, GroupDetailRow>(
         r#"
-        INSERT INTO user_groups (id, name, description, created_by)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO user_groups (id, name, description, created_by, tenant_id)
+        VALUES ($1, $2, $3, $4, $5)
         RETURNING id, name, description, created_by, created_at, updated_at
         "#,
     )
@@ -189,6 +194,7 @@ pub async fn create_group(
     .bind(&req.name)
     .bind(&req.description)
     .bind(actor_id)
+    .bind(tenant_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
