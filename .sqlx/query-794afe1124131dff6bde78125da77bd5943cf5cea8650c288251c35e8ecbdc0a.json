@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO group_members (group_id, user_id, added_by)\n            SELECT $1, $2, NULL\n            WHERE EXISTS (\n                SELECT 1\n                FROM user_groups g\n                JOIN users u ON u.id = $2\n                WHERE g.id = $1 AND g.tenant_id = $3 AND u.tenant_id = $3\n            )\n            ON CONFLICT (group_id, user_id) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "794afe1124131dff6bde78125da77bd5943cf5cea8650c288251c35e8ecbdc0a"
+}

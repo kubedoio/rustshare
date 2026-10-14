@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, username, display_name, password_hash, email, is_admin,\n                   storage_quota, theme as \"theme: _\", created_at, updated_at, disabled_at,\n                   name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id,\n                   dashboard_config as \"dashboard_config: _\"\n            FROM users\n            WHERE external_id = $1\n            ",
+  "query": "\n            SELECT id, username, display_name, password_hash, email, is_admin,\n                   storage_quota, theme as \"theme: _\", created_at, updated_at, disabled_at,\n                   name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id,\n                   dashboard_config as \"dashboard_config: _\"\n            FROM users\n            WHERE external_id = $1 AND tenant_id = $2\n            ",
   "describe": {
     "columns": [
       {
@@ -96,7 +96,8 @@
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Text",
+        "Uuid"
       ]
     },
     "nullable": [
@@ -120,5 +121,5 @@
       false
     ]
   },
-  "hash": "ddb5909224c834e46e444ace9408c0ec09d817ed7e9012c6e627b88de4a45ece"
+  "hash": "5cdd8fab61df8ad3b9ab3d25e72bd38f103f18ebd777380df57fd205ae4313e6"
 }
