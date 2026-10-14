@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Group rosters scoped to the requester's organization (AR-03; ADR-0041
+  D3): `GET /api/v1/groups/my` and `GET /api/v1/groups/my/{id}` now filter
+  groups, members, and `member_count` by the requester's organization, so a
+  roster can no longer contain a principal from another organization. A
+  group outside the requester's organization returns the same 404 as a
+  missing one; 403 is returned only for a same-organization group the
+  requester is not a member of.
 - Cross-organization group membership refused (AR-03; ADR-0040 D4 strict
   organization equality): `POST /api/v1/admin/groups/{id}/members` now
   compares the target user's `users.tenant_id` with the group's
