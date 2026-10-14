@@ -447,19 +447,13 @@ pub async fn add_member(
     Json(req): Json<AddMemberRequest>,
 ) -> Result<StatusCode, AppError> {
     // Verify group exists and capture tenant for ACL refresh.
-    let group_row = sqlx::query_as::<_, (bool, Option<Uuid>)>(
-        "SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1), tenant_id FROM user_groups WHERE id = $1"
-    )
-    .bind(group_id)
-    .fetch_one(&state.db_pool)
-    .await
-    .map_err(db_error)?;
-    if !group_row.0 {
-        return Err(admin_not_found("Group not found"));
-    }
-    let tenant_id = group_row
-        .1
-        .ok_or_else(|| admin_internal_error("Group missing tenant_id"))?;
+    let group_tenant: Option<Uuid> =
+        sqlx::query_scalar("SELECT tenant_id FROM user_groups WHERE id = $1")
+            .bind(group_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(db_error)?;
+    let tenant_id = group_tenant.ok_or_else(|| admin_not_found("Group not found"))?;
 
     // Verify the target user exists and belongs to the group's organization
     // (ADR-0040: organization = tenant, strict equality). The AdminUser
@@ -535,19 +529,13 @@ pub async fn remove_member(
     Path((group_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
     // Verify group exists and capture tenant for ACL refresh.
-    let group_row = sqlx::query_as::<_, (bool, Option<Uuid>)>(
-        "SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1), tenant_id FROM user_groups WHERE id = $1"
-    )
-    .bind(group_id)
-    .fetch_one(&state.db_pool)
-    .await
-    .map_err(db_error)?;
-    if !group_row.0 {
-        return Err(admin_not_found("Group not found"));
-    }
-    let tenant_id = group_row
-        .1
-        .ok_or_else(|| admin_internal_error("Group missing tenant_id"))?;
+    let group_tenant: Option<Uuid> =
+        sqlx::query_scalar("SELECT tenant_id FROM user_groups WHERE id = $1")
+            .bind(group_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(db_error)?;
+    let tenant_id = group_tenant.ok_or_else(|| admin_not_found("Group not found"))?;
 
     // Verify the target user exists and belongs to the group's organization
     // (ADR-0040: organization = tenant, strict equality). The AdminUser
