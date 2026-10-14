@@ -951,3 +951,372 @@ async fn test_admin_remove_member_same_organization_allowed() {
     cleanup_group(&pool, group_id).await;
     cleanup_users(&pool, &[actor_id, member_user_id]).await;
 }
+// ---------------------------------------------------------------------------
+// AR-03 read path: user group reads must stay inside the requester
+// organization (ADR-0040 D4 — organization = tenant, strict equality;
+// fail-closed so foreign groups are indistinguishable from missing ones)
+// ---------------------------------------------------------------------------
+
+async fn ar03_create_tenant(pool: &sqlx::PgPool, tenant_id: Uuid, label: &str) {
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+        .bind(tenant_id)
+        .bind(format!("ar03_{label}_{}", tenant_id.simple()))
+        .execute(pool)
+        .await
+        .expect("create tenant");
+}
+
+async fn ar03_create_user_in_tenant(pool: &sqlx::PgPool, tenant_id: Uuid, label: &str) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin,
+                            storage_quota, tenant_id)
+         VALUES ($1, $2, $3, 'test-password-hash', $2, false, 10737418240, $4)",
+    )
+    .bind(id)
+    .bind(format!("ar03_{label}_{}", id.simple()))
+    .bind(format!("ar03_{label}_{}@test.local", id.simple()))
+    .bind(tenant_id)
+    .execute(pool)
+    .await
+    .expect("create user");
+    id
+}
+
+async fn ar03_delete_tenant(pool: &sqlx::PgPool, tenant_id: Uuid) {
+    sqlx::query("DELETE FROM tenants WHERE id = $1")
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .expect("remove tenant");
+}
+
+/// The roster of GET /api/v1/groups/my/{id} must list only members whose
+/// organization matches the requester's; a legacy mismatched membership row
+/// must not leak a foreign user into the roster.
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable local PostgreSQL database and S3-compatible storage"]
+async fn test_my_group_roster_excludes_foreign_organization_members() {
+    use support::calendar_harness::{
+        assert_local_database, create_auth_token, setup_test_env, SERIAL,
+    };
+
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL explicitly to a disposable local database");
+    ar03_assert_disposable_database(&database_url);
+    assert_local_database();
+
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+
+    let home_tenant = Uuid::new_v4();
+    ar03_create_tenant(&pool, home_tenant, "home").await;
+    let user_a = ar03_create_user_in_tenant(&pool, home_tenant, "member").await;
+
+    let foreign_tenant = Uuid::new_v4();
+    ar03_create_tenant(&pool, foreign_tenant, "foreign").await;
+    let user_b = ar03_create_user_in_tenant(&pool, foreign_tenant, "foreign").await;
+
+    let group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, created_by, tenant_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(group_id)
+    .bind(format!("ar03_roster_{}", group_id.simple()))
+    .bind(user_a)
+    .bind(home_tenant)
+    .execute(&pool)
+    .await
+    .expect("create group in home tenant");
+
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(user_a)
+        .bind(user_a)
+        .execute(&pool)
+        .await
+        .expect("add same-organization member");
+
+    // Seed the mismatched legacy row directly, as a pre-AR-03 row would exist.
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(user_b)
+        .bind(user_a)
+        .execute(&pool)
+        .await
+        .expect("seed mismatched group_members row");
+
+    let token = create_auth_token(&state, user_a, home_tenant);
+    let app = rustshare_server::routes::group_routes().with_state(state);
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/groups/my/{group_id}"))
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .expect("build roster request"),
+        )
+        .await
+        .expect("roster request");
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::OK,
+        "the same-organization member must see the group"
+    );
+
+    let body = axum::body::to_bytes(response.into_body(), 1_000_000)
+        .await
+        .expect("read roster response");
+    let json =
+        serde_json::from_slice::<serde_json::Value>(&body).expect("roster response must be JSON");
+    let member_ids: Vec<Uuid> = json
+        .get("members")
+        .and_then(serde_json::Value::as_array)
+        .expect("roster response must include a members array")
+        .iter()
+        .map(|member| {
+            Uuid::parse_str(
+                member
+                    .get("user_id")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("member entry must carry a user_id"),
+            )
+            .expect("member user_id must be a UUID")
+        })
+        .collect();
+
+    assert!(
+        member_ids.contains(&user_a),
+        "roster must include the same-organization member"
+    );
+    assert!(
+        !member_ids.contains(&user_b),
+        "roster must exclude the foreign-organization member"
+    );
+
+    cleanup_group(&pool, group_id).await;
+    cleanup_users(&pool, &[user_a, user_b]).await;
+    ar03_delete_tenant(&pool, home_tenant).await;
+    ar03_delete_tenant(&pool, foreign_tenant).await;
+}
+
+/// GET /api/v1/groups/my must not include groups outside the requester's
+/// organization.
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable local PostgreSQL database and S3-compatible storage"]
+async fn test_list_my_groups_excludes_foreign_tenant_groups() {
+    use support::calendar_harness::{
+        assert_local_database, create_auth_token, setup_test_env, SERIAL,
+    };
+
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL explicitly to a disposable local database");
+    ar03_assert_disposable_database(&database_url);
+    assert_local_database();
+
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+
+    let home_tenant = Uuid::new_v4();
+    ar03_create_tenant(&pool, home_tenant, "home").await;
+    let user_a = ar03_create_user_in_tenant(&pool, home_tenant, "member").await;
+
+    let foreign_tenant = Uuid::new_v4();
+    ar03_create_tenant(&pool, foreign_tenant, "foreign").await;
+    let user_b = ar03_create_user_in_tenant(&pool, foreign_tenant, "foreign").await;
+
+    // A group in the requester's organization that must be listed.
+    let home_group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, created_by, tenant_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(home_group_id)
+    .bind(format!("ar03_home_{}", home_group_id.simple()))
+    .bind(user_a)
+    .bind(home_tenant)
+    .execute(&pool)
+    .await
+    .expect("create group in home tenant");
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(home_group_id)
+        .bind(user_a)
+        .bind(user_a)
+        .execute(&pool)
+        .await
+        .expect("add same-organization member");
+
+    // A group in another organization with only its own member (direct SQL).
+    let foreign_group_id = Uuid::new_v4();
+    let foreign_group_name = format!("ar03_foreign_{}", foreign_group_id.simple());
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, created_by, tenant_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(foreign_group_id)
+    .bind(foreign_group_name.clone())
+    .bind(user_b)
+    .bind(foreign_tenant)
+    .execute(&pool)
+    .await
+    .expect("create group in foreign tenant");
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(foreign_group_id)
+        .bind(user_b)
+        .bind(user_b)
+        .execute(&pool)
+        .await
+        .expect("add foreign-organization member");
+
+    let token = create_auth_token(&state, user_a, home_tenant);
+    let app = rustshare_server::routes::group_routes().with_state(state);
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/api/v1/groups/my")
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .expect("build list-my-groups request"),
+        )
+        .await
+        .expect("list-my-groups request");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1_000_000)
+        .await
+        .expect("read list-my-groups response");
+    let groups = serde_json::from_slice::<serde_json::Value>(&body)
+        .expect("list-my-groups response must be JSON")
+        .as_array()
+        .cloned()
+        .expect("list-my-groups response must be a JSON array");
+
+    assert!(
+        groups.iter().any(|group| {
+            group
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id == home_group_id.to_string())
+        }),
+        "the requester's own-organization group must be listed"
+    );
+    assert!(
+        groups.iter().all(|group| {
+            group
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|id| id != foreign_group_id.to_string())
+        }),
+        "a foreign-organization group must not be listed"
+    );
+    assert!(
+        groups.iter().all(|group| {
+            group
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|name| name != foreign_group_name)
+        }),
+        "a foreign-organization group name must not be listed"
+    );
+
+    cleanup_group(&pool, home_group_id).await;
+    cleanup_group(&pool, foreign_group_id).await;
+    cleanup_users(&pool, &[user_a, user_b]).await;
+    ar03_delete_tenant(&pool, home_tenant).await;
+    ar03_delete_tenant(&pool, foreign_tenant).await;
+}
+
+/// A group outside the requester's organization must be indistinguishable
+/// from a missing one on GET /api/v1/groups/my/{id}: both fail closed with
+/// 404, never 403 (existence disclosure).
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable local PostgreSQL database and S3-compatible storage"]
+async fn test_get_my_group_foreign_tenant_group_not_found() {
+    use support::calendar_harness::{
+        assert_local_database, create_auth_token, setup_test_env, SERIAL,
+    };
+
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL explicitly to a disposable local database");
+    ar03_assert_disposable_database(&database_url);
+    assert_local_database();
+
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+
+    let home_tenant = Uuid::new_v4();
+    ar03_create_tenant(&pool, home_tenant, "home").await;
+    let user_a = ar03_create_user_in_tenant(&pool, home_tenant, "member").await;
+
+    let foreign_tenant = Uuid::new_v4();
+    ar03_create_tenant(&pool, foreign_tenant, "foreign").await;
+    let user_b = ar03_create_user_in_tenant(&pool, foreign_tenant, "foreign").await;
+
+    let foreign_group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, created_by, tenant_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(foreign_group_id)
+    .bind(format!("ar03_foreign_{}", foreign_group_id.simple()))
+    .bind(user_b)
+    .bind(foreign_tenant)
+    .execute(&pool)
+    .await
+    .expect("create group in foreign tenant");
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(foreign_group_id)
+        .bind(user_b)
+        .bind(user_b)
+        .execute(&pool)
+        .await
+        .expect("add foreign-organization member");
+
+    let token = create_auth_token(&state, user_a, home_tenant);
+    let app = rustshare_server::routes::group_routes().with_state(state);
+
+    // Foreign-tenant group: must fail closed exactly like a missing group.
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/groups/my/{foreign_group_id}"))
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .expect("build foreign-group request"),
+        )
+        .await
+        .expect("foreign-group request");
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::NOT_FOUND,
+        "a foreign-organization group must be indistinguishable from a missing one"
+    );
+
+    // Parity: a truly missing group must return the same status.
+    let missing_group_id = Uuid::new_v4();
+    let response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri(format!("/api/v1/groups/my/{missing_group_id}"))
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .expect("build missing-group request"),
+        )
+        .await
+        .expect("missing-group request");
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::NOT_FOUND,
+        "a missing group must return 404"
+    );
+
+    cleanup_group(&pool, foreign_group_id).await;
+    cleanup_users(&pool, &[user_a, user_b]).await;
+    ar03_delete_tenant(&pool, home_tenant).await;
+    ar03_delete_tenant(&pool, foreign_tenant).await;
+}

@@ -133,17 +133,20 @@ pub async fn list_my_groups(
             g.name,
             g.description,
             g.created_at,
-            COUNT(m2.id) AS member_count
+            COUNT(u2.id) AS member_count
         FROM user_groups g
         JOIN group_members m ON m.group_id = g.id
         LEFT JOIN group_members m2 ON m2.group_id = g.id
+        LEFT JOIN users u2 ON u2.id = m2.user_id AND u2.tenant_id = g.tenant_id
         WHERE m.user_id = $1
+          AND g.tenant_id = $2
         GROUP BY g.id
         ORDER BY g.name ASC
-        LIMIT $2 OFFSET $3
+        LIMIT $3 OFFSET $4
         "#,
     )
     .bind(auth.user_id)
+    .bind(auth.tenant_id)
     .bind(query.limit())
     .bind(query.offset())
     .fetch_all(&state.db_pool)
@@ -182,7 +185,19 @@ pub async fn get_my_group(
     auth: AuthenticatedUser,
     Path(group_id): Path<Uuid>,
 ) -> Result<Json<UserGroupDetailResponse>, AppError> {
-    // First verify the user is a member of this group
+    // Get group details, scoped to the requester's organization. A group from
+    // another organization must be indistinguishable from a missing one
+    // (fail-closed), so both return 404 here.
+    let group = sqlx::query_as::<_, (Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>)>(
+        "SELECT id, name, description, created_at FROM user_groups WHERE id = $1 AND tenant_id = $2",
+    )
+    .bind(group_id)
+    .bind(auth.tenant_id)
+    .fetch_optional(&state.db_pool)
+    .await?
+    .ok_or_else(|| AppError::not_found("Group not found"))?;
+
+    // Verify the user is a member of this (same-organization) group.
     let is_member = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2)",
     )
@@ -195,26 +210,20 @@ pub async fn get_my_group(
         return Err(AppError::forbidden("You are not a member of this group"));
     }
 
-    // Get group details
-    let group = sqlx::query_as::<_, (Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, name, description, created_at FROM user_groups WHERE id = $1",
-    )
-    .bind(group_id)
-    .fetch_optional(&state.db_pool)
-    .await?
-    .ok_or_else(|| AppError::not_found("Group not found"))?;
-
-    // Get members
+    // Get members, scoped to the requester's organization: a legacy
+    // mismatched membership row must not leak a foreign user into the roster.
     let members = sqlx::query_as::<_, MemberRow>(
         r#"
         SELECT u.id AS user_id, u.username, u.email, m.added_at
         FROM group_members m
         JOIN users u ON u.id = m.user_id
         WHERE m.group_id = $1
+          AND u.tenant_id = $2
         ORDER BY m.added_at ASC
         "#,
     )
     .bind(group_id)
+    .bind(auth.tenant_id)
     .fetch_all(&state.db_pool)
     .await?;
 
