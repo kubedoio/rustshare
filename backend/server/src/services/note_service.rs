@@ -8,7 +8,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use rustshare_core::{
-    domain::{Folder, UserId},
+    domain::{Folder, SharePermissions, UserId},
     okf::frontmatter::{
         default_note_frontmatter, merge_required_okf_keys, parse_frontmatter, to_document,
         OkfNoteFrontmatter, RustshareFrontmatter,
@@ -2658,6 +2658,18 @@ impl NoteService {
     }
 
     /// Toggle note visibility between private and public.
+    ///
+    /// Authorization decision (security, GHSA-rvj5-hgxh-w7m7): publishing a
+    /// note — or changing its public visibility in either direction — changes
+    /// the note's exposure boundary (public notes are readable without
+    /// authentication), so it requires ownership or the highest delegated
+    /// share tier, `SharePermissions::Admin`, resolved here in the note
+    /// service through the `PermissionResolver` (owner first, then direct,
+    /// group, and inherited shares). View and Edit shares grant read/content
+    /// access only and do NOT qualify. This mirrors `FileService::delete_file`,
+    /// the existing Admin-tier operation of comparable sensitivity. A
+    /// dedicated publication-capable permission is deferred to the
+    /// PermissionResolver roadmap (AR-05).
     pub async fn toggle_visibility(
         &self,
         file_id: Uuid,
@@ -2666,6 +2678,17 @@ impl NoteService {
     ) -> Result<Note, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
         if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
+
+        // Deny before any mutation so a denied request can never write the
+        // public share index, sidecar, or search index.
+        let can_change_visibility = self
+            .permission_resolver
+            .check_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Admin)
+            .await
+            .map_err(|e| NoteError::Database(e.to_string()))?;
+        if !can_change_visibility {
             return Err(NoteError::PermissionDenied);
         }
 
