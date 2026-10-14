@@ -320,6 +320,10 @@ name = "replication_lease_recovery_test"
 path = "../tests/replication_lease_recovery_test.rs"
 
 [[test]]
+name = "scim_org_scope_test"
+path = "../tests/scim_org_scope_test.rs"
+
+[[test]]
 name = "chat_observation_memory_catalog_test"
 path = "../tests/chat_observation_memory_catalog_test.rs"
 

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO user_groups (id, name, external_id, created_by, tenant_id)\n            VALUES ($1, $2, $3, NULL, $4)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f3352cba6e399351c29990c8fdea38234a88110566af6cc42af64419810efd19"
+}

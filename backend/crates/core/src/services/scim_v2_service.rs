@@ -634,26 +634,36 @@ pub fn parse_filter(filter: &str) -> Result<Vec<ScimFilter>, ScimV2Error> {
 }
 
 /// Repository operations required for SCIM v2 service.
+///
+/// Every operation is scoped to a single organization (`tenant_id`): the
+/// SCIM integration is bound to exactly one organization and must never
+/// reach across it.
 #[allow(async_fn_in_trait)]
 pub trait ScimV2Repository: Send + Sync {
-    /// Get all users with optional filtering and pagination.
+    /// Get all users in the organization with optional filtering and pagination.
     async fn list_users(
         &self,
+        tenant_id: Uuid,
         filters: &[ScimFilter],
         start_index: Option<i64>,
         count: Option<i64>,
     ) -> Result<(Vec<ScimV2UserRecord>, i64), sqlx::Error>;
 
-    /// Get a single user by ID.
-    async fn get_user(&self, id: Uuid) -> Result<Option<ScimV2UserRecord>, sqlx::Error>;
+    /// Get a single user by ID within the organization.
+    async fn get_user(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<ScimV2UserRecord>, sqlx::Error>;
 
-    /// Get a user by external_id.
+    /// Get a user by external_id within the organization.
     async fn get_user_by_external_id(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<ScimV2UserRecord>, sqlx::Error>;
 
-    /// Create a new user.
+    /// Create a new user in the organization.
     async fn create_user(
         &self,
         user: &ScimV2User,
@@ -661,72 +671,112 @@ pub trait ScimV2Repository: Send + Sync {
         storage_quota: i64,
     ) -> Result<Uuid, sqlx::Error>;
 
-    /// Update an existing user (full replacement).
-    async fn update_user(&self, id: Uuid, user: &ScimV2User) -> Result<(), sqlx::Error>;
+    /// Update an existing user (full replacement) within the organization.
+    async fn update_user(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+        user: &ScimV2User,
+    ) -> Result<(), sqlx::Error>;
 
-    /// Partial update a user (PATCH).
+    /// Partial update a user (PATCH) within the organization.
     async fn patch_user(
         &self,
+        tenant_id: Uuid,
         id: Uuid,
         operations: &[ScimPatchOperation],
     ) -> Result<(), sqlx::Error>;
 
-    /// Deprovision a user while retaining the account and its owned data.
-    async fn delete_user(&self, id: Uuid) -> Result<(), sqlx::Error>;
+    /// Deprovision a user within the organization while retaining the
+    /// account and its owned data.
+    async fn delete_user(&self, tenant_id: Uuid, id: Uuid) -> Result<(), sqlx::Error>;
 
-    /// Get all groups with optional filtering and pagination.
+    /// Get all groups in the organization with optional filtering and pagination.
     async fn list_groups(
         &self,
+        tenant_id: Uuid,
         filters: &[ScimFilter],
         start_index: Option<i64>,
         count: Option<i64>,
     ) -> Result<(Vec<ScimV2GroupRecord>, i64), sqlx::Error>;
 
-    /// Get a single group by ID.
-    async fn get_group(&self, id: Uuid) -> Result<Option<ScimV2GroupRecord>, sqlx::Error>;
+    /// Get a single group by ID within the organization.
+    async fn get_group(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<ScimV2GroupRecord>, sqlx::Error>;
 
-    /// Get a group by external_id.
+    /// Get a group by external_id within the organization.
     async fn get_group_by_external_id(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<ScimV2GroupRecord>, sqlx::Error>;
 
-    /// Create a new group.
-    async fn create_group(&self, group: &ScimV2Group) -> Result<Uuid, sqlx::Error>;
+    /// Create a new group in the organization.
+    async fn create_group(&self, tenant_id: Uuid, group: &ScimV2Group)
+        -> Result<Uuid, sqlx::Error>;
 
-    /// Update an existing group.
-    async fn update_group(&self, id: Uuid, group: &ScimV2Group) -> Result<(), sqlx::Error>;
+    /// Update an existing group within the organization.
+    async fn update_group(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+        group: &ScimV2Group,
+    ) -> Result<(), sqlx::Error>;
 
-    /// Partial update a group (PATCH).
+    /// Partial update a group (PATCH) within the organization.
     async fn patch_group(
         &self,
+        tenant_id: Uuid,
         id: Uuid,
         operations: &[ScimPatchOperation],
     ) -> Result<(), sqlx::Error>;
 
-    /// Delete a group.
-    async fn delete_group(&self, id: Uuid) -> Result<(), sqlx::Error>;
+    /// Delete a group within the organization.
+    async fn delete_group(&self, tenant_id: Uuid, id: Uuid) -> Result<(), sqlx::Error>;
 
-    /// Get group members.
-    async fn get_group_members(&self, group_id: Uuid) -> Result<Vec<(Uuid, String)>, sqlx::Error>;
+    /// Get group members within the organization.
+    async fn get_group_members(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+    ) -> Result<Vec<(Uuid, String)>, sqlx::Error>;
 
-    /// Get user's groups.
-    async fn get_user_groups(&self, user_id: Uuid) -> Result<Vec<(Uuid, String)>, sqlx::Error>;
+    /// Get user's groups within the organization.
+    async fn get_user_groups(
+        &self,
+        tenant_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Vec<(Uuid, String)>, sqlx::Error>;
 
-    /// Add member to group.
-    async fn add_group_member(&self, group_id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error>;
+    /// Add member to group; both must belong to the organization.
+    async fn add_group_member(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), sqlx::Error>;
 
-    /// Remove member from group.
-    async fn remove_group_member(&self, group_id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error>;
+    /// Remove member from group within the organization.
+    async fn remove_group_member(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), sqlx::Error>;
 
-    /// Find user ID by external_id.
+    /// Find user ID by external_id within the organization.
     async fn find_user_id_by_external_id(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<Uuid>, sqlx::Error>;
 
-    /// Clear all members from group.
-    async fn clear_group_members(&self, group_id: Uuid) -> Result<(), sqlx::Error>;
+    /// Clear all members from a group within the organization.
+    async fn clear_group_members(&self, tenant_id: Uuid, group_id: Uuid)
+        -> Result<(), sqlx::Error>;
 }
 
 /// SCIM Patch operation (RFC 7644 Section 3.5.2).
@@ -747,24 +797,29 @@ pub struct ScimPatchRequest {
 }
 
 /// SCIM v2 Service.
+///
+/// `tenant_scope` is the single organization this integration is bound to
+/// (ADR-0040 D5). It is resolved from server configuration by the HTTP layer
+/// and threaded through every repository operation; it is never derived from
+/// request input.
 pub struct ScimV2Service<R: ScimV2Repository> {
     repository: Arc<R>,
-    default_tenant_id: Uuid,
+    tenant_scope: Uuid,
     default_storage_quota: i64,
     base_url: String,
 }
 
 impl<R: ScimV2Repository> ScimV2Service<R> {
-    /// Create a new SCIM v2 service.
+    /// Create a new SCIM v2 service scoped to one organization.
     pub fn new(
         repository: Arc<R>,
-        default_tenant_id: Uuid,
+        tenant_scope: Uuid,
         default_storage_quota: i64,
         base_url: String,
     ) -> Self {
         Self {
             repository,
-            default_tenant_id,
+            tenant_scope,
             default_storage_quota,
             base_url,
         }
@@ -784,12 +839,15 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
 
         let (users, total) = self
             .repository
-            .list_users(&filters, start_index, count)
+            .list_users(self.tenant_scope, &filters, start_index, count)
             .await?;
 
         let mut resources = Vec::new();
         for user_record in users {
-            let groups = self.repository.get_user_groups(user_record.id).await?;
+            let groups = self
+                .repository
+                .get_user_groups(self.tenant_scope, user_record.id)
+                .await?;
 
             // Convert record to full user
             let user = self.record_to_user(user_record, groups).await?;
@@ -806,11 +864,14 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
 
     /// Get a user by ID.
     pub async fn get_user(&self, id: Uuid) -> Result<ScimV2User, ScimV2Error> {
-        let user_record = self.repository.get_user(id).await?;
+        let user_record = self.repository.get_user(self.tenant_scope, id).await?;
 
         match user_record {
             Some(record) => {
-                let groups = self.repository.get_user_groups(id).await?;
+                let groups = self
+                    .repository
+                    .get_user_groups(self.tenant_scope, id)
+                    .await?;
                 self.record_to_user(record, groups).await
             }
             None => Err(ScimV2Error::UserNotFound(id.to_string())),
@@ -826,9 +887,13 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
             ));
         }
 
-        // Check for existing user by external_id
+        // Check for existing user by external_id within the organization
         if let Some(ref external_id) = user.external_id {
-            if let Some(existing) = self.repository.get_user_by_external_id(external_id).await? {
+            if let Some(existing) = self
+                .repository
+                .get_user_by_external_id(self.tenant_scope, external_id)
+                .await?
+            {
                 // Update existing user instead
                 let existing_id = existing.id;
                 return self.update_user(existing_id, user).await;
@@ -837,7 +902,7 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
 
         let id = self
             .repository
-            .create_user(&user, self.default_tenant_id, self.default_storage_quota)
+            .create_user(&user, self.tenant_scope, self.default_storage_quota)
             .await?;
 
         self.get_user(id).await
@@ -845,12 +910,19 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
 
     /// Update a user (full replacement - PUT).
     pub async fn update_user(&self, id: Uuid, user: ScimV2User) -> Result<ScimV2User, ScimV2Error> {
-        // Check if user exists
-        if self.repository.get_user(id).await?.is_none() {
+        // Check if user exists within the organization
+        if self
+            .repository
+            .get_user(self.tenant_scope, id)
+            .await?
+            .is_none()
+        {
             return Err(ScimV2Error::UserNotFound(id.to_string()));
         }
 
-        self.repository.update_user(id, &user).await?;
+        self.repository
+            .update_user(self.tenant_scope, id, &user)
+            .await?;
         self.get_user(id).await
     }
 
@@ -860,22 +932,34 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
         id: Uuid,
         operations: &[ScimPatchOperation],
     ) -> Result<ScimV2User, ScimV2Error> {
-        // Check if user exists
-        if self.repository.get_user(id).await?.is_none() {
+        // Check if user exists within the organization
+        if self
+            .repository
+            .get_user(self.tenant_scope, id)
+            .await?
+            .is_none()
+        {
             return Err(ScimV2Error::UserNotFound(id.to_string()));
         }
 
-        self.repository.patch_user(id, operations).await?;
+        self.repository
+            .patch_user(self.tenant_scope, id, operations)
+            .await?;
         self.get_user(id).await
     }
 
     /// Deprovision a user while retaining the account and its owned data.
     pub async fn delete_user(&self, id: Uuid) -> Result<(), ScimV2Error> {
-        if self.repository.get_user(id).await?.is_none() {
+        if self
+            .repository
+            .get_user(self.tenant_scope, id)
+            .await?
+            .is_none()
+        {
             return Err(ScimV2Error::UserNotFound(id.to_string()));
         }
 
-        self.repository.delete_user(id).await?;
+        self.repository.delete_user(self.tenant_scope, id).await?;
         Ok(())
     }
 
@@ -893,12 +977,15 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
 
         let (groups, total) = self
             .repository
-            .list_groups(&filters, start_index, count)
+            .list_groups(self.tenant_scope, &filters, start_index, count)
             .await?;
 
         let mut resources = Vec::new();
         for group_record in groups {
-            let members = self.repository.get_group_members(group_record.id).await?;
+            let members = self
+                .repository
+                .get_group_members(self.tenant_scope, group_record.id)
+                .await?;
             let group = self.record_to_group(group_record, members).await?;
             resources.push(group);
         }
@@ -913,11 +1000,14 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
 
     /// Get a group by ID.
     pub async fn get_group(&self, id: Uuid) -> Result<ScimV2Group, ScimV2Error> {
-        let group_record = self.repository.get_group(id).await?;
+        let group_record = self.repository.get_group(self.tenant_scope, id).await?;
 
         match group_record {
             Some(record) => {
-                let members = self.repository.get_group_members(id).await?;
+                let members = self
+                    .repository
+                    .get_group_members(self.tenant_scope, id)
+                    .await?;
                 self.record_to_group(record, members).await
             }
             None => Err(ScimV2Error::GroupNotFound(id.to_string())),
@@ -932,24 +1022,31 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
             ));
         }
 
-        // Check for existing group by external_id
+        // Check for existing group by external_id within the organization
         if let Some(ref external_id) = group.external_id {
             if let Some(existing) = self
                 .repository
-                .get_group_by_external_id(external_id)
+                .get_group_by_external_id(self.tenant_scope, external_id)
                 .await?
             {
                 return self.update_group(existing.id, group).await;
             }
         }
 
-        let id = self.repository.create_group(&group).await?;
+        let id = self
+            .repository
+            .create_group(self.tenant_scope, &group)
+            .await?;
 
         // Add members if provided
         if let Some(ref members) = group.members {
             for member in members {
                 if let Ok(user_id) = Uuid::parse_str(&member.value) {
-                    if let Err(e) = self.repository.add_group_member(id, user_id).await {
+                    if let Err(e) = self
+                        .repository
+                        .add_group_member(self.tenant_scope, id, user_id)
+                        .await
+                    {
                         warn!(
                             "Failed to add member {} to group {}: {}",
                             member.value, id, e
@@ -959,10 +1056,14 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
                     // Try to find by external_id
                     if let Some(user_id) = self
                         .repository
-                        .find_user_id_by_external_id(&member.value)
+                        .find_user_id_by_external_id(self.tenant_scope, &member.value)
                         .await?
                     {
-                        if let Err(e) = self.repository.add_group_member(id, user_id).await {
+                        if let Err(e) = self
+                            .repository
+                            .add_group_member(self.tenant_scope, id, user_id)
+                            .await
+                        {
                             warn!(
                                 "Failed to add member {} to group {}: {}",
                                 member.value, id, e
@@ -982,19 +1083,32 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
         id: Uuid,
         group: ScimV2Group,
     ) -> Result<ScimV2Group, ScimV2Error> {
-        if self.repository.get_group(id).await?.is_none() {
+        if self
+            .repository
+            .get_group(self.tenant_scope, id)
+            .await?
+            .is_none()
+        {
             return Err(ScimV2Error::GroupNotFound(id.to_string()));
         }
 
-        self.repository.update_group(id, &group).await?;
+        self.repository
+            .update_group(self.tenant_scope, id, &group)
+            .await?;
 
         // Sync members if provided
         if let Some(ref members) = group.members {
-            self.repository.clear_group_members(id).await?;
+            self.repository
+                .clear_group_members(self.tenant_scope, id)
+                .await?;
 
             for member in members {
                 if let Ok(user_id) = Uuid::parse_str(&member.value) {
-                    if let Err(e) = self.repository.add_group_member(id, user_id).await {
+                    if let Err(e) = self
+                        .repository
+                        .add_group_member(self.tenant_scope, id, user_id)
+                        .await
+                    {
                         warn!(
                             "Failed to add member {} to group {}: {}",
                             member.value, id, e
@@ -1004,10 +1118,14 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
                     // Try to find by external_id
                     if let Some(user_id) = self
                         .repository
-                        .find_user_id_by_external_id(&member.value)
+                        .find_user_id_by_external_id(self.tenant_scope, &member.value)
                         .await?
                     {
-                        if let Err(e) = self.repository.add_group_member(id, user_id).await {
+                        if let Err(e) = self
+                            .repository
+                            .add_group_member(self.tenant_scope, id, user_id)
+                            .await
+                        {
                             warn!(
                                 "Failed to add member {} to group {}: {}",
                                 member.value, id, e
@@ -1027,21 +1145,33 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
         id: Uuid,
         operations: &[ScimPatchOperation],
     ) -> Result<ScimV2Group, ScimV2Error> {
-        if self.repository.get_group(id).await?.is_none() {
+        if self
+            .repository
+            .get_group(self.tenant_scope, id)
+            .await?
+            .is_none()
+        {
             return Err(ScimV2Error::GroupNotFound(id.to_string()));
         }
 
-        self.repository.patch_group(id, operations).await?;
+        self.repository
+            .patch_group(self.tenant_scope, id, operations)
+            .await?;
         self.get_group(id).await
     }
 
     /// Delete a group.
     pub async fn delete_group(&self, id: Uuid) -> Result<(), ScimV2Error> {
-        if self.repository.get_group(id).await?.is_none() {
+        if self
+            .repository
+            .get_group(self.tenant_scope, id)
+            .await?
+            .is_none()
+        {
             return Err(ScimV2Error::GroupNotFound(id.to_string()));
         }
 
-        self.repository.delete_group(id).await?;
+        self.repository.delete_group(self.tenant_scope, id).await?;
         Ok(())
     }
 

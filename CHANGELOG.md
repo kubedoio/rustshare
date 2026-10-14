@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Fixed SCIM endpoint authorization to enforce a single configured
+  organization scope: the SCIM v1/v2 bearer token is now bound to one
+  organization via `RUSTSHARE_SCIM_TENANT_ID` (falling back to an explicitly
+  configured `RUSTSHARE_DEFAULT_TENANT_ID`). Every SCIM list, count, lookup,
+  create, update, disable, delete and group-membership operation is scoped to
+  that organization, request-supplied tenant input can no longer widen scope,
+  and a missing or invalid organization scope fails closed instead of
+  operating across the whole installation. Operators using SCIM must set
+  `RUSTSHARE_SCIM_TENANT_ID`; unsetting `RUSTSHARE_SCIM_BEARER_TOKEN`
+  disables the integration as before.
 - Replaced the unmaintained `serde_yaml` 0.9 / `unsafe-libyaml` dependency
   (RUSTSEC-2024-0449) with `yaml_serde` 0.10, the continuation maintained by
   the YAML Organization, via Cargo's package-rename mechanism. All

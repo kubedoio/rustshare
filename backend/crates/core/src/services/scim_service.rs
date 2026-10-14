@@ -98,23 +98,34 @@ pub enum ScimAction {
 }
 
 /// Repository operations required for SCIM service.
+///
+/// Every operation is scoped to a single organization (`tenant_id`): the
+/// SCIM integration is bound to exactly one organization and must never
+/// reach across it.
 #[allow(async_fn_in_trait)]
 pub trait ScimRepository: Send + Sync {
-    /// Find user by external_id.
+    /// Find user by external_id within the organization.
     async fn find_user_by_external_id(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<User>, sqlx::Error>;
 
-    /// Find user by email (case-insensitive).
-    async fn find_user_by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error>;
+    /// Find user by email (case-insensitive) within the organization.
+    async fn find_user_by_email(
+        &self,
+        tenant_id: Uuid,
+        email: &str,
+    ) -> Result<Option<User>, sqlx::Error>;
 
-    /// Create a new user.
+    /// Create a new user in the organization.
     async fn create_user(&self, user: &User, external_id: &str) -> Result<(), sqlx::Error>;
 
-    /// Update an existing user.
+    /// Update an existing user within the organization.
+    #[allow(clippy::too_many_arguments)]
     async fn update_user(
         &self,
+        tenant_id: Uuid,
         user_id: Uuid,
         display_name: &str,
         email: &str,
@@ -123,46 +134,73 @@ pub trait ScimRepository: Send + Sync {
         disabled_at: Option<DateTime<Utc>>,
     ) -> Result<(), sqlx::Error>;
 
-    /// Set user's disabled_at timestamp.
-    async fn set_user_disabled(&self, external_id: &str, disabled: bool)
-        -> Result<(), sqlx::Error>;
+    /// Set user's disabled_at timestamp within the organization.
+    async fn set_user_disabled(
+        &self,
+        tenant_id: Uuid,
+        external_id: &str,
+        disabled: bool,
+    ) -> Result<(), sqlx::Error>;
 
-    /// Find group by external_id.
+    /// Find group by external_id within the organization.
     async fn find_group_by_external_id(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<GroupRecord>, sqlx::Error>;
 
-    /// Create a new group.
+    /// Create a new group in the organization.
     async fn create_group(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
         display_name: &str,
     ) -> Result<Uuid, sqlx::Error>;
 
-    /// Update an existing group.
-    async fn update_group(&self, external_id: &str, display_name: &str) -> Result<(), sqlx::Error>;
+    /// Update an existing group within the organization.
+    async fn update_group(
+        &self,
+        tenant_id: Uuid,
+        external_id: &str,
+        display_name: &str,
+    ) -> Result<(), sqlx::Error>;
 
-    /// Delete a group.
-    async fn delete_group(&self, external_id: &str) -> Result<(), sqlx::Error>;
+    /// Delete a group within the organization.
+    async fn delete_group(&self, tenant_id: Uuid, external_id: &str) -> Result<(), sqlx::Error>;
 
-    /// Find user ID by external_id.
+    /// Find user ID by external_id within the organization.
     async fn find_user_id_by_external_id(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<Uuid>, sqlx::Error>;
 
-    /// Get current group members.
-    async fn get_group_members(&self, group_id: Uuid) -> Result<Vec<Uuid>, sqlx::Error>;
+    /// Get current group members within the organization.
+    async fn get_group_members(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+    ) -> Result<Vec<Uuid>, sqlx::Error>;
 
-    /// Add member to group.
-    async fn add_group_member(&self, group_id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error>;
+    /// Add member to group; both must belong to the organization.
+    async fn add_group_member(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), sqlx::Error>;
 
-    /// Remove member from group.
-    async fn remove_group_member(&self, group_id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error>;
+    /// Remove member from group within the organization.
+    async fn remove_group_member(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), sqlx::Error>;
 
-    /// Clear all members from group.
-    async fn clear_group_members(&self, group_id: Uuid) -> Result<(), sqlx::Error>;
+    /// Clear all members from a group within the organization.
+    async fn clear_group_members(&self, tenant_id: Uuid, group_id: Uuid)
+        -> Result<(), sqlx::Error>;
 }
 
 /// Group record for SCIM operations.
@@ -174,18 +212,22 @@ pub struct GroupRecord {
 }
 
 /// SCIM provisioning service.
+///
+/// `tenant_scope` is the single organization this integration is bound to
+/// (ADR-0040 D5). It is resolved from server configuration by the HTTP layer;
+/// request input can never widen or redirect it.
 pub struct ScimService<R: ScimRepository> {
     repository: Arc<R>,
-    default_tenant_id: Uuid,
+    tenant_scope: Uuid,
     default_storage_quota: i64,
 }
 
 impl<R: ScimRepository> ScimService<R> {
-    /// Create a new SCIM service.
-    pub fn new(repository: Arc<R>, default_tenant_id: Uuid, default_storage_quota: i64) -> Self {
+    /// Create a new SCIM service scoped to one organization.
+    pub fn new(repository: Arc<R>, tenant_scope: Uuid, default_storage_quota: i64) -> Self {
         Self {
             repository,
-            default_tenant_id,
+            tenant_scope,
             default_storage_quota,
         }
     }
@@ -193,6 +235,24 @@ impl<R: ScimRepository> ScimService<R> {
     /// Provision or update a user from SCIM data.
     pub async fn provision_user(&self, scim_user: ScimUser) -> Result<ScimUserResult, ScimError> {
         debug!("Provisioning SCIM user: {}", scim_user.external_id);
+
+        // The integration is bound to exactly one organization. A
+        // request-supplied tenantId must equal that scope or the request is
+        // rejected; it can never widen or redirect the write.
+        let tenant_id = self.tenant_scope;
+        if let Some(requested) = scim_user.tenant_id {
+            if requested != tenant_id {
+                warn!(
+                    external_id = %scim_user.external_id,
+                    requested = %requested,
+                    scope = %tenant_id,
+                    "SCIM provision rejected: tenantId outside the configured organization scope"
+                );
+                return Err(ScimError::InvalidRequest(
+                    "tenantId does not match the configured SCIM organization scope".to_string(),
+                ));
+            }
+        }
 
         // Extract email from SCIM emails (prefer primary, fallback to first)
         let email = scim_user
@@ -227,13 +287,11 @@ impl<R: ScimRepository> ScimService<R> {
         let name = scim_user.name.as_ref().and_then(|n| n.given_name.clone());
         let surname = scim_user.name.as_ref().and_then(|n| n.family_name.clone());
 
-        // Check if user already exists by external_id
+        // Check if user already exists by external_id within the organization
         let existing = self
             .repository
-            .find_user_by_external_id(&scim_user.external_id)
+            .find_user_by_external_id(tenant_id, &scim_user.external_id)
             .await?;
-
-        let tenant_id = scim_user.tenant_id.unwrap_or(self.default_tenant_id);
 
         match existing {
             Some(user) => {
@@ -251,6 +309,7 @@ impl<R: ScimRepository> ScimService<R> {
 
                 self.repository
                     .update_user(
+                        tenant_id,
                         user.id,
                         &display_name,
                         &email,
@@ -292,7 +351,7 @@ impl<R: ScimRepository> ScimService<R> {
                 // If user should be disabled, set that now
                 if !scim_user.active {
                     self.repository
-                        .set_user_disabled(&scim_user.external_id, true)
+                        .set_user_disabled(tenant_id, &scim_user.external_id, true)
                         .await?;
                 }
 
@@ -311,7 +370,7 @@ impl<R: ScimRepository> ScimService<R> {
 
         let existing = self
             .repository
-            .find_user_by_external_id(external_id)
+            .find_user_by_external_id(self.tenant_scope, external_id)
             .await?;
 
         if existing.is_none() {
@@ -322,7 +381,9 @@ impl<R: ScimRepository> ScimService<R> {
             return Err(ScimError::UserNotFound(external_id.to_string()));
         }
 
-        self.repository.set_user_disabled(external_id, true).await?;
+        self.repository
+            .set_user_disabled(self.tenant_scope, external_id, true)
+            .await?;
 
         Ok(())
     }
@@ -336,7 +397,7 @@ impl<R: ScimRepository> ScimService<R> {
 
         let existing = self
             .repository
-            .find_group_by_external_id(&scim_group.external_id)
+            .find_group_by_external_id(self.tenant_scope, &scim_group.external_id)
             .await?;
 
         match existing {
@@ -348,7 +409,11 @@ impl<R: ScimRepository> ScimService<R> {
                 );
 
                 self.repository
-                    .update_group(&scim_group.external_id, &scim_group.display_name)
+                    .update_group(
+                        self.tenant_scope,
+                        &scim_group.external_id,
+                        &scim_group.display_name,
+                    )
                     .await?;
 
                 // Sync members if provided
@@ -368,7 +433,11 @@ impl<R: ScimRepository> ScimService<R> {
 
                 let group_id = self
                     .repository
-                    .create_group(&scim_group.external_id, &scim_group.display_name)
+                    .create_group(
+                        self.tenant_scope,
+                        &scim_group.external_id,
+                        &scim_group.display_name,
+                    )
                     .await?;
 
                 // Add members if provided
@@ -376,12 +445,14 @@ impl<R: ScimRepository> ScimService<R> {
                     for member in members {
                         match self
                             .repository
-                            .find_user_id_by_external_id(&member.value)
+                            .find_user_id_by_external_id(self.tenant_scope, &member.value)
                             .await?
                         {
                             Some(user_id) => {
-                                if let Err(e) =
-                                    self.repository.add_group_member(group_id, user_id).await
+                                if let Err(e) = self
+                                    .repository
+                                    .add_group_member(self.tenant_scope, group_id, user_id)
+                                    .await
                                 {
                                     warn!(
                                         "Failed to add member {} to group {}: {}",
@@ -414,7 +485,7 @@ impl<R: ScimRepository> ScimService<R> {
 
         let existing = self
             .repository
-            .find_group_by_external_id(external_id)
+            .find_group_by_external_id(self.tenant_scope, external_id)
             .await?;
 
         if existing.is_none() {
@@ -422,7 +493,9 @@ impl<R: ScimRepository> ScimService<R> {
             return Err(ScimError::GroupNotFound(external_id.to_string()));
         }
 
-        self.repository.delete_group(external_id).await?;
+        self.repository
+            .delete_group(self.tenant_scope, external_id)
+            .await?;
 
         Ok(())
     }
@@ -434,15 +507,18 @@ impl<R: ScimRepository> ScimService<R> {
         members: Vec<ScimMember>,
     ) -> Result<(), ScimError> {
         // Get current members
-        let current_members = self.repository.get_group_members(group_id).await?;
+        let current_members = self
+            .repository
+            .get_group_members(self.tenant_scope, group_id)
+            .await?;
         let current_set: std::collections::HashSet<_> = current_members.into_iter().collect();
 
-        // Resolve new member IDs
+        // Resolve new member IDs within the organization
         let mut new_members = Vec::new();
         for member in members {
             match self
                 .repository
-                .find_user_id_by_external_id(&member.value)
+                .find_user_id_by_external_id(self.tenant_scope, &member.value)
                 .await?
             {
                 Some(user_id) => new_members.push(user_id),
@@ -463,7 +539,11 @@ impl<R: ScimRepository> ScimService<R> {
 
         // Apply changes
         for user_id in to_add {
-            if let Err(e) = self.repository.add_group_member(group_id, user_id).await {
+            if let Err(e) = self
+                .repository
+                .add_group_member(self.tenant_scope, group_id, user_id)
+                .await
+            {
                 error!(
                     "Failed to add member {} to group {}: {}",
                     user_id, group_id, e
@@ -472,7 +552,11 @@ impl<R: ScimRepository> ScimService<R> {
         }
 
         for user_id in to_remove {
-            if let Err(e) = self.repository.remove_group_member(group_id, user_id).await {
+            if let Err(e) = self
+                .repository
+                .remove_group_member(self.tenant_scope, group_id, user_id)
+                .await
+            {
                 error!(
                     "Failed to remove member {} from group {}: {}",
                     user_id, group_id, e

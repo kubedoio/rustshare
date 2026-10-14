@@ -12,12 +12,62 @@ use axum_extra::headers::{authorization::Bearer, Authorization, HeaderMapExt};
 use rustshare_core::services::{ScimGroup, ScimService, ScimUser};
 use serde_json::json;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::AppState;
 
 // ---------------------------------------------------------------------------
 // Authentication middleware for SCIM endpoints
 // ---------------------------------------------------------------------------
+
+/// Resolve the single organization this SCIM integration is bound to
+/// (ADR-0040 D5).
+///
+/// `RUSTSHARE_SCIM_TENANT_ID` supplies the scope; when it is unset, an
+/// explicitly configured `RUSTSHARE_DEFAULT_TENANT_ID` supplies it. Any other
+/// state — unset with no explicit default, empty, or not a valid UUID — fails
+/// closed: a SCIM token without exactly one valid organization must never
+/// operate installation-wide.
+pub(crate) fn resolve_scim_tenant_scope() -> Result<Uuid, String> {
+    if let Ok(raw) = std::env::var("RUSTSHARE_SCIM_TENANT_ID") {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Err("RUSTSHARE_SCIM_TENANT_ID is set but empty".to_string());
+        }
+        return raw
+            .parse::<Uuid>()
+            .map_err(|_| format!("RUSTSHARE_SCIM_TENANT_ID is not a valid UUID: {raw:?}"));
+    }
+    if let Ok(raw) = std::env::var("RUSTSHARE_DEFAULT_TENANT_ID") {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return Err("RUSTSHARE_DEFAULT_TENANT_ID is set but empty".to_string());
+        }
+        return raw
+            .parse::<Uuid>()
+            .map_err(|_| format!("RUSTSHARE_DEFAULT_TENANT_ID is not a valid UUID: {raw:?}"));
+    }
+    Err(
+        "no SCIM organization scope configured: set RUSTSHARE_SCIM_TENANT_ID \
+         to the organization this integration provisions"
+            .to_string(),
+    )
+}
+
+/// Resolve the SCIM organization scope or map the misconfiguration to a
+/// fail-closed 500 response.
+fn scim_scope_or_error() -> Result<Uuid, (StatusCode, Json<serde_json::Value>)> {
+    resolve_scim_tenant_scope().map_err(|detail| {
+        tracing::error!("SCIM organization scope misconfigured: {}", detail);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "SCIM misconfigured",
+                "detail": detail
+            })),
+        )
+    })
+}
 
 /// Verify SCIM bearer token from Authorization header.
 fn verify_scim_token(
@@ -99,11 +149,8 @@ pub async fn provision_user(
 
     // Create repository and service
     let repository = Arc::new(ScimRepositoryImpl::new(state.db_pool.clone()));
-    let service = ScimService::new(
-        repository,
-        state.default_tenant_id,
-        crate::default_storage_quota_bytes(),
-    );
+    let scope = scim_scope_or_error()?;
+    let service = ScimService::new(repository, scope, crate::default_storage_quota_bytes());
 
     match service.provision_user(scim_user).await {
         Ok(result) => {
@@ -124,6 +171,13 @@ pub async fn provision_user(
                 })),
             ))
         }
+        Err(rustshare_core::services::ScimError::InvalidRequest(detail)) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Bad Request",
+                "detail": detail
+            })),
+        )),
         Err(e) => {
             tracing::error!("SCIM provision_user error: {:?}", e);
             Err((
@@ -153,11 +207,8 @@ pub async fn deprovision_user(
         .unwrap_or(external_id);
 
     let repository = Arc::new(ScimRepositoryImpl::new(state.db_pool.clone()));
-    let service = ScimService::new(
-        repository,
-        state.default_tenant_id,
-        crate::default_storage_quota_bytes(),
-    );
+    let scope = scim_scope_or_error()?;
+    let service = ScimService::new(repository, scope, crate::default_storage_quota_bytes());
 
     match service.deprovision_user(&external_id).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
@@ -216,11 +267,8 @@ pub async fn provision_group(
     }
 
     let repository = Arc::new(ScimRepositoryImpl::new(state.db_pool.clone()));
-    let service = ScimService::new(
-        repository,
-        state.default_tenant_id,
-        crate::default_storage_quota_bytes(),
-    );
+    let scope = scim_scope_or_error()?;
+    let service = ScimService::new(repository, scope, crate::default_storage_quota_bytes());
 
     match service.provision_group(scim_group).await {
         Ok(result) => {
@@ -241,6 +289,13 @@ pub async fn provision_group(
                 })),
             ))
         }
+        Err(rustshare_core::services::ScimError::InvalidRequest(detail)) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Bad Request",
+                "detail": detail
+            })),
+        )),
         Err(e) => {
             tracing::error!("SCIM provision_group error: {:?}", e);
             Err((
@@ -270,11 +325,8 @@ pub async fn delete_group(
         .unwrap_or(external_id);
 
     let repository = Arc::new(ScimRepositoryImpl::new(state.db_pool.clone()));
-    let service = ScimService::new(
-        repository,
-        state.default_tenant_id,
-        crate::default_storage_quota_bytes(),
-    );
+    let scope = scim_scope_or_error()?;
+    let service = ScimService::new(repository, scope, crate::default_storage_quota_bytes());
 
     match service.delete_group(&external_id).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
@@ -320,6 +372,7 @@ impl ScimRepositoryImpl {
 impl ScimRepository for ScimRepositoryImpl {
     async fn find_user_by_external_id(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<User>, sqlx::Error> {
         let row = sqlx::query_as!(
@@ -330,9 +383,10 @@ impl ScimRepository for ScimRepositoryImpl {
                    name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id,
                    dashboard_config as "dashboard_config: _"
             FROM users
-            WHERE external_id = $1
+            WHERE external_id = $1 AND tenant_id = $2
             "#,
-            external_id
+            external_id,
+            tenant_id
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -340,7 +394,11 @@ impl ScimRepository for ScimRepositoryImpl {
         Ok(row)
     }
 
-    async fn find_user_by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error> {
+    async fn find_user_by_email(
+        &self,
+        tenant_id: Uuid,
+        email: &str,
+    ) -> Result<Option<User>, sqlx::Error> {
         let email_lower = email.trim().to_lowercase();
 
         let row = sqlx::query_as!(
@@ -351,9 +409,10 @@ impl ScimRepository for ScimRepositoryImpl {
                    name, surname, avatar_path, email_sharing_enabled, trash_retention_days, tenant_id,
                    dashboard_config as "dashboard_config: _"
             FROM users
-            WHERE LOWER(email) = $1
+            WHERE LOWER(email) = $1 AND tenant_id = $2
             "#,
-            email_lower
+            email_lower,
+            tenant_id
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -395,8 +454,10 @@ impl ScimRepository for ScimRepositoryImpl {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn update_user(
         &self,
+        tenant_id: Uuid,
         user_id: uuid::Uuid,
         display_name: &str,
         email: &str,
@@ -413,14 +474,15 @@ impl ScimRepository for ScimRepositoryImpl {
                 surname = $5,
                 disabled_at = $6,
                 updated_at = NOW()
-            WHERE id = $1
+            WHERE id = $1 AND tenant_id = $7
             "#,
             user_id,
             display_name,
             email,
             name,
             surname,
-            disabled_at
+            disabled_at,
+            tenant_id
         )
         .execute(&self.pool)
         .await?;
@@ -430,6 +492,7 @@ impl ScimRepository for ScimRepositoryImpl {
 
     async fn set_user_disabled(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
         disabled: bool,
     ) -> Result<(), sqlx::Error> {
@@ -444,10 +507,11 @@ impl ScimRepository for ScimRepositoryImpl {
             UPDATE users
             SET disabled_at = $2,
                 updated_at = NOW()
-            WHERE external_id = $1
+            WHERE external_id = $1 AND tenant_id = $3
             "#,
             external_id,
-            disabled_at
+            disabled_at,
+            tenant_id
         )
         .execute(&self.pool)
         .await?;
@@ -457,6 +521,7 @@ impl ScimRepository for ScimRepositoryImpl {
 
     async fn find_group_by_external_id(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<GroupRecord>, sqlx::Error> {
         let row = sqlx::query_as!(
@@ -464,9 +529,10 @@ impl ScimRepository for ScimRepositoryImpl {
             r#"
             SELECT id, external_id, name
             FROM user_groups
-            WHERE external_id = $1
+            WHERE external_id = $1 AND tenant_id = $2
             "#,
-            external_id
+            external_id,
+            tenant_id
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -480,6 +546,7 @@ impl ScimRepository for ScimRepositoryImpl {
 
     async fn create_group(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
         display_name: &str,
     ) -> Result<uuid::Uuid, sqlx::Error> {
@@ -487,12 +554,13 @@ impl ScimRepository for ScimRepositoryImpl {
 
         sqlx::query!(
             r#"
-            INSERT INTO user_groups (id, name, external_id, created_by)
-            VALUES ($1, $2, $3, NULL)
+            INSERT INTO user_groups (id, name, external_id, created_by, tenant_id)
+            VALUES ($1, $2, $3, NULL, $4)
             "#,
             id,
             display_name,
-            external_id
+            external_id,
+            tenant_id
         )
         .execute(&self.pool)
         .await?;
@@ -500,16 +568,22 @@ impl ScimRepository for ScimRepositoryImpl {
         Ok(id)
     }
 
-    async fn update_group(&self, external_id: &str, display_name: &str) -> Result<(), sqlx::Error> {
+    async fn update_group(
+        &self,
+        tenant_id: Uuid,
+        external_id: &str,
+        display_name: &str,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query!(
             r#"
             UPDATE user_groups
             SET name = $2,
                 updated_at = NOW()
-            WHERE external_id = $1
+            WHERE external_id = $1 AND tenant_id = $3
             "#,
             external_id,
-            display_name
+            display_name,
+            tenant_id
         )
         .execute(&self.pool)
         .await?;
@@ -517,10 +591,11 @@ impl ScimRepository for ScimRepositoryImpl {
         Ok(())
     }
 
-    async fn delete_group(&self, external_id: &str) -> Result<(), sqlx::Error> {
+    async fn delete_group(&self, tenant_id: Uuid, external_id: &str) -> Result<(), sqlx::Error> {
         sqlx::query!(
-            "DELETE FROM user_groups WHERE external_id = $1",
-            external_id
+            "DELETE FROM user_groups WHERE external_id = $1 AND tenant_id = $2",
+            external_id,
+            tenant_id
         )
         .execute(&self.pool)
         .await?;
@@ -530,23 +605,30 @@ impl ScimRepository for ScimRepositoryImpl {
 
     async fn find_user_id_by_external_id(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<uuid::Uuid>, sqlx::Error> {
-        let id: Option<uuid::Uuid> =
-            sqlx::query_scalar!("SELECT id FROM users WHERE external_id = $1", external_id)
-                .fetch_optional(&self.pool)
-                .await?;
+        let id: Option<uuid::Uuid> = sqlx::query_scalar!(
+            "SELECT id FROM users WHERE external_id = $1 AND tenant_id = $2",
+            external_id,
+            tenant_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
 
         Ok(id)
     }
 
     async fn get_group_members(
         &self,
+        tenant_id: Uuid,
         group_id: uuid::Uuid,
     ) -> Result<Vec<uuid::Uuid>, sqlx::Error> {
         let members: Vec<uuid::Uuid> = sqlx::query_scalar!(
-            "SELECT user_id FROM group_members WHERE group_id = $1",
-            group_id
+            "SELECT user_id FROM group_members WHERE group_id = $1 AND EXISTS \
+                (SELECT 1 FROM user_groups g WHERE g.id = $1 AND g.tenant_id = $2)",
+            group_id,
+            tenant_id
         )
         .fetch_all(&self.pool)
         .await?;
@@ -556,17 +638,27 @@ impl ScimRepository for ScimRepositoryImpl {
 
     async fn add_group_member(
         &self,
-        group_id: uuid::Uuid,
-        user_id: uuid::Uuid,
+        tenant_id: Uuid,
+        group_id: Uuid,
+        user_id: Uuid,
     ) -> Result<(), sqlx::Error> {
+        // The membership is written only when both the group and the user
+        // belong to the configured organization.
         sqlx::query!(
             r#"
             INSERT INTO group_members (group_id, user_id, added_by)
-            VALUES ($1, $2, NULL)
+            SELECT $1, $2, NULL
+            WHERE EXISTS (
+                SELECT 1
+                FROM user_groups g
+                JOIN users u ON u.id = $2
+                WHERE g.id = $1 AND g.tenant_id = $3 AND u.tenant_id = $3
+            )
             ON CONFLICT (group_id, user_id) DO NOTHING
             "#,
             group_id,
-            user_id
+            user_id,
+            tenant_id
         )
         .execute(&self.pool)
         .await?;
@@ -576,13 +668,16 @@ impl ScimRepository for ScimRepositoryImpl {
 
     async fn remove_group_member(
         &self,
-        group_id: uuid::Uuid,
-        user_id: uuid::Uuid,
+        tenant_id: Uuid,
+        group_id: Uuid,
+        user_id: Uuid,
     ) -> Result<(), sqlx::Error> {
         sqlx::query!(
-            "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2",
+            "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2 AND EXISTS \
+                (SELECT 1 FROM user_groups g WHERE g.id = $1 AND g.tenant_id = $3)",
             group_id,
-            user_id
+            user_id,
+            tenant_id
         )
         .execute(&self.pool)
         .await?;
@@ -590,10 +685,19 @@ impl ScimRepository for ScimRepositoryImpl {
         Ok(())
     }
 
-    async fn clear_group_members(&self, group_id: uuid::Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query!("DELETE FROM group_members WHERE group_id = $1", group_id)
-            .execute(&self.pool)
-            .await?;
+    async fn clear_group_members(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            "DELETE FROM group_members WHERE group_id = $1 AND EXISTS \
+                (SELECT 1 FROM user_groups g WHERE g.id = $1 AND g.tenant_id = $2)",
+            group_id,
+            tenant_id
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
