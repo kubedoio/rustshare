@@ -152,6 +152,10 @@ name = "notes_test"
 path = "../tests/notes_test.rs"
 
 [[test]]
+name = "note_visibility_http_test"
+path = "../tests/note_visibility_http_test.rs"
+
+[[test]]
 name = "kanban_test"
 path = "../tests/kanban_test.rs"
 
