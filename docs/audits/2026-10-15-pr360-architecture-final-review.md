@@ -179,6 +179,13 @@ workflow and backup/restore/upgrade acceptance for the actual pilot. Postponing 
 decision blocks its dependent capability or rollout, not unrelated documentation.
 No issue is closed, ADR Accepted, legacy row remapped or GC enabled by this report.
 
+Existing narrow human approvals remain recorded on PR #360: ADR-0040 original
+items 1/5 authorized AR-01/#364; ADR-0041 original items 2/3 unblocked AR-03/#365.
+Those approvals preserve naming and roster/membership directions within their
+stated scope; they do not approve revised workspace evolution, remaining
+authorization changes or the whole package. The corresponding ADRs link the
+original decision comments explicitly.
+
 ## J. GitHub and validation
 
 Corrections are documentation-only. Final commit and live PR check status are
@@ -192,6 +199,11 @@ was modified. No dedicated Markdown lint job was found in repository workflows.
 Full Rust/frontend baselines are
 not substitutes for architecture approval and are unnecessary for prose-only
 edits; production integration tests specified by the ADRs remain release gates.
+
+The complete PR retains its original `scripts/phase40-tenant-isolation-negative-tests.sql`
+evidence harness unchanged by this correction. Thus the correction is Markdown-only;
+the full PR additionally contains that historical synthetic SQL evidence artifact.
+No production Rust, migration, schema or runtime configuration differs from main.
 
 Changed files in the correction:
 

@@ -57,6 +57,14 @@ Acceptance requires revision/image/deployment-bound gate artifacts, no unresolve
 
 ## Amendments, human decisions and revisit triggers
 
+Preserve the [2026-10-14 project-owner partial approval](https://github.com/kubedoio/rustshare/pull/360#issuecomment-6175252081):
+original item 2 approved roster field minimization (implementation with the
+organization-admin extractor), and item 3 confirmed membership conveys no content
+grant. This unblocked AR-03/#365 only. Resolver expansion remained inventory-gated;
+other decisions remained pending. References above to approving a client contract
+mean approval of any revised implementation scope, not cancellation of that
+recorded approval. This correction does not silently broaden it.
+
 ADR-0038 remains Proposed: this ADR refines tenant-bound group grants, additive revocation and explanations while ADR-0040 explicitly defers independent workspace functionality. The resource-reference ADR-0032 is Proposed; ADR-0036's accepted candidate-index authority remains intact. The separately numbered blob-GC ADR-0032 is a different decision and is not evidence that the resource-reference proposal is Accepted. The indexing contract carries a labelled proposed clarification; contract-owner approval is mandatory before its active wording changes. Historical audit evidence is preserved by links above rather than rewriting its findings as current facts.
 
 Maintainer approves this architecture and client contract; security owner approves Files evaluator consolidation, roster minimization and publication residual disposition; operator reviews inventory, support/recovery and measured budgets before pilot rollout. Postponing evaluator agreement or residual disposition blocks the affected release gate; postponing nested groups, tenant-scoped naming, explicit publish capability or durable refresh does not block a single-organization pilot absent demonstrated need. Revisit those deferrals when multiple organizations need colliding names, collaboration requires hierarchy, exposure duties require delegated publish authority, or measured search lag cannot meet the accepted workflow. No human approval authorizes legacy mapping, RLS enforcement or GC implicitly.
