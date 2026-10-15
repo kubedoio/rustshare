@@ -255,6 +255,13 @@ pub struct NoteService {
     pub workspace_name: String,
     pub folder_name: String,
     index_sink: Option<Arc<dyn NoteIndexSink>>,
+    /// Metric-style counters recording best-effort refresh dispatches.
+    /// Production semantics are unchanged; tests use them to prove negative
+    /// cases at the dispatch level instead of inferring silence from sink
+    /// timing. Counts are incremented synchronously before any task spawns,
+    /// so they are deterministic once the dispatching call returns.
+    group_refresh_dispatch_counts: Arc<std::sync::Mutex<std::collections::HashMap<Uuid, usize>>>,
+    share_target_refresh_dispatch_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl NoteService {
@@ -289,7 +296,43 @@ impl NoteService {
             workspace_name: "Workspace".to_string(),
             folder_name: "Notes".to_string(),
             index_sink: None,
+            group_refresh_dispatch_counts: Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            share_target_refresh_dispatch_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
+    }
+
+    /// Record a group index-ACL refresh dispatch (metric-style counter).
+    pub fn record_group_refresh_dispatch(&self, group_id: Uuid) {
+        *self
+            .group_refresh_dispatch_counts
+            .lock()
+            .expect("dispatch counter lock")
+            .entry(group_id)
+            .or_insert(0) += 1;
+    }
+
+    /// Number of group index-ACL refresh dispatches recorded for a group.
+    pub fn group_refresh_dispatch_count(&self, group_id: Uuid) -> usize {
+        self.group_refresh_dispatch_counts
+            .lock()
+            .expect("dispatch counter lock")
+            .get(&group_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Record a captured share-target refresh dispatch (metric-style counter).
+    pub fn record_share_target_refresh_dispatch(&self) {
+        self.share_target_refresh_dispatch_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Number of captured share-target refresh dispatches recorded.
+    pub fn share_target_refresh_dispatch_count(&self) -> usize {
+        self.share_target_refresh_dispatch_count
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Attach an optional indexing callback sink.
@@ -1073,9 +1116,13 @@ impl NoteService {
             return;
         }
 
+        // Tenant-scoped traversal: the recursive query filters every step by
+        // the share tenant, so a malformed legacy hierarchy with a
+        // foreign-tenant intermediate folder terminates the walk — its
+        // subtree is never processed.
         let descendants = match self
             .metadata_store
-            .find_descendant_folders_unchecked(folder_id)
+            .find_descendant_folders_for_tenant(folder_id, share_tenant_id)
             .await
         {
             Ok(folders) => folders,
@@ -1091,8 +1138,15 @@ impl NoteService {
             }
         };
 
+        // The scoped query anchors on the root (already tenant-validated
+        // above), so it is included in the result; process it exactly once.
         let mut folder_ids = vec![folder_id];
-        folder_ids.extend(descendants.iter().map(|folder| folder.id));
+        folder_ids.extend(
+            descendants
+                .iter()
+                .map(|folder| folder.id)
+                .filter(|id| *id != folder_id),
+        );
 
         for current_folder_id in folder_ids {
             let files = match self
@@ -3090,6 +3144,7 @@ pub async fn capture_group_share_targets(
 /// Discovery, dispatch, and index failures stay best-effort: they are logged
 /// inside the refresh and never surface to the caller.
 pub fn dispatch_group_index_acl_refresh(note_service: Arc<NoteService>, group_id: Uuid) {
+    note_service.record_group_refresh_dispatch(group_id);
     tokio::spawn(async move {
         note_service.refresh_index_acl_for_group(group_id).await;
     });
@@ -3109,6 +3164,7 @@ pub fn dispatch_share_target_acl_refresh(
     if targets.is_empty() {
         return;
     }
+    note_service.record_share_target_refresh_dispatch();
     tokio::spawn(async move {
         note_service
             .refresh_index_acl_for_share_targets(targets)

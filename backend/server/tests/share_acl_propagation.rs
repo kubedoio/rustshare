@@ -1419,6 +1419,15 @@ async fn test_file_share_tenant_mismatch_not_indexed() {
 
     // The mutation committed; a bounded window proves no cross-tenant indexing
     // followed. A direct control refresh then proves the sink is alive.
+    // The membership mutation committed and dispatched exactly one group
+    // refresh (deterministic counter), so the absence of indexing below is
+    // proven to come from the tenant guard — not from a silently failed or
+    // never-dispatched refresh.
+    assert_eq!(
+        state.note_service.group_refresh_dispatch_count(group_id),
+        1,
+        "the valid membership mutation must dispatch exactly one group refresh"
+    );
     assert_no_new_calls(&sink, 0, Duration::from_millis(500)).await;
     state
         .note_service
@@ -1500,6 +1509,11 @@ async fn test_folder_share_tenant_mismatch_not_indexed() {
     .await
     .unwrap();
 
+    assert_eq!(
+        state.note_service.group_refresh_dispatch_count(group_id),
+        1,
+        "the valid membership mutation must dispatch exactly one group refresh"
+    );
     assert_no_new_calls(&sink, 0, Duration::from_millis(500)).await;
     state
         .note_service
@@ -2090,9 +2104,23 @@ async fn test_rejected_requests_dispatch_nothing() {
         StatusCode::NOT_FOUND
     );
 
+    // Dispatch-level proof (deterministic: counters increment synchronously
+    // in the dispatch entry point before any task spawns): every rejected
+    // request committed nothing and must not have dispatched.
+    assert_eq!(
+        state.note_service.group_refresh_dispatch_count(group_id),
+        0,
+        "rejected requests must not dispatch a group refresh"
+    );
+    assert_eq!(
+        state.note_service.share_target_refresh_dispatch_count(),
+        0,
+        "rejected requests must not dispatch a share-target refresh"
+    );
+
     // All rejected requests completed synchronously; a bounded window proves
-    // nothing was dispatched. A valid mutation afterwards proves the pipeline
-    // is alive and counting correctly.
+    // nothing reached the sink either. A valid mutation afterwards proves the
+    // pipeline is alive and counting correctly.
     assert_no_new_calls(&sink, 0, Duration::from_millis(500)).await;
     admin_groups::add_member(
         State(state.clone()),
@@ -2102,6 +2130,11 @@ async fn test_rejected_requests_dispatch_nothing() {
     )
     .await
     .unwrap();
+    assert_eq!(
+        state.note_service.group_refresh_dispatch_count(group_id),
+        1,
+        "the valid mutation must dispatch exactly one group refresh"
+    );
     wait_for_calls_for(&sink, note_id, 1).await;
 }
 
@@ -2161,10 +2194,23 @@ async fn test_rolled_back_group_deletion_dispatches_nothing() {
     assert_eq!(group_exists, Some(group_id));
     assert_eq!(count_group_shares(&state.db_pool, group_id).await, 1);
 
-    // No dispatch left the rolled-back transaction.
+    // No dispatch left the rolled-back transaction: the dispatch counters are
+    // incremented synchronously in the dispatch entry points, so a zero count
+    // here is deterministic — not a timing inference.
+    assert_eq!(
+        state.note_service.share_target_refresh_dispatch_count(),
+        0,
+        "rolled-back deletion must not dispatch a share-target refresh"
+    );
+    assert_eq!(
+        state.note_service.group_refresh_dispatch_count(group_id),
+        0,
+        "rolled-back deletion must not dispatch a group refresh"
+    );
     assert_no_new_calls(&sink, 0, Duration::from_millis(500)).await;
 
-    // Control: a direct refresh works, and a valid deletion then refreshes.
+    // Control: a direct refresh works, and a valid deletion then dispatches
+    // exactly one captured-target refresh.
     state
         .note_service
         .refresh_note_index_acl(note_id, owner_id, tenant_id)
@@ -2179,6 +2225,11 @@ async fn test_rolled_back_group_deletion_dispatches_nothing() {
     )
     .await
     .unwrap();
+    assert_eq!(
+        state.note_service.share_target_refresh_dispatch_count(),
+        1,
+        "committed deletion must dispatch exactly one share-target refresh"
+    );
     wait_for_calls_for(&sink, note_id, 2).await;
     let after_delete = sink.calls_for(note_id)[1].clone();
     assert!(
@@ -2408,5 +2459,266 @@ async fn test_unchanged_effective_acl_preserves_hash_and_version() {
     assert!(
         third.principals.contains(&format!("group:{group_id}")),
         "group principal stays constant across membership churn"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// AR-04 follow-up: a pre-write rejection must not dispatch. The service
+// reports the committed-writes boundary explicitly; a PUT whose first
+// statement the database rejects commits nothing and must not refresh.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn test_scim_v2_put_pre_write_rejection_dispatches_nothing() {
+    use rustshare_core::services::ScimV2Group;
+
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    let existing_member = Uuid::new_v4();
+    let replacement_member = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        owner_id,
+        "ar04-pw-owner@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        existing_member,
+        "ar04-pw-existing@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        replacement_member,
+        "ar04-pw-replacement@example.com",
+    )
+    .await;
+    let group_id = insert_test_group(&state.db_pool, tenant_id, None).await;
+    insert_group_member_direct(&state.db_pool, group_id, existing_member).await;
+    // A second group whose name the PUT below will collide with, so the very
+    // first statement (the rename) is rejected by the database.
+    let name_holder = insert_test_group(&state.db_pool, tenant_id, None).await;
+    let colliding_name: String = sqlx::query_scalar("SELECT name FROM user_groups WHERE id = $1")
+        .bind(name_holder)
+        .fetch_one(&state.db_pool)
+        .await
+        .unwrap();
+    let note_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+    seed_group_share(
+        &state.db_pool,
+        ShareTarget::File(note_id),
+        group_id,
+        tenant_id,
+        owner_id,
+        false,
+        None,
+    )
+    .await;
+
+    let _env = ScimEnv::configure(tenant_id);
+
+    let put_group = ScimV2Group {
+        display_name: colliding_name.clone(),
+        members: Some(vec![rustshare_core::services::ScimV2Member {
+            value: replacement_member.to_string(),
+            ref_url: None,
+            display: None,
+            member_type: None,
+        }]),
+        ..ScimV2Group::new(colliding_name)
+    };
+    let response = scim_v2::update_group(
+        State(state.clone()),
+        scim_headers(),
+        Path(group_id),
+        axum::Json(put_group),
+    )
+    .await;
+    assert_eq!(
+        response.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "the rename violates the global name uniqueness, so the first write fails"
+    );
+
+    // Nothing committed: the membership is exactly what it was before, with
+    // no clear and no replacement add.
+    let members: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT user_id FROM group_members WHERE group_id = $1 ORDER BY user_id",
+    )
+    .bind(group_id)
+    .fetch_all(&state.db_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        members,
+        vec![existing_member],
+        "a pre-write rejection must leave the membership untouched"
+    );
+
+    // Dispatch-level proof: the committed-writes marker said nothing
+    // committed, so no refresh may be dispatched — deterministically.
+    assert_eq!(
+        state.note_service.group_refresh_dispatch_count(group_id),
+        0,
+        "a rejection that committed nothing must not dispatch a group refresh"
+    );
+    assert_eq!(state.note_service.share_target_refresh_dispatch_count(), 0);
+    assert_no_new_calls(&sink, 0, Duration::from_millis(300)).await;
+}
+
+// ---------------------------------------------------------------------------
+// AR-04 follow-up: tenant-scoped folder traversal. A malformed legacy
+// hierarchy with a foreign-tenant intermediate folder must terminate the
+// descendant walk — its subtree is never processed.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn test_group_folder_refresh_terminates_at_foreign_tenant_folder() {
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let foreign_tenant = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    let member_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        owner_id,
+        "ar04-ft-owner@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        member_id,
+        "ar04-ft-member@example.com",
+    )
+    .await;
+    let group_id = insert_test_group(&state.db_pool, tenant_id, None).await;
+
+    // A (tenant T) -> B (foreign tenant X, malformed legacy) -> C (tenant T).
+    let folder_a = state
+        .folder_service
+        .create_folder("AR04RootA".to_string(), None, owner_id, tenant_id)
+        .await
+        .unwrap();
+    let folder_b = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO folders (id, name, path, parent_folder_id, owner_id, tenant_id, created_at, updated_at) \
+         VALUES ($1, 'AR04ForeignB', '/ar04-foreign-b', $2, $3, $4, NOW(), NOW())",
+    )
+    .bind(folder_b)
+    .bind(folder_a.id)
+    .bind(owner_id)
+    .bind(foreign_tenant)
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
+    let folder_c = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO folders (id, name, path, parent_folder_id, owner_id, tenant_id, created_at, updated_at) \
+         VALUES ($1, 'AR04NestedC', '/ar04-foreign-b/ar04-nested-c', $2, $3, $4, NOW(), NOW())",
+    )
+    .bind(folder_c)
+    .bind(folder_b)
+    .bind(owner_id)
+    .bind(tenant_id)
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
+
+    // A's own note (tenant T) — must be refreshed.
+    let note_a = state
+        .note_service
+        .create_note(
+            owner_id,
+            tenant_id,
+            Some("AR04 note in A".to_string()),
+            Some(folder_a.id),
+            Some("# AR04 note in A".to_string()),
+        )
+        .await
+        .unwrap();
+    // C's note: created normally, then re-parented under C via SQL so its
+    // sidecar moves with it and it stays a fully indexable note.
+    let note_c = state
+        .note_service
+        .create_note(
+            owner_id,
+            tenant_id,
+            Some("AR04 note in C".to_string()),
+            None,
+            Some("# AR04 note in C".to_string()),
+        )
+        .await
+        .unwrap();
+    let file_c = state
+        .metadata_store
+        .find_file_by_id_unchecked(note_c.id)
+        .await
+        .unwrap()
+        .expect("note C file exists");
+    sqlx::query(
+        "UPDATE files SET parent_folder_id = $1 WHERE parent_folder_id = $2 AND owner_id = $3 AND (id = $4 OR name = $5)",
+    )
+    .bind(folder_c)
+    .bind(file_c.parent_folder_id)
+    .bind(owner_id)
+    .bind(note_c.id)
+    .bind(format!("{}.rustshare.json", file_c.name))
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
+    let _ = sink.take_indexed();
+
+    seed_group_share(
+        &state.db_pool,
+        ShareTarget::Folder(folder_a.id),
+        group_id,
+        tenant_id,
+        owner_id,
+        false,
+        None,
+    )
+    .await;
+
+    admin_groups::add_member(
+        State(state.clone()),
+        AdminUser { user_id: owner_id },
+        Path(group_id),
+        axum::Json(admin_groups::AddMemberRequest { user_id: member_id }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        state.note_service.group_refresh_dispatch_count(group_id),
+        1,
+        "the membership mutation must dispatch the group refresh"
+    );
+
+    // A's note is refreshed...
+    wait_for_calls_for(&sink, note_a.id, 1).await;
+    let record_a = sink.calls_for(note_a.id)[0].clone();
+    assert_eq!(record_a.tenant_id, tenant_id);
+    assert!(
+        record_a.principals.contains(&format!("group:{group_id}")),
+        "A's note projection carries the group share principal"
+    );
+
+    // ...but the walk terminated at the foreign-tenant folder B: C's note is
+    // never reached through this path, and nothing foreign is indexed.
+    assert!(
+        sink.calls_for(note_c.id).is_empty(),
+        "the tenant-scoped traversal must not pass through the foreign-tenant folder into C"
+    );
+    assert!(
+        sink.snapshot().iter().all(|r| r.tenant_id == tenant_id),
+        "no cross-tenant content may be indexed"
     );
 }
