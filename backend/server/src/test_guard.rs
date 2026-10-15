@@ -25,6 +25,11 @@ const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "::1"];
 /// `…/rustshare_test?dbname=postgres` or `?host=192.0.2.1` would otherwise
 /// pass a host/path check and still connect somewhere else. Supply a plain
 /// URL; connection parameters are refused.
+///
+/// Scope: this validates the URL. libpq environment variables (`PGHOST`,
+/// `PGPORT`, `PGDATABASE`, …) are not consulted, so the host and database
+/// checked here are the ones sqlx will use; test processes are expected not to
+/// set them.
 pub fn validate_disposable_database_url(database_url: &str) -> Result<(), String> {
     let parsed = url::Url::parse(database_url)
         .map_err(|error| format!("DATABASE_URL is not a valid URL: {error}"))?;
@@ -61,10 +66,15 @@ pub fn validate_disposable_database_url(database_url: &str) -> Result<(), String
     // hostaddr, port, dbname, user, password, and unix-socket host paths), so
     // refuse them outright rather than trying to re-derive the destination.
     if let Some(query) = parsed.query() {
-        // Names only: parameter values can carry credentials.
-        let names: Vec<&str> = query
+        // Names only, and only when they look like parameter names: a
+        // credential can sit in a value *or* in a malformed component with no
+        // `=`, and the message must never echo either.
+        let names: Vec<String> = query
             .split('&')
-            .map(|pair| pair.split('=').next().unwrap_or_default())
+            .map(|pair| match pair.split_once('=') {
+                Some((name, _)) if is_parameter_name(name) => name.to_string(),
+                _ => "<unnamed>".to_string(),
+            })
             .collect();
         return Err(format!(
             "DATABASE_URL must not carry connection parameters (found \
@@ -74,6 +84,15 @@ pub fn validate_disposable_database_url(database_url: &str) -> Result<(), String
         ));
     }
     Ok(())
+}
+
+/// Whether `name` is a plausible connection-parameter name, so it can be
+/// echoed in a refusal message without risking a credential.
+fn is_parameter_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '[' | ']'))
 }
 
 /// Read `DATABASE_URL` from the explicitly supplied environment — never from

@@ -204,6 +204,11 @@ fn guard_rejects_non_loopback_hosts() {
         "postgres://u:p@203.0.113.10:5432/rustshare_test",
         "postgres://u:p@db.internal.test:5432/rustshare_test",
         "postgres://u:p@10.0.0.5:5432/rustshare_test",
+        // Empty host: sqlx would fall back to a unix socket.
+        "postgres:///rustshare_test",
+        // Percent-encoded socket path: sqlx percent-decodes the host and then
+        // treats a leading `/` as a unix socket, so this must stay refused.
+        "postgres://%2Fvar%2Frun%2Fpostgresql/rustshare_test",
     ] {
         let error = crate::test_guard::validate_disposable_database_url(url)
             .expect_err("non-loopback host must be rejected before connecting");
@@ -256,6 +261,17 @@ fn guard_rejects_connection_parameter_redirects() {
     let error = crate::test_guard::validate_disposable_database_url(
         "postgres://u:p@127.0.0.1:15432/rustshare_test?password=dotenv_decoy_password",
     )
+    .expect_err("connection parameters must be refused");
+    assert!(
+        !error.contains(DECOY_PASSWORD),
+        "leaked credential: {error}"
+    );
+
+    // A malformed component with no `=` is not a parameter name: the value
+    // must not be echoed either.
+    let error = crate::test_guard::validate_disposable_database_url(&format!(
+        "postgres://u:p@127.0.0.1:15432/rustshare_test?{DECOY_PASSWORD}"
+    ))
     .expect_err("connection parameters must be refused");
     assert!(
         !error.contains(DECOY_PASSWORD),

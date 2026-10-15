@@ -15,11 +15,14 @@ so this baseline stays database-free. They require an explicitly supplied
 disposable `DATABASE_URL` (`rustshare_test` or `rustshare_test_*` on a loopback
 endpoint) and refuse non-disposable destinations — including a URL carrying
 connection parameters such as `?host=`/`?dbname=` — before connecting. Run them
-separately and serialized:
+separately and serialized; note that the `--ignored` selection also includes
+mail/link tests that need the disposable S3 service described below:
 
 ```bash
 export DATABASE_URL=postgres://USER:PASSWORD@127.0.0.1:15432/rustshare_test
 cargo test -p rustshare-server --lib -- --ignored --test-threads=1
+# auth login tests only (no S3 needed):
+cargo test -p rustshare-server --lib -- --ignored --test-threads=1 handlers::auth::tests::login_
 ```
 
 Library tests never dotenv-load (issue #366): `DATABASE_URL` must come from the
