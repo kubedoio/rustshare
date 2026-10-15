@@ -1,6 +1,6 @@
 # ADR-0040: Organization, Tenant and Workspace Identity
 
-Status: Proposed — maintainer, product-owner and security-owner approval required; authorizes no implementation.
+Status: Accepted — architecture approved by the project owner on 2026-10-15. Implementation and rollout remain subject to documented evidence and operational gates.
 Date: 2026-10-13; correction: 2026-10-15
 Historical baseline: `1ec2ea7a887ee0ab79d7d8ce525a0e5a76e0109e`. Current reconciliation includes merged PRs [#361](https://github.com/kubedoio/rustshare/pull/361), [#362](https://github.com/kubedoio/rustshare/pull/362), [#364](https://github.com/kubedoio/rustshare/pull/364) and [#365](https://github.com/kubedoio/rustshare/pull/365).
 
@@ -88,7 +88,7 @@ legacy migration, GC or deployment. That narrow approval is not revoked by this 
 
 ADR-0038 remains Proposed: preserve distinct-workspace intent, defer implementation under D2, and retain administration/content/revocation invariants. Accepted ADR-0031 and unified-search ADR-0036 retain history and behavior; no silent supersession is proposed.
 
-Maintainer and product owner must approve Option B as a bounded #330/#331/#333 workspace deferral before Gate A. #330 remains open for workspace membership requirements. If declined, implement Option A and reassess schedule. Security owner approves grant/recovery/revocation behavior; operator approves fresh identity and legacy impact. Until owners approve, all four Phase 4.0 ADRs remain Proposed; CI and review are not approval.
+The project owner's 2026-10-15 instruction to mark the revised architecture Accepted approves Option B and the bounded #330/#331/#333 milestone deferral. #330 remains open for future workspace membership requirements; issue status is not changed by architecture acceptance. ADR-0040–0043 are Accepted. Security owner still validates implemented grant/recovery/revocation behavior; operator validates fresh identity and legacy impact before rollout. CI is evidence, not the source of this acceptance.
 
 See [roadmap](../plans/2026-10-13-phase4-0-institutional-implementation-roadmap.md) and [acceptance gates](../pilot/2026-10-13-institutional-acceptance-gates.md) for implementation/test traceability.
 

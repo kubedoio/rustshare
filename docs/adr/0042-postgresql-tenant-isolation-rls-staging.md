@@ -1,6 +1,6 @@
 # ADR-0042: PostgreSQL Tenant Isolation — Least Privilege First, Gated RLS
 
-Status: Proposed; maintainer, security-owner and operator approval pending. Authorizes no production change.
+Status: Accepted — architecture approved by the project owner on 2026-10-15. Production role changes, RLS enforcement and GC activation retain their separate gates.
 Date: 2026-10-13; corrected 2026-10-15
 Historical baseline: `1ec2ea7a887ee0ab79d7d8ce525a0e5a76e0109e`
 
@@ -140,8 +140,8 @@ restore and role rollback. Reverting FORCE never authorizes application bypass o
 
 Maintainer owns executor integration/role manifest; security owner approves policies, threat model, privileged counts
 and independent negatives; storage owner approves GC coordination; deployment operator approves numeric workload budgets,
-restore and credential separation. These responsibility roles require named people in rollout records; all approvals
-remain pending. Pilot gate: least privilege plus application/operational gates. RLS gate: tests above and per-table
+restore and credential separation. These responsibility roles require named people in rollout records; operational sign-offs
+remain pending, separately from the recorded architecture acceptance. Pilot gate: least privilege plus application/operational gates. RLS gate: tests above and per-table
 inventory approval. GC gate: separate global-count/concurrency proof. Revisit enforcement once executor coverage exists
 or demonstrated missing-predicate risk justifies cost; do not silently make it a pilot dependency. No production SQLx
 integration evidence is claimed.

@@ -1,6 +1,6 @@
 # PR #360 architecture correction and final review
 
-Date: 2026-10-15. Status: Proposed; human architecture approval outstanding.
+Date: 2026-10-15. Status: Architecture Accepted by explicit user approval; implementation and operational gates outstanding.
 Repository: kubedoio/rustshare. PR: https://github.com/kubedoio/rustshare/pull/360.
 Reviewed main: `cb31eff928db1dd04d5811b9def3d3140eff9878`.
 Original PR head: `46433c042e8b45274e54991e054a81c968f12433`.
@@ -8,11 +8,17 @@ Historical audit baseline: `1ec2ea7a887ee0ab79d7d8ce525a0e5a76e0109e`.
 
 ## A. Executive verdict
 
-The corrected proposal is intended for human architecture review, not production
-acceptance. ADR-0040–0043 remain Proposed. No architecture approval, institutional
-workflow acceptance, SQLx enforcement proof or customer deployment evidence is
-conferred by this documentation package. Outstanding implementation and human
-gates are explicit in the roadmap and institutional acceptance gates.
+ADR-0040–0043 and their associated architecture, contract and milestone amendments
+are Accepted following the user's explicit instruction on 2026-10-15:
+“change them to accepted.” This includes the Option B workspace deferral and
+revised roadmap/acceptance definition. It does not claim implementation completion,
+institutional workflow acceptance, SQLx enforcement proof or customer deployment
+evidence. Outstanding implementation and operational gates remain mandatory.
+
+The review, score and publication observations below preserve the pre-acceptance
+checkpoint. References there to Proposed status or pending architecture approval
+are historical and superseded by this acceptance record; pending implementation,
+residual-risk, mapping, enforcement, GC and release gates are not superseded.
 
 ## B. Before/after decisions and traceability
 

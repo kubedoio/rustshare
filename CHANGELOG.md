@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Accept the revised Phase 4.0 architecture (ADR-0040–0043) and aligned
+  milestone/contract amendments following explicit approval on 2026-10-15;
+  implementation evidence and separate operational activation gates remain.
 - Correct the Proposed Phase 4.0 architecture: defer first-class workspaces
   explicitly, retain Application-owned authorization, distinguish absent database
   context from the valid nil tenant, and gate global blob maintenance independently

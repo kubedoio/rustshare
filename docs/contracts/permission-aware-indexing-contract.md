@@ -6,9 +6,9 @@
 
 ## Summary
 
-### Proposed amendment, 2026-10-15 — pending contract-owner approval
+### Accepted amendment, 2026-10-15 — explicit architecture approval
 
-This note preserves the active contract and proposes the ADR-0040/0041 clarification; it does not silently amend accepted requirements. `workspace:<uuid>` is reserved vocabulary, not evidence of implemented independent workspace membership. Current 1:1 identifiers are compatibility only. A future workspace grant requires an explicit resource-owning Application contract; tenant or workspace membership never creates a content grant implicitly.
+This explicitly approved amendment records the ADR-0040/0041 clarification; the original text below is retained with this clarification governing its interpretation. `workspace:<uuid>` is reserved vocabulary, not evidence of implemented independent workspace membership. Current 1:1 identifiers are compatibility only. A future workspace grant requires an explicit resource-owning Application contract; tenant or workspace membership never creates a content grant implicitly.
 
 The Files/Notes resolver authorizes its own resource family. Other Applications, including Buzz Chat, retain their own source authorization and signed communication contracts. Memory and Agents must reauthorize the ResourceRef source immediately before protected content is materialized; a candidate hit or general Agent execution permission is insufficient. Projection refresh improves discoverability but never grants access. Minimum-ACL-version rejection applies only when callers supply minimum versions; production paths currently rely on live source reauthorization and must not be described as protected by an armed version floor without evidence.
 

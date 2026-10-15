@@ -15,13 +15,14 @@ sequential numbers. New ADRs must pick the next unused number. Statuses used:
 | `0037-calendar-application-and-external-sync.md` | Calendar Application and External Calendar Sync | Proposed |
 | `0038-institutional-organization-and-workspace-access.md` | Institutional Organization and Workspace Access | Proposed |
 | `0039-orphan-blob-discovery-and-reconciliation.md` | Orphan Blob Discovery and Reconciliation | Accepted (3.4A); 3.4B Implemented (disabled by default, not activated) |
-| `0040-organization-tenant-and-workspace-identity.md` | Organization, Tenant and Workspace Identity | Proposed (Phase 4.0 decision gate) |
-| `0041-groups-and-authorization.md` | Groups and Organization Authorization | Proposed (Phase 4.0 decision gate) |
-| `0042-postgresql-tenant-isolation-rls-staging.md` | PostgreSQL Tenant Isolation — Least Privilege First, Gated RLS | Proposed (Phase 4.0 decision gate) |
-| `0043-legacy-nil-tenant-compatibility.md` | Legacy Nil-Tenant Compatibility and Non-Destructive Migration | Proposed (Phase 4.0 decision gate) |
+| `0040-organization-tenant-and-workspace-identity.md` | Organization, Tenant and Workspace Identity | Accepted (2026-10-15) |
+| `0041-groups-and-authorization.md` | Groups and Organization Authorization | Accepted (2026-10-15) |
+| `0042-postgresql-tenant-isolation-rls-staging.md` | PostgreSQL Tenant Isolation — Least Privilege First, Gated RLS | Accepted (2026-10-15) |
+| `0043-legacy-nil-tenant-compatibility.md` | Legacy Nil-Tenant Compatibility and Non-Destructive Migration | Accepted (2026-10-15) |
 
-The 2026-10-15 revisions of ADR-0040–0043 correct the earlier proposals; none
-is Accepted. Historical audits retain their original baselines. See the
+The 2026-10-15 revisions of ADR-0040–0043 are Accepted following explicit user
+approval. Acceptance covers architecture and associated milestone/contract amendments,
+not deployment, RLS/GC activation or legacy mapping. Historical audits retain their original baselines. See the
 [architecture review](../audits/2026-10-15-pr360-architecture-final-review.md)
 for decision ownership, verification boundaries and remaining human gates.
 
