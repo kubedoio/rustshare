@@ -9,7 +9,7 @@ use axum::{
     Json,
 };
 use axum_extra::headers::{authorization::Bearer, Authorization, HeaderMapExt};
-use rustshare_core::services::{ScimGroup, ScimService, ScimUser};
+use rustshare_core::services::{ScimError, ScimGroup, ScimService, ScimUser};
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -300,11 +300,28 @@ pub async fn provision_group(
             {
                 Ok(Some(group)) => Some(group.id),
                 Ok(None) => {
-                    tracing::warn!(
-                        external_id = %external_id,
-                        error = %provision_error,
-                        "SCIM provision failed and re-resolved no group; skipping ACL refresh"
-                    );
+                    // Pre-write validation and directory collisions write
+                    // nothing, so a missing group afterwards is the routine
+                    // rejected-request case, not post-commit ambiguity.
+                    // Other failures may have committed earlier statements
+                    // (the create branch commits the group before resolving
+                    // members) and stay at warn.
+                    if matches!(
+                        provision_error,
+                        ScimError::InvalidRequest(_) | ScimError::Conflict(_)
+                    ) {
+                        tracing::debug!(
+                            external_id = %external_id,
+                            error = %provision_error,
+                            "SCIM provision rejected before any write; skipping ACL refresh"
+                        );
+                    } else {
+                        tracing::warn!(
+                            external_id = %external_id,
+                            error = %provision_error,
+                            "SCIM provision failed and re-resolved no group; skipping ACL refresh"
+                        );
+                    }
                     None
                 }
                 Err(resolution_error) => {

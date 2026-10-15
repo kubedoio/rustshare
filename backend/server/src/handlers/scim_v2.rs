@@ -1139,11 +1139,27 @@ pub async fn create_group(
             {
                 Ok(Some(record)) => Some(record.id.to_string()),
                 Ok(None) => {
-                    tracing::warn!(
-                        external_id = external_id.as_deref().unwrap_or_default(),
-                        error = %create_error,
-                        "SCIM v2 group create failed and re-resolved no group; skipping ACL refresh"
-                    );
+                    // Pre-write validation (empty displayName) and directory
+                    // collisions write nothing, so a missing group afterwards
+                    // is the routine rejected-request case, not post-commit
+                    // ambiguity. Other failures may have committed earlier
+                    // statements and stay at warn.
+                    if matches!(
+                        create_error,
+                        ScimV2Error::InvalidRequest(_) | ScimV2Error::Conflict(_)
+                    ) {
+                        tracing::debug!(
+                            external_id = external_id.as_deref().unwrap_or_default(),
+                            error = %create_error,
+                            "SCIM v2 group create rejected before any write; skipping ACL refresh"
+                        );
+                    } else {
+                        tracing::warn!(
+                            external_id = external_id.as_deref().unwrap_or_default(),
+                            error = %create_error,
+                            "SCIM v2 group create failed and re-resolved no group; skipping ACL refresh"
+                        );
+                    }
                     None
                 }
                 Err(resolution_error) => {
@@ -1201,17 +1217,30 @@ pub async fn update_group(
     // never touched and dispatches nothing.
     let outcome = service.update_group(id, group).await;
     if let Err(error) = &outcome {
-        if service.get_group(id).await.is_err() {
-            tracing::warn!(
-                group_id = %id,
-                error = %error,
-                "SCIM v2 group replacement failed and the group no longer resolves; skipping ACL refresh"
-            );
-        } else {
-            crate::services::note_service::dispatch_group_index_acl_refresh(
-                Arc::clone(&state.note_service),
-                id,
-            );
+        match service.get_group(id).await {
+            Ok(_) => {
+                crate::services::note_service::dispatch_group_index_acl_refresh(
+                    Arc::clone(&state.note_service),
+                    id,
+                );
+            }
+            // Routine 404: PUT raced an already-deleted group (common IdP
+            // deprovisioning race); nothing of ours remains to refresh.
+            Err(ScimV2Error::GroupNotFound(_)) => {
+                tracing::debug!(
+                    group_id = %id,
+                    error = %error,
+                    "SCIM v2 group replacement failed and the group does not exist; skipping ACL refresh"
+                );
+            }
+            Err(resolution_error) => {
+                tracing::warn!(
+                    group_id = %id,
+                    error = %error,
+                    resolution_error = %resolution_error,
+                    "SCIM v2 group replacement failed and group re-resolution errored; skipping ACL refresh"
+                );
+            }
         }
     } else {
         crate::services::note_service::dispatch_group_index_acl_refresh(
@@ -1256,14 +1285,25 @@ pub async fn patch_group(
     let outcome = service.patch_group(id, &patch.operations).await;
     let mut dispatch = outcome.is_ok();
     if let Err(error) = &outcome {
-        if service.get_group(id).await.is_ok() {
-            dispatch = true;
-        } else {
-            tracing::warn!(
-                group_id = %id,
-                error = %error,
-                "SCIM v2 group patch failed and the group no longer resolves; skipping ACL refresh"
-            );
+        match service.get_group(id).await {
+            Ok(_) => dispatch = true,
+            // Routine 404: PATCH raced an already-deleted group (common IdP
+            // deprovisioning race); nothing of ours remains to refresh.
+            Err(ScimV2Error::GroupNotFound(_)) => {
+                tracing::debug!(
+                    group_id = %id,
+                    error = %error,
+                    "SCIM v2 group patch failed and the group does not exist; skipping ACL refresh"
+                );
+            }
+            Err(resolution_error) => {
+                tracing::warn!(
+                    group_id = %id,
+                    error = %error,
+                    resolution_error = %resolution_error,
+                    "SCIM v2 group patch failed and group re-resolution errored; skipping ACL refresh"
+                );
+            }
         }
     }
     if dispatch {
