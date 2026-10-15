@@ -79,8 +79,9 @@ Acceptance requires candidate-revision artifacts, operator recovery rehearsal an
 ## Amendment, deferrals and human decisions
 
 Historical approval is preserved: the [project-owner decision of 2026-10-14](https://github.com/kubedoio/rustshare/pull/360#issuecomment-6174911062)
-approved original items 1 and 5 solely for AR-01/#364: organization=tenant, no additional
-identity tables at that stage, and global username/external-ID uniqueness. It did
+approved original items 1 and 5 solely for AR-01/#364: organization=tenant,
+workspace=organization (1:1) for Phase 4.0/4.1, no additional identity tables at
+that stage, and global username/external-ID uniqueness. It did
 not approve permanent workspace/organization equivalence or these revised Option B
 evolution contracts. It authorized neither the remaining ADR package nor RLS,
 legacy migration, GC or deployment. That narrow approval is not revoked by this revision.
