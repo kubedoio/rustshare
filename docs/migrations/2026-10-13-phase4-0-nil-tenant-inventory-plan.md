@@ -15,6 +15,33 @@ Executed evidence this plan is calibrated against:
 
 ## Purpose
 
+### 2026-10-15 proposed correction to the historical execution instructions
+
+The catalogue and executed measurements below retain their 2026-10-13 baseline;
+they are not fresh evidence for current main. ADR-0042 now separates pilot
+least-privilege credentials from optional enforced RLS; its enforcement gate
+replaces the old numbered “Stage 6/7” references here. ADR-0043 owns compatibility.
+Merged #361, #362 and #365 change provisioning, publication and sharing behavior;
+historical counts or reproductions must never be reported as current findings.
+
+**Role correction:** table ownership alone does **not** bypass `FORCE ROW LEVEL
+SECURITY`. Any instruction below to rerun “as owner” means a separately approved
+operator role proven to see all referenced tables, with explicit SELECT grants
+and, where required, BYPASSRLS; ordinary application traffic must not have that
+role, its credentials or membership. Keep `SET LOCAL row_security = off`: it
+raises when RLS would filter; it does not grant bypass. Any error makes the
+inventory incomplete, never a zero population. Use a restored snapshot first,
+read-only credentials and the READ ONLY transaction envelope. Do not grant write
+privileges merely to run this catalogue.
+
+The report remains aggregate-only, with no names, email addresses, resource IDs
+or contents. A count is evidence for review, never an ownership mapping. Strict
+authorization may reject previously reachable inconsistent data: notify the
+operator, record aggregate impact and provide an audited recovery process after
+mapping approval; never restore access through a nil wildcard. This package
+authorizes neither row rewrites nor GC/reconciliation activation. Restore and
+rollback evidence is required before any separately approved data remediation.
+
 Answer four questions about a specific deployment with aggregate evidence and **no data movement**:
 
 1. Is this deployment one coherent tenant (including a coherent nil tenant), or a mixture of tenants?

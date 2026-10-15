@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Correct the Proposed Phase 4.0 architecture: defer first-class workspaces
+  explicitly, retain Application-owned authorization, distinguish absent database
+  context from the valid nil tenant, and gate global blob maintenance independently
+  from pilot delivery. Reconcile merged authorization fixes with dated evidence;
+  no production behavior or ADR approval changes in this documentation update.
 - Phase 4.0 institutional authorization decision gate (design and evidence only —
   no schema migration, no authorization change, object GC and orphan
   reconciliation remain disabled). Four decision-ready ADRs: ADR-0040

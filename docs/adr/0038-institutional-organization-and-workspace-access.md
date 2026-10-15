@@ -3,6 +3,17 @@
 Status: Proposed
 Date: 2026-10-04
 
+## Proposed milestone amendment — 2026-10-15
+
+The original decisions below remain preserved. [ADR-0040](0040-organization-tenant-and-workspace-identity.md)
+proposes Option B: defer independent workspace implementation for the initial institutional milestone,
+while retaining this ADR's distinction between collaboration context and tenant security boundary.
+Existing tenant-valued workspace fields are compatibility aliases, not workspace memberships.
+This does not fulfill issue #330's workspace criteria. Maintainer/product-owner approval of a bounded
+deferral is required before Gate A; absent approval, plan first-class workspaces and reassess schedule.
+Organization administration, Application-owned resource authorization, explainability and revocation
+requirements remain. Neither this note nor CI accepts either ADR.
+
 ## Context
 
 Issue [#330](https://github.com/KubedoIO/RustShare/issues/330) requires
