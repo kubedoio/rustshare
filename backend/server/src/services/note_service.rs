@@ -856,7 +856,14 @@ impl NoteService {
         }
         let content = match self.object_store.get(&file.storage_key()).await {
             Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-            Err(_) => String::new(),
+            Err(error) => {
+                // Never index empty content as a substitute for a storage
+                // read failure: that would wipe the note's indexed body and
+                // embedding. Propagate so best-effort callers skip this note.
+                return Err(NoteError::Storage(format!(
+                    "Failed to read note content for index refresh: {error}"
+                )));
+            }
         };
         self.emit_index_note(&file, &meta, &content, tenant_id)
             .await;
@@ -933,7 +940,7 @@ impl NoteService {
     /// effective ACL for all resources shared with that group. Targets are the
     /// active shares (`recipient_group_id`, `revoked_at IS NULL`) and each
     /// share contributes its own tenant — never the group's tenant, which may
-    /// be nil on legacy rows. Errors are logged and do not fail the
+    /// be the zero UUID on legacy rows. Errors are logged and do not fail the
     /// originating request.
     pub async fn refresh_index_acl_for_group(&self, group_id: Uuid) {
         let targets = match query_group_share_targets(&self.db_pool, group_id).await {
@@ -3008,7 +3015,7 @@ impl NoteService {
 
 /// One active group-share target: the shared resource plus the tenant stored
 /// on the share row itself (AR-04). The share tenant — not the group's
-/// tenant, which may be nil on legacy rows — scopes the refresh.
+/// tenant, which may be the zero UUID on legacy rows — scopes the refresh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroupShareTarget {
     pub resource: rustshare_core::services::Resource,
@@ -3019,8 +3026,8 @@ pub struct GroupShareTarget {
 ///
 /// Selects by `recipient_group_id` with `revoked_at IS NULL` and carries each
 /// share's own tenant. Filtering on the group's tenant here would silently
-/// drop legacy nil-tenant groups whose shares (and resources) live in a real
-/// tenant.
+/// drop legacy groups whose zero-UUID tenant differs from their shares'
+/// real tenant.
 async fn query_group_share_targets(
     executor: impl sqlx::PgExecutor<'_>,
     group_id: Uuid,

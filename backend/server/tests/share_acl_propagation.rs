@@ -575,6 +575,50 @@ async fn test_non_note_share_refresh_does_not_index_file() {
 
 #[tokio::test]
 #[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn test_object_store_error_does_not_index_empty_content() {
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        owner_id,
+        "ar04-os-owner@example.com",
+    )
+    .await;
+    let note_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+
+    // Remove the note's content object behind the service's back so the
+    // refresh's storage read fails. A storage hiccup must skip indexing, not
+    // silently wipe the note's indexed body with empty content.
+    let file = state
+        .metadata_store
+        .find_file_by_id_unchecked(note_id)
+        .await
+        .unwrap()
+        .expect("note file exists");
+    state
+        .object_store
+        .delete(&file.storage_key())
+        .await
+        .expect("delete the note content object");
+
+    let result = state
+        .note_service
+        .refresh_note_index_acl(note_id, owner_id, tenant_id)
+        .await;
+    assert!(
+        result.is_err(),
+        "a storage read failure must surface as an error instead of indexing empty content"
+    );
+    assert!(
+        sink.calls_for(note_id).is_empty(),
+        "no index call may be emitted when the note content cannot be read"
+    );
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn test_share_create_triggers_acl_refresh() {
     let (state, sink) = setup_with_recording_sink().await;
     let tenant_id = insert_test_tenant(&state.db_pool).await;

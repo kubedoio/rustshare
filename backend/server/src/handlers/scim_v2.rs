@@ -1132,12 +1132,30 @@ pub async fn create_group(
     let outcome = service.create_group(group).await;
     let affected_group = match &outcome {
         Ok(created) => created.id.clone(),
-        Err(_) => repository
-            .get_group_by_external_id(scope, external_id.as_deref().unwrap_or_default())
-            .await
-            .ok()
-            .flatten()
-            .map(|record| record.id.to_string()),
+        Err(create_error) => {
+            match repository
+                .get_group_by_external_id(scope, external_id.as_deref().unwrap_or_default())
+                .await
+            {
+                Ok(Some(record)) => Some(record.id.to_string()),
+                Ok(None) => {
+                    tracing::warn!(
+                        external_id = external_id.as_deref().unwrap_or_default(),
+                        error = %create_error,
+                        "SCIM v2 group create failed and re-resolved no group; skipping ACL refresh"
+                    );
+                    None
+                }
+                Err(resolution_error) => {
+                    tracing::warn!(
+                        external_id = external_id.as_deref().unwrap_or_default(),
+                        error = %resolution_error,
+                        "SCIM v2 group create failed and group re-resolution errored; skipping ACL refresh"
+                    );
+                    None
+                }
+            }
+        }
     };
     if let Some(group_id) = affected_group.and_then(|id| Uuid::parse_str(&id).ok()) {
         crate::services::note_service::dispatch_group_index_acl_refresh(
@@ -1184,10 +1202,10 @@ pub async fn update_group(
     let outcome = service.update_group(id, group).await;
     if let Err(error) = &outcome {
         if service.get_group(id).await.is_err() {
-            tracing::debug!(
+            tracing::warn!(
                 group_id = %id,
                 error = %error,
-                "SCIM v2 group replacement failed before any committed write; skipping ACL refresh"
+                "SCIM v2 group replacement failed and the group no longer resolves; skipping ACL refresh"
             );
         } else {
             crate::services::note_service::dispatch_group_index_acl_refresh(
@@ -1241,10 +1259,10 @@ pub async fn patch_group(
         if service.get_group(id).await.is_ok() {
             dispatch = true;
         } else {
-            tracing::debug!(
+            tracing::warn!(
                 group_id = %id,
                 error = %error,
-                "SCIM v2 group patch failed before any committed write; skipping ACL refresh"
+                "SCIM v2 group patch failed and the group no longer resolves; skipping ACL refresh"
             );
         }
     }

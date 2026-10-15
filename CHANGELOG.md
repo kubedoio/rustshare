@@ -179,10 +179,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   folder targets), the refresh context is the resource owner rather than the
   historical share creator, and group deletion captures its targets while
   holding the group row lock, dispatching only after a successful commit so a
-  rolled-back deletion never refreshes. Revoked or expired grants no longer
-  appear in rebuilt projections, and SCIM failures after committed membership
-  writes still trigger the refresh. Existing ACL hash/version semantics are
-  unchanged.
+  rolled-back deletion never refreshes. Revoked or expired grants remain
+  excluded from rebuilt projections (the permission resolver's pre-existing
+  invariant, now covered by tests), and SCIM failures after committed
+  membership writes still trigger the refresh. Existing ACL hash/version
+  semantics are unchanged.
 
 ### Changed
 

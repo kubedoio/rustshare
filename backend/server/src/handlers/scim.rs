@@ -292,14 +292,30 @@ pub async fn provision_group(
     // foreign organization) never resolve a group and dispatch nothing.
     let affected_group = match &outcome {
         Ok(result) => Some(result.id),
-        Err(_) => {
+        Err(provision_error) => {
             let repository = Arc::new(ScimRepositoryImpl::new(state.db_pool.clone()));
-            repository
+            match repository
                 .find_group_by_external_id(scope, &external_id)
                 .await
-                .ok()
-                .flatten()
-                .map(|group| group.id)
+            {
+                Ok(Some(group)) => Some(group.id),
+                Ok(None) => {
+                    tracing::warn!(
+                        external_id = %external_id,
+                        error = %provision_error,
+                        "SCIM provision failed and re-resolved no group; skipping ACL refresh"
+                    );
+                    None
+                }
+                Err(resolution_error) => {
+                    tracing::warn!(
+                        external_id = %external_id,
+                        error = %resolution_error,
+                        "SCIM provision failed and group re-resolution errored; skipping ACL refresh"
+                    );
+                    None
+                }
+            }
         }
     };
     if let Some(group_id) = affected_group {
