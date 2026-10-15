@@ -189,10 +189,88 @@ async fn assert_no_new_calls(sink: &RecordingSink, baseline: usize, window: Dura
 }
 
 // ---------------------------------------------------------------------------
+// Disposable-destination guard
+// ---------------------------------------------------------------------------
+
+/// Refuse to run unless every test destination is the disposable test stack.
+///
+/// The harness (`common::setup_test_server`) dotenv-loads and falls back to
+/// defaults that can silently point at the application database (`rustshare`)
+/// or bucket (`rustshare`). This guard reads the same live environment —
+/// `S3_*` taking precedence over `RUSTFS_*`, exactly like the harness — and
+/// panics in setup, before any test logic or pool/object-store construction,
+/// when a destination is not provably disposable.
+fn assert_disposable_test_destination() {
+    // Match the harness's dotenv overlay before reading the environment.
+    dotenvy::dotenv().ok();
+
+    // DATABASE_URL: loopback host and a rustshare_test[_...] database name.
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
+    let parsed = url::Url::parse(&database_url).unwrap_or_else(|error| {
+        panic!(
+            "refusing to run share_acl_propagation tests: DATABASE_URL \
+             ({database_url:?}) is not a valid URL: {error}"
+        )
+    });
+    let host = parsed.host_str().unwrap_or_default();
+    if !matches!(host, "127.0.0.1" | "localhost" | "::1") {
+        panic!(
+            "refusing to run share_acl_propagation tests: DATABASE_URL host \
+             {host:?} is not loopback (expected 127.0.0.1, localhost, or ::1); \
+             point DATABASE_URL at the disposable rustshare_test database"
+        );
+    }
+    let database_name = parsed.path().trim_start_matches('/');
+    if database_name != "rustshare_test" && !database_name.starts_with("rustshare_test_") {
+        panic!(
+            "refusing to run share_acl_propagation tests: DATABASE_URL database \
+             {database_name:?} is not disposable (expected rustshare_test or \
+             rustshare_test_*); the harness would otherwise target the \
+             application database"
+        );
+    }
+
+    // S3 endpoint: loopback only (S3_ENDPOINT preferred over RUSTFS_ENDPOINT,
+    // matching the harness).
+    let s3_endpoint = std::env::var("S3_ENDPOINT")
+        .or_else(|_| std::env::var("RUSTFS_ENDPOINT"))
+        .unwrap_or_else(|_| "http://localhost:9000".to_string());
+    let endpoint = url::Url::parse(&s3_endpoint).unwrap_or_else(|error| {
+        panic!(
+            "refusing to run share_acl_propagation tests: S3 endpoint \
+             ({s3_endpoint:?}) is not a valid URL: {error}"
+        )
+    });
+    let endpoint_host = endpoint.host_str().unwrap_or_default();
+    if !matches!(endpoint_host, "127.0.0.1" | "localhost" | "::1") {
+        panic!(
+            "refusing to run share_acl_propagation tests: S3 endpoint host \
+             {endpoint_host:?} is not loopback (expected 127.0.0.1, localhost, \
+             or ::1); point S3_ENDPOINT at the disposable test object store"
+        );
+    }
+
+    // Bucket: the rustshare-test namespace (S3_BUCKET preferred over
+    // RUSTFS_BUCKET, matching the harness).
+    let bucket = std::env::var("S3_BUCKET")
+        .or_else(|_| std::env::var("RUSTFS_BUCKET"))
+        .unwrap_or_else(|_| "rustshare".to_string());
+    if !bucket.starts_with("rustshare-test") {
+        panic!(
+            "refusing to run share_acl_propagation tests: bucket {bucket:?} is \
+             outside the rustshare-test namespace; the harness would otherwise \
+             target the application bucket"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Fixture helpers
 // ---------------------------------------------------------------------------
 
 async fn setup_with_recording_sink() -> (rustshare_server::AppState, Arc<RecordingSink>) {
+    assert_disposable_test_destination();
     let (mut state, _url) = common::setup_test_server().await;
     let sink = Arc::new(RecordingSink::new());
 
