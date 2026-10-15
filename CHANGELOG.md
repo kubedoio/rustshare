@@ -209,6 +209,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   invariant, now covered by tests), and SCIM failures after committed
   membership writes still trigger the refresh. Existing ACL hash/version
   semantics are unchanged.
+- Isolated library test database setup from repository dotenv settings
+  (issue #366): `handlers::auth` login tests no longer dotenv-load, read
+  `DATABASE_URL` only from the explicitly supplied environment, refuse
+  non-disposable destinations (anything but `rustshare_test`/`rustshare_test_*`
+  on loopback, and only plain `postgres`/`postgresql` URLs without connection
+  parameters such as `?host=`/`?dbname=` that could redirect the connection)
+  before connecting, and are `#[ignore]`-gated so the documented
+  database-free library baseline passes without a live PostgreSQL. The same
+  disposable-destination guard is shared with the integration-test harness,
+  and child-process regression tests pin the isolation (they fail if dotenv
+  loading is restored). This also removes the process-wide `.env` pollution
+  that made the chat_identity relay-rejection test fail environmentally.
+  Refusal messages redact all connection-query contents, including malformed
+  credential-shaped keys; the parity probe checks for imports in the same
+  child process that exercises auth database setup.
 
 ### Changed
 

@@ -10,6 +10,8 @@ pub mod buzz_observation;
 pub mod calendar_import_worker;
 pub mod calendar_sync_worker;
 pub mod config;
+#[cfg(test)]
+mod dotenv_isolation;
 pub mod handlers;
 pub mod mail_import_worker;
 pub mod memory_projection;
@@ -28,6 +30,8 @@ pub mod retention;
 pub mod routes;
 pub mod services;
 pub mod state;
+#[doc(hidden)]
+pub mod test_guard;
 pub mod trash_cleanup;
 pub mod user_disable;
 pub mod web_session;

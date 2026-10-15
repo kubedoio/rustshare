@@ -204,31 +204,14 @@ fn assert_disposable_test_destination() {
     // Match the harness's dotenv overlay before reading the environment.
     dotenvy::dotenv().ok();
 
-    // DATABASE_URL: loopback host and a rustshare_test[_...] database name.
+    // DATABASE_URL: loopback host and a rustshare_test[_...] database name
+    // (shared guard, same rules as the library DB-backed tests).
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string());
-    let parsed = url::Url::parse(&database_url).unwrap_or_else(|error| {
-        panic!(
-            "refusing to run share_acl_propagation tests: DATABASE_URL \
-             ({database_url:?}) is not a valid URL: {error}"
-        )
-    });
-    let host = parsed.host_str().unwrap_or_default();
-    if !matches!(host, "127.0.0.1" | "localhost" | "::1") {
-        panic!(
-            "refusing to run share_acl_propagation tests: DATABASE_URL host \
-             {host:?} is not loopback (expected 127.0.0.1, localhost, or ::1); \
-             point DATABASE_URL at the disposable rustshare_test database"
-        );
-    }
-    let database_name = parsed.path().trim_start_matches('/');
-    if database_name != "rustshare_test" && !database_name.starts_with("rustshare_test_") {
-        panic!(
-            "refusing to run share_acl_propagation tests: DATABASE_URL database \
-             {database_name:?} is not disposable (expected rustshare_test or \
-             rustshare_test_*); the harness would otherwise target the \
-             application database"
-        );
+    if let Err(message) =
+        rustshare_server::test_guard::validate_disposable_database_url(&database_url)
+    {
+        panic!("refusing to run share_acl_propagation tests: {message}");
     }
 
     // S3 endpoint: loopback only (S3_ENDPOINT preferred over RUSTFS_ENDPOINT,
