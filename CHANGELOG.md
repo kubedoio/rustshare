@@ -165,6 +165,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and logs the effective OAuth redirect URIs so operators can register them
   verbatim (issue #315 QA follow-up).
 
+### Fixed
+
+- Group membership changes now refresh the AI index ACL for every resource
+  shared with the group (AR-04, issue #367). Admin member add/remove, admin
+  group deletion, and SCIM v1/v2 group provisioning, PUT replacement, PATCH,
+  and deletion all dispatch one shared best-effort refresh per affected group.
+  Refresh targets are the active shares (`recipient_group_id`,
+  `revoked_at IS NULL`) and each share's own tenant scopes the refresh, so
+  legacy nil-tenant groups with real-tenant shares are indexed again; the
+  previous group-tenant filter silently skipped them. Share/resource tenant
+  equality is validated before any content is read or indexed (file and
+  folder targets), the refresh context is the resource owner rather than the
+  historical share creator, and group deletion captures its targets while
+  holding the group row lock, dispatching only after a successful commit so a
+  rolled-back deletion never refreshes. Revoked or expired grants no longer
+  appear in rebuilt projections, and SCIM failures after committed membership
+  writes still trigger the refresh. Existing ACL hash/version semantics are
+  unchanged.
+
 ### Changed
 
 - Self-service security-event responses no longer expose free-form session

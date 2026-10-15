@@ -16,6 +16,7 @@ use super::{
 };
 use crate::{
     handlers::{AdminUser, AppError},
+    services::note_service,
     AppState,
 };
 
@@ -409,6 +410,13 @@ pub async fn delete_group(
     .map_err(db_error)?
     .ok_or_else(|| admin_not_found("Group not found"))?;
 
+    // AR-04: capture the refresh targets while the group row lock is held, so
+    // a concurrent share creation cannot commit a grant the capture misses.
+    // The shares themselves cascade away on the delete below.
+    let targets = note_service::capture_group_share_targets(&mut tx, group_id)
+        .await
+        .map_err(db_error)?;
+
     // CASCADE on group_members handles membership rows
     sqlx::query!("DELETE FROM user_groups WHERE id = $1", group_id)
         .execute(&mut *tx)
@@ -426,6 +434,10 @@ pub async fn delete_group(
     .await
     .map_err(db_error)?;
     tx.commit().await.map_err(db_error)?;
+
+    // Best-effort refresh of the captured targets, now that the deletion has
+    // committed and the group principal is gone from the rebuilt projection.
+    note_service::dispatch_share_target_acl_refresh(Arc::clone(&state.note_service), targets);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -505,12 +517,7 @@ pub async fn add_member(
     tx.commit().await.map_err(db_error)?;
 
     // Best-effort ACL refresh so newly added member can search group-shared notes.
-    let note_service = Arc::clone(&state.note_service);
-    tokio::spawn(async move {
-        note_service
-            .refresh_index_acl_for_group(group_id, tenant_id)
-            .await;
-    });
+    note_service::dispatch_group_index_acl_refresh(Arc::clone(&state.note_service), group_id);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -585,12 +592,7 @@ pub async fn remove_member(
     tx.commit().await.map_err(db_error)?;
 
     // Best-effort ACL refresh so removed member stops seeing group-shared notes in search.
-    let note_service = Arc::clone(&state.note_service);
-    tokio::spawn(async move {
-        note_service
-            .refresh_index_acl_for_group(group_id, tenant_id)
-            .await;
-    });
+    note_service::dispatch_group_index_acl_refresh(Arc::clone(&state.note_service), group_id);
 
     Ok(StatusCode::NO_CONTENT)
 }

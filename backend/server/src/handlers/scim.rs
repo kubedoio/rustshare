@@ -279,7 +279,37 @@ pub async fn provision_group(
     let scope = scim_scope_or_error()?;
     let service = ScimService::new(repository, scope, crate::default_storage_quota_bytes());
 
-    match service.provision_group(scim_group).await {
+    // Keep the directory key: on a failure after committed writes the group
+    // is re-resolved so the membership mutation still gets its ACL refresh.
+    let external_id = scim_group.external_id.clone();
+    let outcome = service.provision_group(scim_group).await;
+
+    // AR-04: SCIM commits membership writes statement by statement, so a
+    // failure can follow committed changes. Refresh the group when the
+    // provision succeeded, and — because the group row itself proves a
+    // mutation reached the directory — also when it failed after the group
+    // was created or updated. Rejected requests (validation, unauthorized,
+    // foreign organization) never resolve a group and dispatch nothing.
+    let affected_group = match &outcome {
+        Ok(result) => Some(result.id),
+        Err(_) => {
+            let repository = Arc::new(ScimRepositoryImpl::new(state.db_pool.clone()));
+            repository
+                .find_group_by_external_id(scope, &external_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|group| group.id)
+        }
+    };
+    if let Some(group_id) = affected_group {
+        crate::services::note_service::dispatch_group_index_acl_refresh(
+            Arc::clone(&state.note_service),
+            group_id,
+        );
+    }
+
+    match outcome {
         Ok(result) => {
             let status = match result.action {
                 rustshare_core::services::ScimAction::Created => StatusCode::CREATED,
@@ -340,30 +370,57 @@ pub async fn delete_group(
         .map(|s| s.into_owned())
         .unwrap_or(external_id);
 
-    let repository = Arc::new(ScimRepositoryImpl::new(state.db_pool.clone()));
     let scope = scim_scope_or_error()?;
-    let service = ScimService::new(repository, scope, crate::default_storage_quota_bytes());
 
-    match service.delete_group(&external_id).await {
-        Ok(()) => Ok(StatusCode::NO_CONTENT),
-        Err(rustshare_core::services::ScimError::GroupNotFound(_)) => Err((
+    // AR-04: lock, capture, and delete in one transaction (same observable
+    // semantics as `ScimService::delete_group`, scoped to the organization).
+    // The row lock serializes concurrent share creation: its foreign-key
+    // check blocks until this transaction commits (group gone, insert
+    // rejected) or rolls back. The refresh of the captured targets is
+    // dispatched only after a successful commit.
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| scim_internal_error("begin transaction", e))?;
+    let group_id = sqlx::query_scalar!(
+        "SELECT id FROM user_groups WHERE external_id = $1 AND tenant_id = $2 FOR UPDATE",
+        external_id,
+        scope
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| scim_internal_error("lock group", e))?;
+    let Some(group_id) = group_id else {
+        return Err((
             StatusCode::NOT_FOUND,
             Json(json!({
                 "error": "Not Found",
                 "detail": format!("Group with external_id '{}' not found", external_id)
             })),
-        )),
-        Err(e) => {
-            tracing::error!("SCIM delete_group error: {:?}", e);
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "Internal server error",
-                    "detail": e.to_string()
-                })),
-            ))
-        }
-    }
+        ));
+    };
+    let targets = crate::services::note_service::capture_group_share_targets(&mut tx, group_id)
+        .await
+        .map_err(|e| scim_internal_error("capture group share targets", e))?;
+    sqlx::query!(
+        "DELETE FROM user_groups WHERE external_id = $1 AND tenant_id = $2",
+        external_id,
+        scope
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| scim_internal_error("delete group", e))?;
+    tx.commit()
+        .await
+        .map_err(|e| scim_internal_error("commit group deletion", e))?;
+
+    crate::services::note_service::dispatch_share_target_acl_refresh(
+        Arc::clone(&state.note_service),
+        targets,
+    );
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------
@@ -702,6 +759,18 @@ impl ScimRepository for ScimRepositoryImpl {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Map an internal SCIM group-deletion failure to a generic 500 response.
+fn scim_internal_error(step: &str, error: sqlx::Error) -> (StatusCode, Json<serde_json::Value>) {
+    tracing::error!("SCIM group deletion failed during {}: {:?}", step, error);
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "error": "Internal server error",
+            "detail": format!("Failed to delete group during {}", step)
+        })),
+    )
+}
 
 #[derive(sqlx::FromRow)]
 struct GroupRecordRow {

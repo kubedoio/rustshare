@@ -1119,13 +1119,34 @@ pub async fn create_group(
         Err(response) => return *response,
     };
     let service = ScimV2Service::new(
-        repository,
+        repository.clone(),
         scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
 
-    match service.create_group(group).await {
+    // AR-04: membership writes commit per statement; on a failure the group
+    // is re-resolved by externalId so committed changes still get their ACL
+    // refresh. Rejected requests resolve no group and dispatch nothing.
+    let external_id = group.external_id.clone();
+    let outcome = service.create_group(group).await;
+    let affected_group = match &outcome {
+        Ok(created) => created.id.clone(),
+        Err(_) => repository
+            .get_group_by_external_id(scope, external_id.as_deref().unwrap_or_default())
+            .await
+            .ok()
+            .flatten()
+            .map(|record| record.id.to_string()),
+    };
+    if let Some(group_id) = affected_group.and_then(|id| Uuid::parse_str(&id).ok()) {
+        crate::services::note_service::dispatch_group_index_acl_refresh(
+            Arc::clone(&state.note_service),
+            group_id,
+        );
+    }
+
+    match outcome {
         Ok(group) => scim_json_response(StatusCode::CREATED, group),
         Err(e) => scim_error_response(e),
     }
@@ -1156,7 +1177,32 @@ pub async fn update_group(
         base_url,
     );
 
-    match service.update_group(id, group).await {
+    // AR-04: PUT replaces membership statement by statement; a failure can
+    // follow committed writes, so a group that still resolves gets the ACL
+    // refresh even on the error path. A group that does not resolve was
+    // never touched and dispatches nothing.
+    let outcome = service.update_group(id, group).await;
+    if let Err(error) = &outcome {
+        if service.get_group(id).await.is_err() {
+            tracing::debug!(
+                group_id = %id,
+                error = %error,
+                "SCIM v2 group replacement failed before any committed write; skipping ACL refresh"
+            );
+        } else {
+            crate::services::note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&state.note_service),
+                id,
+            );
+        }
+    } else {
+        crate::services::note_service::dispatch_group_index_acl_refresh(
+            Arc::clone(&state.note_service),
+            id,
+        );
+    }
+
+    match outcome {
         Ok(group) => scim_json_response(StatusCode::OK, group),
         Err(e) => scim_error_response(e),
     }
@@ -1187,7 +1233,29 @@ pub async fn patch_group(
         base_url,
     );
 
-    match service.patch_group(id, &patch.operations).await {
+    // AR-04: PATCH mutates membership statement by statement; refresh when the
+    // group resolves even if a later step failed (see `update_group`).
+    let outcome = service.patch_group(id, &patch.operations).await;
+    let mut dispatch = outcome.is_ok();
+    if let Err(error) = &outcome {
+        if service.get_group(id).await.is_ok() {
+            dispatch = true;
+        } else {
+            tracing::debug!(
+                group_id = %id,
+                error = %error,
+                "SCIM v2 group patch failed before any committed write; skipping ACL refresh"
+            );
+        }
+    }
+    if dispatch {
+        crate::services::note_service::dispatch_group_index_acl_refresh(
+            Arc::clone(&state.note_service),
+            id,
+        );
+    }
+
+    match outcome {
         Ok(group) => scim_json_response(StatusCode::OK, group),
         Err(e) => scim_error_response(e),
     }
@@ -1204,23 +1272,58 @@ pub async fn delete_group(
         return scim_json_response(StatusCode::UNAUTHORIZED, err);
     }
 
-    let base_url = get_base_url(&headers);
-    let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
     let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
         Err(response) => return *response,
     };
-    let service = ScimV2Service::new(
-        repository,
-        scope,
-        crate::default_storage_quota_bytes(),
-        base_url,
+
+    // AR-04: lock, capture, and delete in one transaction (same observable
+    // semantics as `ScimV2Service::delete_group`, scoped to the organization).
+    // The row lock serializes concurrent share creation, and the refresh of
+    // the captured targets is dispatched only after a successful commit.
+    let mut tx = match state.db_pool.begin().await {
+        Ok(tx) => tx,
+        Err(error) => return scim_error_response(ScimV2Error::Database(error)),
+    };
+    let locked = sqlx::query_scalar!(
+        "SELECT id FROM user_groups WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
+        id,
+        scope
+    )
+    .fetch_optional(&mut *tx)
+    .await;
+    let locked = match locked {
+        Ok(locked) => locked,
+        Err(error) => return scim_error_response(ScimV2Error::Database(error)),
+    };
+    if locked.is_none() {
+        return scim_error_response(ScimV2Error::GroupNotFound(id.to_string()));
+    }
+    let targets =
+        match crate::services::note_service::capture_group_share_targets(&mut tx, id).await {
+            Ok(targets) => targets,
+            Err(error) => return scim_error_response(ScimV2Error::Database(error)),
+        };
+    let delete_result = sqlx::query!(
+        "DELETE FROM user_groups WHERE id = $1 AND tenant_id = $2",
+        id,
+        scope
+    )
+    .execute(&mut *tx)
+    .await;
+    if let Err(error) = delete_result {
+        return scim_error_response(ScimV2Error::Database(error));
+    }
+    if let Err(error) = tx.commit().await {
+        return scim_error_response(ScimV2Error::Database(error));
+    }
+
+    crate::services::note_service::dispatch_share_target_acl_refresh(
+        Arc::clone(&state.note_service),
+        targets,
     );
 
-    match service.delete_group(id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => scim_error_response(e),
-    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 // ---------------------------------------------------------------------------
