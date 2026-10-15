@@ -44,6 +44,80 @@ impl ScimV2Error {
     }
 }
 
+/// A SCIM v2 group write failure tagged with whether any statement committed
+/// before the error was raised.
+///
+/// Group writes commit per statement, so a failure can follow committed
+/// changes (e.g. the group INSERT succeeded and a later member lookup
+/// failed). Callers that act after a failure — such as the best-effort index
+/// ACL refresh — must only run when `writes_committed` is true; a rejection
+/// that committed nothing must not dispatch follow-up work.
+#[derive(Debug)]
+pub struct ScimV2WriteError {
+    pub error: ScimV2Error,
+    pub writes_committed: bool,
+}
+
+impl ScimV2WriteError {
+    fn pre_write(error: ScimV2Error) -> Self {
+        Self {
+            error,
+            writes_committed: false,
+        }
+    }
+
+    fn post_commit(error: ScimV2Error) -> Self {
+        Self {
+            error,
+            writes_committed: true,
+        }
+    }
+}
+
+impl std::fmt::Display for ScimV2WriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+impl std::error::Error for ScimV2WriteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+/// Converts an error through the blanket `From` impls only via `?` in
+/// **pre-write** positions — before the first statement that can commit.
+/// Once any write has committed, errors must be constructed explicitly with
+/// `writes_committed: true` (see [`ScimV2WriteError::post_commit`]); a `?`
+/// added after a committing statement would silently default to
+/// `writes_committed: false` and wrongly skip post-failure refresh.
+impl From<ScimV2Error> for ScimV2WriteError {
+    // Conservative default: an unclassified error is treated as pre-write.
+    // Only apply `?` via this conversion BEFORE the first committing
+    // statement; errors after any committed write must be constructed
+    // explicitly with writes_committed: true.
+    fn from(error: ScimV2Error) -> Self {
+        Self::pre_write(error)
+    }
+}
+
+/// Converts an error through the blanket `From` impls only via `?` in
+/// **pre-write** positions — before the first statement that can commit.
+/// Once any write has committed, errors must be constructed explicitly with
+/// `writes_committed: true` (see [`ScimV2WriteError::post_commit`]); a `?`
+/// added after a committing statement would silently default to
+/// `writes_committed: false` and wrongly skip post-failure refresh.
+impl From<sqlx::Error> for ScimV2WriteError {
+    // Conservative default: an unclassified error is treated as pre-write.
+    // Only apply `?` via this conversion BEFORE the first committing
+    // statement; errors after any committed write must be constructed
+    // explicitly with writes_committed: true.
+    fn from(error: sqlx::Error) -> Self {
+        Self::pre_write(error.into())
+    }
+}
+
 /// SCIM v2 Name complex type (RFC 7643 Section 4.1.1).
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ScimV2Name {
@@ -1030,11 +1104,11 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
     }
 
     /// Create a new group.
-    pub async fn create_group(&self, group: ScimV2Group) -> Result<ScimV2Group, ScimV2Error> {
+    pub async fn create_group(&self, group: ScimV2Group) -> Result<ScimV2Group, ScimV2WriteError> {
         if group.display_name.is_empty() {
-            return Err(ScimV2Error::InvalidRequest(
+            return Err(ScimV2WriteError::pre_write(ScimV2Error::InvalidRequest(
                 "displayName is required".to_string(),
-            ));
+            )));
         }
 
         // Check for existing group by external_id within the organization
@@ -1052,9 +1126,9 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
             .repository
             .create_group(self.tenant_scope, &group)
             .await
-            .map_err(|e| directory_conflict("group", e))?;
+            .map_err(|e| ScimV2WriteError::pre_write(directory_conflict("group", e)))?;
 
-        // Add members if provided
+        // The group INSERT is committed from here on.
         if let Some(ref members) = group.members {
             for member in members {
                 if let Ok(user_id) = Uuid::parse_str(&member.value) {
@@ -1070,27 +1144,33 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
                     }
                 } else {
                     // Try to find by external_id
-                    if let Some(user_id) = self
+                    match self
                         .repository
                         .find_user_id_by_external_id(self.tenant_scope, &member.value)
-                        .await?
+                        .await
                     {
-                        if let Err(e) = self
-                            .repository
-                            .add_group_member(self.tenant_scope, id, user_id)
-                            .await
-                        {
-                            warn!(
-                                "Failed to add member {} to group {}: {}",
-                                member.value, id, e
-                            );
+                        Ok(Some(user_id)) => {
+                            if let Err(e) = self
+                                .repository
+                                .add_group_member(self.tenant_scope, id, user_id)
+                                .await
+                            {
+                                warn!(
+                                    "Failed to add member {} to group {}: {}",
+                                    member.value, id, e
+                                );
+                            }
                         }
+                        Ok(None) => {}
+                        Err(e) => return Err(ScimV2WriteError::post_commit(e.into())),
                     }
                 }
             }
         }
 
-        self.get_group(id).await
+        self.get_group(id)
+            .await
+            .map_err(ScimV2WriteError::post_commit)
     }
 
     /// Update a group (full replacement).
@@ -1098,25 +1178,29 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
         &self,
         id: Uuid,
         group: ScimV2Group,
-    ) -> Result<ScimV2Group, ScimV2Error> {
+    ) -> Result<ScimV2Group, ScimV2WriteError> {
         if self
             .repository
             .get_group(self.tenant_scope, id)
             .await?
             .is_none()
         {
-            return Err(ScimV2Error::GroupNotFound(id.to_string()));
+            return Err(ScimV2WriteError::pre_write(ScimV2Error::GroupNotFound(
+                id.to_string(),
+            )));
         }
 
+        // The rename is the first write; its failure commits nothing.
         self.repository
             .update_group(self.tenant_scope, id, &group)
             .await?;
 
-        // Sync members if provided
+        // The rename is committed from here on.
         if let Some(ref members) = group.members {
             self.repository
                 .clear_group_members(self.tenant_scope, id)
-                .await?;
+                .await
+                .map_err(|e| ScimV2WriteError::post_commit(e.into()))?;
 
             for member in members {
                 if let Ok(user_id) = Uuid::parse_str(&member.value) {
@@ -1132,27 +1216,33 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
                     }
                 } else {
                     // Try to find by external_id
-                    if let Some(user_id) = self
+                    match self
                         .repository
                         .find_user_id_by_external_id(self.tenant_scope, &member.value)
-                        .await?
+                        .await
                     {
-                        if let Err(e) = self
-                            .repository
-                            .add_group_member(self.tenant_scope, id, user_id)
-                            .await
-                        {
-                            warn!(
-                                "Failed to add member {} to group {}: {}",
-                                member.value, id, e
-                            );
+                        Ok(Some(user_id)) => {
+                            if let Err(e) = self
+                                .repository
+                                .add_group_member(self.tenant_scope, id, user_id)
+                                .await
+                            {
+                                warn!(
+                                    "Failed to add member {} to group {}: {}",
+                                    member.value, id, e
+                                );
+                            }
                         }
+                        Ok(None) => {}
+                        Err(e) => return Err(ScimV2WriteError::post_commit(e.into())),
                     }
                 }
             }
         }
 
-        self.get_group(id).await
+        self.get_group(id)
+            .await
+            .map_err(ScimV2WriteError::post_commit)
     }
 
     /// Patch a group (partial update, typically for membership changes).
@@ -1160,20 +1250,26 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
         &self,
         id: Uuid,
         operations: &[ScimPatchOperation],
-    ) -> Result<ScimV2Group, ScimV2Error> {
+    ) -> Result<ScimV2Group, ScimV2WriteError> {
         if self
             .repository
             .get_group(self.tenant_scope, id)
             .await?
             .is_none()
         {
-            return Err(ScimV2Error::GroupNotFound(id.to_string()));
+            return Err(ScimV2WriteError::pre_write(ScimV2Error::GroupNotFound(
+                id.to_string(),
+            )));
         }
 
+        // Member mutations inside the repository patch commit per statement;
+        // any failure there surfaces through the response lookup below.
         self.repository
             .patch_group(self.tenant_scope, id, operations)
             .await?;
-        self.get_group(id).await
+        self.get_group(id)
+            .await
+            .map_err(ScimV2WriteError::post_commit)
     }
 
     /// Delete a group.
