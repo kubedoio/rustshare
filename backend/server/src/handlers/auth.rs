@@ -438,6 +438,11 @@ mod tests {
     // poison later unscoped lookups — the case-insensitive ambiguity check
     // counts every matching row, so a single leftover turns a one-off flake
     // into a deterministic failure.
+    //
+    // Every DB-backed login test is `#[ignore]`-gated: the documented library
+    // baseline (`cargo test --lib` with `SQLX_OFFLINE=true`) is database-free,
+    // and these tests connect to a live disposable PostgreSQL instead (run
+    // with `-- --ignored`).
 
     #[test]
     fn non_empty_env_value_treats_blank_values_as_unset() {
@@ -452,11 +457,13 @@ mod tests {
     }
 
     async fn test_db_pool() -> sqlx::PgPool {
-        // Load a local .env file if present, then require DATABASE_URL to be set.
-        // Avoids checking hardcoded credentials into source control.
-        dotenvy::dotenv().ok();
-        let database_url = std::env::var("DATABASE_URL")
-            .expect("DATABASE_URL must be set for tests (or via a .env file)");
+        // Read the test database URL only from the explicitly supplied
+        // environment — never from a .env file (issue #366) — and refuse
+        // non-disposable destinations before connecting.
+        let database_url =
+            crate::test_guard::disposable_database_url_from_env().unwrap_or_else(|message| {
+                panic!("refusing to run database-backed login tests: {message}")
+            });
 
         PgPoolOptions::new()
             .max_connections(1)
@@ -504,6 +511,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL (rustshare_test on loopback) via DATABASE_URL; run with -- --ignored"]
     async fn login_scopes_to_tenant_when_provided() {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
@@ -534,6 +542,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL (rustshare_test on loopback) via DATABASE_URL; run with -- --ignored"]
     async fn login_without_tenant_id_still_works() {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
@@ -559,6 +568,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL (rustshare_test on loopback) via DATABASE_URL; run with -- --ignored"]
     async fn login_with_wrong_tenant_id_returns_unauthorized() {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
@@ -588,6 +598,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL (rustshare_test on loopback) via DATABASE_URL; run with -- --ignored"]
     async fn login_without_tenant_id_rejects_ambiguous_email() {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
@@ -619,6 +630,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL (rustshare_test on loopback) via DATABASE_URL; run with -- --ignored"]
     async fn login_without_tenant_id_rejects_case_insensitive_ambiguous_email() {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
@@ -654,6 +666,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL (rustshare_test on loopback) via DATABASE_URL; run with -- --ignored"]
     async fn login_with_tenant_id_is_case_insensitive() {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
@@ -681,6 +694,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL (rustshare_test on loopback) via DATABASE_URL; run with -- --ignored"]
     async fn login_timing_attack_resistance() {
         let pool = test_db_pool().await;
         let metadata_store = MetadataStore::new(pool.clone());
