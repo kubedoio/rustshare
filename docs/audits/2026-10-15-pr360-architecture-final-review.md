@@ -205,6 +205,15 @@ evidence harness unchanged by this correction. Thus the correction is Markdown-o
 the full PR additionally contains that historical synthetic SQL evidence artifact.
 No production Rust, migration, schema or runtime configuration differs from main.
 
+Publication outcome: the existing branch and PR #360 were updated, with signed
+correction commit `86675e0a` and main reconciliation `39d0d02d`; later signed review
+clarifications preserve the original narrow approvals. The final immutable head
+SHA is supplied with this report and is visible on PR #360. At the first live
+check after publication, DCO passed; Terminology & Trademark Scan and Plugin Unit
+Tests were in progress. No all-green result is claimed. The `gh pr edit` command
+hit GitHub's retired classic-projects GraphQL field; the REST pull-request update
+succeeded. The PR remains OPEN, unmerged, with Proposed ADRs.
+
 Changed files in the correction:
 
 - `CHANGELOG.md`, `README.md`.
