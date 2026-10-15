@@ -2,6 +2,12 @@
 
 **Open-source sovereign business memory workspace for durable team knowledge, files, notes, Chat, and permission-aware AI workflows.**
 
+Elembra's target architecture is a small Platform Core with independently owned Files, Notes, Mail,
+Chat (powered by Buzz), Memory and Agents Applications. See the [platform architecture](docs/architecture/elembra-platform.md).
+The [accepted institutional architecture](docs/adr/0040-organization-tenant-and-workspace-identity.md)
+retains tenant isolation while deferring independent collaboration workspaces; current workspace
+fields are compatibility aliases and do not provide workspace membership administration.
+
 > The GitHub repository is still named `rustshare`; **Elembra** is the current product and architecture name.
 
 > [!NOTE]

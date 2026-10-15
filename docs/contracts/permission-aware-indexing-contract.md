@@ -6,6 +6,14 @@
 
 ## Summary
 
+### Accepted amendment, 2026-10-15 — explicit architecture approval
+
+This explicitly approved amendment records the ADR-0040/0041 clarification; the original text below is retained with this clarification governing its interpretation. `workspace:<uuid>` is reserved vocabulary, not evidence of implemented independent workspace membership. Current 1:1 identifiers are compatibility only. A future workspace grant requires an explicit resource-owning Application contract; tenant or workspace membership never creates a content grant implicitly.
+
+The Files/Notes resolver authorizes its own resource family. Other Applications, including Buzz Chat, retain their own source authorization and signed communication contracts. Memory and Agents must reauthorize the ResourceRef source immediately before protected content is materialized; a candidate hit or general Agent execution permission is insufficient. Projection refresh improves discoverability but never grants access. Minimum-ACL-version rejection applies only when callers supply minimum versions; production paths currently rely on live source reauthorization and must not be described as protected by an armed version floor without evidence.
+
+The [post-hotfix supplement](../audits/2026-10-15-phase4-0-post-hotfix-verification.md) distinguishes historical findings from merged source changes. Publication and explicit unpublication require owner/Admin resource authority; Edit alone is insufficient. The documented Edit-sidecar availability residual remains a security-owner acceptance gate.
+
 This document defines the canonical permission model for AI indexing and retrieval in RustShare. It is the authoritative contract that all index implementations and retrieval paths must satisfy.
 
 The fundamental guarantee is:
