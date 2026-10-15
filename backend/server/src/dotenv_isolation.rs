@@ -277,6 +277,16 @@ fn guard_rejects_connection_parameter_redirects() {
         !error.contains(DECOY_PASSWORD),
         "leaked credential: {error}"
     );
+
+    // Delimiter-only tokens are not plausible parameter names either.
+    let error = crate::test_guard::validate_disposable_database_url(
+        "postgres://u:p@127.0.0.1:15432/rustshare_test?___=1&=",
+    )
+    .expect_err("connection parameters must be refused");
+    assert!(
+        error.contains("<unnamed>"),
+        "delimiter-only names must be redacted: {error}"
+    );
 }
 
 #[test]

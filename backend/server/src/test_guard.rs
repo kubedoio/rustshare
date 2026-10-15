@@ -87,9 +87,11 @@ pub fn validate_disposable_database_url(database_url: &str) -> Result<(), String
 }
 
 /// Whether `name` is a plausible connection-parameter name, so it can be
-/// echoed in a refusal message without risking a credential.
+/// echoed in a refusal message without risking a credential. Requires at
+/// least one ASCII alphanumeric character.
 fn is_parameter_name(name: &str) -> bool {
     !name.is_empty()
+        && name.chars().any(|c| c.is_ascii_alphanumeric())
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '[' | ']'))
