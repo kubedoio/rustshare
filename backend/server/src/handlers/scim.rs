@@ -9,7 +9,7 @@ use axum::{
     Json,
 };
 use axum_extra::headers::{authorization::Bearer, Authorization, HeaderMapExt};
-use rustshare_core::services::{ScimError, ScimGroup, ScimService, ScimUser};
+use rustshare_core::services::{ScimGroup, ScimService, ScimUser};
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -286,13 +286,12 @@ pub async fn provision_group(
 
     // AR-04: SCIM commits membership writes statement by statement, so a
     // failure can follow committed changes. Refresh the group when the
-    // provision succeeded, and — because the group row itself proves a
-    // mutation reached the directory — also when it failed after the group
-    // was created or updated. Rejected requests (validation, unauthorized,
-    // foreign organization) never resolve a group and dispatch nothing.
+    // provision succeeded or when it failed after writes committed; a
+    // rejection that committed nothing must not dispatch (issue #367). The
+    // service reports the boundary explicitly via `writes_committed`.
     let affected_group = match &outcome {
         Ok(result) => Some(result.id),
-        Err(provision_error) => {
+        Err(write_error) if write_error.writes_committed => {
             let repository = Arc::new(ScimRepositoryImpl::new(state.db_pool.clone()));
             match repository
                 .find_group_by_external_id(scope, &external_id)
@@ -300,39 +299,30 @@ pub async fn provision_group(
             {
                 Ok(Some(group)) => Some(group.id),
                 Ok(None) => {
-                    // Pre-write validation and directory collisions write
-                    // nothing, so a missing group afterwards is the routine
-                    // rejected-request case, not post-commit ambiguity.
-                    // Other failures may have committed earlier statements
-                    // (the create branch commits the group before resolving
-                    // members) and stay at warn.
-                    if matches!(
-                        provision_error,
-                        ScimError::InvalidRequest(_) | ScimError::Conflict(_)
-                    ) {
-                        tracing::debug!(
-                            external_id = %external_id,
-                            error = %provision_error,
-                            "SCIM provision rejected before any write; skipping ACL refresh"
-                        );
-                    } else {
-                        tracing::warn!(
-                            external_id = %external_id,
-                            error = %provision_error,
-                            "SCIM provision failed and re-resolved no group; skipping ACL refresh"
-                        );
-                    }
+                    tracing::warn!(
+                        external_id = %external_id,
+                        error = %write_error.error,
+                        "SCIM provision failed after committed writes but re-resolved no group; skipping ACL refresh"
+                    );
                     None
                 }
                 Err(resolution_error) => {
                     tracing::warn!(
                         external_id = %external_id,
                         error = %resolution_error,
-                        "SCIM provision failed and group re-resolution errored; skipping ACL refresh"
+                        "SCIM provision failed after committed writes and group re-resolution errored; skipping ACL refresh"
                     );
                     None
                 }
             }
+        }
+        Err(write_error) => {
+            tracing::debug!(
+                external_id = %external_id,
+                error = %write_error.error,
+                "SCIM provision rejected before any write; skipping ACL refresh"
+            );
+            None
         }
     };
     if let Some(group_id) = affected_group {
@@ -342,7 +332,7 @@ pub async fn provision_group(
         );
     }
 
-    match outcome {
+    match outcome.map_err(|write_error| write_error.error) {
         Ok(result) => {
             let status = match result.action {
                 rustshare_core::services::ScimAction::Created => StatusCode::CREATED,

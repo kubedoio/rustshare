@@ -26,6 +26,61 @@ pub enum ScimError {
     Conflict(String),
 }
 
+/// A SCIM group write failure tagged with whether any statement committed
+/// before the error was raised.
+///
+/// Group writes commit per statement, so a failure can follow committed
+/// changes (e.g. the group INSERT succeeded and a later member lookup
+/// failed). Callers that act after a failure — such as the best-effort index
+/// ACL refresh — must only run when `writes_committed` is true; a rejection
+/// that committed nothing must not dispatch follow-up work.
+#[derive(Debug)]
+pub struct ScimWriteError {
+    pub error: ScimError,
+    pub writes_committed: bool,
+}
+
+impl ScimWriteError {
+    fn pre_write(error: ScimError) -> Self {
+        Self {
+            error,
+            writes_committed: false,
+        }
+    }
+
+    fn post_commit(error: ScimError) -> Self {
+        Self {
+            error,
+            writes_committed: true,
+        }
+    }
+}
+
+impl std::fmt::Display for ScimWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+impl std::error::Error for ScimWriteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+impl From<ScimError> for ScimWriteError {
+    // Conservative default: an unclassified error is treated as pre-write.
+    fn from(error: ScimError) -> Self {
+        Self::pre_write(error)
+    }
+}
+
+impl From<sqlx::Error> for ScimWriteError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::pre_write(error.into())
+    }
+}
+
 /// SCIM Name complex type.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScimName {
@@ -400,7 +455,7 @@ impl<R: ScimRepository> ScimService<R> {
     pub async fn provision_group(
         &self,
         scim_group: ScimGroup,
-    ) -> Result<ScimGroupResult, ScimError> {
+    ) -> Result<ScimGroupResult, ScimWriteError> {
         debug!("Provisioning SCIM group: {}", scim_group.external_id);
 
         let existing = self
@@ -416,6 +471,7 @@ impl<R: ScimRepository> ScimService<R> {
                     scim_group.external_id, group.id
                 );
 
+                // The rename is the first write; its failure commits nothing.
                 self.repository
                     .update_group(
                         self.tenant_scope,
@@ -424,7 +480,7 @@ impl<R: ScimRepository> ScimService<R> {
                     )
                     .await?;
 
-                // Sync members if provided
+                // The rename is committed from here on.
                 if let Some(members) = scim_group.members {
                     self.sync_group_members(group.id, members).await?;
                 }
@@ -447,17 +503,17 @@ impl<R: ScimRepository> ScimService<R> {
                         &scim_group.display_name,
                     )
                     .await
-                    .map_err(|e| directory_conflict("group", e))?;
+                    .map_err(|e| ScimWriteError::pre_write(directory_conflict("group", e)))?;
 
-                // Add members if provided
+                // The group INSERT is committed from here on.
                 if let Some(members) = scim_group.members {
                     for member in members {
                         match self
                             .repository
                             .find_user_id_by_external_id(self.tenant_scope, &member.value)
-                            .await?
+                            .await
                         {
-                            Some(user_id) => {
+                            Ok(Some(user_id)) => {
                                 if let Err(e) = self
                                     .repository
                                     .add_group_member(self.tenant_scope, group_id, user_id)
@@ -469,12 +525,13 @@ impl<R: ScimRepository> ScimService<R> {
                                     );
                                 }
                             }
-                            None => {
+                            Ok(None) => {
                                 warn!(
                                     "Member {} not found when creating group {}",
                                     member.value, scim_group.external_id
                                 );
                             }
+                            Err(e) => return Err(ScimWriteError::post_commit(e.into())),
                         }
                     }
                 }
@@ -510,16 +567,21 @@ impl<R: ScimRepository> ScimService<R> {
     }
 
     /// Sync group members.
+    ///
+    /// Callers must have committed an earlier write in the same request (the
+    /// group rename); every error raised here is therefore tagged
+    /// `writes_committed`.
     async fn sync_group_members(
         &self,
         group_id: Uuid,
         members: Vec<ScimMember>,
-    ) -> Result<(), ScimError> {
+    ) -> Result<(), ScimWriteError> {
         // Get current members
         let current_members = self
             .repository
             .get_group_members(self.tenant_scope, group_id)
-            .await?;
+            .await
+            .map_err(|e| ScimWriteError::post_commit(e.into()))?;
         let current_set: std::collections::HashSet<_> = current_members.into_iter().collect();
 
         // Resolve new member IDs within the organization
@@ -528,12 +590,13 @@ impl<R: ScimRepository> ScimService<R> {
             match self
                 .repository
                 .find_user_id_by_external_id(self.tenant_scope, &member.value)
-                .await?
+                .await
             {
-                Some(user_id) => new_members.push(user_id),
-                None => {
+                Ok(Some(user_id)) => new_members.push(user_id),
+                Ok(None) => {
                     warn!("Member {} not found during group sync", member.value);
                 }
+                Err(e) => return Err(ScimWriteError::post_commit(e.into())),
             }
         }
         let new_set: std::collections::HashSet<_> = new_members.into_iter().collect();

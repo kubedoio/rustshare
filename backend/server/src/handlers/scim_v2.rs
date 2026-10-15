@@ -1125,52 +1125,45 @@ pub async fn create_group(
         base_url,
     );
 
-    // AR-04: membership writes commit per statement; on a failure the group
-    // is re-resolved by externalId so committed changes still get their ACL
-    // refresh. Rejected requests resolve no group and dispatch nothing.
+    // AR-04: membership writes commit per statement. On a failure, refresh
+    // only when writes committed (the service reports the boundary via
+    // `writes_committed`); a rejection that committed nothing must not
+    // dispatch (issue #367).
     let external_id = group.external_id.clone();
     let outcome = service.create_group(group).await;
     let affected_group = match &outcome {
         Ok(created) => created.id.clone(),
-        Err(create_error) => {
+        Err(write_error) if write_error.writes_committed => {
             match repository
                 .get_group_by_external_id(scope, external_id.as_deref().unwrap_or_default())
                 .await
             {
                 Ok(Some(record)) => Some(record.id.to_string()),
                 Ok(None) => {
-                    // Pre-write validation (empty displayName) and directory
-                    // collisions write nothing, so a missing group afterwards
-                    // is the routine rejected-request case, not post-commit
-                    // ambiguity. Other failures may have committed earlier
-                    // statements and stay at warn.
-                    if matches!(
-                        create_error,
-                        ScimV2Error::InvalidRequest(_) | ScimV2Error::Conflict(_)
-                    ) {
-                        tracing::debug!(
-                            external_id = external_id.as_deref().unwrap_or_default(),
-                            error = %create_error,
-                            "SCIM v2 group create rejected before any write; skipping ACL refresh"
-                        );
-                    } else {
-                        tracing::warn!(
-                            external_id = external_id.as_deref().unwrap_or_default(),
-                            error = %create_error,
-                            "SCIM v2 group create failed and re-resolved no group; skipping ACL refresh"
-                        );
-                    }
+                    tracing::warn!(
+                        external_id = external_id.as_deref().unwrap_or_default(),
+                        error = %write_error.error,
+                        "SCIM v2 group create failed after committed writes but re-resolved no group; skipping ACL refresh"
+                    );
                     None
                 }
                 Err(resolution_error) => {
                     tracing::warn!(
                         external_id = external_id.as_deref().unwrap_or_default(),
                         error = %resolution_error,
-                        "SCIM v2 group create failed and group re-resolution errored; skipping ACL refresh"
+                        "SCIM v2 group create failed after committed writes and group re-resolution errored; skipping ACL refresh"
                     );
                     None
                 }
             }
+        }
+        Err(write_error) => {
+            tracing::debug!(
+                external_id = external_id.as_deref().unwrap_or_default(),
+                error = %write_error.error,
+                "SCIM v2 group create rejected before any write; skipping ACL refresh"
+            );
+            None
         }
     };
     if let Some(group_id) = affected_group.and_then(|id| Uuid::parse_str(&id).ok()) {
@@ -1180,7 +1173,7 @@ pub async fn create_group(
         );
     }
 
-    match outcome {
+    match outcome.map_err(|write_error| write_error.error) {
         Ok(group) => scim_json_response(StatusCode::CREATED, group),
         Err(e) => scim_error_response(e),
     }
@@ -1211,45 +1204,36 @@ pub async fn update_group(
         base_url,
     );
 
-    // AR-04: PUT replaces membership statement by statement; a failure can
-    // follow committed writes, so a group that still resolves gets the ACL
-    // refresh even on the error path. A group that does not resolve was
-    // never touched and dispatches nothing.
+    // AR-04: PUT replaces membership statement by statement. Refresh on
+    // success or when the failure came after writes committed (the service
+    // reports the boundary via `writes_committed`); a rejection that
+    // committed nothing must not dispatch (issue #367). The group id is
+    // known, so no re-resolution is needed — a concurrent deletion leaves
+    // discovery with nothing to refresh.
     let outcome = service.update_group(id, group).await;
-    if let Err(error) = &outcome {
-        match service.get_group(id).await {
-            Ok(_) => {
-                crate::services::note_service::dispatch_group_index_acl_refresh(
-                    Arc::clone(&state.note_service),
-                    id,
-                );
-            }
-            // Routine 404: PUT raced an already-deleted group (common IdP
-            // deprovisioning race); nothing of ours remains to refresh.
-            Err(ScimV2Error::GroupNotFound(_)) => {
-                tracing::debug!(
-                    group_id = %id,
-                    error = %error,
-                    "SCIM v2 group replacement failed and the group does not exist; skipping ACL refresh"
-                );
-            }
-            Err(resolution_error) => {
-                tracing::warn!(
-                    group_id = %id,
-                    error = %error,
-                    resolution_error = %resolution_error,
-                    "SCIM v2 group replacement failed and group re-resolution errored; skipping ACL refresh"
-                );
-            }
+    match &outcome {
+        Ok(_) => {
+            crate::services::note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&state.note_service),
+                id,
+            );
         }
-    } else {
-        crate::services::note_service::dispatch_group_index_acl_refresh(
-            Arc::clone(&state.note_service),
-            id,
-        );
+        Err(write_error) if write_error.writes_committed => {
+            crate::services::note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&state.note_service),
+                id,
+            );
+        }
+        Err(write_error) => {
+            tracing::debug!(
+                group_id = %id,
+                error = %write_error.error,
+                "SCIM v2 group replacement rejected before any write; skipping ACL refresh"
+            );
+        }
     }
 
-    match outcome {
+    match outcome.map_err(|write_error| write_error.error) {
         Ok(group) => scim_json_response(StatusCode::OK, group),
         Err(e) => scim_error_response(e),
     }
@@ -1280,40 +1264,33 @@ pub async fn patch_group(
         base_url,
     );
 
-    // AR-04: PATCH mutates membership statement by statement; refresh when the
-    // group resolves even if a later step failed (see `update_group`).
+    // AR-04: PATCH mutates membership statement by statement. Refresh on
+    // success or when the failure came after writes committed (see
+    // `update_group`).
     let outcome = service.patch_group(id, &patch.operations).await;
-    let mut dispatch = outcome.is_ok();
-    if let Err(error) = &outcome {
-        match service.get_group(id).await {
-            Ok(_) => dispatch = true,
-            // Routine 404: PATCH raced an already-deleted group (common IdP
-            // deprovisioning race); nothing of ours remains to refresh.
-            Err(ScimV2Error::GroupNotFound(_)) => {
-                tracing::debug!(
-                    group_id = %id,
-                    error = %error,
-                    "SCIM v2 group patch failed and the group does not exist; skipping ACL refresh"
-                );
-            }
-            Err(resolution_error) => {
-                tracing::warn!(
-                    group_id = %id,
-                    error = %error,
-                    resolution_error = %resolution_error,
-                    "SCIM v2 group patch failed and group re-resolution errored; skipping ACL refresh"
-                );
-            }
+    match &outcome {
+        Ok(_) => {
+            crate::services::note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&state.note_service),
+                id,
+            );
+        }
+        Err(write_error) if write_error.writes_committed => {
+            crate::services::note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&state.note_service),
+                id,
+            );
+        }
+        Err(write_error) => {
+            tracing::debug!(
+                group_id = %id,
+                error = %write_error.error,
+                "SCIM v2 group patch rejected before any write; skipping ACL refresh"
+            );
         }
     }
-    if dispatch {
-        crate::services::note_service::dispatch_group_index_acl_refresh(
-            Arc::clone(&state.note_service),
-            id,
-        );
-    }
 
-    match outcome {
+    match outcome.map_err(|write_error| write_error.error) {
         Ok(group) => scim_json_response(StatusCode::OK, group),
         Err(e) => scim_error_response(e),
     }
