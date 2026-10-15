@@ -78,6 +78,13 @@ Acceptance requires candidate-revision artifacts, operator recovery rehearsal an
 
 ## Amendment, deferrals and human decisions
 
+Historical approval is preserved: the [project-owner decision of 2026-10-14](https://github.com/kubedoio/rustshare/pull/360#issuecomment-6174911062)
+approved original items 1 and 5 solely for AR-01/#364: organization=tenant, no additional
+identity tables at that stage, and global username/external-ID uniqueness. It did
+not approve permanent workspace/organization equivalence or these revised Option B
+evolution contracts. It authorized neither the remaining ADR package nor RLS,
+legacy migration, GC or deployment. That narrow approval is not revoked by this revision.
+
 ADR-0038 remains Proposed: preserve distinct-workspace intent, defer implementation under D2, and retain administration/content/revocation invariants. Accepted ADR-0031 and unified-search ADR-0036 retain history and behavior; no silent supersession is proposed.
 
 Maintainer and product owner must approve Option B as a bounded #330/#331/#333 workspace deferral before Gate A. #330 remains open for workspace membership requirements. If declined, implement Option A and reassess schedule. Security owner approves grant/recovery/revocation behavior; operator approves fresh identity and legacy impact. Until owners approve, all four Phase 4.0 ADRs remain Proposed; CI and review are not approval.
