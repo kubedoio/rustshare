@@ -1,6 +1,6 @@
 # Phase 4.0 — Institutional Implementation Roadmap
 
-Status: Proposed; correction 2026-10-15. Human approval required; no implementation or release authorization.
+Status: Accepted architecture and implementation sequence, explicitly approved on 2026-10-15. Implementation review and operational release gates remain mandatory.
 
 The 2026-10-13 sequence was planned against `1ec2ea7a887ee0ab79d7d8ce525a0e5a76e0109e`. Merged PRs #361/#362 now supply SCIM scope and owner/Admin publication checks. Preserve historical audits; do not refile their fixed observations as live defects. This replaces the fixed 19-PR scheduling plan with bounded outcomes; implementation may split a risky change, but numbering itself is not a dependency.
 
@@ -22,7 +22,7 @@ Each implementation PR requires DCO, tests, applicable security note and human r
 
 | Slice | Scope and dependencies | Required implementation/test evidence |
 |---|---|---|
-| P0 — Decision and candidate baseline | Approve pilot identity/resource/legacy and least-privilege contracts; pin latest main including #361/#362/#364/#365; approve bounded #330 workspace deferral. Optional RLS/maintenance decisions need separate later approvals | Owner sign-offs; post-hotfix source/test reconciliation; no claim of workspace completion |
+| P0 — Decision and candidate baseline | Architecture contracts and bounded #330 workspace deferral Accepted on 2026-10-15; pin latest main including #361/#362/#364/#365 and assign delivery owners. Optional RLS/maintenance activation needs separate later approvals | Recorded architecture acceptance; owner assignments; post-hotfix source/test reconciliation; no claim of workspace completion |
 | P1 — Identity, grants and audit foundation | Explicit tenant writes, credential drift, generated fresh identity; additive admin grants/bootstrap/recovery; tenant-attributable audit. Depends P0 | Tenant/nil creation negatives; operator/admin separation; grant/revoke/recovery; secret/content redaction. Audit must exist before exposing new mutations |
 | P2 — Groups and Files/Notes authorization | Tenant-bound membership/rosters, recipient validation, shared resolver within Files/Notes, effective explanations, index refresh parity. Depends P1 and read-only legacy inventory | Owner need not join recipient group; overlap/removal; cross-tenant non-disclosure; source/HTTP parity; stale search denies; #362 publication/unpublication regression |
 | P3 — Bulk lifecycle and administration UI | Bounded dry-run/apply/retry, invites, disable and safe re-enable policy, groups/grants/audit UI. Depends P1/P2 | #330 non-workspace scope; #331 retry/partial-failure tests; #332 scoped pagination/export; no routine SQL access |
@@ -61,10 +61,10 @@ Stable slice IDs P0–P5 replace old scheduling IDs. Crosswalk: AR-01/02 → P1 
 
 Source contains Files/Notes, owner-scoped Calendar, meeting-resource/decision code, unified permission-aware search and backup/restore tooling. These are components, not proof of a functioning institutional deployment. SCIM scope and publication hotfixes are merged. Current source lacks independent workspace membership and organization-scoped administrator grants; group/bulk/audit/UI integration and the complete meeting journey still require candidate evidence. No Gate A/B/C is claimed here.
 
-Deferred: independent workspaces (bounded product approval), multi-organization human identity, nested groups, independently scoped IdPs, optional RLS enforcement, universal policy engine and new distributed services. Agents/RAG and additional Applications evolve through ResourceRef/source authorization, not tenant membership or index ACL shortcuts.
+Deferred: independent workspaces (bounded deferral approved on 2026-10-15), multi-organization human identity, nested groups, independently scoped IdPs, optional RLS enforcement, universal policy engine and new distributed services. Agents/RAG and additional Applications evolve through ResourceRef/source authorization, not tenant membership or index ACL shortcuts.
 
 ## Human gates
 
 CODEOWNERS @senolcolak and @zoorpha are accountable for assigning named product/security/operator owners before Gate A. Missing designation or approval blocks the affected gate.
 
-Maintainer + product owner approve Option B and the #330 bounded scope amendment; otherwise P0 fails and Option A must be planned. Security owner approves publication/sharing, revocation/re-enable, grants/recovery, database role/context contracts and residual risks. Operator approves legacy impact, secrets, persisted tenant identity and recovery drills. Deployment candidate evidence and release approval remain mandatory. None is implied by green CI.
+Option B, the #330 bounded milestone amendment and ADR-0040–0043 architecture contracts were explicitly Accepted on 2026-10-15. Security owner still reviews implementation and residual-risk dispositions for publication/sharing, revocation/re-enable, grants/recovery and database role/context behavior. Operator approves deployment-specific legacy impact, secrets, persisted tenant identity and recovery drills. Deployment candidate evidence, operational activation and release approval remain mandatory. None is implied by architecture acceptance or green CI.

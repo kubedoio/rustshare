@@ -4,7 +4,7 @@
 
 Elembra's target architecture is a small Platform Core with independently owned Files, Notes, Mail,
 Chat (powered by Buzz), Memory and Agents Applications. See the [platform architecture](docs/architecture/elembra-platform.md).
-The [proposed institutional milestone](docs/adr/0040-organization-tenant-and-workspace-identity.md)
+The [accepted institutional architecture](docs/adr/0040-organization-tenant-and-workspace-identity.md)
 retains tenant isolation while deferring independent collaboration workspaces; current workspace
 fields are compatibility aliases and do not provide workspace membership administration.
 

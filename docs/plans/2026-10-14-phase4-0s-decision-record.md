@@ -1,6 +1,6 @@
 # Phase 4.0-S — Containment Decision Record
 
-Status: Proposed — awaiting security-owner and maintainer approval. This document authorizes no implementation, no migration, no policy change, and no enabling step.
+Status: Accepted architecture correction — explicit approval recorded on 2026-10-15. Migration, enforcement, activation and release retain separate operational gates.
 Date: 2026-10-14
 Baseline: PR [#360](https://github.com/KubedoIO/RustShare/pull/360) head `ab6fabd9` (branch `codex/phase4.0-institutional-authz`); main base `1ec2ea7a`.
 
@@ -20,7 +20,7 @@ Publication and explicit unpublication use owner/Admin resource authorization, n
 
 Files/Notes resolver consolidation is Application-local; Platform Core shares principal context, and other Applications retain source authority. Workspace membership is deferred; the existing 1:1 identifier is compatibility only (ADR-0040). ADR-0042 replaces the original nil-reset and ordinary-definer assumptions; a hotfix passing its own tests proves neither RLS isolation nor safe global blob counting. GC and orphan reconciliation remain disabled.
 
-Current decision owners: maintainer approves Proposed ADRs and contract amendments; security owner approves authorization consolidation, publication-sidecar availability disposition and credential lifecycle residuals; operator/pilot owner approves target inventory, restore/recovery and rollout evidence. The roadmap owns slice dependencies. Pending optional RLS design/enforcement decisions block only database-hardening work; legacy mappings require their own explicit approval. Credential residuals cannot be silently accepted by this record: their measured disposition gates pilot release. Merged #364 credential-creation work must be reconciled alongside #361/#362/#365 in candidate evidence, without assuming deployment.
+Architecture approval: the user's explicit 2026-10-15 instruction to change the revised architecture to Accepted accepts ADR-0040–0043, associated milestone scope and contract amendments. Current operational owners remain: security owner reviews implemented authorization consolidation, publication-sidecar availability disposition and credential lifecycle residuals; operator/pilot owner approves target inventory, restore/recovery and rollout evidence. The roadmap owns slice dependencies. Optional RLS/maintenance activation requires separate operational approval; legacy mappings require their own explicit approval. Credential residuals cannot be silently accepted by this record: their measured disposition gates pilot release. Merged #364 credential-creation work must be reconciled alongside #361/#362/#365 in candidate evidence, without assuming deployment.
 
 ## Historical containment record — sections 2–8 are non-authoritative
 

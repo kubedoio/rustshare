@@ -1,6 +1,6 @@
 # Institutional Acceptance Gates (Gate A, Gate B, Gate C)
 
-Status: Proposed acceptance definition. This document defines evidence; it authorizes no release and
+Status: Accepted acceptance definition, explicitly approved on 2026-10-15. This document defines evidence; it authorizes no release and
 no change to the product.
 Date: 2026-10-13
 Correction: 2026-10-15. Historical baseline below remains attributable; candidate evidence must include merged #361, #362, #364 and #365 (and newer relevant commits).
@@ -81,7 +81,7 @@ an administrative audit trail, all with tenant-bounded permissions and exercised
   group type, or hierarchy exists, and none is asserted by a gate.
 - No independent workspace entity this milestone (ADR-0040 Option B). The existing tenant-valued
   workspace fields are compatibility aliases, not permanent identity. Gate checks must not claim
-  workspace membership. Maintainer/product-owner approval of the bounded #330 deferral is mandatory.
+  workspace membership. The bounded #330 milestone deferral was approved with ADR-0040 on 2026-10-15.
 - No enforced database row-level security as a gate precondition. A deployment that has not adopted
   the staged isolation work records its deployment shape (ADR-0042: this deployment is or is not a
   database-enforcing deployment) and states honestly that the database is not an enforcing layer.

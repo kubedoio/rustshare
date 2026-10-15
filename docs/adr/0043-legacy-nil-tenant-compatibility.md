@@ -1,6 +1,6 @@
 # ADR-0043: Legacy Nil-Tenant Compatibility and Non-Destructive Migration
 
-Status: Proposed; maintainer, security-owner and operator approval pending. No data rewrite authorized.
+Status: Accepted — architecture approved by the project owner on 2026-10-15. No data rewrite authorized; mapping and rollout require their separate approvals and evidence.
 Date: 2026-10-13; corrected 2026-10-15
 Historical baseline: `1ec2ea7a887ee0ab79d7d8ce525a0e5a76e0109e`
 
@@ -85,7 +85,7 @@ rehearsal blocks migration, not strict checks. Preserve historical reports with 
 - Clone migration and rollback/restore preserve row/reference totals and authorized reachability including nil fixtures.
 
 Writer inventory, explicit assignment coverage and fresh/legacy provisioning tests gate default removal. Deployment
-inventory and human mapping approval gate backfill. Restore proof gates migration. ADR-0042 approval gates FORCE.
+inventory and human mapping approval gate backfill. Restore proof gates migration. ADR-0042's implementation/evidence gates and operational approval gate FORCE activation.
 These are pending implementation/deployment gates, not executed evidence. The pilot may proceed with coherent data and
 application isolation independently of optional RLS.
 
