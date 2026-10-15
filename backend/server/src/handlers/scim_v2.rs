@@ -1219,6 +1219,9 @@ pub async fn update_group(
             );
         }
         Err(write_error) if write_error.writes_committed => {
+            // Intentional: no re-resolution here. If a concurrent deletion
+            // removed the group, the refresh is a harmless no-op — share
+            // discovery by group id finds nothing to refresh.
             crate::services::note_service::dispatch_group_index_acl_refresh(
                 Arc::clone(&state.note_service),
                 id,
@@ -1276,6 +1279,9 @@ pub async fn patch_group(
             );
         }
         Err(write_error) if write_error.writes_committed => {
+            // Intentional: no re-resolution here. If a concurrent deletion
+            // removed the group, the refresh is a harmless no-op — share
+            // discovery by group id finds nothing to refresh.
             crate::services::note_service::dispatch_group_index_acl_refresh(
                 Arc::clone(&state.note_service),
                 id,

@@ -68,14 +68,33 @@ impl std::error::Error for ScimWriteError {
     }
 }
 
+/// Converts an error through the blanket `From` impls only via `?` in
+/// **pre-write** positions — before the first statement that can commit.
+/// Once any write has committed, errors must be constructed explicitly with
+/// `writes_committed: true` (see [`ScimWriteError::post_commit`]); a `?`
+/// added after a committing statement would silently default to
+/// `writes_committed: false` and wrongly skip post-failure refresh.
 impl From<ScimError> for ScimWriteError {
     // Conservative default: an unclassified error is treated as pre-write.
+    // Only apply `?` via this conversion BEFORE the first committing
+    // statement; errors after any committed write must be constructed
+    // explicitly with writes_committed: true.
     fn from(error: ScimError) -> Self {
         Self::pre_write(error)
     }
 }
 
+/// Converts an error through the blanket `From` impls only via `?` in
+/// **pre-write** positions — before the first statement that can commit.
+/// Once any write has committed, errors must be constructed explicitly with
+/// `writes_committed: true` (see [`ScimWriteError::post_commit`]); a `?`
+/// added after a committing statement would silently default to
+/// `writes_committed: false` and wrongly skip post-failure refresh.
 impl From<sqlx::Error> for ScimWriteError {
+    // Conservative default: an unclassified error is treated as pre-write.
+    // Only apply `?` via this conversion BEFORE the first committing
+    // statement; errors after any committed write must be constructed
+    // explicitly with writes_committed: true.
     fn from(error: sqlx::Error) -> Self {
         Self::pre_write(error.into())
     }
