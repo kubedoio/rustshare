@@ -221,6 +221,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and child-process regression tests pin the isolation (they fail if dotenv
   loading is restored). This also removes the process-wide `.env` pollution
   that made the chat_identity relay-rejection test fail environmentally.
+  Refusal messages redact all connection-query contents, including malformed
+  credential-shaped keys; the parity probe checks for imports in the same
+  child process that exercises auth database setup.
 
 ### Changed
 

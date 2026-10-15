@@ -231,6 +231,15 @@ fn guard_rejection_messages_never_print_credentials() {
         "leaked credential: {error}"
     );
 
+    let error = crate::test_guard::validate_disposable_database_url(&format!(
+        "postgres://u:p@127.0.0.1:15432/rustshare_test?{DECOY_PASSWORD}=1"
+    ))
+    .expect_err("malformed connection parameter must be refused");
+    assert!(
+        !error.contains(DECOY_PASSWORD),
+        "credential-shaped parameter name leaked: {error}"
+    );
+
     let error = crate::test_guard::validate_disposable_database_url(
         "postgres://dotenv_decoy_user:dotenv_decoy_password@not a url",
     )
@@ -278,13 +287,13 @@ fn guard_rejects_connection_parameter_redirects() {
         "leaked credential: {error}"
     );
 
-    // Delimiter-only tokens are not plausible parameter names either.
+    // Even malformed names must stay out of diagnostics.
     let error = crate::test_guard::validate_disposable_database_url(
         "postgres://u:p@127.0.0.1:15432/rustshare_test?___=1",
     )
     .expect_err("connection parameters must be refused");
     assert!(
-        error.contains("<unnamed>") && !error.contains("___"),
+        error.contains("connection parameters") && !error.contains("___"),
         "delimiter-only names must be redacted: {error}"
     );
 }
@@ -453,11 +462,17 @@ async fn child_login_suite_matches_with_and_without_env_file() {
 
 /// Runs in child processes only (gated by [`CHILD_SENTINEL_VAR`]): asserts
 /// none of the synthetic `.env` values were imported into the child
-/// environment. Without the sentinel it is a deliberate no-op.
-#[test]
-fn probe_rejects_imported_dotenv_values() {
+/// environment. With a supplied database, exercise auth setup in this same
+/// process: a separate child cannot observe another child's environment.
+/// Without the sentinel it is a deliberate no-op.
+#[tokio::test]
+async fn probe_rejects_imported_dotenv_values() {
     if std::env::var_os(CHILD_SENTINEL_VAR).is_none() {
         return;
+    }
+    if std::env::var_os("DATABASE_URL").is_some() {
+        let pool = crate::handlers::auth::tests::test_db_pool().await;
+        pool.close().await;
     }
     for var in [MARKER_VAR, DECOY_RELAY_VAR, DECOY_LOCAL_RELAY_FLAG] {
         assert!(

@@ -65,36 +65,16 @@ pub fn validate_disposable_database_url(database_url: &str) -> Result<(), String
     // Connection parameters can override every part checked above (host,
     // hostaddr, port, dbname, user, password, and unix-socket host paths), so
     // refuse them outright rather than trying to re-derive the destination.
-    if let Some(query) = parsed.query() {
-        // Names only, and only when they look like parameter names: a
-        // credential can sit in a value *or* in a malformed component with no
-        // `=`, and the message must never echo either.
-        let names: Vec<String> = query
-            .split('&')
-            .map(|pair| match pair.split_once('=') {
-                Some((name, _)) if is_parameter_name(name) => name.to_string(),
-                _ => "<unnamed>".to_string(),
-            })
-            .collect();
-        return Err(format!(
-            "DATABASE_URL must not carry connection parameters (found \
-             {names:?}); they can redirect the connection away from the \
+    if parsed.query().is_some() {
+        // Malformed keys can contain credentials too. Do not echo any query
+        // content, even if it looks like a plausible parameter name.
+        return Err("DATABASE_URL must not carry connection parameters; \
+             they can redirect the connection away from the \
              validated disposable rustshare_test database. Supply a plain \
              postgres:// URL"
-        ));
+            .to_string());
     }
     Ok(())
-}
-
-/// Whether `name` is a plausible connection-parameter name, so it can be
-/// echoed in a refusal message without risking a credential. Requires at
-/// least one ASCII alphanumeric character.
-fn is_parameter_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.chars().any(|c| c.is_ascii_alphanumeric())
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '[' | ']'))
 }
 
 /// Read `DATABASE_URL` from the explicitly supplied environment — never from

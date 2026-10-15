@@ -427,7 +427,7 @@ pub async fn ensure_optional_seed_user(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use sqlx::postgres::PgPoolOptions;
     use std::time::{Duration, Instant};
@@ -456,7 +456,7 @@ mod tests {
         );
     }
 
-    async fn test_db_pool() -> sqlx::PgPool {
+    pub(crate) async fn test_db_pool() -> sqlx::PgPool {
         // Read the test database URL only from the explicitly supplied
         // environment — never from a .env file (issue #366) — and refuse
         // non-disposable destinations before connecting.

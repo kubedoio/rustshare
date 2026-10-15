@@ -27,6 +27,8 @@ cargo test -p rustshare-server --lib -- --ignored --test-threads=1 handlers::aut
 
 Library tests never dotenv-load (issue #366): `DATABASE_URL` must come from the
 process environment, not from `backend/.env` or a parent-directory `.env`.
+The ignored dotenv parity test also checks the child's environment after auth
+database setup in that same process, so imports cannot hide behind process isolation.
 
 ## Integration and ignored tests
 
