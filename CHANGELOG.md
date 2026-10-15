@@ -213,7 +213,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (issue #366): `handlers::auth` login tests no longer dotenv-load, read
   `DATABASE_URL` only from the explicitly supplied environment, refuse
   non-disposable destinations (anything but `rustshare_test`/`rustshare_test_*`
-  on loopback) before connecting, and are `#[ignore]`-gated so the documented
+  on loopback, and only plain `postgres`/`postgresql` URLs without connection
+  parameters such as `?host=`/`?dbname=` that could redirect the connection)
+  before connecting, and are `#[ignore]`-gated so the documented
   database-free library baseline passes without a live PostgreSQL. The same
   disposable-destination guard is shared with the integration-test harness,
   and child-process regression tests pin the isolation (they fail if dotenv

@@ -10,6 +10,21 @@ Run the library unit tests. Does **not** require a running database when `SQLX_O
 SQLX_OFFLINE=true cargo test --workspace --all-features --lib
 ```
 
+DB-backed library tests (the `handlers::auth` login tests) are `#[ignore]`-gated
+so this baseline stays database-free. They require an explicitly supplied
+disposable `DATABASE_URL` (`rustshare_test` or `rustshare_test_*` on a loopback
+endpoint) and refuse non-disposable destinations — including a URL carrying
+connection parameters such as `?host=`/`?dbname=` — before connecting. Run them
+separately and serialized:
+
+```bash
+export DATABASE_URL=postgres://USER:PASSWORD@127.0.0.1:15432/rustshare_test
+cargo test -p rustshare-server --lib -- --ignored --test-threads=1
+```
+
+Library tests never dotenv-load (issue #366): `DATABASE_URL` must come from the
+process environment, not from `backend/.env` or a parent-directory `.env`.
+
 ## Integration and ignored tests
 
 Integration tests and contract tests require running services (PostgreSQL + RustFS/S3-compatible storage).

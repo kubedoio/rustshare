@@ -48,6 +48,10 @@ const CHILD_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// libtest substring filter matching exactly the seven DB-backed login tests.
 const LOGIN_TEST_FILTER: &str = "handlers::auth::tests::login_";
+/// The Argon2 timing-ratio test is excluded from child runs: it is
+/// load-sensitive and the parent process may be running the same test
+/// concurrently. It remains covered by the parent's `--ignored` run.
+const LOGIN_TIMING_TEST_PATH: &str = "handlers::auth::tests::login_timing_attack_resistance";
 const CONFIG_TEST_PATH: &str = "config::tests::chat_provisioning_auto_without_relay_url_fails";
 const CHAT_IDENTITY_TEST_PATH: &str =
     "handlers::chat_identity::tests::relay_url_rejects_private_or_credentialed_targets";
@@ -115,12 +119,38 @@ fn wait_with_timeout(mut child: Child, timeout: Duration, label: &[&str]) -> Out
             return child.wait_with_output().expect("collect child output");
         }
         if Instant::now() >= deadline {
+            // Kill first, then collect: the panic must carry the child's own
+            // output (otherwise a hung child reports only its filter label and
+            // the reason for the hang is lost).
             let _ = child.kill();
-            let _ = child.wait();
-            panic!("child test binary timed out after {timeout:?}: {label:?}");
+            let collected = child
+                .wait_with_output()
+                .map(|output| {
+                    format!(
+                        "\n--- child stdout ---\n{}\n--- child stderr ---\n{}",
+                        excerpt(&output.stdout),
+                        excerpt(&output.stderr)
+                    )
+                })
+                .unwrap_or_default();
+            panic!("child test binary timed out after {timeout:?}: {label:?}{collected}");
         }
         std::thread::sleep(Duration::from_millis(25));
     }
+}
+
+/// Bound captured child output so a timeout panic stays readable.
+fn excerpt(bytes: &[u8]) -> String {
+    const LIMIT: usize = 4_000;
+    let text = String::from_utf8_lossy(bytes);
+    if text.len() <= LIMIT {
+        return text.into_owned();
+    }
+    let mut end = LIMIT;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}… [truncated]", &text[..end])
 }
 
 /// Assert the synthetic `.env` stayed unimported and unprinted: no value from
@@ -204,6 +234,45 @@ fn guard_rejection_messages_never_print_credentials() {
         !error.contains(DECOY_PASSWORD),
         "leaked credential: {error}"
     );
+}
+
+#[test]
+fn guard_rejects_connection_parameter_redirects() {
+    // sqlx honours these as connection parameters, so a host/path check alone
+    // would let them redirect the connection (or use a unix socket).
+    for url in [
+        "postgres://u:p@127.0.0.1:15432/rustshare_test?dbname=postgres",
+        "postgres://u:p@127.0.0.1:15432/rustshare_test?host=192.0.2.1",
+        "postgres://u:p@127.0.0.1:15432/rustshare_test?hostaddr=192.0.2.1",
+        "postgres://u:p@127.0.0.1:15432/rustshare_test?host=/var/run/postgresql",
+        "postgres://u:p@127.0.0.1:15432/rustshare_test?port=5439&dbname=rustshare",
+        "postgres://u:p@127.0.0.1:15432/rustshare_test?sslmode=disable",
+    ] {
+        let error = crate::test_guard::validate_disposable_database_url(url)
+            .expect_err("connection parameters must be refused before connecting");
+        assert!(error.contains("connection parameters"), "{error}");
+    }
+
+    let error = crate::test_guard::validate_disposable_database_url(
+        "postgres://u:p@127.0.0.1:15432/rustshare_test?password=dotenv_decoy_password",
+    )
+    .expect_err("connection parameters must be refused");
+    assert!(
+        !error.contains(DECOY_PASSWORD),
+        "leaked credential: {error}"
+    );
+}
+
+#[test]
+fn guard_rejects_non_postgres_schemes() {
+    for url in [
+        "mysql://u:p@127.0.0.1:15432/rustshare_test",
+        "http://u:p@127.0.0.1:15432/rustshare_test",
+    ] {
+        let error = crate::test_guard::validate_disposable_database_url(url)
+            .expect_err("non-PostgreSQL scheme must be refused before connecting");
+        assert!(error.contains("not PostgreSQL"), "{error}");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -305,10 +374,11 @@ fn child_config_and_chat_identity_results_match_with_and_without_env_file() {
     }
 }
 
-/// With an explicit disposable DATABASE_URL, the seven DB-backed login tests
-/// must pass identically from a directory containing the synthetic `.env` and
-/// one without — proving the supplied URL is used (the `.env` decoy points at
-/// a closed port) and no unrelated `.env` keys are imported.
+/// With an explicit disposable DATABASE_URL, the DB-backed login tests must
+/// pass identically from a directory containing the synthetic `.env` and one
+/// without — proving the supplied URL is used (the `.env` decoy points at a
+/// closed port) and no unrelated `.env` keys are imported. The load-sensitive
+/// Argon2 timing test is skipped here (see [`LOGIN_TIMING_TEST_PATH`]).
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL (rustshare_test on loopback) via DATABASE_URL; run with -- --ignored"]
 async fn child_login_suite_matches_with_and_without_env_file() {
@@ -322,9 +392,14 @@ async fn child_login_suite_matches_with_and_without_env_file() {
     let without_env = tempfile::tempdir().expect("plain temp dir");
 
     for dir in [with_env.path(), without_env.path()] {
-        let run = run_child(&[LOGIN_TEST_FILTER], dir, CHILD_TIMEOUT, |command| {
-            command.env("DATABASE_URL", &database_url);
-        });
+        let run = run_child(
+            &[LOGIN_TEST_FILTER, "--skip", LOGIN_TIMING_TEST_PATH],
+            dir,
+            CHILD_TIMEOUT,
+            |command| {
+                command.env("DATABASE_URL", &database_url);
+            },
+        );
         assert!(
             run.success,
             "login suite must pass against the supplied disposable DATABASE_URL (cwd {}):\n{}",
@@ -332,8 +407,8 @@ async fn child_login_suite_matches_with_and_without_env_file() {
             run.output
         );
         assert!(
-            run.output.contains("7 passed; 0 failed"),
-            "expected all seven login tests to run and pass:\n{}",
+            run.output.contains("6 passed; 0 failed"),
+            "expected the six non-timing login tests to run and pass:\n{}",
             run.output
         );
         assert_no_dotenv_leak(&run);
