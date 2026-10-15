@@ -1,5 +1,7 @@
 # Phase 4.0 — Tenant-Isolation Evidence Matrix
 
+**2026-10-15 supplement:** [post-hotfix source verification](2026-10-15-phase4-0-post-hotfix-verification.md) reconciles merged #361/#362/#365. This matrix remains historical evidence at its stated baseline; fixed findings are not current findings, and source inspection is not a rerun.
+
 **Milestone:** Elembra — Phase 4.0: Institutional Authorization Decision Gate (Deliverable 2)
 **Baseline:** `1ec2ea7a887ee0ab79d7d8ce525a0e5a76e0109e` (branch `codex/phase4.0-institutional-authz`)
 **Date:** 2026-10-13

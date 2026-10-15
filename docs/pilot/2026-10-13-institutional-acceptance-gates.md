@@ -3,6 +3,7 @@
 Status: Proposed acceptance definition. This document defines evidence; it authorizes no release and
 no change to the product.
 Date: 2026-10-13
+Correction: 2026-10-15. Historical baseline below remains attributable; candidate evidence must include merged #361, #362, #364 and #365 (and newer relevant commits).
 Baseline: `1ec2ea7a887ee0ab79d7d8ce525a0e5a76e0109e`
 
 Companion documents:
@@ -38,6 +39,36 @@ readiness contract.
 
 ## 2. Scope, and what these gates deliberately do not require
 
+Current readiness is **NOT ASSESSED / NOT READY**, not a passed pilot. Source components and historical
+test results do not close deployed workflow gates. #361/#362/#364/#365 provide specific corrections,
+while independent workspace memberships and organization-admin grants remain absent. The full linked
+Calendar/meeting/decisions/actions journey and unaided operations require deployment evidence.
+CODEOWNERS @senolcolak and @zoorpha must designate named product/security/operator owners before Gate A;
+missing designation or approval blocks the affected check. P1 bootstrap/recovery must be implemented
+and rehearsed; it is not existing operational evidence.
+
+Mandatory pilot database posture: least-privilege runtime credentials distinct from migration/operator
+credentials, no migration execution through request pools, explicit tenant predicates and candidate
+negative tests. Enforcement RLS remains optional. Explicit publication and unpublication operations require owner or
+Admin-level resource authority; View/Edit deny. ADR-0041's separate sidecar availability limitation
+requires security-owner disposition before pilot release. Owner-to-group grants must not require the owner to
+join the recipient group. Revocation is observed on the next authorization decision, including search;
+an overlapping independent grant may remain and its explanation must identify that grant.
+
+Gate A role evidence must inspect the effective request role: NOSUPERUSER, NOBYPASSRLS, not table
+owner, and no inherited or SET ROLE membership permitting privileged maintenance/migration access.
+Rehearse actual boot and scoped read/write with that role, separately provisioned migrations, and
+backup/restore with operator credentials. Missing evidence blocks Gate A even when enforcement RLS
+is deferred. Keep credential values out of artifacts.
+
+Before Gate A, product/security/operator owners fix and record performance thresholds. Default test
+workload: 100 provisioned accounts, 30 active clients with overlapping autosave/search/upload/download
+requests for 30 minutes; p95 interactive API latency <=2 seconds, p95 pool-acquire <=250 ms, zero pool
+timeouts, no monotonic backlog, and no tenant/context leak. Record deployment resources, request rate,
+error budget, connection count and baseline/candidate results. Different thresholds require written
+justification before execution, not retrospective adjustment. Streams must not hold idle database
+connections; background-worker concurrency and cancellation/retry behavior are measured separately.
+
 **In scope.** A generic self-managed institution with roughly 100 human users: organization
 administration, groups, membership lifecycle, calendar-led meeting workflow, notes and documents
 around a meeting, recorded decisions and action items, retrieval of past organizational context, and
@@ -48,8 +79,9 @@ an administrative audit trail, all with tenant-bounded permissions and exercised
 - No customer-specific, education-specific, or organization-specific domain model. The role
   vocabulary is `member` and `administrator`; no class, cohort, subject, grade, or customer role,
   group type, or hierarchy exists, and none is asserted by a gate.
-- No workspace entity. In Phase 4.0 a workspace *is* the organization (ADR-0040 D2). Gate checks say
-  "organization" and must not claim workspace membership functionality, which is unimplemented.
+- No independent workspace entity this milestone (ADR-0040 Option B). The existing tenant-valued
+  workspace fields are compatibility aliases, not permanent identity. Gate checks must not claim
+  workspace membership. Maintainer/product-owner approval of the bounded #330 deferral is mandatory.
 - No enforced database row-level security as a gate precondition. A deployment that has not adopted
   the staged isolation work records its deployment shape (ADR-0042: this deployment is or is not a
   database-enforcing deployment) and states honestly that the database is not an enforcing layer.
@@ -79,10 +111,10 @@ bounded deferral with the follow-up issue.
 
 **Entry criteria.**
 
-1. Roadmap PRs AR-01, AR-02, AR-03, AR-04, AR-05 and AR-06 are merged, so ambiguous-row production has
-   stopped, SCIM is organization-bound, membership rejection and organization-scoped reads exist, the
-   index-refresh correction is in, one authorization engine decides, and organization administration
-   is scoped. No organization-administration surface may be exposed before AR-03 and AR-05.
+1. Roadmap outcomes P1–P3 satisfy scoped identity/provisioning, admin grants/audit, group validation,
+   Files/Notes decision parity, index refresh and lifecycle/UI requirements. Merged hotfixes are
+   regression baselines, not proof that these outcomes are complete. No new administration surface
+   is exposed before its tenant predicates, grant validation, audit and negative tests exist.
 2. The deployment passes the pilot readiness contract's mandatory product, operational, security and
    recovery gates on the exact candidate revision, or every unmet item is a documented bounded
    deferral excluding the categories named in section 2.
@@ -107,7 +139,7 @@ bounded deferral with the follow-up issue.
 | A10 | A decision and an action item are recorded against the meeting with an owner and a state, or the gap is a bounded deferral | decision record captured (`decisions` API); the action item is captured in the meeting record; a deferral records the follow-up issue |
 | A11 | Opening a past event still exposes what was discussed, which documents were used, and what was decided | the operator reopens a past meeting and records the reconstruction; unified search for a permitted user returns the meeting artifacts and returns none for a foreign-organization user |
 | A12 | The permission-negative set (section 5, items 1-10) is executed against the pilot deployment | the case-by-case harness results plus the API-level results, with the case letters and matrix rows recorded per item |
-| A13 | Administrative mutations performed in this gate appear in the organization-scoped audit list with actor, target and outcome | audit query output filtered to the gate window; where AR-08 has not landed, this is a bounded deferral with the follow-up issue |
+| A13 | Administrative mutations performed in this gate appear in the organization-scoped audit list with actor, target and outcome | audit query output filtered to the gate window; attribution is mandatory and cannot be deferred |
 | A14 | Backup, structural verification and an isolated restore drill succeed and reproduce representative pilot data | `backup.env`, `*-restore-drill.env`, `scripts/verify-backup-bundle.sh` output, `scripts/post-restore-smoke.sh` output |
 | A15 | The upgrade and rollback path is documented and exercised | `upgrade.env`, `upgrade-previous.env`, `upgrade-candidate.env`, `migration.env`; the rollback statement (restore the pre-upgrade backup and return to the previous verified image) is in the runbook |
 | A16 | The operator administers the cohort without developer or database intervention | the operator log for the gate window, containing zero developer interventions for routine administration, cross-checked against A13 |
@@ -126,7 +158,7 @@ performed the cohort's routine administration alone; and the readiness decision 
 - a user can regain access after being disabled through a credential the identity contract says is
   revoked;
 - an administrative mutation is performed whose attribution (actor, organization, target, outcome)
-  cannot be reconstructed after the fact, once AR-08 has landed;
+  cannot be reconstructed after the fact;
 - the restore drill fails, the backup bundle verification fails, or restored data differs from the
   pre-backup state;
 - readiness reports healthy while a required dependency is down, or reports unhealthy with no
@@ -144,10 +176,8 @@ mutations, a measured support burden, and no unresolved P0/P1 authorization or d
 **Entry criteria.**
 
 1. Gate A is closed with no open stop condition.
-2. Roadmap PRs AR-08 (audit foundation), AR-09 (bulk onboarding and offboarding) and AR-10
-   (organization administration UI) are merged, or the deployment records a bounded deferral for the
-   UI only; AR-08 and AR-09 are mandatory at Gate B because #333 requires audit coverage and bulk
-   lifecycle work to be understood before the largest cohort.
+2. Roadmap P1/P3 audit, bulk lifecycle and administration outcomes are verified; richer UI polish may
+   be deferred only if ordinary administration is already possible without SQL/developer access.
 3. The audit event taxonomy in use is recorded, including which application owns each high-value
    mutation class.
 4. A support and incident path exists and has been exercised at least once end to end (see section 7).
@@ -199,7 +229,7 @@ the full committed suite must be green on the exact candidate revision and wired
 | # | Item | Executed case | Evidence-matrix rows | Test or artifact |
 |---|---|---|---|---|
 | 1 | Same-organization membership is allowed | (a) | `P4-30`, `#287-R13`, `#287-R06` | `backend/tests/admin_groups_test.rs`, `backend/tests/group_sharing_test.rs` |
-| 2 | Cross-organization membership is rejected | (b) | `P4-09`, `#287-R16` | membership-validation suite (roadmap AR-03); both add and remove paths |
+| 2 | Cross-organization membership is rejected | (b) | `P4-09`, `#287-R16` | membership-validation suite (roadmap P2, #365 baseline); both add and remove paths |
 | 3 | Group share resolution is correctly organization-scoped | (c) | `P4-30`, `#287-R13`, `#287-R14` | `backend/tests/group_sharing_test.rs`, `backend/tests/contracts/tenant_isolation_contract.rs` |
 | 4 | Removing a membership invalidates effective access | (d) | `P4-21`, `P4-30` | `backend/tests/contracts/search_authorization_contract.rs` plus the API denial |
 | 5 | Legacy nil-tenant group behaviour is defined and stable | (e) | `#287-R17`, `P4-14`, `P4-16` | `backend/tests/pilot_group_scope_inventory_test.rs`; a nil group grants nothing to a non-nil principal |
@@ -207,7 +237,7 @@ the full committed suite must be green on the exact candidate revision and wired
 | 7 | An admin-created group's index refresh reaches the resource | (g) | `P4-31`, `#287-R19` | `backend/server/tests/share_acl_propagation.rs`, legacy-shaped fixture |
 | 8 | A disabled user cannot regain access | (h) | `P4-10`, `P4-12` | `backend/tests/user_disable_credential_revocation_test.rs`; see the documented residual in section 5.1 |
 | 9 | An organization administrator cannot implicitly access private content | (i) | `P4-18`, `P4-06` | unified-search negative plus the API denial for a private file and note owned by another member |
-| 10 | Connection-pool reuse cannot leak security context | (j) | `P4-38`, `P4-39`, `#287-R03` | the hardened-role context tests, plus the `row_security = off` fail-closed case (i) part 2 (`#287-R11`, `#287-R20`, `P4-48`) |
+| 10 | Connection-pool reuse cannot leak security context | (j) | `P4-38`, `P4-39`, `#287-R03` | Always prove explicit tenant predicates across reused connections. Only if enforcement RLS is enabled, also prove absent/empty/nil/non-nil context, rollback/cancellation/reuse and `row_security = off` errors under ADR-0042; optional enforcement tests are not pilot prerequisites |
 
 Gate-specific additional requirements:
 
@@ -233,9 +263,9 @@ until its expiry (24 hours by default), because there is no server-side token-ve
 - while disabled, every credential form is denied (JWT, session cookie, device token, WebSocket,
   login, OIDC, admin routes);
 - after re-enable, sessions and device tokens issued before the disable stay revoked;
-- the pre-disable JWT residual is either closed by a token-version or `iat` check, or accepted in
-  writing by the pilot owner with the 24-hour bound and the follow-up issue; it may not be left
-  unrecorded.
+- the pre-disable JWT residual requires a tested lifecycle fix or a security-owner-approved
+  restriction preventing unsafe re-enable until old tokens expire. Record the exact procedure,
+  token lifetime and test; merely accepting an unchecked 24-hour window does not close this gate.
 
 ## 6. Administrative audit coverage expectations
 
@@ -249,10 +279,10 @@ applicable. #332 is the owning contract.
 
 ### 6.2 Required event classes by gate
 
-- **Gate A** — the classes the deployment actually exercises in the window: user invite, user disable,
-  group create/rename/archive, group member add/remove, share create/revoke. Where the audit
-  foundation has not landed, this is a bounded deferral naming the outstanding issue, and no gate
-  beyond A may defer it.
+- **Gate A** — minimum audit foundation is mandatory for all exercised classes: user invite/disable,
+  group create/rename/archive, group member add/remove, share create/revoke, administrator grant/revoke
+  and bootstrap/recovery. Attribution cannot be deferred. Richer filters/export may have bounded
+  deferrals until their required gate, without omitting the underlying records.
 - **Gate B** — all of the above plus invitation cancel/resend, user reactivation, organization
   administrator grant/revoke, permission changes on supported resources, public or capability link
   create/revoke, and the calendar administration mutations the Calendar application defines as
@@ -399,7 +429,7 @@ deferral named in writing.
 | A12, A17, B13, C3 | case-by-case harness results, suite results, `/metrics` sample and leak scan | `scripts/phase40-tenant-isolation-negative-tests.sql`, the committed suites, `scripts/redact_pilot_logs.py` |
 | A14, B15, C5, 7.1 | `backup.env`, `*-restore-drill.env`, row-count comparison, upgrade artifacts | `scripts/backup-stack.sh`, `scripts/verify-backup-bundle.sh`, `scripts/run-restore-drill.sh`, `scripts/post-restore-smoke.sh` |
 | A15, B15, C5, 7.3 | `upgrade*.env`, `migration.env`, the documented rollback statement | pilot workflow and `docs/upgrading.md` |
-| B1-B4, C1 | import validation report, applied result, repeat-run result, partial-failure report | the bulk lifecycle workflow (roadmap AR-09) |
+| B1-B4, C1 | import validation report, applied result, repeat-run result, partial-failure report | the bulk lifecycle workflow (roadmap P3) |
 | B5, C2 | revocation check per user, surviving content check, offboarding audit records | `user_disable_credential_revocation_test.rs` plus the operator's record |
 | B10, B11, B16, C8, 6.3, 7.6 | redaction scan, cross-organization audit denial, export artifact, secret scan | `admin_audit_redaction_test.rs`, the audit export, `scripts/redact_pilot_logs.py` |
 | B14, C6, 7.5 | escalation log with severity classification, issue register, support-bundle exercise record | the operator's support process and `scripts/support-bundle.sh` |
@@ -412,7 +442,7 @@ deferral named in writing.
 
 | Residual | Source | Treatment |
 |---|---|---|
-| A pre-disable stateless JWT works again after re-enable until expiry | rows `P4-11`, `F5` | Either close it with a token-version or `iat` check, or accept it in writing with the 24-hour bound and a follow-up issue; it is not a silent pass |
+| A pre-disable stateless JWT works again after re-enable until expiry | rows `P4-11`, `F5` | Tested lifecycle fix, or security-owner-approved restriction preventing unsafe re-enable until old tokens expire; an unchecked 24-hour risk acceptance does not satisfy immediate revocation |
 | Index ACL refresh is best-effort, non-durable, with no redrive; SCIM membership mutations historically differed | rows `P4-34`, `P4-35`; ADR-0041 D7 | Documented in the runbook; access is unaffected because retrieval re-authorizes live (`P4-32`); the refresh-lag bound is stated rather than implied |
 | `min_acl_versions` is inert in production | row `P4-33`; ADR-0041 D9 | The contract wording is corrected rather than the behaviour claimed; live re-authorization is the backstop |
 | Legacy nil-tenant and mismatched populations | rows `P4-14`, `P4-16`, `#287-R16`, `#287-R17` | Counted by the inventory, classified P1/P2/P3, and reviewed in the quarantine ledger; never repaired by inference and never repaired by widening access |

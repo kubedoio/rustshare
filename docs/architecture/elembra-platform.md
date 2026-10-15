@@ -1,5 +1,15 @@
 # Elembra Platform Architecture
 
+> Proposed Phase 4.0 scope correction (2026-10-15): [ADR-0040](../adr/0040-organization-tenant-and-workspace-identity.md)
+> retains Organization = Tenant, but defers independently identified workspaces. Existing tenant-valued
+> workspace fields are compatibility aliases, not permanent identity or membership grants. Future
+> workspaces are collaboration contexts within a tenant. Platform Core shares principal/tenant/group
+> and Application-grant context; owning Applications authorize their resources. Files/Notes may share
+> PermissionResolver; it is not a universal engine for Mail, Chat, Memory or Agents. ResourceRef and
+> current source authorization remain required before Memory materializes protected content. Buzz
+> preserves its own signed communication and authorization boundaries. This proposed amendment
+> preserves the architecture below and requires explicit human approval.
+
 Status: Target architecture  
 Date: 2026-08-07  
 Applies to: migration from RustShare to Elembra
