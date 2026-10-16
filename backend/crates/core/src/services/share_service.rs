@@ -720,6 +720,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
+        if let Some(group_id) = share.recipient_group_id {
+            if !self.group_matches_tenant(group_id, share.tenant_id).await? {
+                return Err(ShareError::CrossTenantSharingNotAllowed);
+            }
+        }
+
         // Determine resource and check permission using the same pattern as create_group_share
         let resource = if let Some(file_id) = share.file_id {
             let _file = self
@@ -1315,13 +1321,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         let Some(group_id) = share.recipient_group_id else {
             return Err(ShareError::InvalidState("Not a group share".to_string()));
         };
-        if self
-            .metadata_store
-            .find_group_tenant_id(group_id)
-            .await
-            .map_err(|e| ShareError::Database(e.to_string()))?
-            != Some(share.tenant_id)
-        {
+        if !self.group_matches_tenant(group_id, share.tenant_id).await? {
             return Err(ShareError::CrossTenantSharingNotAllowed);
         }
 
@@ -1387,6 +1387,19 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
         Ok(share)
+    }
+
+    async fn group_matches_tenant(
+        &self,
+        group_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<bool, ShareError> {
+        Ok(self
+            .metadata_store
+            .find_group_tenant_id(group_id)
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?
+            == Some(tenant_id))
     }
 
     async fn user_matches_tenant(
@@ -2309,6 +2322,17 @@ mod tests {
             })
             .await
             .unwrap();
+        assert!(matches!(
+            service
+                .update_share(
+                    foreign_group_share_id,
+                    user_a.id,
+                    None,
+                    Some(Utc::now() + chrono::Duration::days(1)),
+                )
+                .await,
+            Err(ShareError::CrossTenantSharingNotAllowed)
+        ));
         assert!(matches!(
             service
                 .update_group_share_permission(
