@@ -15,8 +15,14 @@ const MAX_REQUEST_ID_LEN: usize = 64;
 /// * Otherwise a new UUIDv4 is generated.
 /// * The request ID is added to the current tracing span as `request_id`.
 /// * The request ID is echoed back to the client in the response headers.
-pub async fn trace_middleware(request: Request, next: Next) -> Response {
+pub async fn trace_middleware(mut request: Request, next: Next) -> Response {
     let request_id = extract_or_generate_request_id(&request);
+    // Make the canonical ID available to handlers as well as the tracing span
+    // and response. Audit mutations can then persist the same correlation ID
+    // even when the client omitted or supplied an invalid value.
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        request.headers_mut().insert(REQUEST_ID_HEADER, value);
+    }
 
     let span = tracing::info_span!(
         "http_request",
@@ -83,19 +89,37 @@ mod tests {
 
     #[tokio::test]
     async fn test_generates_request_id_when_header_missing() {
-        let app = test_app();
+        let app = Router::new()
+            .route(
+                "/",
+                get(|request: Request| async move {
+                    request
+                        .headers()
+                        .get(REQUEST_ID_HEADER)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string()
+                }),
+            )
+            .layer(axum::middleware::from_fn(trace_middleware));
         let request = Request::builder().uri("/").body(Body::empty()).unwrap();
         let response = app.oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        let request_id = response
+        let response_request_id = response
             .headers()
             .get(REQUEST_ID_HEADER)
             .expect("response should contain a request ID")
             .to_str()
+            .unwrap()
+            .to_string();
+        let handler_request_id = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
             .unwrap();
-        assert!(!request_id.is_empty());
-        assert!(is_valid_request_id(request_id));
+        let handler_request_id = std::str::from_utf8(&handler_request_id).unwrap();
+        assert!(!response_request_id.is_empty());
+        assert!(is_valid_request_id(&response_request_id));
+        assert_eq!(handler_request_id, response_request_id);
     }
 
     #[tokio::test]
