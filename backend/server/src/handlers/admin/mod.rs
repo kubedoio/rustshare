@@ -4,6 +4,7 @@ pub mod applications;
 pub mod audit;
 pub mod config;
 pub mod groups;
+pub mod organization_administrators;
 pub mod templates;
 pub mod users;
 pub mod webhooks;

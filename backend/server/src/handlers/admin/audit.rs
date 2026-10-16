@@ -189,7 +189,16 @@ pub async fn list_audit_log(
                 aa.outcome,
                 aa.performed_at AS occurred_at,
                 'admin_action'::text AS event_type,
-                COALESCE(u.username, 'deleted_user')::text AS actor_label,
+                CASE
+                    WHEN COALESCE(aa.actor_principal_id, aa.actor_id) IS NULL
+                    THEN CASE
+                        WHEN aa.action_type = 'organization_admin.revoked'
+                             AND aa.detail->>'actor_kind' = 'scim'
+                        THEN 'scim'
+                        ELSE 'system'
+                    END
+                    ELSE COALESCE(u.username, 'deleted_user')
+                END::text AS actor_label,
                 aa.action_type::text AS action_type,
                 aa.target_type::text AS target_type,
                 aa.target_id::text AS target_label,
@@ -405,6 +414,20 @@ pub(crate) fn project_audit_detail(
                 copy_bool(fields, &mut projected, "old_is_admin");
                 copy_bool(fields, &mut projected, "new_is_admin");
             }
+            "organization_admin.bootstrap"
+            | "organization_admin.granted"
+            | "organization_admin.recovered"
+            | "organization_admin.revoked" => {
+                copy_uuid(fields, &mut projected, "grant_id");
+                if action_type == "organization_admin.revoked"
+                    && fields.get("actor_kind").and_then(serde_json::Value::as_str) == Some("scim")
+                {
+                    projected.insert(
+                        "actor_kind".to_string(),
+                        serde_json::Value::String("scim".to_string()),
+                    );
+                }
+            }
             "user.deleted" => {
                 copy_nonnegative_integer(fields, &mut projected, "storage_keys_count")
             }
@@ -604,6 +627,26 @@ mod tests {
 
         assert_eq!(
             project_audit_detail("admin_action", "future.action", &detail),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn scim_administrator_revocation_detail_exposes_only_actor_kind() {
+        assert_eq!(
+            project_audit_detail(
+                "admin_action",
+                "organization_admin.revoked",
+                &json!({ "actor_kind": "scim", "token": "secret" })
+            ),
+            json!({ "actor_kind": "scim" })
+        );
+        assert_eq!(
+            project_audit_detail(
+                "admin_action",
+                "organization_admin.revoked",
+                &json!({ "actor_kind": "other", "token": "secret" })
+            ),
             json!({})
         );
     }

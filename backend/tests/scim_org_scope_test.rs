@@ -182,6 +182,35 @@ async fn seed_two_organizations(pool: &PgPool) -> Fixture {
     }
 }
 
+async fn seed_org_admin_grant(pool: &PgPool, tenant_id: Uuid, user_id: Uuid, actor_id: Uuid) {
+    let mut tx = pool.begin().await.expect("begin grant fixture transaction");
+    let grant_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO organization_administrators (tenant_id, user_id, granted_by)
+         VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(tenant_id)
+    .bind(user_id)
+    .bind(actor_id)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("seed organization administrator grant");
+    sqlx::query(
+        "INSERT INTO admin_actions
+            (tenant_id, actor_id, actor_principal_id, action_type, target_type,
+             target_id, detail, outcome)
+         VALUES ($1, $2, $2, 'organization_admin.bootstrap',
+                 'organization_administrator', $3, $4, 'success')",
+    )
+    .bind(tenant_id)
+    .bind(actor_id)
+    .bind(user_id)
+    .bind(json!({ "grant_id": grant_id }))
+    .execute(&mut *tx)
+    .await
+    .expect("seed grant audit record");
+    tx.commit().await.expect("commit grant fixture transaction");
+}
+
 async fn scim_request(
     app: &axum::Router,
     method: &str,
@@ -340,6 +369,10 @@ async fn scim_v2_is_scoped_to_the_configured_organization() {
     .await;
     assert_eq!(status, StatusCode::OK, "same-org user update must succeed");
 
+    // SCIM deprovisioning must permanently revoke an existing organization
+    // administrator grant; reactivation must not silently restore authority.
+    seed_org_admin_grant(&pool, fixture.org_a, fixture.user_a2, fixture.user_a1).await;
+
     let patch_disable = json!({
         "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
         "Operations": [{"op": "replace", "path": "active", "value": false}]
@@ -353,6 +386,34 @@ async fn scim_v2_is_scoped_to_the_configured_organization() {
     .await;
     assert_eq!(status, StatusCode::OK, "same-org user disable must succeed");
     assert!(user_disabled(&pool, fixture.user_a2).await);
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT revocation_source FROM organization_administrators
+             WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NOT NULL",
+        )
+        .bind(fixture.org_a)
+        .bind(fixture.user_a2)
+        .fetch_one(&pool)
+        .await
+        .expect("read SCIM-revoked grant"),
+        Some("scim".to_string())
+    );
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT actor_id IS NULL AND actor_principal_id IS NULL
+                    AND detail->>'actor_kind' = 'scim'
+                    AND detail->>'grant_id' IS NOT NULL
+             FROM admin_actions
+             WHERE tenant_id = $1 AND target_id = $2
+               AND action_type = 'organization_admin.revoked'",
+        )
+        .bind(fixture.org_a)
+        .bind(fixture.user_a2)
+        .fetch_one(&pool)
+        .await
+        .expect("read SCIM grant audit"),
+        "the audit record must identify the SCIM integration without inventing a user actor"
+    );
     let (status, _) = scim_request(
         &app,
         "PATCH",
@@ -369,6 +430,18 @@ async fn scim_v2_is_scoped_to_the_configured_organization() {
         "same-org user re-enable must succeed"
     );
     assert!(!user_disabled(&pool, fixture.user_a2).await);
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT revoked_at IS NOT NULL FROM organization_administrators
+             WHERE tenant_id = $1 AND user_id = $2",
+        )
+        .bind(fixture.org_a)
+        .bind(fixture.user_a2)
+        .fetch_one(&pool)
+        .await
+        .expect("read grant after SCIM reactivation"),
+        "SCIM reactivation must not restore the revoked administrator grant"
+    );
 
     // Group membership inside the scope.
     let (status, _) = scim_request(
@@ -682,6 +755,7 @@ async fn scim_v1_is_scoped_to_the_configured_organization() {
     assert!(user_disabled(&pool, fixture.user_a1).await);
 
     // Deprovision inside the scope.
+    seed_org_admin_grant(&pool, fixture.org_a, fixture.user_a2, fixture.user_a1).await;
     let (status, _) = scim_request(
         &app,
         "DELETE",
@@ -695,6 +769,18 @@ async fn scim_v1_is_scoped_to_the_configured_organization() {
         "same-org v1 deprovision must succeed"
     );
     assert!(user_disabled(&pool, fixture.user_a2).await);
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT revocation_source FROM organization_administrators
+             WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NOT NULL",
+        )
+        .bind(fixture.org_a)
+        .bind(fixture.user_a2)
+        .fetch_one(&pool)
+        .await
+        .expect("read v1 SCIM-revoked grant"),
+        Some("scim".to_string())
+    );
 
     // Group provision with a same-organization member resolves the member.
     let v1_group = format!("scim-v1-group-{}", Uuid::new_v4());

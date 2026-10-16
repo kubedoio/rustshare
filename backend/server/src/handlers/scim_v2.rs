@@ -19,6 +19,9 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use super::admin::organization_administrators::{
+    lock_tenant_admin_grants, revoke_for_scim_lifecycle,
+};
 use super::scim::resolve_scim_tenant_scope;
 use super::ErrorResponse;
 use crate::user_disable::{set_user_disabled_at, DisableUserTarget};
@@ -344,6 +347,17 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             (n.given_name.clone(), n.family_name.clone())
         });
 
+        let mut tx = self.pool.begin().await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+        let was_disabled = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "SELECT disabled_at FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .flatten()
+        .is_some();
         sqlx::query!(
             r#"
             UPDATE users
@@ -371,8 +385,13 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             user.external_id,
             tenant_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+
+        if !user.active || was_disabled {
+            revoke_for_scim_lifecycle(&mut tx, tenant_id, id).await?;
+        }
+        tx.commit().await?;
 
         Ok(())
     }
@@ -383,6 +402,17 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         id: Uuid,
         operations: &[rustshare_core::services::ScimPatchOperation],
     ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+        let mut was_disabled = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "SELECT disabled_at FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .flatten()
+        .is_some();
         for op in operations {
             if op.op.to_lowercase().as_str() == "replace" {
                 if let Some(ref path) = op.path {
@@ -395,40 +425,53 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                             // `users_disable_revokes_credentials` trigger
                             // performs credential revocation.
                             set_user_disabled_at(
-                                &self.pool,
+                                &mut *tx,
                                 DisableUserTarget::Id(id),
                                 Some(tenant_id),
                                 if active { None } else { Some(Utc::now()) },
                             )
                             .await?;
+                            if !active || was_disabled {
+                                revoke_for_scim_lifecycle(&mut tx, tenant_id, id).await?;
+                            }
+                            was_disabled = !active;
                         }
                     }
                 } else if let Some(ref value) = op.value {
                     // Handle value object with multiple attributes
                     if let Some(active) = value.get("active").and_then(|v| v.as_bool()) {
                         set_user_disabled_at(
-                            &self.pool,
+                            &mut *tx,
                             DisableUserTarget::Id(id),
                             Some(tenant_id),
                             if active { None } else { Some(Utc::now()) },
                         )
                         .await?;
+                        if !active || was_disabled {
+                            revoke_for_scim_lifecycle(&mut tx, tenant_id, id).await?;
+                        }
+                        was_disabled = !active;
                     }
                 }
             }
         }
+        tx.commit().await?;
         Ok(())
     }
 
     async fn delete_user(&self, tenant_id: Uuid, id: Uuid) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
         sqlx::query(
             "UPDATE users SET disabled_at = NOW(), updated_at = NOW() \
              WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL",
         )
         .bind(id)
         .bind(tenant_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        revoke_for_scim_lifecycle(&mut tx, tenant_id, id).await?;
+        tx.commit().await?;
         Ok(())
     }
 

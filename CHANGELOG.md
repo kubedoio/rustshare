@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   groups, group membership, and share creation/revocation. Audit writes share
   mutation transactions, tenant-filtered reads preserve installation-operator
   access, and responses expose safe attribution with allowlisted detail.
+- Tenant-scoped organization-administrator grants managed by installation
+  operators, with append-only grant/revoke history, transactional audit events,
+  last-admin protection, and grant revocation on disable or deletion. The new
+  role grants do not authorize organization-admin access yet.
 - Admin-only, read-only orphan-blob discovery: `POST /api/admin/object-gc/orphan-scan`
   (requires `dry_run: true`) lists content-addressed blobs in budgeted pages and
   reports aggregate classifications (`referenced`, `queued_<state>`,
