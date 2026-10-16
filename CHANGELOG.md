@@ -64,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Share-management grant evaluation now rejects revoked, expired, or
+  tenant-mismatched direct and group shares.
 - Permission-resolver group expansion now requires the user and each group to
   belong to the requested organization. Legacy mismatched membership rows no
   longer add foreign groups to a user's authorization context.
