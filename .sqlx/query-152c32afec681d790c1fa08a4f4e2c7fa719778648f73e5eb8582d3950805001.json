@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT gm.group_id\n            FROM group_members gm\n            JOIN users u ON u.id = gm.user_id\n            JOIN user_groups g ON g.id = gm.group_id\n            WHERE gm.user_id = $1\n              AND u.tenant_id = $2\n              AND g.tenant_id = $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "group_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "152c32afec681d790c1fa08a4f4e2c7fa719778648f73e5eb8582d3950805001"
+}
