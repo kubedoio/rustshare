@@ -1058,6 +1058,8 @@ async fn test_legacy_nil_and_malformed_recipient_shares_do_not_grant_access() {
     let f = setup_group_share_fixture(&pool).await;
     let nil_share_id = Uuid::new_v4();
     let malformed_share_id = Uuid::new_v4();
+    let mismatched_public_share_id = Uuid::new_v4();
+    let mismatched_public_token = format!("tenant-mismatch-{}", Uuid::new_v4());
     let foreign_tenant = Uuid::new_v4();
     sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
         .bind(foreign_tenant)
@@ -1081,6 +1083,17 @@ async fn test_legacy_nil_and_malformed_recipient_shares_do_not_grant_access() {
         .bind(format!("Foreign group {}", Uuid::new_v4()))
         .bind(foreign_tenant)
         .bind(foreign_user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let foreign_child_folder_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO folders (id, name, path, parent_folder_id, owner_id, tenant_id) VALUES ($1,$2,$3,$4,$5,$6)")
+        .bind(foreign_child_folder_id)
+        .bind("foreign-child")
+        .bind(format!("/foreign-child-{}", Uuid::new_v4()))
+        .bind(f.folder_id)
+        .bind(foreign_user)
+        .bind(foreign_tenant)
         .execute(&pool)
         .await
         .unwrap();
@@ -1114,6 +1127,15 @@ async fn test_legacy_nil_and_malformed_recipient_shares_do_not_grant_access() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("INSERT INTO shares (id, file_id, share_token, permissions, created_by, tenant_id) VALUES ($1,$2,$3,'View',$4,$5)")
+        .bind(mismatched_public_share_id)
+        .bind(f.file_id)
+        .bind(&mismatched_public_token)
+        .bind(f.owner_id)
+        .bind(foreign_tenant)
+        .execute(&pool)
+        .await
+        .unwrap();
     let foreign_folder_group_share = Uuid::new_v4();
     sqlx::query("INSERT INTO shares (id, folder_id, recipient_group_id, permissions, created_by, tenant_id) VALUES ($1,$2,$3,'Admin',$4,$5)")
         .bind(foreign_folder_group_share)
@@ -1144,6 +1166,45 @@ async fn test_legacy_nil_and_malformed_recipient_shares_do_not_grant_access() {
     assert!(!principals.contains(&format!("group:{foreign_group}")));
     assert!(!principals.contains(&format!("group:{foreign_folder_group}")));
     let service = create_test_share_service(pool.clone());
+    assert!(matches!(
+        service
+            .get_public_share_info(&mismatched_public_token, None)
+            .await,
+        Err(ShareError::ShareNotFoundByToken(_))
+    ));
+    let public_folder_share = service
+        .create_folder_share(
+            f.folder_id,
+            f.owner_id,
+            SharePermissions::View,
+            None,
+            None,
+            false,
+            f.tenant_id,
+        )
+        .await
+        .unwrap();
+    let (_, _, folders, _) = service
+        .list_public_folder_contents(
+            public_folder_share.share_token.as_deref().unwrap(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(folders
+        .iter()
+        .all(|folder| folder.id != foreign_child_folder_id));
+    assert!(matches!(
+        service
+            .list_public_folder_contents(
+                public_folder_share.share_token.as_deref().unwrap(),
+                Some(foreign_child_folder_id),
+                None,
+            )
+            .await,
+        Err(ShareError::FolderNotFound(_))
+    ));
     let visible = service
         .list_file_shares(f.file_id, f.owner_id)
         .await
@@ -1157,6 +1218,8 @@ async fn test_legacy_nil_and_malformed_recipient_shares_do_not_grant_access() {
         .bind(vec![
             nil_share_id,
             malformed_share_id,
+            mismatched_public_share_id,
+            public_folder_share.id,
             foreign_group_share,
             foreign_folder_group_share,
         ])
@@ -1165,6 +1228,11 @@ async fn test_legacy_nil_and_malformed_recipient_shares_do_not_grant_access() {
         .unwrap();
     sqlx::query("DELETE FROM user_groups WHERE id = $1")
         .bind(foreign_group)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM folders WHERE id = $1")
+        .bind(foreign_child_folder_id)
         .execute(&pool)
         .await
         .unwrap();

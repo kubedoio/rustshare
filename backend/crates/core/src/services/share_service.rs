@@ -160,6 +160,13 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn find_descendant_folders_unchecked(&self, folder_id: uuid::Uuid)
         -> Result<Vec<Folder>>;
 
+    /// Find a folder subtree without crossing the tenant boundary.
+    async fn find_descendant_folders_for_tenant(
+        &self,
+        folder_id: uuid::Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Vec<Folder>>;
+
     /// Revoke a share by ID.
     async fn revoke_share(&self, share_id: uuid::Uuid, actor_id: UserId) -> Result<()>;
 
@@ -290,7 +297,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     /// Looks up the share without tenant scoping. If `tenant_id` is provided, it
     /// must match the share's actual tenant (defense in depth). If it is omitted,
     /// the share's own tenant is used.
-    async fn resolve_public_share(
+    pub async fn resolve_public_share(
         &self,
         share_token: &str,
         tenant_id: Option<Uuid>,
@@ -306,6 +313,32 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             if share.tenant_id != tenant_id {
                 return Err(ShareError::ShareNotFoundByToken(share_token.to_string()));
             }
+        }
+
+        if share.share_token.as_deref() != Some(share_token)
+            || share.recipient_user_id.is_some()
+            || share.recipient_group_id.is_some()
+        {
+            return Err(ShareError::ShareNotFoundByToken(share_token.to_string()));
+        }
+
+        let resource_tenant = match (share.file_id, share.folder_id) {
+            (Some(file_id), None) => self
+                .metadata_store
+                .find_file_by_id_unchecked(file_id)
+                .await
+                .map_err(|e| ShareError::Database(e.to_string()))?
+                .map(|file| file.tenant_id),
+            (None, Some(folder_id)) => self
+                .metadata_store
+                .find_folder_by_id_unchecked(folder_id)
+                .await
+                .map_err(|e| ShareError::Database(e.to_string()))?
+                .map(|folder| folder.tenant_id),
+            _ => None,
+        };
+        if resource_tenant != Some(share.tenant_id) {
+            return Err(ShareError::ShareNotFoundByToken(share_token.to_string()));
         }
 
         Ok(share)
@@ -930,18 +963,20 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         if let Some(file_id) = share.file_id {
             let file = self
                 .metadata_store
-                .find_file_by_id(file_id, share.created_by)
+                .find_file_by_id_unchecked(file_id)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
+                .filter(|file| file.tenant_id == share.tenant_id)
                 .ok_or(ShareError::FileNotFound(file_id))?;
 
             Ok((share, Some(file), None))
         } else if let Some(folder_id) = share.folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id, share.created_by)
+                .find_folder_by_id_unchecked(folder_id)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
+                .filter(|folder| folder.tenant_id == share.tenant_id)
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
 
             Ok((share, None, Some(folder)))
@@ -979,21 +1014,22 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         ))?;
         let root_folder = self
             .metadata_store
-            .find_folder_by_id(root_folder_id, share.created_by)
+            .find_folder_by_id_unchecked(root_folder_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
+            .filter(|folder| folder.tenant_id == share.tenant_id)
             .ok_or(ShareError::FolderNotFound(root_folder_id))?;
         let target_folder_id = current_folder_id.unwrap_or(root_folder.id);
 
         let descendants = self
             .metadata_store
-            .find_descendant_folders_unchecked(root_folder.id)
+            .find_descendant_folders_for_tenant(root_folder.id, share.tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
         let target_folder = descendants
             .into_iter()
-            .find(|folder| folder.id == target_folder_id)
+            .find(|folder| folder.id == target_folder_id && folder.tenant_id == share.tenant_id)
             .ok_or(ShareError::FolderNotFound(target_folder_id))?;
 
         let folders = self
@@ -2091,6 +2127,19 @@ mod tests {
             }
 
             Ok(result)
+        }
+
+        async fn find_descendant_folders_for_tenant(
+            &self,
+            folder_id: Uuid,
+            tenant_id: Uuid,
+        ) -> Result<Vec<Folder>> {
+            Ok(self
+                .find_descendant_folders_unchecked(folder_id)
+                .await?
+                .into_iter()
+                .filter(|folder| folder.tenant_id == tenant_id)
+                .collect())
         }
 
         async fn revoke_share(&self, share_id: Uuid, _actor_id: UserId) -> Result<()> {
