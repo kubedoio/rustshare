@@ -14911,14 +14911,28 @@
           "type",
           "actor_label",
           "action_type",
+          "outcome",
           "detail"
         ],
         "properties": {
           "action_type": {
             "type": "string"
           },
+          "actor_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "actor_label": {
             "type": "string"
+          },
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "detail": {},
           "id": {
@@ -14928,11 +14942,27 @@
             "type": "string",
             "format": "date-time"
           },
+          "outcome": {
+            "type": "string"
+          },
           "target_label": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "target_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenant_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "type": {
             "type": "string"
@@ -14963,6 +14993,14 @@
               "null"
             ],
             "format": "int64"
+          },
+          "tenant_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Restrict an installation operator's view to one organization."
           },
           "to": {
             "type": [
