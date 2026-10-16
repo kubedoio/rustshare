@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -11,8 +11,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::{
-    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, insert_admin_action,
-    resolve_creation_tenant,
+    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found,
+    insert_scoped_admin_action, request_correlation_id, resolve_creation_tenant,
 };
 use crate::{
     handlers::{AdminUser, AppError},
@@ -89,6 +89,7 @@ struct GroupRow {
 #[derive(sqlx::FromRow)]
 struct GroupDetailRow {
     id: Uuid,
+    tenant_id: Uuid,
     name: String,
     description: Option<String>,
     created_by: Option<Uuid>,
@@ -171,6 +172,7 @@ pub async fn list_groups(
 pub async fn create_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Json(req): Json<CreateGroupRequest>,
 ) -> Result<(StatusCode, Json<GroupResponse>), AppError> {
     if req.name.trim().is_empty() {
@@ -188,7 +190,7 @@ pub async fn create_group(
         r#"
         INSERT INTO user_groups (id, name, description, created_by, tenant_id)
         VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, name, description, created_by, created_at, updated_at
+        RETURNING id, tenant_id, name, description, created_by, created_at, updated_at
         "#,
     )
     .bind(new_id)
@@ -207,13 +209,15 @@ pub async fn create_group(
         db_error(e)
     })?;
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        tenant_id,
         actor_id,
         "group.created",
         Some("group"),
         Some(new_id),
         json!({"name": req.name}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;
@@ -249,7 +253,7 @@ pub async fn get_group(
     Path(group_id): Path<Uuid>,
 ) -> Result<Json<GroupDetailResponse>, AppError> {
     let row = sqlx::query_as::<_, GroupDetailRow>(
-        "SELECT id, name, description, created_by, created_at, updated_at
+        "SELECT id, tenant_id, name, description, created_by, created_at, updated_at
          FROM user_groups WHERE id = $1",
     )
     .bind(group_id)
@@ -304,13 +308,14 @@ pub async fn get_group(
 pub async fn update_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Path(group_id): Path<Uuid>,
     Json(req): Json<UpdateGroupRequest>,
 ) -> Result<Json<GroupResponse>, AppError> {
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     // Fetch current group
     let current = sqlx::query_as::<_, GroupDetailRow>(
-        "SELECT id, name, description, created_by, created_at, updated_at
+        "SELECT id, tenant_id, name, description, created_by, created_at, updated_at
          FROM user_groups WHERE id = $1",
     )
     .bind(group_id)
@@ -335,7 +340,7 @@ pub async fn update_group(
         UPDATE user_groups
         SET name = $2, description = $3, updated_at = NOW()
         WHERE id = $1
-        RETURNING id, name, description, created_by, created_at, updated_at
+        RETURNING id, tenant_id, name, description, created_by, created_at, updated_at
         "#,
     )
     .bind(group_id)
@@ -353,13 +358,15 @@ pub async fn update_group(
     })?
     .ok_or_else(|| admin_not_found("Group not found"))?;
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        current.tenant_id,
         actor_id,
         "group.updated",
         Some("group"),
         Some(group_id),
         json!({"name": updated.name}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;
@@ -396,12 +403,13 @@ pub async fn update_group(
 pub async fn delete_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Path(group_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     // Lock the row so the audit event and deletion describe the same group.
     let row = sqlx::query_as::<_, GroupDetailRow>(
-        "SELECT id, name, description, created_by, created_at, updated_at
+        "SELECT id, tenant_id, name, description, created_by, created_at, updated_at
          FROM user_groups WHERE id = $1 FOR UPDATE",
     )
     .bind(group_id)
@@ -423,13 +431,15 @@ pub async fn delete_group(
         .await
         .map_err(db_error)?;
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        row.tenant_id,
         actor_id,
         "group.deleted",
         Some("group"),
         Some(group_id),
         json!({"name": row.name}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;
@@ -457,6 +467,7 @@ pub async fn delete_group(
 pub async fn add_member(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Path(group_id): Path<Uuid>,
     Json(req): Json<AddMemberRequest>,
 ) -> Result<StatusCode, AppError> {
@@ -504,13 +515,15 @@ pub async fn add_member(
         return Err(admin_conflict("User is already a member of this group"));
     }
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        tenant_id,
         actor_id,
         "group.member_added",
         Some("group"),
         Some(group_id),
         json!({"user_id": req.user_id}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;
@@ -537,6 +550,7 @@ pub async fn add_member(
 pub async fn remove_member(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Path((group_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
     // Verify group exists and capture tenant for ACL refresh.
@@ -579,13 +593,15 @@ pub async fn remove_member(
         return Err(admin_not_found("Membership not found"));
     }
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        tenant_id,
         actor_id,
         "group.member_removed",
         Some("group"),
         Some(group_id),
         json!({"user_id": user_id}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;

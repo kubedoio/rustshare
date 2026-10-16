@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -58,6 +58,7 @@ pub async fn create_public_file_share(
     State(state): State<AppState>,
     Path(file_id): Path<Uuid>,
     auth: AuthenticatedUser,
+    headers: HeaderMap,
     Json(req): Json<CreateShareRequest>,
 ) -> Result<Response, AppError> {
     if req.upload_only {
@@ -68,13 +69,14 @@ pub async fn create_public_file_share(
 
     let share = state
         .share_service
-        .create_share(
+        .create_share_with_correlation(
             file_id,
             auth.user_id,
             req.permissions,
             req.password,
             req.expires_at,
             auth.tenant_id,
+            crate::handlers::admin::request_correlation_id(&headers),
         )
         .await?;
 
@@ -136,11 +138,12 @@ pub async fn create_public_folder_share(
     State(state): State<AppState>,
     Path(folder_id): Path<Uuid>,
     auth: AuthenticatedUser,
+    headers: HeaderMap,
     Json(req): Json<CreateShareRequest>,
 ) -> Result<Response, AppError> {
     let share = state
         .share_service
-        .create_folder_share(
+        .create_folder_share_with_correlation(
             folder_id,
             auth.user_id,
             req.permissions,
@@ -148,6 +151,7 @@ pub async fn create_public_folder_share(
             req.expires_at,
             req.upload_only,
             auth.tenant_id,
+            crate::handlers::admin::request_correlation_id(&headers),
         )
         .await?;
 
@@ -386,8 +390,16 @@ pub async fn revoke_share(
     AuthenticatedUser {
         user_id, tenant_id, ..
     }: AuthenticatedUser,
+    headers: HeaderMap,
 ) -> Result<StatusCode, AppError> {
-    let share = state.share_service.revoke_share(share_id, user_id).await?;
+    let share = state
+        .share_service
+        .revoke_share_with_correlation(
+            share_id,
+            user_id,
+            crate::handlers::admin::request_correlation_id(&headers),
+        )
+        .await?;
 
     // Best-effort ACL refresh so the revoked share stops being retrievable.
     if let Some(resource_id) = share.resource_id() {

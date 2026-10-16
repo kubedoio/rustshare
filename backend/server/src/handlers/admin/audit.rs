@@ -28,6 +28,8 @@ pub struct AuditLogQuery {
     pub from: Option<chrono::DateTime<chrono::Utc>>,
     /// ISO timestamp upper bound (inclusive)
     pub to: Option<chrono::DateTime<chrono::Utc>>,
+    /// Restrict an installation operator's view to one organization.
+    pub tenant_id: Option<Uuid>,
     pub page: Option<i64>,
     pub per_page: Option<i64>,
 }
@@ -35,12 +37,17 @@ pub struct AuditLogQuery {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AuditEntry {
     pub id: String,
+    pub tenant_id: Option<Uuid>,
+    pub actor_id: Option<Uuid>,
     pub occurred_at: chrono::DateTime<chrono::Utc>,
     #[serde(rename = "type")]
     pub event_type: String,
     pub actor_label: String,
     pub action_type: String,
+    pub target_type: Option<String>,
     pub target_label: Option<String>,
+    pub correlation_id: Option<String>,
+    pub outcome: String,
     pub detail: serde_json::Value,
 }
 
@@ -59,13 +66,16 @@ pub struct PaginatedAuditLog {
 #[derive(sqlx::FromRow)]
 struct AuditRow {
     id: Uuid,
+    tenant_id: Option<Uuid>,
+    correlation_id: Option<String>,
+    outcome: String,
     occurred_at: chrono::DateTime<chrono::Utc>,
     event_type: String,
     actor_label: String,
     action_type: String,
+    target_type: Option<String>,
     target_label: Option<String>,
     detail: serde_json::Value,
-    #[allow(dead_code)]
     actor_id: Option<Uuid>,
 }
 
@@ -124,9 +134,7 @@ pub async fn list_audit_log(
 
     // Build the UNION branches ------------------------------------------------
 
-    // Each branch selects:
-    //   id, occurred_at, event_type, actor_label, action_type, target_label, detail, actor_id
-    // We collect them into a Vec<&str> and join with UNION ALL.
+    // Each branch selects the same tenant-attributed audit contract.
 
     let mut branches: Vec<String> = Vec::new();
 
@@ -134,14 +142,19 @@ pub async fn list_audit_log(
         branches.push(
             "SELECT
                 sal.id,
+                s.tenant_id,
+                NULL::text AS correlation_id,
+                CASE WHEN sal.success THEN 'success' ELSE 'failure' END::text AS outcome,
                 sal.accessed_at AS occurred_at,
                 'share_access'::text AS event_type,
-                COALESCE(sal.actor_label, 'anonymous')::text AS actor_label,
+                'anonymous'::text AS actor_label,
                 sal.action::text AS action_type,
+                'share'::text AS target_type,
                 sal.share_id::text AS target_label,
                 json_build_object('success', sal.success)::jsonb AS detail,
                 NULL::uuid AS actor_id
-            FROM share_access_log sal"
+            FROM share_access_log sal
+            JOIN shares s ON s.id = sal.share_id"
                 .to_string(),
         );
     }
@@ -150,10 +163,14 @@ pub async fn list_audit_log(
         branches.push(
             "SELECT
                 use2.id,
+                u.tenant_id,
+                NULL::text AS correlation_id,
+                'observed'::text AS outcome,
                 use2.occurred_at,
                 'security_event'::text AS event_type,
                 COALESCE(u.username, 'deleted_user')::text AS actor_label,
                 use2.event_type::text AS action_type,
+                NULL::text AS target_type,
                 NULL::text AS target_label,
                 '{}'::jsonb AS detail,
                 use2.user_id AS actor_id
@@ -167,15 +184,19 @@ pub async fn list_audit_log(
         branches.push(
             "SELECT
                 aa.id,
+                aa.tenant_id,
+                aa.correlation_id,
+                aa.outcome,
                 aa.performed_at AS occurred_at,
                 'admin_action'::text AS event_type,
                 COALESCE(u.username, 'deleted_user')::text AS actor_label,
                 aa.action_type::text AS action_type,
+                aa.target_type::text AS target_type,
                 aa.target_id::text AS target_label,
                 COALESCE(aa.detail, '{}'::jsonb) AS detail,
-                aa.actor_id AS actor_id
+                COALESCE(aa.actor_principal_id, aa.actor_id) AS actor_id
             FROM admin_actions aa
-            LEFT JOIN users u ON u.id = aa.actor_id"
+            LEFT JOIN users u ON u.id = COALESCE(aa.actor_principal_id, aa.actor_id)"
                 .to_string(),
         );
     }
@@ -198,6 +219,11 @@ pub async fn list_audit_log(
     let mut where_parts: Vec<String> = Vec::new();
     // bind_index starts at 1; we'll increment as we add each parameter.
     let mut bind_index: u32 = 1;
+
+    if query.tenant_id.is_some() {
+        where_parts.push(format!("tenant_id = ${bind_index}"));
+        bind_index += 1;
+    }
 
     // user_id filter — applied to actor_id column
     let _user_id_bind_pos = if user_id_active {
@@ -246,10 +272,11 @@ pub async fn list_audit_log(
 
     let select_sql = format!(
         "{cte_sql}
-SELECT id, occurred_at, event_type, actor_label, action_type, target_label, detail, actor_id
+SELECT id, tenant_id, correlation_id, outcome, occurred_at, event_type, actor_label,
+       action_type, target_type, target_label, detail, actor_id
 FROM all_events
 {where_clause}
-ORDER BY occurred_at DESC
+ORDER BY occurred_at DESC, id DESC, event_type ASC
 LIMIT ${limit_pos} OFFSET ${offset_pos}"
     );
 
@@ -257,6 +284,9 @@ LIMIT ${limit_pos} OFFSET ${offset_pos}"
     macro_rules! bind_params {
         ($q:expr) => {{
             let mut q = $q;
+            if let Some(tenant_id) = query.tenant_id {
+                q = q.bind(tenant_id);
+            }
             if let Some(user_id) = query.user_id {
                 q = q.bind(user_id);
             }
@@ -297,11 +327,16 @@ LIMIT ${limit_pos} OFFSET ${offset_pos}"
             let detail = project_audit_detail(&row.event_type, &row.action_type, &row.detail);
             AuditEntry {
                 id: row.id.to_string(),
+                tenant_id: row.tenant_id,
+                actor_id: row.actor_id,
                 occurred_at: row.occurred_at,
                 event_type: row.event_type,
                 actor_label: row.actor_label,
                 action_type: row.action_type,
+                target_type: row.target_type,
                 target_label: row.target_label,
+                correlation_id: row.correlation_id,
+                outcome: row.outcome,
                 detail,
             }
         })
@@ -334,7 +369,7 @@ fn db_error(e: sqlx::Error) -> AppError {
     admin_internal_error("Database error")
 }
 
-fn project_audit_detail(
+pub(crate) fn project_audit_detail(
     event_type: &str,
     action_type: &str,
     detail: &serde_json::Value,
@@ -353,6 +388,14 @@ fn project_audit_detail(
         "admin_action" => match action_type {
             "group.created" | "group.updated" | "group.deleted" => {
                 copy_safe_display_text(fields, &mut projected, "name");
+            }
+            "user.created" | "user.invited" => {
+                copy_safe_identifier(fields, &mut projected, "username");
+            }
+            "share.created" | "share.revoked" => {
+                copy_uuid(fields, &mut projected, "share_id");
+                copy_safe_identifier(fields, &mut projected, "permissions");
+                copy_bool(fields, &mut projected, "password_protected");
             }
             "user.quota_changed" => {
                 copy_nonnegative_integer(fields, &mut projected, "old_quota");
