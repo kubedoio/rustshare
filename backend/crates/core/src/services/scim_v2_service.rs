@@ -751,7 +751,7 @@ pub trait ScimV2Repository: Send + Sync {
         tenant_id: Uuid,
         id: Uuid,
         user: &ScimV2User,
-    ) -> Result<(), sqlx::Error>;
+    ) -> Result<(), ScimV2Error>;
 
     /// Partial update a user (PATCH) within the organization.
     async fn patch_user(
@@ -759,11 +759,11 @@ pub trait ScimV2Repository: Send + Sync {
         tenant_id: Uuid,
         id: Uuid,
         operations: &[ScimPatchOperation],
-    ) -> Result<(), sqlx::Error>;
+    ) -> Result<(), ScimV2Error>;
 
     /// Deprovision a user within the organization while retaining the
     /// account and its owned data.
-    async fn delete_user(&self, tenant_id: Uuid, id: Uuid) -> Result<(), sqlx::Error>;
+    async fn delete_user(&self, tenant_id: Uuid, id: Uuid) -> Result<(), ScimV2Error>;
 
     /// Get all groups in the organization with optional filtering and pagination.
     async fn list_groups(

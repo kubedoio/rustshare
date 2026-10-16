@@ -69,6 +69,14 @@ BEGIN
                   'organization_admin.granted',
                   'organization_admin.recovered'
               )
+              AND (
+                  action_type <> 'organization_admin.recovered'
+                  OR detail->>'recovery_reason' IN (
+                      'administrator_unavailable',
+                      'security_incident',
+                      'administrative_continuity'
+                  )
+              )
               AND target_id = NEW.user_id
               AND detail->>'grant_id' = NEW.id::text
               AND performed_at = NEW.granted_at

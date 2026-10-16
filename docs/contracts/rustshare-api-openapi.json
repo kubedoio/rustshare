@@ -1129,6 +1129,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationAdministratorGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "201": {
             "description": "Administrator grant created",
@@ -1136,6 +1146,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OrganizationAdministrator"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Recovery reason is required for recovery grants and forbidden otherwise",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -22417,6 +22437,30 @@
             "type": "string"
           }
         }
+      },
+      "OrganizationAdministratorGrantRequest": {
+        "type": "object",
+        "properties": {
+          "recovery_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OrganizationAdministratorRecoveryReason",
+                "description": "Required only when recovering a tenant with grant history and no active administrator."
+              }
+            ]
+          }
+        }
+      },
+      "OrganizationAdministratorRecoveryReason": {
+        "type": "string",
+        "enum": [
+          "administrator_unavailable",
+          "security_incident",
+          "administrative_continuity"
+        ]
       },
       "OwnedShareResponse": {
         "type": "object",

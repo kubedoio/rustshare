@@ -416,7 +416,6 @@ pub(crate) fn project_audit_detail(
             }
             "organization_admin.bootstrap"
             | "organization_admin.granted"
-            | "organization_admin.recovered"
             | "organization_admin.revoked" => {
                 copy_uuid(fields, &mut projected, "grant_id");
                 if action_type == "organization_admin.revoked"
@@ -425,6 +424,24 @@ pub(crate) fn project_audit_detail(
                     projected.insert(
                         "actor_kind".to_string(),
                         serde_json::Value::String("scim".to_string()),
+                    );
+                }
+            }
+            "organization_admin.recovered" => {
+                copy_uuid(fields, &mut projected, "grant_id");
+                if matches!(
+                    fields
+                        .get("recovery_reason")
+                        .and_then(serde_json::Value::as_str),
+                    Some(
+                        "administrator_unavailable"
+                            | "security_incident"
+                            | "administrative_continuity"
+                    )
+                ) {
+                    projected.insert(
+                        "recovery_reason".to_string(),
+                        fields["recovery_reason"].clone(),
                     );
                 }
             }
@@ -646,6 +663,33 @@ mod tests {
                 "admin_action",
                 "organization_admin.revoked",
                 &json!({ "actor_kind": "other", "token": "secret" })
+            ),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn organization_administrator_recovery_detail_exposes_only_allowlisted_reason() {
+        assert_eq!(
+            project_audit_detail(
+                "admin_action",
+                "organization_admin.recovered",
+                &json!({
+                    "grant_id": "972894ac-15f2-4a83-91b5-6425a4a0c440",
+                    "recovery_reason": "security_incident",
+                    "secret": "must not be returned"
+                })
+            ),
+            json!({
+                "grant_id": "972894ac-15f2-4a83-91b5-6425a4a0c440",
+                "recovery_reason": "security_incident"
+            })
+        );
+        assert_eq!(
+            project_audit_detail(
+                "admin_action",
+                "organization_admin.recovered",
+                &json!({ "recovery_reason": "unreviewed text" })
             ),
             json!({})
         );

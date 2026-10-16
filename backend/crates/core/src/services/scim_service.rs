@@ -199,7 +199,7 @@ pub trait ScimRepository: Send + Sync {
         name: Option<&str>,
         surname: Option<&str>,
         disabled_at: Option<DateTime<Utc>>,
-    ) -> Result<(), sqlx::Error>;
+    ) -> Result<(), ScimError>;
 
     /// Set user's disabled_at timestamp within the organization.
     async fn set_user_disabled(
@@ -207,7 +207,7 @@ pub trait ScimRepository: Send + Sync {
         tenant_id: Uuid,
         external_id: &str,
         disabled: bool,
-    ) -> Result<(), sqlx::Error>;
+    ) -> Result<(), ScimError>;
 
     /// Find group by external_id within the organization.
     async fn find_group_by_external_id(

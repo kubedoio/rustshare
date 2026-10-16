@@ -53,6 +53,28 @@ async fn send(
     token: &str,
     request_id: Option<&str>,
 ) -> (axum::http::StatusCode, Value) {
+    send_with_json(app, method, uri, token, request_id, None).await
+}
+
+async fn send_json(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    request_id: Option<&str>,
+    body: Value,
+) -> (axum::http::StatusCode, Value) {
+    send_with_json(app, method, uri, token, request_id, Some(body)).await
+}
+
+async fn send_with_json(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    request_id: Option<&str>,
+    body: Option<Value>,
+) -> (axum::http::StatusCode, Value) {
     let mut request = Request::builder()
         .method(method)
         .uri(uri)
@@ -60,9 +82,15 @@ async fn send(
     if let Some(request_id) = request_id {
         request = request.header("x-request-id", request_id);
     }
+    let request = if body.is_some() {
+        request.header(axum::http::header::CONTENT_TYPE, "application/json")
+    } else {
+        request
+    };
+    let request_body = body.map_or_else(Body::empty, |body| Body::from(body.to_string()));
     let response = app
         .clone()
-        .oneshot(request.body(Body::empty()).expect("build request"))
+        .oneshot(request.body(request_body).expect("build request"))
         .await
         .expect("send request");
     let status = response.status();
@@ -129,12 +157,13 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
         format!("/api/v1/admin/organizations/{tenant_id}/administrators/{target_id}")
     };
 
-    let (status, grant) = send(
+    let (status, grant) = send_json(
         &app,
         "POST",
         &grant_uri(member_id),
         &operator_token,
         Some("grant-start-01"),
+        serde_json::json!({}),
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::CREATED);
@@ -168,7 +197,15 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
         )
     );
 
-    let (status, _) = send(&app, "POST", &grant_uri(member_id), &operator_token, None).await;
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        &grant_uri(member_id),
+        &operator_token,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
     assert_eq!(status, axum::http::StatusCode::CONFLICT);
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
@@ -182,25 +219,35 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
         "failed grant attempts do not claim successful audit outcomes"
     );
 
-    let (status, _) = send(
+    let (status, _) = send_json(
         &app,
         "POST",
         &grant_uri(foreign_member_id),
         &operator_token,
         None,
+        serde_json::json!({}),
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
-    let (status, _) = send(
+    let (status, _) = send_json(
         &app,
         "POST",
         &grant_uri(successor_id),
         &ordinary_token,
         None,
+        serde_json::json!({}),
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
-    let (status, _) = send(&app, "POST", &grant_uri(operator_id), &operator_token, None).await;
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        &grant_uri(operator_id),
+        &operator_token,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
     assert_eq!(status, axum::http::StatusCode::CONFLICT);
 
     let (status, _) = send(&app, "DELETE", &grant_uri(member_id), &operator_token, None).await;
@@ -219,12 +266,13 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
     );
 
     assert_eq!(
-        send(
+        send_json(
             &app,
             "POST",
             &grant_uri(successor_id),
             &operator_token,
-            None
+            None,
+            serde_json::json!({})
         )
         .await
         .0,
@@ -262,12 +310,13 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
             .0,
         axum::http::StatusCode::NO_CONTENT
     );
-    let (status, _) = send(
+    let (status, _) = send_json(
         &app,
         "POST",
         &grant_uri(successor_id),
         &operator_token,
         None,
+        serde_json::json!({}),
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::CONFLICT);
@@ -294,15 +343,55 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
         .await
         .expect("simulate disabled administrator needing recovery");
     assert_eq!(
-        send(&app, "POST", &grant_uri(recovery_id), &operator_token, None)
-            .await
-            .0,
+        send_json(
+            &app,
+            "POST",
+            &grant_uri(recovery_id),
+            &operator_token,
+            None,
+            serde_json::json!({}),
+        )
+        .await
+        .0,
+        axum::http::StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM organization_administrators
+             WHERE tenant_id = $1 AND user_id = $2",
+        )
+        .bind(tenant_id)
+        .bind(recovery_id)
+        .fetch_one(&pool)
+        .await
+        .expect("check rejected recovery grant"),
+        0,
+        "a recovery grant without a reason must not be persisted"
+    );
+    assert_eq!(
+        send_json(
+            &app,
+            "POST",
+            &grant_uri(recovery_id),
+            &operator_token,
+            None,
+            serde_json::json!({ "recovery_reason": "administrator_unavailable" }),
+        )
+        .await
+        .0,
         axum::http::StatusCode::CREATED
     );
     assert_eq!(
-        send(&app, "POST", &grant_uri(third_id), &operator_token, None)
-            .await
-            .0,
+        send_json(
+            &app,
+            "POST",
+            &grant_uri(third_id),
+            &operator_token,
+            None,
+            serde_json::json!({}),
+        )
+        .await
+        .0,
         axum::http::StatusCode::CREATED
     );
     assert_eq!(
@@ -328,22 +417,31 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
     .expect("disabled administrator grant must be revoked"));
     assert_eq!(
         sqlx::query_scalar::<_, String>(
-            "SELECT action_type FROM admin_actions
+            "SELECT detail->>'recovery_reason' FROM admin_actions
              WHERE target_id = $1 AND action_type = 'organization_admin.recovered'
              ORDER BY performed_at DESC LIMIT 1",
         )
         .bind(recovery_id)
         .fetch_one(&pool)
         .await
-        .expect("read recovery action"),
-        "organization_admin.recovered"
+        .expect("read recovery reason"),
+        "administrator_unavailable"
     );
 
     // Nil remains a concrete tenant for grants, just as for principals.
     let nil_uri =
         format!("/api/v1/admin/organizations/{nil_tenant_id}/administrators/{nil_member_id}");
     assert_eq!(
-        send(&app, "POST", &nil_uri, &operator_token, None).await.0,
+        send_json(
+            &app,
+            "POST",
+            &nil_uri,
+            &operator_token,
+            None,
+            serde_json::json!({}),
+        )
+        .await
+        .0,
         axum::http::StatusCode::CREATED
     );
 
@@ -406,12 +504,13 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
     .execute(&pool)
     .await
     .expect("create audit failure trigger");
-    let failed_grant_status = send(
+    let failed_grant_status = send_json(
         &app,
         "POST",
         &grant_uri(failing_member_id),
         &operator_token,
         None,
+        serde_json::json!({}),
     )
     .await
     .0;

@@ -5,14 +5,14 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use super::{
-    admin_conflict, admin_internal_error, admin_not_found, insert_scoped_admin_action,
-    request_correlation_id,
+    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found,
+    insert_scoped_admin_action, request_correlation_id,
 };
 use crate::{
     handlers::{AdminUser, AppError, PaginationQuery},
@@ -37,6 +37,21 @@ pub struct PaginatedOrganizationAdministrators {
     pub total: i64,
     pub page: u32,
     pub per_page: i64,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationAdministratorRecoveryReason {
+    AdministratorUnavailable,
+    SecurityIncident,
+    AdministrativeContinuity,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct OrganizationAdministratorGrantRequest {
+    /// Required only when recovering a tenant with grant history and no active administrator.
+    #[serde(default)]
+    pub recovery_reason: Option<OrganizationAdministratorRecoveryReason>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -124,13 +139,15 @@ impl From<AdministratorRow> for OrganizationAdministrator {
     path = "/api/v1/admin/organizations/{tenant_id}/administrators/{user_id}",
     tag = "Admin",
     params(("tenant_id" = Uuid, Path, description = "Tenant UUID"), ("user_id" = Uuid, Path, description = "Principal UUID")),
-    responses((status = 201, description = "Administrator grant created", body = OrganizationAdministrator), (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse), (status = 403, description = "Installation operator required", body = crate::handlers::ErrorResponse), (status = 404, description = "Enabled principal not found in tenant", body = crate::handlers::ErrorResponse), (status = 409, description = "Self-grants are prohibited or an active grant already exists", body = crate::handlers::ErrorResponse))
+    request_body = OrganizationAdministratorGrantRequest,
+    responses((status = 201, description = "Administrator grant created", body = OrganizationAdministrator), (status = 400, description = "Recovery reason is required for recovery grants and forbidden otherwise", body = crate::handlers::ErrorResponse), (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse), (status = 403, description = "Installation operator required", body = crate::handlers::ErrorResponse), (status = 404, description = "Enabled principal not found in tenant", body = crate::handlers::ErrorResponse), (status = 409, description = "Self-grants are prohibited or an active grant already exists", body = crate::handlers::ErrorResponse))
 )]
 pub async fn grant_organization_administrator(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
     headers: axum::http::HeaderMap,
     Path((tenant_id, user_id)): Path<(Uuid, Uuid)>,
+    Json(request): Json<OrganizationAdministratorGrantRequest>,
 ) -> Result<(StatusCode, Json<OrganizationAdministrator>), AppError> {
     if actor_id == user_id {
         return Err(admin_conflict(
@@ -158,6 +175,21 @@ pub async fn grant_organization_administrator(
         return Err(admin_not_found("Enabled principal not found in tenant"));
     }
 
+    let target_has_active_grant: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM organization_administrators
+         WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL)",
+    )
+    .bind(tenant_id)
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(db_error)?;
+    if target_has_active_grant {
+        return Err(admin_conflict(
+            "An active organization administrator grant already exists",
+        ));
+    }
+
     let history_exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM organization_administrators WHERE tenant_id = $1)",
     )
@@ -183,6 +215,17 @@ pub async fn grant_organization_administrator(
     } else {
         "organization_admin.granted"
     };
+
+    if action_type == "organization_admin.recovered" && request.recovery_reason.is_none() {
+        return Err(admin_bad_request(
+            "A recovery reason is required when restoring administration",
+        ));
+    }
+    if action_type != "organization_admin.recovered" && request.recovery_reason.is_some() {
+        return Err(admin_bad_request(
+            "A recovery reason is only valid when restoring administration",
+        ));
+    }
 
     let row = sqlx::query_as::<_, AdministratorRow>(
         r#"INSERT INTO organization_administrators (tenant_id, user_id, granted_by)
@@ -213,7 +256,11 @@ pub async fn grant_organization_administrator(
         action_type,
         Some("organization_administrator"),
         Some(user_id),
-        json!({ "grant_id": row.grant_id }),
+        if let Some(recovery_reason) = request.recovery_reason {
+            json!({ "grant_id": row.grant_id, "recovery_reason": recovery_reason })
+        } else {
+            json!({ "grant_id": row.grant_id })
+        },
         request_correlation_id(&headers),
     )
     .await
@@ -374,11 +421,12 @@ pub(crate) async fn revoke_for_lifecycle(
                     (tenant_id, actor_id, actor_principal_id, action_type, target_type,
                      target_id, detail, correlation_id, outcome)
                  VALUES ($1, NULL, NULL, 'organization_admin.revoked',
-                         'organization_administrator', $2, $3, NULL, 'success')",
+                         'organization_administrator', $2, $3, $4, 'success')",
             )
             .bind(tenant_id)
             .bind(user_id)
             .bind(json!({ "actor_kind": source, "grant_id": grant_id }))
+            .bind(correlation_id)
             .execute(&mut **tx)
             .await?;
         }
@@ -390,6 +438,7 @@ pub(crate) async fn revoke_for_scim_lifecycle(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
     user_id: Uuid,
+    correlation_id: Option<&str>,
 ) -> Result<(), sqlx::Error> {
-    revoke_for_lifecycle(tx, tenant_id, None, user_id, "scim", None).await
+    revoke_for_lifecycle(tx, tenant_id, None, user_id, "scim", correlation_id).await
 }
