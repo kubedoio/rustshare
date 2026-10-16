@@ -49,7 +49,30 @@ impl PermissionResolverRepository {
     }
 }
 
+#[async_trait::async_trait]
 impl PermissionResolverOps for PermissionResolverRepository {
+    async fn group_belongs_to_tenant(&self, group_id: Uuid, tenant_id: Uuid) -> Result<bool> {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1 AND tenant_id = $2)",
+        )
+        .bind(group_id)
+        .bind(tenant_id)
+        .fetch_one(&self.share_repo.pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    async fn user_belongs_to_tenant(&self, user_id: UserId, tenant_id: Uuid) -> Result<bool> {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND tenant_id = $2)",
+        )
+        .bind(user_id)
+        .bind(tenant_id)
+        .fetch_one(&self.user_repo.pool)
+        .await
+        .map_err(Into::into)
+    }
+
     async fn find_user_share(
         &self,
         file_id: Option<FileId>,

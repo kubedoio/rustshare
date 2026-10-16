@@ -432,13 +432,16 @@ async fn init_services(
         brainstorming_service,
     ) = tokio::join!(
         async {
-            Arc::new(ShareService::new(
-                Arc::clone(&event_store),
-                Arc::clone(&metadata_store),
-                Arc::clone(&broadcaster),
-                Arc::clone(&jwt_manager),
-                Arc::clone(&share_notification_repo),
-            ))
+            Arc::new(
+                ShareService::new(
+                    Arc::clone(&event_store),
+                    Arc::clone(&metadata_store),
+                    Arc::clone(&broadcaster),
+                    Arc::clone(&jwt_manager),
+                    Arc::clone(&share_notification_repo),
+                )
+                .with_permission_checker(permission_resolver.clone()),
+            )
         },
         async {
             Arc::new(

@@ -399,6 +399,10 @@ path = "../tests/calendar_connect_test.rs"
 name = "vault_webui_content_test"
 path = "../tests/vault_webui_content_test.rs"
 
+[[test]]
+name = "share_authorization_parity"
+path = "tests/share_authorization_parity.rs"
+
 [dev-dependencies]
 ical = { version = "0.11", default-features = false, features = ["ical"] }
 rustshare-crypto = { path = "../crates/crypto" }
