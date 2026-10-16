@@ -37,6 +37,7 @@ yanked = "deny"
 # Temporarily ignored advisories — these require upstream dependency updates
 # that are out of scope for the open-source-readiness PR. Track removal in a follow-up issue.
 ignore = [
+    { crate = "zip@3.0.0", reason = "utoipa-swagger-ui 9.0.2 requires this build dependency; its upstream semver range has no non-yanked release" },
     # rustls-webpki v0.101.7 — pulled in by rustls v0.21.12 via AWS SDK; fixed in v0.103+
     { id = "RUSTSEC-2026-0098", reason = "rustls-webpki v0.101.7 blocked by AWS SDK rustls 0.21 dependency" },
     { id = "RUSTSEC-2026-0099", reason = "rustls-webpki v0.101.7 blocked by AWS SDK rustls 0.21 dependency" },

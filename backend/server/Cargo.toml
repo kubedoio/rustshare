@@ -46,7 +46,7 @@ aws-config.workspace = true
 aws-sdk-s3.workspace = true
 futures-util = "0.3"
 tokio-tungstenite = "0.30"
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 tempfile = "3"
 dotenvy = "0.15"
 envy = "0.4"
