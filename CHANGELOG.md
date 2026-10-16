@@ -64,6 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Permission-resolver group expansion now requires the user and each group to
+  belong to the requested organization. Legacy mismatched membership rows no
+  longer add foreign groups to a user's authorization context.
 - Group rosters scoped to the requester's organization (AR-03; ADR-0041
   D3): `GET /api/v1/groups/my` and `GET /api/v1/groups/my/{id}` now filter
   groups, members, and `member_count` by the requester's organization, so a
