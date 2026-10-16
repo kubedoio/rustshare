@@ -249,7 +249,17 @@ impl MockPermissionOps {
     }
 }
 
+#[async_trait::async_trait]
+
 impl PermissionResolverOps for MockPermissionOps {
+    async fn user_belongs_to_tenant(
+        &self,
+        _user_id: UserId,
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<bool> {
+        Ok(true)
+    }
+
     async fn find_user_share(
         &self,
         _file_id: Option<Uuid>,
@@ -533,7 +543,17 @@ struct SharedFolderPermissionOps {
     share: Share,
 }
 
+#[async_trait::async_trait]
+
 impl PermissionResolverOps for SharedFolderPermissionOps {
+    async fn user_belongs_to_tenant(
+        &self,
+        _user_id: UserId,
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<bool> {
+        Ok(true)
+    }
+
     async fn find_user_share(
         &self,
         _file_id: Option<Uuid>,

@@ -412,6 +412,7 @@ pub fn create_test_share_service<J: JwtOps>(
         ctx.broadcaster.clone(),
         jwt_manager,
         Arc::new(MockNotificationRepo),
+        ctx.permission_resolver(),
     )
 }
 

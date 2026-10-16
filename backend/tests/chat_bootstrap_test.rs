@@ -1126,6 +1126,7 @@ async fn setup_app_state(pool: PgPool, bootstrap: Option<Arc<ChatBootstrapServic
         broadcaster.clone(),
         jwt_manager.clone(),
         share_notification_repo.clone(),
+        permission_resolver.clone(),
     ));
 
     let thumbnail_service = Arc::new(ThumbnailService::new(pool.clone(), object_store.clone()));

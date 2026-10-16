@@ -62,6 +62,9 @@ fn create_test_share_service(
         broadcaster,
         jwt_manager,
         notification_repo,
+        Arc::new(PermissionResolver::new(Arc::new(
+            PermissionResolverRepository::new(pool),
+        ))),
     )
 }
 
@@ -478,10 +481,10 @@ async fn test_cross_tenant_sharing_blocked() {
         )
         .await;
 
-    assert!(
-        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
-        "Cross-tenant sharing should be blocked"
-    );
+    assert!(matches!(
+        result,
+        Err(ShareError::FileNotFound(id)) if id == f.file_id
+    ));
 
     // Cleanup cross-tenant data
     sqlx::query("DELETE FROM users WHERE id = $1")
@@ -540,10 +543,10 @@ async fn test_group_share_group_from_other_tenant_refused() {
         )
         .await;
 
-    assert!(
-        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
-        "Group from another tenant should be refused"
-    );
+    assert!(matches!(
+        result,
+        Err(ShareError::GroupNotFound(id)) if id == foreign_group_id
+    ));
 
     let share_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM shares WHERE recipient_group_id = $1")
@@ -643,10 +646,10 @@ async fn test_group_folder_share_owner_bypass_still_tenant_checked() {
         )
         .await;
 
-    assert!(
-        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
-        "Owner sharing with a foreign-tenant group should be refused"
-    );
+    assert!(matches!(
+        result,
+        Err(ShareError::GroupNotFound(id)) if id == foreign_group_id
+    ));
 
     let share_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM shares WHERE recipient_group_id = $1")
@@ -804,6 +807,198 @@ async fn test_group_share_access_fails_after_membership_removal() {
         "Member should lose access after being removed from group"
     );
 
+    cleanup_group_share_fixture(&pool, &f, Some(share.id)).await;
+}
+
+/// Deleting a group removes its grant from a live permission resolution.
+#[tokio::test]
+async fn test_group_deletion_revokes_live_permission() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let share_service = create_test_share_service(pool.clone());
+    let share = share_service
+        .create_group_share(
+            Resource::File(f.file_id),
+            f.group_id,
+            SharePermissions::View,
+            f.owner_id,
+            f.tenant_id,
+        )
+        .await
+        .expect("Failed to create group share");
+    let resolver =
+        PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
+
+    assert!(resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View)
+        .await
+        .expect("Permission check failed"));
+    sqlx::query("DELETE FROM user_groups WHERE id = $1")
+        .bind(f.group_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View)
+        .await
+        .expect("Permission check failed after group deletion"));
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM files WHERE id = $1)")
+            .bind(f.file_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    );
+    cleanup_group_share_fixture(&pool, &f, Some(share.id)).await;
+}
+
+/// Inherited folder Admin authorizes a share-management action on a child file.
+#[tokio::test]
+async fn test_inherited_admin_authorizes_child_file_share_management() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let share_service = create_test_share_service(pool.clone());
+    sqlx::query("UPDATE files SET parent_folder_id = $1 WHERE id = $2")
+        .bind(f.folder_id)
+        .bind(f.file_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let folder_grant = share_service
+        .create_group_share(
+            Resource::Folder(f.folder_id),
+            f.group_id,
+            SharePermissions::Admin,
+            f.owner_id,
+            f.tenant_id,
+        )
+        .await
+        .expect("Owner should grant folder Admin");
+    let resolver =
+        PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
+    assert!(resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::Admin)
+        .await
+        .expect("Inherited permission resolution should succeed"));
+
+    let child_grant = share_service
+        .create_group_share(
+            Resource::File(f.file_id),
+            f.group_id,
+            SharePermissions::View,
+            f.member_id,
+            f.tenant_id,
+        )
+        .await
+        .expect("Inherited Admin should authorize child file share management");
+    cleanup_group_share_fixture(&pool, &f, Some(child_grant.id)).await;
+    let _ = folder_grant;
+}
+
+/// Overlapping grants preserve the lower direct grant when the higher path is removed.
+#[tokio::test]
+async fn test_overlapping_grants_retain_direct_view_until_final_removal() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let share_service = create_test_share_service(pool.clone());
+    let direct_share_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO shares (id, file_id, recipient_user_id, permissions, created_by, tenant_id) VALUES ($1, $2, $3, 'View', $4, $5)",
+    )
+    .bind(direct_share_id)
+    .bind(f.file_id)
+    .bind(f.member_id)
+    .bind(f.owner_id)
+    .bind(f.tenant_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let group_edit = share_service
+        .create_group_share(
+            Resource::File(f.file_id),
+            f.group_id,
+            SharePermissions::Edit,
+            f.owner_id,
+            f.tenant_id,
+        )
+        .await
+        .expect("Owner should grant group Edit");
+    let resolver =
+        PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
+    assert!(resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::Edit)
+        .await
+        .expect("Edit permission resolution should succeed"));
+
+    share_service
+        .revoke_group_share(group_edit.id, f.owner_id)
+        .await
+        .expect("Owner should revoke the higher group grant");
+    assert!(resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View)
+        .await
+        .expect("Direct View should remain after group grant removal"));
+    assert!(!resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::Edit)
+        .await
+        .expect("Edit permission resolution should succeed"));
+
+    sqlx::query("DELETE FROM shares WHERE id = $1")
+        .bind(direct_share_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View)
+        .await
+        .expect("View permission resolution should succeed"));
+    cleanup_group_share_fixture(&pool, &f, Some(group_edit.id)).await;
+}
+
+/// A nil tenant remains valid when principal, resource, share, and group all match.
+#[tokio::test]
+async fn test_same_nil_tenant_group_share_is_authorized() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let share_service = create_test_share_service(pool.clone());
+    let resolver =
+        PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
+    let nil_tenant = Uuid::nil();
+
+    sqlx::query("UPDATE users SET tenant_id = $1 WHERE id = ANY($2)")
+        .bind(nil_tenant)
+        .bind(vec![f.owner_id, f.member_id])
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE user_groups SET tenant_id = $1 WHERE id = $2")
+        .bind(nil_tenant)
+        .bind(f.group_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE files SET tenant_id = $1 WHERE id = $2")
+        .bind(nil_tenant)
+        .bind(f.file_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let share = share_service
+        .create_group_share(
+            Resource::File(f.file_id),
+            f.group_id,
+            SharePermissions::View,
+            f.owner_id,
+            nil_tenant,
+        )
+        .await
+        .expect("Same nil-tenant group grant should remain valid");
+    assert_eq!(share.tenant_id, nil_tenant);
+    assert!(resolver
+        .check_file_permission(f.member_id, nil_tenant, f.file_id, SharePermissions::View)
+        .await
+        .expect("Nil-tenant permission check should succeed"));
     cleanup_group_share_fixture(&pool, &f, Some(share.id)).await;
 }
 
@@ -1104,10 +1299,10 @@ async fn test_public_file_share_cross_tenant_refused() {
         )
         .await;
 
-    assert!(
-        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
-        "Cross-tenant public file share should be refused"
-    );
+    assert!(matches!(
+        result,
+        Err(ShareError::FileNotFound(id)) if id == f.file_id
+    ));
 
     let share_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM shares WHERE file_id = $1")
         .bind(f.file_id)
@@ -1154,10 +1349,10 @@ async fn test_public_folder_share_cross_tenant_refused() {
         )
         .await;
 
-    assert!(
-        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
-        "Cross-tenant public folder share should be refused"
-    );
+    assert!(matches!(
+        result,
+        Err(ShareError::FolderNotFound(id)) if id == f.folder_id
+    ));
 
     let share_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM shares WHERE folder_id = $1")
         .bind(f.folder_id)

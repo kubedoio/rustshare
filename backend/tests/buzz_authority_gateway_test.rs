@@ -4630,6 +4630,7 @@ async fn setup_app_state(
         broadcaster.clone(),
         jwt_manager.clone(),
         share_notification_repo.clone(),
+        permission_resolver.clone(),
     ));
 
     let thumbnail_service = Arc::new(ThumbnailService::new(pool.clone(), object_store.clone()));

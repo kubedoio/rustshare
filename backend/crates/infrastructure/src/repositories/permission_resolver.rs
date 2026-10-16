@@ -49,7 +49,13 @@ impl PermissionResolverRepository {
     }
 }
 
+#[async_trait::async_trait]
+
 impl PermissionResolverOps for PermissionResolverRepository {
+    async fn user_belongs_to_tenant(&self, user_id: UserId, tenant_id: Uuid) -> Result<bool> {
+        Ok(self.user_repo.get_tenant_id_for_user(user_id).await? == Some(tenant_id))
+    }
+
     async fn find_user_share(
         &self,
         file_id: Option<FileId>,

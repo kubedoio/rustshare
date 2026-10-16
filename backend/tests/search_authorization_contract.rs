@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use uuid::Uuid;
 
-use rustshare_core::domain::{File, Folder, Share, SharePermissions};
+use rustshare_core::domain::{File, Folder, Share, SharePermissions, UserId};
 use rustshare_core::services::{
     PermissionResolver, PermissionResolverOps, SearchIndexRepository, SearchResult, SearchService,
 };
@@ -69,7 +69,17 @@ impl MockPermissionOps {
     }
 }
 
+#[async_trait::async_trait]
+
 impl PermissionResolverOps for MockPermissionOps {
+    async fn user_belongs_to_tenant(
+        &self,
+        _user_id: UserId,
+        _tenant_id: Uuid,
+    ) -> anyhow::Result<bool> {
+        Ok(true)
+    }
+
     async fn find_user_share(
         &self,
         file_id: Option<Uuid>,

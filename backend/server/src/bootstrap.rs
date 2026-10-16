@@ -438,6 +438,7 @@ async fn init_services(
                 Arc::clone(&broadcaster),
                 Arc::clone(&jwt_manager),
                 Arc::clone(&share_notification_repo),
+                permission_resolver.clone(),
             ))
         },
         async {

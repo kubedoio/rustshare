@@ -178,6 +178,53 @@ where
         format!("/shared-with-me/{resource_path}/{resource_id}")
     }
 
+    async fn is_same_tenant_user(
+        &self,
+        user_id: UserId,
+        tenant_id: uuid::Uuid,
+    ) -> Result<bool, ShareError> {
+        Ok(self
+            .user_repo
+            .get_by_id(user_id)
+            .await
+            .map_err(|error| ShareError::Database(error.to_string()))?
+            .is_some_and(|user| user.tenant_id == tenant_id))
+    }
+
+    async fn is_manageable_user_share(
+        &self,
+        share: &Share,
+        tenant_id: uuid::Uuid,
+    ) -> Result<bool, ShareError> {
+        if share.tenant_id != tenant_id
+            || share.recipient_group_id.is_some()
+            || share.recipient_user_id.is_none()
+        {
+            return Ok(false);
+        }
+        let Some(user_id) = share.recipient_user_id else {
+            return Ok(false);
+        };
+        if !self.is_same_tenant_user(user_id, tenant_id).await? {
+            return Ok(false);
+        }
+        match (share.file_id, share.folder_id) {
+            (Some(file_id), None) => Ok(self
+                .file_repo
+                .get_by_id(file_id, tenant_id)
+                .await
+                .map_err(|error| ShareError::Database(error.to_string()))?
+                .is_some_and(|file| file.tenant_id == tenant_id)),
+            (None, Some(folder_id)) => Ok(self
+                .folder_repo
+                .get_by_id(folder_id, tenant_id)
+                .await
+                .map_err(|error| ShareError::Database(error.to_string()))?
+                .is_some_and(|folder| folder.tenant_id == tenant_id)),
+            _ => Ok(false),
+        }
+    }
+
     /// DEPRECATED: Use ShareService::new instead
     #[deprecated(since = "0.2.0", note = "Use ShareService::new instead")]
     pub fn new(deps: UserShareServiceDeps<SR, UR, FR, DR, P, N, E>) -> Self {
@@ -263,8 +310,10 @@ where
             .get_tenant_id_for_user(created_by)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
-            .unwrap_or_else(uuid::Uuid::nil);
-
+            .ok_or(ShareError::PermissionDenied {
+                file_id,
+                user_id: created_by,
+            })?;
         // Verify file exists
         let file = self
             .file_repo
@@ -390,8 +439,10 @@ where
             .get_tenant_id_for_user(created_by)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
-            .unwrap_or_else(uuid::Uuid::nil);
-
+            .ok_or(ShareError::PermissionDenied {
+                file_id: folder_id,
+                user_id: created_by,
+            })?;
         // Verify folder exists
         let folder = self
             .folder_repo
@@ -511,12 +562,23 @@ where
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Share>, ShareError> {
+        if !self.is_same_tenant_user(user_id, tenant_id).await? {
+            return Ok(Vec::new());
+        }
         let shares = self
             .share_repo
             .list_received_shares(user_id, tenant_id, limit, offset)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
-        Ok(shares)
+        let mut visible = Vec::with_capacity(shares.len());
+        for share in shares {
+            if share.recipient_user_id == Some(user_id)
+                && self.is_manageable_user_share(&share, tenant_id).await?
+            {
+                visible.push(share);
+            }
+        }
+        Ok(visible)
     }
 
     /// DEPRECATED: Use ShareService::list_recipients instead
@@ -529,6 +591,13 @@ where
         requesting_user: UserId,
         tenant_id: uuid::Uuid,
     ) -> Result<Vec<ShareRecipient>, ShareError> {
+        if !self.is_same_tenant_user(requesting_user, tenant_id).await? {
+            return Err(ShareError::InsufficientPermission {
+                required: SharePermissions::Admin,
+                actual: SharePermissions::View,
+            });
+        }
+
         // Determine resource for permission check
         let resource = if let Some(fid) = file_id {
             Resource::File(fid)
@@ -576,22 +645,26 @@ where
         // Convert to ShareRecipient DTOs
         let mut recipients = Vec::new();
         for share in shares {
-            if let Some(recipient_user_id) = share.recipient_user_id {
-                // Fetch user email
-                if let Some(user) = self
-                    .user_repo
-                    .get_by_id(recipient_user_id)
-                    .await
-                    .map_err(|e| ShareError::Database(e.to_string()))?
-                {
-                    recipients.push(ShareRecipient {
-                        share_id: share.id,
-                        user_id: recipient_user_id,
-                        email: user.email,
-                        permission: share.permissions,
-                        added_at: share.created_at,
-                        added_by: share.created_by,
-                    });
+            if share.tenant_id == tenant_id
+                && share.recipient_group_id.is_none()
+                && self.is_manageable_user_share(&share, tenant_id).await?
+            {
+                if let Some(recipient_user_id) = share.recipient_user_id {
+                    if let Some(user) = self
+                        .user_repo
+                        .get_by_id(recipient_user_id)
+                        .await
+                        .map_err(|e| ShareError::Database(e.to_string()))?
+                    {
+                        recipients.push(ShareRecipient {
+                            share_id: share.id,
+                            user_id: recipient_user_id,
+                            email: user.email,
+                            permission: share.permissions,
+                            added_at: share.created_at,
+                            added_by: share.created_by,
+                        });
+                    }
                 }
             }
         }
@@ -619,6 +692,16 @@ where
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
+
+        if !self.is_manageable_user_share(&share, tenant_id).await? {
+            return Err(ShareError::ShareNotFound(share_id));
+        }
+        if !self.is_same_tenant_user(requesting_user, tenant_id).await? {
+            return Err(ShareError::InsufficientPermission {
+                required: SharePermissions::Admin,
+                actual: SharePermissions::View,
+            });
+        }
 
         // Determine resource for permission check
         let resource = if let Some(fid) = share.file_id {
@@ -731,6 +814,16 @@ where
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
+
+        if !self.is_manageable_user_share(&share, tenant_id).await? {
+            return Err(ShareError::ShareNotFound(share_id));
+        }
+        if !self.is_same_tenant_user(requesting_user, tenant_id).await? {
+            return Err(ShareError::InsufficientPermission {
+                required: SharePermissions::Admin,
+                actual: SharePermissions::View,
+            });
+        }
 
         // Determine resource for permission check
         let resource = if let Some(fid) = share.file_id {
