@@ -19,6 +19,10 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use super::admin::organization_administrators::{
+    lock_tenant_admin_grants, removal_would_leave_no_enabled_admin, revoke_for_scim_lifecycle,
+};
+use super::admin::request_correlation_id;
 use super::scim::resolve_scim_tenant_scope;
 use super::ErrorResponse;
 use crate::user_disable::{set_user_disabled_at, DisableUserTarget};
@@ -140,11 +144,22 @@ fn scim_error_response(err: ScimV2Error) -> Response {
 /// SQLx-based implementation of SCIM v2 repository.
 pub struct ScimV2RepositoryImpl {
     pool: PgPool,
+    correlation_id: Option<String>,
 }
 
 impl ScimV2RepositoryImpl {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            correlation_id: None,
+        }
+    }
+
+    pub fn with_correlation_id(pool: PgPool, correlation_id: Option<String>) -> Self {
+        Self {
+            pool,
+            correlation_id,
+        }
     }
 }
 
@@ -328,7 +343,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         id: Uuid,
         user: &ScimV2User,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), ScimV2Error> {
         let email = user
             .emails
             .as_ref()
@@ -344,6 +359,24 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             (n.given_name.clone(), n.family_name.clone())
         });
 
+        let mut tx = self.pool.begin().await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+        let current_disabled_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "SELECT disabled_at FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if !user.active
+            && matches!(current_disabled_at.as_ref(), Some(None))
+            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id).await?
+        {
+            return Err(ScimV2Error::Conflict(
+                "Cannot deactivate the last enabled organization administrator".into(),
+            ));
+        }
+        let was_disabled = current_disabled_at.flatten().is_some();
         sqlx::query!(
             r#"
             UPDATE users
@@ -371,8 +404,14 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             user.external_id,
             tenant_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+
+        if !user.active || was_disabled {
+            revoke_for_scim_lifecycle(&mut tx, tenant_id, id, self.correlation_id.as_deref())
+                .await?;
+        }
+        tx.commit().await?;
 
         Ok(())
     }
@@ -382,53 +421,122 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         id: Uuid,
         operations: &[rustshare_core::services::ScimPatchOperation],
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), ScimV2Error> {
+        let mut tx = self.pool.begin().await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+        let mut was_disabled = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "SELECT disabled_at FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .flatten()
+        .is_some();
         for op in operations {
             if op.op.to_lowercase().as_str() == "replace" {
                 if let Some(ref path) = op.path {
                     if path.as_str() == "active" {
                         if let Some(ref value) = op.value {
                             let active = value.as_bool().unwrap_or(true);
+                            if !active
+                                && !was_disabled
+                                && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id)
+                                    .await?
+                            {
+                                return Err(ScimV2Error::Conflict(
+                                    "Cannot deactivate the last enabled organization administrator"
+                                        .into(),
+                                ));
+                            }
                             // AR-01 disable parity: shared disable/enable
                             // write (see `crate::user_disable` for which
                             // entry points share it); the
                             // `users_disable_revokes_credentials` trigger
                             // performs credential revocation.
                             set_user_disabled_at(
-                                &self.pool,
+                                &mut *tx,
                                 DisableUserTarget::Id(id),
                                 Some(tenant_id),
                                 if active { None } else { Some(Utc::now()) },
                             )
                             .await?;
+                            if !active || was_disabled {
+                                revoke_for_scim_lifecycle(
+                                    &mut tx,
+                                    tenant_id,
+                                    id,
+                                    self.correlation_id.as_deref(),
+                                )
+                                .await?;
+                            }
+                            was_disabled = !active;
                         }
                     }
                 } else if let Some(ref value) = op.value {
                     // Handle value object with multiple attributes
                     if let Some(active) = value.get("active").and_then(|v| v.as_bool()) {
+                        if !active
+                            && !was_disabled
+                            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id).await?
+                        {
+                            return Err(ScimV2Error::Conflict(
+                                "Cannot deactivate the last enabled organization administrator"
+                                    .into(),
+                            ));
+                        }
                         set_user_disabled_at(
-                            &self.pool,
+                            &mut *tx,
                             DisableUserTarget::Id(id),
                             Some(tenant_id),
                             if active { None } else { Some(Utc::now()) },
                         )
                         .await?;
+                        if !active || was_disabled {
+                            revoke_for_scim_lifecycle(
+                                &mut tx,
+                                tenant_id,
+                                id,
+                                self.correlation_id.as_deref(),
+                            )
+                            .await?;
+                        }
+                        was_disabled = !active;
                     }
                 }
             }
         }
+        tx.commit().await?;
         Ok(())
     }
 
-    async fn delete_user(&self, tenant_id: Uuid, id: Uuid) -> Result<(), sqlx::Error> {
+    async fn delete_user(&self, tenant_id: Uuid, id: Uuid) -> Result<(), ScimV2Error> {
+        let mut tx = self.pool.begin().await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+        let current_disabled_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "SELECT disabled_at FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if matches!(current_disabled_at.as_ref(), Some(None))
+            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id).await?
+        {
+            return Err(ScimV2Error::Conflict(
+                "Cannot deactivate the last enabled organization administrator".into(),
+            ));
+        }
         sqlx::query(
             "UPDATE users SET disabled_at = NOW(), updated_at = NOW() \
              WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL",
         )
         .bind(id)
         .bind(tenant_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        revoke_for_scim_lifecycle(&mut tx, tenant_id, id, self.correlation_id.as_deref()).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -955,7 +1063,10 @@ pub async fn update_user(
     }
 
     let base_url = get_base_url(&headers);
-    let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let repository = Arc::new(ScimV2RepositoryImpl::with_correlation_id(
+        state.db_pool,
+        request_correlation_id(&headers).map(str::to_owned),
+    ));
     let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
         Err(response) => return *response,
@@ -986,7 +1097,10 @@ pub async fn patch_user(
     }
 
     let base_url = get_base_url(&headers);
-    let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let repository = Arc::new(ScimV2RepositoryImpl::with_correlation_id(
+        state.db_pool,
+        request_correlation_id(&headers).map(str::to_owned),
+    ));
     let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
         Err(response) => return *response,
@@ -1016,7 +1130,10 @@ pub async fn delete_user(
     }
 
     let base_url = get_base_url(&headers);
-    let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let repository = Arc::new(ScimV2RepositoryImpl::with_correlation_id(
+        state.db_pool,
+        request_correlation_id(&headers).map(str::to_owned),
+    ));
     let scope = match scim_scope_or_response() {
         Ok(scope) => scope,
         Err(response) => return *response,

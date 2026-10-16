@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
+use super::organization_administrators::{
+    lock_tenant_admin_grants, removal_would_leave_no_enabled_admin, revoke_for_lifecycle,
+};
 use super::{
     admin_bad_request, admin_conflict, admin_internal_error, admin_not_found,
     insert_scoped_admin_action, request_correlation_id, resolve_creation_tenant,
@@ -645,13 +648,41 @@ pub async fn disable_admin_user(
     }
 
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
-    let tenant_id: Uuid =
-        sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1 FOR UPDATE")
-            .bind(user_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db_error)?
-            .ok_or_else(|| admin_not_found("User not found"))?;
+    let tenant_id: Uuid = sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| admin_not_found("User not found"))?;
+    lock_tenant_admin_grants(&mut tx, tenant_id)
+        .await
+        .map_err(db_error)?;
+    sqlx::query("SELECT id FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE")
+        .bind(user_id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| admin_not_found("User not found"))?;
+
+    if removal_would_leave_no_enabled_admin(&mut tx, tenant_id, user_id)
+        .await
+        .map_err(db_error)?
+    {
+        return Err(admin_conflict(
+            "Grant a replacement enabled administrator before disabling the last one",
+        ));
+    }
+    revoke_for_lifecycle(
+        &mut tx,
+        tenant_id,
+        Some(actor_id),
+        user_id,
+        "operator",
+        request_correlation_id(&headers),
+    )
+    .await
+    .map_err(db_error)?;
 
     // Shared write (AR-01 disable parity). Session deletion and device-token
     // revocation for this and every other writer are guaranteed by the
@@ -767,13 +798,40 @@ pub async fn delete_admin_user(
     .map_err(db_error)?;
 
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
-    let tenant_id: Uuid =
-        sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1 FOR UPDATE")
-            .bind(user_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db_error)?
-            .ok_or_else(|| admin_not_found("User not found"))?;
+    let tenant_id: Uuid = sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| admin_not_found("User not found"))?;
+    lock_tenant_admin_grants(&mut tx, tenant_id)
+        .await
+        .map_err(db_error)?;
+    sqlx::query("SELECT id FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE")
+        .bind(user_id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| admin_not_found("User not found"))?;
+    if removal_would_leave_no_enabled_admin(&mut tx, tenant_id, user_id)
+        .await
+        .map_err(db_error)?
+    {
+        return Err(admin_conflict(
+            "Grant a replacement enabled administrator before deleting the last one",
+        ));
+    }
+    revoke_for_lifecycle(
+        &mut tx,
+        tenant_id,
+        Some(actor_id),
+        user_id,
+        "operator",
+        request_correlation_id(&headers),
+    )
+    .await
+    .map_err(db_error)?;
     // Delete user (CASCADE handles files, file_versions, shares, etc.)
     let deleted = sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
         .execute(&mut *tx)

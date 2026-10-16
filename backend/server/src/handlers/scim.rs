@@ -9,11 +9,15 @@ use axum::{
     Json,
 };
 use axum_extra::headers::{authorization::Bearer, Authorization, HeaderMapExt};
-use rustshare_core::services::{ScimGroup, ScimService, ScimUser};
+use rustshare_core::services::{ScimError, ScimGroup, ScimService, ScimUser};
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use super::admin::organization_administrators::{
+    lock_tenant_admin_grants, removal_would_leave_no_enabled_admin, revoke_for_scim_lifecycle,
+};
+use super::admin::request_correlation_id;
 use crate::user_disable::{set_user_disabled_at, DisableUserTarget};
 use crate::AppState;
 
@@ -150,7 +154,10 @@ pub async fn provision_user(
     }
 
     // Create repository and service
-    let repository = Arc::new(ScimRepositoryImpl::new(state.db_pool.clone()));
+    let repository = Arc::new(ScimRepositoryImpl::with_correlation_id(
+        state.db_pool.clone(),
+        request_correlation_id(&headers).map(str::to_owned),
+    ));
     let scope = scim_scope_or_error()?;
     let service = ScimService::new(repository, scope, crate::default_storage_quota_bytes());
 
@@ -215,7 +222,10 @@ pub async fn deprovision_user(
         .map(|s| s.into_owned())
         .unwrap_or(external_id);
 
-    let repository = Arc::new(ScimRepositoryImpl::new(state.db_pool.clone()));
+    let repository = Arc::new(ScimRepositoryImpl::with_correlation_id(
+        state.db_pool.clone(),
+        request_correlation_id(&headers).map(str::to_owned),
+    ));
     let scope = scim_scope_or_error()?;
     let service = ScimService::new(repository, scope, crate::default_storage_quota_bytes());
 
@@ -227,6 +237,10 @@ pub async fn deprovision_user(
                 "error": "Not Found",
                 "detail": format!("User with external_id '{}' not found", external_id)
             })),
+        )),
+        Err(ScimError::Conflict(detail)) => Err((
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "Conflict", "detail": detail })),
         )),
         Err(e) => {
             tracing::error!("SCIM deprovision_user error: {:?}", e);
@@ -457,11 +471,22 @@ use sqlx::PgPool;
 /// SQLx-based implementation of SCIM repository.
 pub struct ScimRepositoryImpl {
     pool: PgPool,
+    correlation_id: Option<String>,
 }
 
 impl ScimRepositoryImpl {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            correlation_id: None,
+        }
+    }
+
+    pub fn with_correlation_id(pool: PgPool, correlation_id: Option<String>) -> Self {
+        Self {
+            pool,
+            correlation_id,
+        }
     }
 }
 
@@ -534,7 +559,24 @@ impl ScimRepository for ScimRepositoryImpl {
         name: Option<&str>,
         surname: Option<&str>,
         disabled_at: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), ScimError> {
+        let mut tx = self.pool.begin().await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+        let was_disabled = sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+            "SELECT disabled_at FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
+        )
+        .bind(user_id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if disabled_at.is_some()
+            && matches!(was_disabled.as_ref(), Some(None))
+            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, user_id).await?
+        {
+            return Err(ScimError::Conflict(
+                "Cannot disable the last enabled organization administrator".into(),
+            ));
+        }
         sqlx::query!(
             r#"
             UPDATE users
@@ -554,8 +596,14 @@ impl ScimRepository for ScimRepositoryImpl {
             disabled_at,
             tenant_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+
+        if was_disabled.flatten().is_some() || disabled_at.is_some() {
+            revoke_for_scim_lifecycle(&mut tx, tenant_id, user_id, self.correlation_id.as_deref())
+                .await?;
+        }
+        tx.commit().await?;
 
         Ok(())
     }
@@ -565,13 +613,27 @@ impl ScimRepository for ScimRepositoryImpl {
         tenant_id: Uuid,
         external_id: &str,
         disabled: bool,
-    ) -> Result<(), sqlx::Error> {
-        // AR-01 disable parity: shared disable/enable write (see
-        // `crate::user_disable` for which entry points share it); the
-        // `users_disable_revokes_credentials` trigger performs credential
-        // revocation.
+    ) -> Result<(), ScimError> {
+        let mut tx = self.pool.begin().await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+        let target = sqlx::query_as::<_, (Uuid, Option<chrono::DateTime<chrono::Utc>>)>(
+            "SELECT id, disabled_at FROM users WHERE external_id = $1 AND tenant_id = $2 FOR UPDATE",
+        )
+        .bind(external_id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if disabled {
+            if let Some((user_id, None)) = target.as_ref() {
+                if removal_would_leave_no_enabled_admin(&mut tx, tenant_id, *user_id).await? {
+                    return Err(ScimError::Conflict(
+                        "Cannot disable the last enabled organization administrator".into(),
+                    ));
+                }
+            }
+        }
         set_user_disabled_at(
-            &self.pool,
+            &mut *tx,
             DisableUserTarget::ExternalId {
                 external_id,
                 tenant_id,
@@ -584,6 +646,18 @@ impl ScimRepository for ScimRepositoryImpl {
             },
         )
         .await?;
+        if let Some((user_id, was_disabled_at)) = target {
+            if disabled || was_disabled_at.is_some() {
+                revoke_for_scim_lifecycle(
+                    &mut tx,
+                    tenant_id,
+                    user_id,
+                    self.correlation_id.as_deref(),
+                )
+                .await?;
+            }
+        }
+        tx.commit().await?;
 
         Ok(())
     }

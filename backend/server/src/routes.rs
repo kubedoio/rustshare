@@ -949,6 +949,18 @@ pub fn admin_routes() -> Router<AppState> {
             get(crate::handlers::admin::audit::list_audit_log),
         )
         .route(
+            "/api/v1/admin/organizations/{tenant_id}/administrators",
+            get(crate::handlers::admin::organization_administrators::list_organization_administrators),
+        )
+        .route(
+            "/api/v1/admin/organizations/{tenant_id}/administrators/{user_id}",
+            post(crate::handlers::admin::organization_administrators::grant_organization_administrator),
+        )
+        .route(
+            "/api/v1/admin/organizations/{tenant_id}/administrators/{user_id}",
+            delete(crate::handlers::admin::organization_administrators::revoke_organization_administrator),
+        )
+        .route(
             "/api/v1/admin/workflows",
             get(crate::handlers::admin::workflows::list_workflows),
         )
