@@ -351,6 +351,93 @@ async fn test_admin_can_share_with_any_group() {
     cleanup_group_share_fixture(&pool, &f, Some(share.id)).await;
 }
 
+/// Legacy cross-tenant membership must not confer Admin authority for
+/// share-management mutations.
+#[tokio::test]
+async fn test_cross_tenant_group_membership_cannot_authorize_group_sharing() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let share_service = create_test_share_service(pool.clone());
+
+    let foreign_tenant_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+        .bind(foreign_tenant_id)
+        .bind(format!("Foreign Tenant {}", foreign_tenant_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let foreign_group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, tenant_id, created_by) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(foreign_group_id)
+    .bind(format!("Foreign Group {}", foreign_group_id))
+    .bind(foreign_tenant_id)
+    .bind(f.owner_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(foreign_group_id)
+        .bind(f.member_id)
+        .bind(f.owner_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let legacy_share_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO shares (id, file_id, recipient_group_id, permissions, created_by, tenant_id) VALUES ($1, $2, $3, 'Admin', $4, $5)",
+    )
+    .bind(legacy_share_id)
+    .bind(f.file_id)
+    .bind(foreign_group_id)
+    .bind(f.owner_id)
+    .bind(f.tenant_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = share_service
+        .create_group_share(
+            Resource::File(f.file_id),
+            f.group_id,
+            SharePermissions::View,
+            f.member_id,
+            f.tenant_id,
+        )
+        .await;
+
+    sqlx::query("DELETE FROM shares WHERE id = $1")
+        .bind(legacy_share_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM group_members WHERE group_id = $1")
+        .bind(foreign_group_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM user_groups WHERE id = $1")
+        .bind(foreign_group_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM tenants WHERE id = $1")
+        .bind(foreign_tenant_id)
+        .execute(&pool)
+        .await
+        .ok();
+    cleanup_group_share_fixture(&pool, &f, None).await;
+
+    assert!(
+        matches!(result, Err(ShareError::PermissionDenied { .. })),
+        "foreign-group membership must not authorize share administration"
+    );
+}
+
 /// Test cross-tenant sharing is blocked
 #[tokio::test]
 async fn test_cross_tenant_sharing_blocked() {
