@@ -84,6 +84,14 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Create a share in the metadata store.
     async fn create_share(&self, share: &Share) -> Result<()>;
 
+    async fn create_share_with_correlation(
+        &self,
+        share: &Share,
+        _correlation_id: Option<&str>,
+    ) -> Result<()> {
+        self.create_share(share).await
+    }
+
     /// Get a share by ID.
     async fn get_share_by_id(&self, id: uuid::Uuid, actor_id: UserId) -> Result<Option<Share>>;
 
@@ -153,6 +161,15 @@ pub trait MetadataStoreOps: Send + Sync {
 
     /// Revoke a share by ID.
     async fn revoke_share(&self, share_id: uuid::Uuid, actor_id: UserId) -> Result<()>;
+
+    async fn revoke_share_with_correlation(
+        &self,
+        share_id: uuid::Uuid,
+        actor_id: UserId,
+        _correlation_id: Option<&str>,
+    ) -> Result<()> {
+        self.revoke_share(share_id, actor_id).await
+    }
 
     /// Update a share.
     async fn update_share(&self, share: &Share) -> Result<()>;
@@ -301,6 +318,29 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         expires_at: Option<DateTime<Utc>>,
         tenant_id: Uuid,
     ) -> Result<Share, ShareError> {
+        self.create_share_with_correlation(
+            file_id,
+            user_id,
+            permissions,
+            password,
+            expires_at,
+            tenant_id,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_share_with_correlation(
+        &self,
+        file_id: uuid::Uuid,
+        user_id: UserId,
+        permissions: SharePermissions,
+        password: Option<String>,
+        expires_at: Option<DateTime<Utc>>,
+        tenant_id: Uuid,
+        correlation_id: Option<&str>,
+    ) -> Result<Share, ShareError> {
         // Verify file exists
         let file = self
             .metadata_store
@@ -338,7 +378,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         // Store in metadata store
         self.metadata_store
-            .create_share(&share)
+            .create_share_with_correlation(&share, correlation_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -390,6 +430,31 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         upload_only: bool,
         tenant_id: Uuid,
     ) -> Result<Share, ShareError> {
+        self.create_folder_share_with_correlation(
+            folder_id,
+            user_id,
+            permissions,
+            password,
+            expires_at,
+            upload_only,
+            tenant_id,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_folder_share_with_correlation(
+        &self,
+        folder_id: uuid::Uuid,
+        user_id: UserId,
+        permissions: SharePermissions,
+        password: Option<String>,
+        expires_at: Option<DateTime<Utc>>,
+        upload_only: bool,
+        tenant_id: Uuid,
+        correlation_id: Option<&str>,
+    ) -> Result<Share, ShareError> {
         let folder = self
             .metadata_store
             .find_folder_by_id_unchecked(folder_id)
@@ -437,7 +502,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         share.upload_only = upload_only;
 
         self.metadata_store
-            .create_share(&share)
+            .create_share_with_correlation(&share, correlation_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -565,6 +630,16 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         share_id: uuid::Uuid,
         user_id: UserId,
     ) -> Result<Share, ShareError> {
+        self.revoke_share_with_correlation(share_id, user_id, None)
+            .await
+    }
+
+    pub async fn revoke_share_with_correlation(
+        &self,
+        share_id: uuid::Uuid,
+        user_id: UserId,
+        correlation_id: Option<&str>,
+    ) -> Result<Share, ShareError> {
         // Get share by ID for an explicit authorization decision.
         let share = self
             .metadata_store
@@ -597,7 +672,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         // Revoke the share
         self.metadata_store
-            .revoke_share(share_id, user_id)
+            .revoke_share_with_correlation(share_id, user_id, correlation_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 

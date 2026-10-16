@@ -9,6 +9,7 @@ pub mod users;
 pub mod webhooks;
 pub mod workflows;
 
+use axum::http::HeaderMap;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
@@ -27,8 +28,7 @@ pub(crate) fn resolve_creation_tenant(state: &crate::AppState) -> Result<Uuid, A
         .ok_or_else(|| admin_internal_error("No default organization could be resolved"))
 }
 
-/// Record an admin action in the `admin_actions` table.
-/// Errors are logged as warnings — audit failures must not block the admin operation.
+/// Record a non-transactional admin action in the `admin_actions` table.
 pub async fn log_admin_action(
     pool: &PgPool,
     actor_id: Uuid,
@@ -37,27 +37,24 @@ pub async fn log_admin_action(
     target_id: Option<Uuid>,
     detail: serde_json::Value,
 ) {
-    let result = sqlx::query!(
+    let detail = audit::project_audit_detail("admin_action", action_type, &detail);
+    let result = sqlx::query(
         r#"
-        INSERT INTO admin_actions (actor_id, action_type, target_type, target_id, detail)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO admin_actions
+            (actor_id, actor_principal_id, tenant_id, action_type, target_type, target_id, detail)
+        VALUES ($1, $1, (SELECT tenant_id FROM users WHERE id = $1), $2, $3, $4, $5)
         "#,
-        actor_id,
-        action_type,
-        target_type,
-        target_id,
-        detail
     )
+    .bind(actor_id)
+    .bind(action_type)
+    .bind(target_type)
+    .bind(target_id)
+    .bind(detail)
     .execute(pool)
     .await;
 
     if let Err(e) = result {
-        tracing::warn!(
-            actor_id = %actor_id,
-            action_type = action_type,
-            target_id = ?target_id,
-            "Failed to log admin action: {:?}", e
-        );
+        tracing::error!(actor_id = %actor_id, action_type, ?target_id, "Failed to log admin action: {e}");
     }
 }
 
@@ -70,21 +67,68 @@ pub async fn insert_admin_action(
     target_id: Option<Uuid>,
     detail: serde_json::Value,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query!(
+    let detail = audit::project_audit_detail("admin_action", action_type, &detail);
+    sqlx::query(
         r#"
-        INSERT INTO admin_actions (actor_id, action_type, target_type, target_id, detail)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO admin_actions
+            (actor_id, actor_principal_id, tenant_id, action_type, target_type, target_id, detail)
+        VALUES ($1, $1, (SELECT tenant_id FROM users WHERE id = $1), $2, $3, $4, $5)
         "#,
-        actor_id,
-        action_type,
-        target_type,
-        target_id,
-        detail
     )
+    .bind(actor_id)
+    .bind(action_type)
+    .bind(target_type)
+    .bind(target_id)
+    .bind(detail)
     .execute(&mut **tx)
     .await?;
 
     Ok(())
+}
+
+/// Insert a tenant-attributable success record with the mutation in one transaction.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_scoped_admin_action(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    actor_id: Uuid,
+    action_type: &str,
+    target_type: Option<&str>,
+    target_id: Option<Uuid>,
+    detail: serde_json::Value,
+    correlation_id: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    let detail = audit::project_audit_detail("admin_action", action_type, &detail);
+    sqlx::query(
+        "INSERT INTO admin_actions
+            (tenant_id, actor_id, actor_principal_id, action_type, target_type, target_id,
+             detail, correlation_id, outcome)
+         VALUES ($1, $2, $2, $3, $4, $5, $6, $7, 'success')",
+    )
+    .bind(tenant_id)
+    .bind(actor_id)
+    .bind(action_type)
+    .bind(target_type)
+    .bind(target_id)
+    .bind(detail)
+    .bind(correlation_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+pub fn request_correlation_id(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(crate::middleware::REQUEST_ID_HEADER)?
+        .to_str()
+        .ok()
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 64
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        })
 }
 
 use crate::handlers::AppError;

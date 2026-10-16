@@ -891,6 +891,7 @@ async fn test_legacy_nil_tenant_group_admin_add_remove_refreshes_share_tenant() 
     admin_groups::add_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
         axum::Json(admin_groups::AddMemberRequest { user_id: member_id }),
     )
@@ -914,6 +915,7 @@ async fn test_legacy_nil_tenant_group_admin_add_remove_refreshes_share_tenant() 
     admin_groups::remove_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path((group_id, member_id)),
     )
     .await
@@ -998,6 +1000,7 @@ async fn test_group_folder_share_refreshes_nested_notes_via_admin_mutation() {
     admin_groups::add_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
         axum::Json(admin_groups::AddMemberRequest { user_id: member_id }),
     )
@@ -1080,6 +1083,7 @@ async fn test_admin_group_deletion_removes_principal_after_commit() {
     admin_groups::delete_group(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
     )
     .await
@@ -1163,6 +1167,7 @@ async fn test_group_refresh_independent_of_share_creator_access() {
     admin_groups::add_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
         axum::Json(admin_groups::AddMemberRequest { user_id: member_id }),
     )
@@ -1183,6 +1188,7 @@ async fn test_group_refresh_independent_of_share_creator_access() {
     admin_groups::delete_group(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
     )
     .await
@@ -1251,6 +1257,7 @@ async fn test_revoked_group_shares_excluded_from_refresh_discovery() {
     admin_groups::add_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
         axum::Json(admin_groups::AddMemberRequest { user_id: member_id }),
     )
@@ -1324,6 +1331,7 @@ async fn test_expired_group_share_not_in_rebuilt_projection() {
     admin_groups::add_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
         axum::Json(admin_groups::AddMemberRequest { user_id: member_id }),
     )
@@ -1394,6 +1402,7 @@ async fn test_file_share_tenant_mismatch_not_indexed() {
     admin_groups::add_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
         axum::Json(admin_groups::AddMemberRequest { user_id: member_id }),
     )
@@ -1486,6 +1495,7 @@ async fn test_folder_share_tenant_mismatch_not_indexed() {
     admin_groups::add_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
         axum::Json(admin_groups::AddMemberRequest { user_id: member_id }),
     )
@@ -2054,6 +2064,7 @@ async fn test_rejected_requests_dispatch_nothing() {
     let missing_group_add = admin_groups::add_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(Uuid::new_v4()),
         axum::Json(admin_groups::AddMemberRequest { user_id: member_id }),
     )
@@ -2067,6 +2078,7 @@ async fn test_rejected_requests_dispatch_nothing() {
     let missing_membership = admin_groups::remove_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path((group_id, member_id)),
     )
     .await;
@@ -2079,6 +2091,7 @@ async fn test_rejected_requests_dispatch_nothing() {
     let missing_group_delete = admin_groups::delete_group(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(Uuid::new_v4()),
     )
     .await;
@@ -2108,6 +2121,7 @@ async fn test_rejected_requests_dispatch_nothing() {
     admin_groups::add_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
         axum::Json(admin_groups::AddMemberRequest { user_id: member_id }),
     )
@@ -2160,6 +2174,7 @@ async fn test_rolled_back_group_deletion_dispatches_nothing() {
         AdminUser {
             user_id: nonexistent_actor,
         },
+        axum::http::HeaderMap::new(),
         Path(group_id),
     )
     .await;
@@ -2204,6 +2219,7 @@ async fn test_rolled_back_group_deletion_dispatches_nothing() {
     admin_groups::delete_group(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
     )
     .await
@@ -2275,6 +2291,7 @@ async fn test_concurrent_share_creation_during_deletion_is_refreshed() {
             admin_groups::delete_group(
                 State(state),
                 AdminUser { user_id: owner_id },
+                axum::http::HeaderMap::new(),
                 Path(group_id),
             )
             .await
@@ -2398,6 +2415,7 @@ async fn test_unchanged_effective_acl_preserves_hash_and_version() {
     admin_groups::add_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
         axum::Json(admin_groups::AddMemberRequest {
             user_id: member_one,
@@ -2414,6 +2432,7 @@ async fn test_unchanged_effective_acl_preserves_hash_and_version() {
     admin_groups::remove_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path((group_id, member_one)),
     )
     .await
@@ -2422,6 +2441,7 @@ async fn test_unchanged_effective_acl_preserves_hash_and_version() {
     admin_groups::add_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
         axum::Json(admin_groups::AddMemberRequest {
             user_id: member_two,
@@ -2674,6 +2694,7 @@ async fn test_group_folder_refresh_terminates_at_foreign_tenant_folder() {
     admin_groups::add_member(
         State(state.clone()),
         AdminUser { user_id: owner_id },
+        axum::http::HeaderMap::new(),
         Path(group_id),
         axum::Json(admin_groups::AddMemberRequest { user_id: member_id }),
     )

@@ -134,6 +134,7 @@ async fn unified_admin_audit_enforces_admin_access_redacts_private_data_and_boun
     let pool = state.db_pool.clone();
     let tenant_id = Uuid::new_v4();
     let actor_id = Uuid::new_v4();
+    let suffix = actor_id.simple();
     let non_admin_id = Uuid::new_v4();
     let disabled_admin_id = Uuid::new_v4();
     let disabled_admin_session_id = Uuid::new_v4();
@@ -141,6 +142,10 @@ async fn unified_admin_audit_enforces_admin_access_redacts_private_data_and_boun
     let disabled_admin_session_hash =
         rustshare_auth::hash_web_session_token(&disabled_admin_session_token);
     let admin_action_id = Uuid::new_v4();
+    let scoped_action_id = Uuid::new_v4();
+    let foreign_action_id = Uuid::new_v4();
+    let nil_tenant_action_id = Uuid::new_v4();
+    let rollback_group_id = Uuid::new_v4();
     let template_action_id = Uuid::new_v4();
     let template_object_id = Uuid::new_v4();
     let security_event_id = Uuid::new_v4();
@@ -149,10 +154,23 @@ async fn unified_admin_audit_enforces_admin_access_redacts_private_data_and_boun
     let security_session_id = Uuid::new_v4();
     let revoked_session_id = Uuid::new_v4();
     let file_id = Uuid::new_v4();
-    let share_id = Uuid::new_v4();
+    let share = rustshare_core::domain::Share::new(
+        file_id,
+        format!("private-link-token-{suffix}"),
+        actor_id,
+        rustshare_core::domain::SharePermissions::View,
+        None,
+        None,
+        tenant_id,
+    );
+    let share_id = share.id;
+    let share_correlation_id = format!("share-request-{suffix}");
     let share_access_id = Uuid::new_v4();
     let share_session_id = Uuid::new_v4();
     let admin_action_id_text = admin_action_id.to_string();
+    let scoped_action_id_text = scoped_action_id.to_string();
+    let foreign_action_id_text = foreign_action_id.to_string();
+    let nil_tenant_action_id_text = nil_tenant_action_id.to_string();
     let template_action_id_text = template_action_id.to_string();
     let template_object_id_text = template_object_id.to_string();
     let security_event_id_text = security_event_id.to_string();
@@ -161,7 +179,6 @@ async fn unified_admin_audit_enforces_admin_access_redacts_private_data_and_boun
     let revoked_session_id_text = revoked_session_id.to_string();
     let share_access_id_text = share_access_id.to_string();
     let share_session_id_text = share_session_id.to_string();
-    let suffix = actor_id.simple();
     let username = format!("audit_redaction_admin_{suffix}");
     let unapproved_sentinel = format!("unapproved-admin-detail-{suffix}");
     let private_path_sentinel = format!("/Workspace/private-notes-{suffix}/minutes.md");
@@ -287,6 +304,34 @@ async fn unified_admin_audit_enforces_admin_access_redacts_private_data_and_boun
         .execute(&pool)
         .await?;
 
+        let correlation_id = format!("audit-{suffix}");
+        for (id, action, row_tenant, outcome) in [
+            (scoped_action_id, "user.created", tenant_id, "success"),
+            (foreign_action_id, "user.disabled", Uuid::new_v4(), "success"),
+            (nil_tenant_action_id, "user.disabled", Uuid::nil(), "success"),
+        ] {
+            sqlx::query(
+                "INSERT INTO admin_actions
+                    (id, tenant_id, actor_id, actor_principal_id, action_type, target_type,
+                     target_id, detail, correlation_id, outcome)
+                 VALUES ($1, $2, $3, $3, $4, 'user', $3, $5, $6, $7)",
+            )
+            .bind(id)
+            .bind(row_tenant)
+            .bind(actor_id)
+            .bind(action)
+            .bind(serde_json::json!({
+                "username": username.clone(),
+                "password": "secret-audit-password",
+                "content": private_path_sentinel.clone(),
+                "session_token": revoked_session_token.clone(),
+            }))
+            .bind(&correlation_id)
+            .bind(outcome)
+            .execute(&pool)
+            .await?;
+        }
+
         sqlx::query(
             "INSERT INTO admin_actions
                 (id, actor_id, action_type, target_type, target_id, detail)
@@ -326,17 +371,10 @@ async fn unified_admin_audit_enforces_admin_access_redacts_private_data_and_boun
         .execute(&pool)
         .await?;
 
-        sqlx::query(
-            "INSERT INTO shares (id, file_id, share_token, created_by, permissions, tenant_id)
-             VALUES ($1, $2, $3, $4, 'View', $5)",
-        )
-        .bind(share_id)
-        .bind(file_id)
-        .bind(format!("audit-redaction-{suffix}"))
-        .bind(actor_id)
-        .bind(tenant_id)
-        .execute(&pool)
-        .await?;
+        state
+            .metadata_store
+            .create_share_with_correlation(&share, Some(&share_correlation_id))
+            .await?;
 
         sqlx::query(
             "INSERT INTO share_access_log
@@ -459,6 +497,24 @@ async fn unified_admin_audit_enforces_admin_access_redacts_private_data_and_boun
                 && share_detail.get("success") == Some(&Value::Bool(true)),
             "share-access detail should omit raw IP while preserving success",
         )?;
+        let share_created = entries
+            .iter()
+            .find(|entry| {
+                entry.get("action_type").and_then(Value::as_str) == Some("share.created")
+                    && entry.get("correlation_id").and_then(Value::as_str)
+                        == Some(share_correlation_id.as_str())
+            })
+            .ok_or("share creation should be recorded with its request correlation ID")?;
+        require_test(
+            share_created.get("tenant_id") == Some(&Value::String(tenant_id.to_string()))
+                && share_created.get("actor_id") == Some(&Value::String(actor_id.to_string()))
+                && share_created.get("target_type") == Some(&Value::String("file".into()))
+                && share_created.get("outcome") == Some(&Value::String("success".into()))
+                && share_created.get("detail").and_then(Value::as_object).is_some_and(|detail| {
+                    detail.keys().all(|key| matches!(key.as_str(), "share_id" | "permissions" | "password_protected"))
+                }),
+            "share audit should contain only attributed, allowlisted metadata",
+        )?;
         require_test(
             !body_text.contains(&unapproved_sentinel)
                 && !body_text.contains(&private_path_sentinel)
@@ -467,8 +523,85 @@ async fn unified_admin_audit_enforces_admin_access_redacts_private_data_and_boun
                 && !body_text.contains(&foreign_event_sentinel)
                 && !body_text.contains(&share_agent_sentinel)
                 && !body_text.contains(&share_subject_sentinel)
+                && !body_text.contains(&format!("private-link-token-{suffix}"))
                 && !body_text.contains(raw_ip),
             "audit response must not expose unapproved detail, description, or raw IP sentinels",
+        )?;
+        require_test(
+            !body_text.contains("secret-audit-password")
+                && !body_text.contains(&revoked_session_token),
+            "audit response must not expose password or session-token sentinels",
+        )?;
+
+        let scoped_request = Request::builder()
+            .method(Method::GET)
+            .uri(format!("/api/v1/admin/audit?type=admin_action&tenant_id={tenant_id}"))
+            .header(header::AUTHORIZATION, format!("Bearer {bearer}"))
+            .body(Body::empty())?;
+        let scoped_response = app.clone().oneshot(scoped_request).await?;
+        require_test(scoped_response.status() == StatusCode::OK, "tenant-filtered audit query should succeed")?;
+        let scoped_body = axum::body::to_bytes(scoped_response.into_body(), usize::MAX).await?;
+        let scoped_payload: Value = serde_json::from_slice(&scoped_body)?;
+        let scoped_entries = scoped_payload.get("entries").and_then(Value::as_array).ok_or("scoped entries should be present")?;
+        let scoped_entry = scoped_entries.iter().find(|entry| entry.get("id").and_then(Value::as_str) == Some(scoped_action_id_text.as_str())).ok_or("tenant audit should include its own event")?;
+        require_test(
+            scoped_entry.get("tenant_id") == Some(&Value::String(tenant_id.to_string()))
+                && scoped_entry.get("actor_id") == Some(&Value::String(actor_id.to_string()))
+                && scoped_entry.get("correlation_id") == Some(&Value::String(correlation_id.clone()))
+                && scoped_entry.get("outcome") == Some(&Value::String("success".into()))
+                && scoped_entry.get("detail") == Some(&serde_json::json!({"username": username})),
+            "audit record should retain tenant, actor, request ID, outcome and only allowlisted metadata",
+        )?;
+        require_test(
+            !scoped_entries.iter().any(|entry| entry.get("id").and_then(Value::as_str) == Some(foreign_action_id_text.as_str())),
+            "tenant-filtered audit query must not return another tenant's event",
+        )?;
+
+        let nil_request = Request::builder()
+            .method(Method::GET)
+            .uri(format!("/api/v1/admin/audit?type=admin_action&tenant_id={}", Uuid::nil()))
+            .header(header::AUTHORIZATION, format!("Bearer {bearer}"))
+            .body(Body::empty())?;
+        let nil_response = app.clone().oneshot(nil_request).await?;
+        let nil_body = axum::body::to_bytes(nil_response.into_body(), usize::MAX).await?;
+        let nil_payload: Value = serde_json::from_slice(&nil_body)?;
+        require_test(
+            nil_payload.get("entries").and_then(Value::as_array).is_some_and(|entries| entries.iter().any(|entry| entry.get("id").and_then(Value::as_str) == Some(nil_tenant_action_id_text.as_str()))),
+            "nil tenant must remain a concrete, queryable tenant value",
+        )?;
+
+        let mut tx = pool.begin().await?;
+        sqlx::query("INSERT INTO user_groups (id, name, created_by, tenant_id) VALUES ($1, $2, $3, $4)")
+            .bind(rollback_group_id)
+            .bind(format!("audit_rollback_{suffix}"))
+            .bind(actor_id)
+            .bind(tenant_id)
+            .execute(&mut *tx)
+            .await?;
+        let missing_actor = Uuid::new_v4();
+        let failed_audit = sqlx::query(
+            "INSERT INTO admin_actions (tenant_id, actor_id, actor_principal_id, action_type)
+             VALUES ($1, $2, $2, 'group.created')",
+        )
+        .bind(tenant_id)
+        .bind(missing_actor)
+        .execute(&mut *tx)
+        .await;
+        require_test(failed_audit.is_err(), "invalid actor must make mandatory audit insert fail")?;
+        tx.rollback().await?;
+        let rolled_back_group: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1)")
+            .bind(rollback_group_id)
+            .fetch_one(&pool)
+            .await?;
+        require_test(!rolled_back_group, "mutation must roll back when its mandatory audit insert fails")?;
+
+        require_test(
+            sqlx::query("UPDATE admin_actions SET detail = '{}'::jsonb WHERE id = $1")
+                .bind(scoped_action_id)
+                .execute(&pool)
+                .await
+                .is_err(),
+            "database must reject rewriting an audit record",
         )?;
 
         let user_app = rustshare_server::routes::user_routes().with_state(state.clone());
@@ -592,6 +725,27 @@ async fn unified_admin_audit_enforces_admin_access_redacts_private_data_and_boun
             "share access log query must remain scoped to its owner",
         )?;
 
+        let revoke_correlation_id = format!("share-revoke-{suffix}");
+        state
+            .metadata_store
+            .revoke_share_with_correlation(share_id, actor_id, Some(&revoke_correlation_id))
+            .await?;
+        let revoke_audit_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM admin_actions
+             WHERE tenant_id = $1 AND actor_principal_id = $2
+               AND action_type = 'share.revoked' AND correlation_id = $3
+               AND outcome = 'success'",
+        )
+        .bind(tenant_id)
+        .bind(actor_id)
+        .bind(&revoke_correlation_id)
+        .fetch_one(&pool)
+        .await?;
+        require_test(
+            revoke_audit_count == 1,
+            "share revocation should atomically record tenant, actor, correlation and outcome",
+        )?;
+
         let last_page_with_safe_offset = i64::MAX / 100 + 1;
         let far_page_request = Request::builder()
             .method(Method::GET)
@@ -651,6 +805,13 @@ async fn unified_admin_audit_enforces_admin_access_redacts_private_data_and_boun
             template_action_id,
         ),
         ("DELETE FROM admin_actions WHERE id = $1", admin_action_id),
+        ("DELETE FROM admin_actions WHERE id = $1", scoped_action_id),
+        ("DELETE FROM admin_actions WHERE id = $1", foreign_action_id),
+        (
+            "DELETE FROM admin_actions WHERE id = $1",
+            nil_tenant_action_id,
+        ),
+        ("DELETE FROM user_groups WHERE id = $1", rollback_group_id),
         (
             "DELETE FROM user_security_events WHERE id = $1",
             security_event_id,

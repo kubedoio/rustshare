@@ -5097,28 +5097,64 @@ impl MetadataStore {
 
     /// Create a new share link for a file
     pub async fn create_share(&self, share: &Share) -> Result<()> {
-        sqlx::query!(
+        self.create_share_with_correlation(share, None).await
+    }
+
+    pub async fn create_share_with_correlation(
+        &self,
+        share: &Share,
+        correlation_id: Option<&str>,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
             r#"
             INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, tenant_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
-            share.id,
-            share.file_id,
-            share.folder_id,
-            share.share_token,
-            share.recipient_user_id,
-            share.recipient_group_id,
-            share.created_by,
-            Self::permission_to_db_value(share.permissions),
-            share.password_hash,
-            share.expires_at,
-            share.upload_only,
-            share.access_count,
-            share.created_at,
-            share.tenant_id
         )
-        .execute(&self.pool)
+        .bind(share.id)
+        .bind(share.file_id)
+        .bind(share.folder_id)
+        .bind(&share.share_token)
+        .bind(share.recipient_user_id)
+        .bind(share.recipient_group_id)
+        .bind(share.created_by)
+        .bind(Self::permission_to_db_value(share.permissions))
+        .bind(&share.password_hash)
+        .bind(share.expires_at)
+        .bind(share.upload_only)
+        .bind(share.access_count)
+        .bind(share.created_at)
+        .bind(share.tenant_id)
+        .execute(&mut *tx)
         .await?;
+
+        let (target_type, target_id) = if let Some(file_id) = share.file_id {
+            ("file", file_id)
+        } else if let Some(folder_id) = share.folder_id {
+            ("folder", folder_id)
+        } else {
+            anyhow::bail!("share must reference a file or folder")
+        };
+        sqlx::query(
+            "INSERT INTO admin_actions
+                (tenant_id, actor_id, actor_principal_id, action_type, target_type, target_id,
+                 detail, correlation_id, outcome)
+             VALUES ($1, $2, $2, 'share.created', $3, $4, $5, $6, 'success')",
+        )
+        .bind(share.tenant_id)
+        .bind(share.created_by)
+        .bind(target_type)
+        .bind(target_id)
+        .bind(serde_json::json!({
+            "share_id": share.id,
+            "permissions": Self::permission_to_db_value(share.permissions),
+            "password_protected": share.password_hash.is_some(),
+        }))
+        .bind(correlation_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
 
         Ok(())
     }
@@ -5446,17 +5482,57 @@ impl MetadataStore {
 
     /// Revoke a share link (soft delete)
     pub async fn revoke_share(&self, share_id: Uuid, actor_id: Uuid) -> Result<()> {
-        sqlx::query!(
-            r#"
-            UPDATE shares
-            SET revoked_at = NOW()
-            WHERE id = $1 AND created_by = $2
-            "#,
-            share_id,
-            actor_id
+        self.revoke_share_with_correlation(share_id, actor_id, None)
+            .await
+    }
+
+    pub async fn revoke_share_with_correlation(
+        &self,
+        share_id: Uuid,
+        actor_id: Uuid,
+        correlation_id: Option<&str>,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        let share = sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<Uuid>, Uuid)>(
+            "SELECT tenant_id, file_id, folder_id, created_by FROM shares WHERE id = $1 FOR UPDATE",
         )
-        .execute(&self.pool)
+        .bind(share_id)
+        .fetch_optional(&mut *tx)
         .await?;
+        let Some((tenant_id, file_id, folder_id, _creator_id)) = share else {
+            tx.rollback().await?;
+            return Ok(());
+        };
+        let changed = sqlx::query(
+            "UPDATE shares SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL",
+        )
+        .bind(share_id)
+        .execute(&mut *tx)
+        .await?;
+        if changed.rows_affected() == 1 {
+            let (target_type, target_id) = if let Some(file_id) = file_id {
+                ("file", file_id)
+            } else if let Some(folder_id) = folder_id {
+                ("folder", folder_id)
+            } else {
+                anyhow::bail!("share must reference a file or folder")
+            };
+            sqlx::query(
+                "INSERT INTO admin_actions
+                    (tenant_id, actor_id, actor_principal_id, action_type, target_type, target_id,
+                     detail, correlation_id, outcome)
+                 VALUES ($1, $2, $2, 'share.revoked', $3, $4, $5, $6, 'success')",
+            )
+            .bind(tenant_id)
+            .bind(actor_id)
+            .bind(target_type)
+            .bind(target_id)
+            .bind(serde_json::json!({ "share_id": share_id }))
+            .bind(correlation_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
 
         Ok(())
     }
@@ -8399,6 +8475,15 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStore {
         self.create_share(share).await
     }
 
+    async fn create_share_with_correlation(
+        &self,
+        share: &rustshare_core::domain::Share,
+        correlation_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.create_share_with_correlation(share, correlation_id)
+            .await
+    }
+
     async fn get_share_by_id(
         &self,
         id: uuid::Uuid,
@@ -8498,6 +8583,16 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStore {
         actor_id: rustshare_core::domain::UserId,
     ) -> anyhow::Result<()> {
         self.revoke_share(share_id, actor_id).await
+    }
+
+    async fn revoke_share_with_correlation(
+        &self,
+        share_id: uuid::Uuid,
+        actor_id: rustshare_core::domain::UserId,
+        correlation_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.revoke_share_with_correlation(share_id, actor_id, correlation_id)
+            .await
     }
 
     async fn update_share(&self, share: &rustshare_core::domain::Share) -> anyhow::Result<()> {
