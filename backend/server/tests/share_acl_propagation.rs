@@ -1390,6 +1390,103 @@ async fn received_user_shares_hide_expired_and_revoked_grants() {
 
 #[tokio::test]
 #[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn received_share_pagination_filters_ineligible_rows_before_limit() {
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let foreign_tenant_id = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    let recipient_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        owner_id,
+        "share-pagination-owner@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        recipient_id,
+        "share-pagination-recipient@example.com",
+    )
+    .await;
+
+    let active_file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+    let expired_file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+    let foreign_group_file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+    let moved_file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+    let deleted_file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+    let foreign_group_id = insert_test_group(&state.db_pool, foreign_tenant_id, None).await;
+    insert_group_member_direct(&state.db_pool, foreign_group_id, recipient_id).await;
+    sqlx::query("UPDATE files SET tenant_id = $2 WHERE id = $1")
+        .bind(moved_file_id)
+        .bind(foreign_tenant_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE files SET deleted_at = NOW() WHERE id = $1")
+        .bind(deleted_file_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+
+    let active_share_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO shares (
+            id, file_id, recipient_user_id, recipient_group_id, permissions,
+            created_by, tenant_id, created_at, expires_at
+        ) VALUES
+            ($1, $2, $3, NULL, 'View', $4, $5, NOW() - INTERVAL '10 minutes', NULL),
+            ($6, $7, $3, NULL, 'View', $4, $5, NOW() + INTERVAL '3 minutes', NOW() - INTERVAL '1 minute'),
+            ($8, $9, NULL, $10, 'View', $4, $5, NOW() + INTERVAL '2 minutes', NULL),
+            ($11, $12, $3, NULL, 'View', $4, $5, NOW() + INTERVAL '1 minute', NULL),
+            ($13, $14, $3, NULL, 'View', $4, $5, NOW() + INTERVAL '4 minutes', NULL)
+        "#,
+    )
+    .bind(active_share_id)
+    .bind(active_file_id)
+    .bind(recipient_id)
+    .bind(owner_id)
+    .bind(tenant_id)
+    .bind(Uuid::new_v4())
+    .bind(expired_file_id)
+    .bind(Uuid::new_v4())
+    .bind(foreign_group_file_id)
+    .bind(foreign_group_id)
+    .bind(Uuid::new_v4())
+    .bind(moved_file_id)
+    .bind(Uuid::new_v4())
+    .bind(deleted_file_id)
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
+
+    let response = rustshare_server::handlers::user_shares::list_received_shares(
+        State(state),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: recipient_id,
+            tenant_id,
+        },
+        axum::extract::Query(
+            rustshare_server::handlers::user_shares::ListReceivedSharesQuery {
+                limit: 1,
+                offset: 0,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let received: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(received.as_array().unwrap().len(), 1);
+    assert_eq!(received[0]["share_id"], active_share_id.to_string());
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn received_user_shares_include_only_tenant_valid_group_grants() {
     let (state, sink) = setup_with_recording_sink().await;
     let tenant_id = insert_test_tenant(&state.db_pool).await;
