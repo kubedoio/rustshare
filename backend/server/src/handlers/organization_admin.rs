@@ -20,11 +20,18 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct PageQuery {
     pub page: Option<i64>,
     pub per_page: Option<i64>,
     pub search: Option<String>,
     pub status: Option<String>,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct PaginationQuery {
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
 }
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct OrgUser {
@@ -44,6 +51,20 @@ pub struct Member {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct OrgUsers {
     pub users: Vec<OrgUser>,
+    pub total: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct OrgGroups {
+    pub groups: Vec<Group>,
+    pub total: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct OrgMembers {
+    pub members: Vec<Member>,
     pub total: i64,
     pub page: i64,
     pub per_page: i64,
@@ -72,6 +93,24 @@ pub struct GroupDetail {
     pub name: String,
     pub description: Option<String>,
     pub members: Vec<Member>,
+    pub total: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct UpdateGroupInput {
+    pub name: Option<String>,
+    pub description: Option<Option<String>>,
+}
+
+fn pagination(page: Option<i64>, per_page: Option<i64>) -> Result<(i64, i64, i64), AppError> {
+    let page = page.unwrap_or(1).max(1);
+    let per_page = per_page.unwrap_or(20).clamp(1, 100);
+    let offset = (page - 1)
+        .checked_mul(per_page)
+        .filter(|offset| *offset <= 100_000)
+        .ok_or_else(|| admin_bad_request("Page exceeds the supported range"))?;
+    Ok((page, per_page, offset))
 }
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AuditEvent {
@@ -97,11 +136,7 @@ pub async fn users(
     OrganizationAdmin { tenant_id, .. }: OrganizationAdmin,
     Query(q): Query<PageQuery>,
 ) -> Result<Json<OrgUsers>, AppError> {
-    let page = q.page.unwrap_or(1).max(1);
-    let per = q.per_page.unwrap_or(20).clamp(1, 100);
-    let off = (page - 1)
-        .checked_mul(per)
-        .ok_or_else(|| admin_bad_request("Invalid page"))?;
+    let (page, per, off) = pagination(q.page, q.per_page)?;
     let status = q.status.as_deref().unwrap_or("all");
     if !matches!(status, "all" | "active" | "disabled") {
         return Err(admin_bad_request("Invalid status"));
@@ -162,14 +197,27 @@ pub async fn user(
     }))
 }
 
-#[utoipa::path(get,path="/api/v1/organization-admin/groups",responses((status=200)))]
+#[utoipa::path(get,path="/api/v1/organization-admin/groups",params(PaginationQuery),responses((status=200,body=OrgGroups)))]
 pub async fn groups(
     State(s): State<AppState>,
     OrganizationAdmin { tenant_id, .. }: OrganizationAdmin,
-) -> Result<Json<Vec<Group>>, AppError> {
-    let r=sqlx::query_as::<_,(Uuid,String,Option<String>,chrono::DateTime<chrono::Utc>,chrono::DateTime<chrono::Utc>,i64)>("SELECT g.id,g.name,g.description,g.created_at,g.updated_at,count(u.id) FROM user_groups g LEFT JOIN group_members m ON m.group_id=g.id LEFT JOIN users u ON u.id=m.user_id AND u.tenant_id=g.tenant_id WHERE g.tenant_id=$1 GROUP BY g.id ORDER BY g.created_at DESC").bind(tenant_id).fetch_all(&s.db_pool).await.map_err(db_error)?;
-    Ok(Json(
-        r.into_iter()
+    Query(q): Query<PaginationQuery>,
+) -> Result<Json<OrgGroups>, AppError> {
+    let (page, per_page, offset) = pagination(q.page, q.per_page)?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_groups WHERE tenant_id=$1")
+        .bind(tenant_id)
+        .fetch_one(&s.db_pool)
+        .await
+        .map_err(db_error)?;
+    let r = if offset >= total {
+        Vec::new()
+    } else {
+        sqlx::query_as::<_, (Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64)>("SELECT g.id,g.name,g.description,g.created_at,g.updated_at,count(u.id) FROM user_groups g LEFT JOIN group_members m ON m.group_id=g.id LEFT JOIN users u ON u.id=m.user_id AND u.tenant_id=g.tenant_id WHERE g.tenant_id=$1 GROUP BY g.id ORDER BY g.created_at DESC LIMIT $2 OFFSET $3")
+            .bind(tenant_id).bind(per_page).bind(offset).fetch_all(&s.db_pool).await.map_err(db_error)?
+    };
+    Ok(Json(OrgGroups {
+        groups: r
+            .into_iter()
             .map(|x| Group {
                 id: x.0,
                 name: x.1,
@@ -179,14 +227,19 @@ pub async fn groups(
                 member_count: x.5,
             })
             .collect(),
-    ))
+        total,
+        page,
+        per_page,
+    }))
 }
-#[utoipa::path(get,path="/api/v1/organization-admin/groups/{id}",params(("id"=Uuid,Path)),responses((status=200,body=GroupDetail),(status=404)))]
+#[utoipa::path(get,path="/api/v1/organization-admin/groups/{id}",params(("id"=Uuid,Path),PaginationQuery),responses((status=200,body=GroupDetail),(status=404)))]
 pub async fn group(
     State(s): State<AppState>,
     OrganizationAdmin { tenant_id, .. }: OrganizationAdmin,
     Path(id): Path<Uuid>,
+    Query(q): Query<PaginationQuery>,
 ) -> Result<Json<GroupDetail>, AppError> {
+    let (page, per_page, offset) = pagination(q.page, q.per_page)?;
     let row = sqlx::query_as::<_, (Uuid, String, Option<String>)>(
         "SELECT id,name,description FROM user_groups WHERE id=$1 AND tenant_id=$2",
     )
@@ -196,7 +249,14 @@ pub async fn group(
     .await
     .map_err(db_error)?
     .ok_or_else(|| admin_not_found("Group not found"))?;
-    let members=sqlx::query_as::<_,(Uuid,String,String,chrono::DateTime<chrono::Utc>)>("SELECT u.id,u.username,u.email,m.added_at FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=$1 AND u.tenant_id=$2 ORDER BY m.added_at").bind(id).bind(tenant_id).fetch_all(&s.db_pool).await.map_err(db_error)?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=$1 AND u.tenant_id=$2")
+        .bind(id).bind(tenant_id).fetch_one(&s.db_pool).await.map_err(db_error)?;
+    let members = if offset >= total {
+        Vec::new()
+    } else {
+        sqlx::query_as::<_,(Uuid,String,String,chrono::DateTime<chrono::Utc>)>("SELECT u.id,u.username,u.email,m.added_at FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=$1 AND u.tenant_id=$2 ORDER BY m.added_at,u.id LIMIT $3 OFFSET $4")
+            .bind(id).bind(tenant_id).bind(per_page).bind(offset).fetch_all(&s.db_pool).await.map_err(db_error)?
+    };
     Ok(Json(GroupDetail {
         id: row.0,
         name: row.1,
@@ -210,6 +270,9 @@ pub async fn group(
                 added_at: m.3,
             })
             .collect(),
+        total,
+        page,
+        per_page,
     }))
 }
 #[utoipa::path(post,path="/api/v1/organization-admin/groups",request_body=GroupInput,responses((status=201,body=Group)))]
@@ -249,19 +312,30 @@ pub async fn create_group(
         }),
     ))
 }
-#[utoipa::path(patch,path="/api/v1/organization-admin/groups/{id}",request_body=GroupInput,responses((status=200,body=Group),(status=404)))]
+#[utoipa::path(patch,path="/api/v1/organization-admin/groups/{id}",request_body=UpdateGroupInput,responses((status=200,body=Group),(status=404)))]
 pub async fn update_group(
     State(s): State<AppState>,
     OrganizationAdmin { user_id, tenant_id }: OrganizationAdmin,
     h: HeaderMap,
     Path(id): Path<Uuid>,
-    Json(input): Json<GroupInput>,
+    Json(input): Json<UpdateGroupInput>,
 ) -> Result<Json<Group>, AppError> {
-    if input.name.trim().is_empty() {
+    let mut tx = s.db_pool.begin().await.map_err(db_error)?;
+    let current = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT name,description FROM user_groups WHERE id=$1 AND tenant_id=$2 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(tenant_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(db_error)?
+    .ok_or_else(|| admin_not_found("Group not found"))?;
+    let name = input.name.unwrap_or(current.0);
+    if name.trim().is_empty() {
         return Err(admin_bad_request("Group name must not be empty"));
     }
-    let mut tx = s.db_pool.begin().await.map_err(db_error)?;
-    let r=sqlx::query_as::<_,(Uuid,String,Option<String>,chrono::DateTime<chrono::Utc>,chrono::DateTime<chrono::Utc>,i64)>("UPDATE user_groups g SET name=$3,description=$4,updated_at=now() WHERE g.id=$1 AND g.tenant_id=$2 AND EXISTS(SELECT 1 FROM user_groups WHERE id=$1 AND tenant_id=$2 FOR UPDATE) RETURNING g.id,g.name,g.description,g.created_at,g.updated_at,(SELECT count(*) FROM group_members m JOIN users u ON u.id=m.user_id AND u.tenant_id=$2 WHERE m.group_id=g.id)").bind(id).bind(tenant_id).bind(input.name).bind(input.description).fetch_optional(&mut *tx).await.map_err(db_error)?.ok_or_else(||admin_not_found("Group not found"))?;
+    let description = input.description.unwrap_or(current.1);
+    let r=sqlx::query_as::<_,(Uuid,String,Option<String>,chrono::DateTime<chrono::Utc>,chrono::DateTime<chrono::Utc>,i64)>("UPDATE user_groups g SET name=$3,description=$4,updated_at=now() WHERE g.id=$1 AND g.tenant_id=$2 RETURNING g.id,g.name,g.description,g.created_at,g.updated_at,(SELECT count(*) FROM group_members m JOIN users u ON u.id=m.user_id AND u.tenant_id=$2 WHERE m.group_id=g.id)").bind(id).bind(tenant_id).bind(name).bind(description).fetch_one(&mut *tx).await.map_err(db_error)?;
     insert_scoped_admin_action(
         &mut tx,
         tenant_id,
@@ -328,12 +402,14 @@ pub async fn delete_group(
     );
     Ok(StatusCode::NO_CONTENT)
 }
-#[utoipa::path(get,path="/api/v1/organization-admin/groups/{id}/members",responses((status=200)))]
+#[utoipa::path(get,path="/api/v1/organization-admin/groups/{id}/members",params(PaginationQuery),responses((status=200,body=OrgMembers)))]
 pub async fn members(
     State(s): State<AppState>,
     OrganizationAdmin { tenant_id, .. }: OrganizationAdmin,
     Path(id): Path<Uuid>,
-) -> Result<Json<Vec<Member>>, AppError> {
+    Query(q): Query<PaginationQuery>,
+) -> Result<Json<OrgMembers>, AppError> {
+    let (page, per_page, offset) = pagination(q.page, q.per_page)?;
     let exists: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_groups WHERE id=$1 AND tenant_id=$2)")
             .bind(id)
@@ -344,9 +420,17 @@ pub async fn members(
     if !exists {
         return Err(admin_not_found("Group not found"));
     }
-    let rows=sqlx::query_as::<_,(Uuid,String,String,chrono::DateTime<chrono::Utc>)>("SELECT u.id,u.username,u.email,m.added_at FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=$1 AND u.tenant_id=$2 ORDER BY m.added_at").bind(id).bind(tenant_id).fetch_all(&s.db_pool).await.map_err(db_error)?;
-    Ok(Json(
-        rows.into_iter()
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=$1 AND u.tenant_id=$2")
+        .bind(id).bind(tenant_id).fetch_one(&s.db_pool).await.map_err(db_error)?;
+    let rows = if offset >= total {
+        Vec::new()
+    } else {
+        sqlx::query_as::<_,(Uuid,String,String,chrono::DateTime<chrono::Utc>)>("SELECT u.id,u.username,u.email,m.added_at FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=$1 AND u.tenant_id=$2 ORDER BY m.added_at,u.id LIMIT $3 OFFSET $4")
+            .bind(id).bind(tenant_id).bind(per_page).bind(offset).fetch_all(&s.db_pool).await.map_err(db_error)?
+    };
+    Ok(Json(OrgMembers {
+        members: rows
+            .into_iter()
             .map(|r| Member {
                 user_id: r.0,
                 username: r.1,
@@ -354,7 +438,10 @@ pub async fn members(
                 added_at: r.3,
             })
             .collect(),
-    ))
+        total,
+        page,
+        per_page,
+    }))
 }
 #[utoipa::path(post,path="/api/v1/organization-admin/groups/{id}/members",request_body=MemberInput,responses((status=204),(status=404)))]
 pub async fn add_member(
@@ -364,6 +451,11 @@ pub async fn add_member(
     Path(id): Path<Uuid>,
     Json(input): Json<MemberInput>,
 ) -> Result<StatusCode, AppError> {
+    if input.user_id == user_id {
+        return Err(AppError::forbidden(
+            "Organization administrators cannot add themselves to groups",
+        ));
+    }
     let mut tx = s.db_pool.begin().await.map_err(db_error)?;
     let valid=sqlx::query("SELECT g.id FROM user_groups g JOIN users u ON u.tenant_id=g.tenant_id WHERE g.id=$1 AND g.tenant_id=$2 AND u.id=$3 FOR UPDATE OF g,u").bind(id).bind(tenant_id).bind(input.user_id).fetch_optional(&mut *tx).await.map_err(db_error)?;
     if valid.is_none() {
@@ -427,17 +519,13 @@ pub async fn remove_member(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[utoipa::path(get,path="/api/v1/organization-admin/audit",params(PageQuery),responses((status=200,body=AuditPage)))]
+#[utoipa::path(get,path="/api/v1/organization-admin/audit",params(PaginationQuery),responses((status=200,body=AuditPage)))]
 pub async fn audit(
     State(s): State<AppState>,
     OrganizationAdmin { tenant_id, .. }: OrganizationAdmin,
-    Query(q): Query<PageQuery>,
+    Query(q): Query<PaginationQuery>,
 ) -> Result<Json<AuditPage>, AppError> {
-    let page = q.page.unwrap_or(1).max(1);
-    let per = q.per_page.unwrap_or(20).clamp(1, 100);
-    let off = (page - 1)
-        .checked_mul(per)
-        .ok_or_else(|| admin_bad_request("Invalid page"))?;
+    let (page, per, off) = pagination(q.page, q.per_page)?;
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM admin_actions WHERE tenant_id=$1 AND (action_type LIKE 'group.%' OR action_type LIKE 'organization_admin.%')")
         .bind(tenant_id)
         .fetch_one(&s.db_pool)

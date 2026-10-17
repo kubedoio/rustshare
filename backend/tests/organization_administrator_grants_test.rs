@@ -643,6 +643,35 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+    let (status, _) = send_json(
+        &app,
+        "PATCH",
+        &format!("/api/v1/admin/users/{member}"),
+        &org_token,
+        None,
+        serde_json::json!({"is_admin":true}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        &format!("/api/v1/admin/organizations/{tenant}/administrators/{member}"),
+        &org_token,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+    let (status, _) = send(
+        &app,
+        "DELETE",
+        &format!("/api/v1/admin/organizations/{tenant}/administrators/{org_admin}"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
 
     let (status, _) = send_json(
         &app,
@@ -654,6 +683,26 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::CREATED);
+    let (status, paged_groups) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/groups?per_page=1",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(paged_groups["groups"].as_array().unwrap().len(), 1);
+    assert_eq!(paged_groups["per_page"], 1);
+    let (status, _) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/groups?page=100001&per_page=100",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
     let group_id: Uuid =
         sqlx::query_scalar("SELECT id FROM user_groups WHERE tenant_id=$1 AND name=$2")
             .bind(tenant)
@@ -661,6 +710,52 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
             .fetch_one(&pool)
             .await
             .unwrap();
+    let private_file_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO files (id,name,path,size,mime_type,content_hash,storage_key,owner_id,tenant_id) VALUES ($1,'group-private.txt','/group-private.txt',5,'text/plain','hash','key',$2,$3)")
+        .bind(private_file_id).bind(member).bind(tenant)
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO shares (id,file_id,share_token,created_by,permissions,recipient_group_id,tenant_id) VALUES ($1,$2,NULL,$3,'View',$4,$5)")
+        .bind(Uuid::new_v4()).bind(private_file_id).bind(member).bind(group_id).bind(tenant)
+        .execute(&pool).await.unwrap();
+    let (status, _) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/files/{private_file_id}"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        &format!("/api/v1/organization-admin/groups/{group_id}/members"),
+        &org_token,
+        None,
+        serde_json::json!({"user_id":org_admin}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM group_members WHERE group_id=$1 AND user_id=$2"
+        )
+        .bind(group_id)
+        .bind(org_admin)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    let (status, _) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/files/{private_file_id}"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
     sqlx::query("INSERT INTO admin_actions (tenant_id,actor_id,actor_principal_id,action_type,detail) VALUES ($1,$2,$2,'config.security_updated',$3)")
         .bind(tenant).bind(operator).bind(serde_json::json!({"login_protection_enabled":true,"max_login_attempts":2}))
         .execute(&pool).await.unwrap();
@@ -715,6 +810,45 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let (status, group_detail) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/organization-admin/groups/{group_id}?per_page=1"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(group_detail["members"].as_array().unwrap().len(), 1);
+    let (status, members_page) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/organization-admin/groups/{group_id}/members?per_page=1"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(members_page["members"].as_array().unwrap().len(), 1);
+    let (status, _) = send_json(
+        &app,
+        "PATCH",
+        &format!("/api/v1/organization-admin/groups/{group_id}"),
+        &org_token,
+        None,
+        serde_json::json!({"name":format!("renamed-org-group-{tenant}")}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<String>>("SELECT description FROM user_groups WHERE id=$1")
+            .bind(group_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        Some("test".to_owned()),
+        "omitting description preserves its current value"
+    );
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM admin_actions WHERE tenant_id=$1 AND action_type='group.member_added' AND target_id=$2").bind(tenant).bind(group_id).fetch_one(&pool).await.unwrap(),1);
     let (status, audit) = send(
         &app,
@@ -729,7 +863,55 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|e| e["action_type"] == "group.member_added"));
+        .any(|e| e["action_type"] == "group.member_added"
+            && e["detail"]["user_id"] == member.to_string()));
+    let (status, _) = send(
+        &app,
+        "DELETE",
+        &format!("/api/v1/organization-admin/groups/{group_id}/members/{member}"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let (status, audit) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/audit?per_page=100",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(audit["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["action_type"] == "group.member_removed"
+            && e["detail"]["user_id"] == member.to_string()));
+    let (status, _) = send(
+        &app,
+        "DELETE",
+        &format!("/api/v1/organization-admin/groups/{group_id}"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let (status, audit) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/audit?per_page=100",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(audit["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["action_type"] == "group.deleted"));
 
     sqlx::query("UPDATE users SET disabled_at=now() WHERE id=$1")
         .bind(org_admin)

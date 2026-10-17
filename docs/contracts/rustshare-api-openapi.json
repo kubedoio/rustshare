@@ -11489,48 +11489,20 @@
         "parameters": [
           {
             "name": "page",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "per_page",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
-            }
-          },
-          {
-            "name": "search",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "status",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
             }
           }
         ],
@@ -11554,9 +11526,36 @@
           "crate::handlers::organization_admin"
         ],
         "operationId": "groups",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgGroups"
+                }
+              }
+            }
           }
         }
       },
@@ -11604,6 +11603,24 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
           }
         ],
         "responses": {
@@ -11645,7 +11662,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GroupInput"
+                "$ref": "#/components/schemas/UpdateGroupInput"
               }
             }
           },
@@ -11674,9 +11691,36 @@
           "crate::handlers::organization_admin"
         ],
         "operationId": "members",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgMembers"
+                }
+              }
+            }
           }
         }
       },
@@ -11730,48 +11774,36 @@
         "parameters": [
           {
             "name": "page",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "per_page",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "search",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "status",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -19704,7 +19736,10 @@
         "required": [
           "id",
           "name",
-          "members"
+          "members",
+          "total",
+          "page",
+          "per_page"
         ],
         "properties": {
           "description": {
@@ -19725,6 +19760,18 @@
           },
           "name": {
             "type": "string"
+          },
+          "page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -22999,6 +23046,64 @@
           }
         }
       },
+      "OrgGroups": {
+        "type": "object",
+        "required": [
+          "groups",
+          "total",
+          "page",
+          "per_page"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Group"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "OrgMembers": {
+        "type": "object",
+        "required": [
+          "members",
+          "total",
+          "page",
+          "per_page"
+        ],
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Member"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "OrgUser": {
         "type": "object",
         "required": [
@@ -25909,6 +26014,23 @@
             ]
           },
           "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UpdateGroupInput": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
             "type": [
               "string",
               "null"
