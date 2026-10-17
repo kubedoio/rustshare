@@ -243,6 +243,10 @@ impl PermissionResolverOps for PermissionResolverRepository {
               AND folder_id IS NULL
               AND recipient_group_id IS NOT NULL
               AND tenant_id = $2
+              AND EXISTS (
+                  SELECT 1 FROM user_groups g
+                  WHERE g.id = shares.recipient_group_id AND g.tenant_id = $2
+              )
               AND revoked_at IS NULL
               AND (expires_at IS NULL OR expires_at > NOW())
             "#,
@@ -295,6 +299,10 @@ impl PermissionResolverOps for PermissionResolverRepository {
             WHERE folder_id = ANY($1)
               AND recipient_group_id IS NOT NULL
               AND tenant_id = $2
+              AND EXISTS (
+                  SELECT 1 FROM user_groups g
+                  WHERE g.id = shares.recipient_group_id AND g.tenant_id = $2
+              )
               AND revoked_at IS NULL
               AND (expires_at IS NULL OR expires_at > NOW())
             "#,
