@@ -11889,6 +11889,42 @@
         }
       }
     },
+    "/api/v1/organization-admin/users/bulk": {
+      "post": {
+        "tags": [
+          "crate::handlers::organization_admin"
+        ],
+        "operationId": "bulk_invite_users",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkInviteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkInviteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/api/v1/organization-admin/users/{id}": {
       "get": {
         "tags": [
@@ -15909,6 +15945,80 @@
           },
           "title": {
             "type": "string"
+          }
+        }
+      },
+      "BulkInviteRequest": {
+        "type": "object",
+        "required": [
+          "dry_run",
+          "users"
+        ],
+        "properties": {
+          "dry_run": {
+            "type": "boolean"
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkInviteUser"
+            }
+          }
+        }
+      },
+      "BulkInviteResponse": {
+        "type": "object",
+        "required": [
+          "dry_run",
+          "rows"
+        ],
+        "properties": {
+          "dry_run": {
+            "type": "boolean"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkInviteRow"
+            }
+          }
+        }
+      },
+      "BulkInviteRow": {
+        "type": "object",
+        "required": [
+          "row",
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "type": "string"
+          },
+          "row": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "BulkInviteUser": {
+        "type": "object",
+        "required": [
+          "email",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "group_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         }
       },

@@ -20,6 +20,7 @@ enum RateLimitScope {
     ShareDownload,
     ShareUpload,
     AuthenticatedShareAdmin,
+    BulkInvite,
     AiQuery,
     VaultSyncUpload,
     VaultSyncRead,
@@ -36,6 +37,7 @@ impl RateLimitScope {
             Self::ShareDownload => HeaderValue::from_static("share-download"),
             Self::ShareUpload => HeaderValue::from_static("share-upload"),
             Self::AuthenticatedShareAdmin => HeaderValue::from_static("authenticated-share-admin"),
+            Self::BulkInvite => HeaderValue::from_static("bulk-invite"),
             Self::AiQuery => HeaderValue::from_static("ai-query"),
             Self::VaultSyncUpload => HeaderValue::from_static("vault-sync-upload"),
             Self::VaultSyncRead => HeaderValue::from_static("vault-sync-read"),
@@ -62,6 +64,8 @@ pub struct RateLimitConfig {
     pub authenticated_share_admin:
         Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
     pub authenticated_share_admin_quota: NonZeroU32,
+    pub bulk_invite: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
+    pub bulk_invite_quota: NonZeroU32,
     pub ai_query: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
     pub ai_query_quota: NonZeroU32,
     pub vault_sync_upload: Arc<RateLimiter<IpAddr, DashMapStateStore<IpAddr>, DefaultClock>>,
@@ -92,6 +96,8 @@ impl RateLimitConfig {
                 "RUSTSHARE_RATE_LIMIT_AUTHENTICATED_SHARE_ADMIN_PER_MINUTE",
                 120,
             );
+        let (bulk_invite_quota, bulk_invite_per_minute) =
+            quota_from_env("RUSTSHARE_RATE_LIMIT_BULK_INVITE_PER_MINUTE", 6);
         let (ai_query_quota, ai_query_per_minute) =
             quota_from_env("RUSTSHARE_RATE_LIMIT_AI_QUERY_PER_MINUTE", 30);
         let (vault_sync_upload_quota, vault_sync_upload_per_minute) =
@@ -118,6 +124,8 @@ impl RateLimitConfig {
                 authenticated_share_admin_quota,
             )),
             authenticated_share_admin_quota: authenticated_share_admin_per_minute,
+            bulk_invite: Arc::new(RateLimiter::dashmap(bulk_invite_quota)),
+            bulk_invite_quota: bulk_invite_per_minute,
             ai_query: Arc::new(RateLimiter::dashmap(ai_query_quota)),
             ai_query_quota: ai_query_per_minute,
             vault_sync_upload: Arc::new(RateLimiter::dashmap(vault_sync_upload_quota)),
@@ -239,6 +247,10 @@ fn quota_from_env(var_name: &str, default_per_minute: u32) -> (Quota, NonZeroU32
 }
 
 fn classify_request(method: &Method, path: &str) -> Option<RateLimitScope> {
+    if method == Method::POST && path == "/api/v1/organization-admin/users/bulk" {
+        return Some(RateLimitScope::BulkInvite);
+    }
+
     if matches_auth_login(method, path) {
         return Some(RateLimitScope::AuthLogin);
     }
@@ -356,6 +368,7 @@ fn limiter_for_scope(
         RateLimitScope::ShareDownload => &config.share_download,
         RateLimitScope::ShareUpload => &config.share_upload,
         RateLimitScope::AuthenticatedShareAdmin => &config.authenticated_share_admin,
+        RateLimitScope::BulkInvite => &config.bulk_invite,
         RateLimitScope::AiQuery => &config.ai_query,
         RateLimitScope::VaultSyncUpload => &config.vault_sync_upload,
         RateLimitScope::VaultSyncRead => &config.vault_sync_read,
@@ -372,6 +385,7 @@ fn scope_limit_per_minute(config: &RateLimitConfig, scope: RateLimitScope) -> u3
         RateLimitScope::ShareDownload => config.share_download_quota.get(),
         RateLimitScope::ShareUpload => config.share_upload_quota.get(),
         RateLimitScope::AuthenticatedShareAdmin => config.authenticated_share_admin_quota.get(),
+        RateLimitScope::BulkInvite => config.bulk_invite_quota.get(),
         RateLimitScope::AiQuery => config.ai_query_quota.get(),
         RateLimitScope::VaultSyncUpload => config.vault_sync_upload_quota.get(),
         RateLimitScope::VaultSyncRead => config.vault_sync_read_quota.get(),
@@ -395,6 +409,7 @@ mod tests {
         assert!(config.share_download.check_key(&test_ip).is_ok());
         assert!(config.share_upload.check_key(&test_ip).is_ok());
         assert!(config.authenticated_share_admin.check_key(&test_ip).is_ok());
+        assert!(config.bulk_invite.check_key(&test_ip).is_ok());
         assert!(config.ai_query.check_key(&test_ip).is_ok());
         assert!(config.vault_sync_upload.check_key(&test_ip).is_ok());
         assert!(config.vault_sync_read.check_key(&test_ip).is_ok());
@@ -518,6 +533,10 @@ mod tests {
         assert_eq!(
             classify_request(&Method::DELETE, "/api/v1/shares/share-id"),
             Some(RateLimitScope::AuthenticatedShareAdmin)
+        );
+        assert_eq!(
+            classify_request(&Method::POST, "/api/v1/organization-admin/users/bulk"),
+            Some(RateLimitScope::BulkInvite)
         );
         assert_eq!(
             classify_request(&Method::GET, "/api/vault-sync/v1/vaults"),

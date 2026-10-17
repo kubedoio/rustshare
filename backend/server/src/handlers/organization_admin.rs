@@ -14,10 +14,12 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
+use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
+use validator::Validate;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -138,6 +140,48 @@ pub struct AuditPage {
     pub total: i64,
     pub page: i64,
     pub per_page: i64,
+}
+
+const MAX_BULK_INVITES: usize = 100;
+const MAX_BULK_INVITE_DELIVERY_CONCURRENCY: usize = 10;
+// shortcut: this cap is per process; use a shared queue for fleet-wide delivery coordination.
+static BULK_INVITE_DELIVERY_SEMAPHORE: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(MAX_BULK_INVITE_DELIVERY_CONCURRENCY);
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct BulkInviteRequest {
+    pub dry_run: bool,
+    pub users: Vec<BulkInviteUser>,
+}
+
+#[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
+pub struct BulkInviteUser {
+    #[validate(email)]
+    pub email: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub group_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BulkInviteRow {
+    pub row: usize,
+    pub outcome: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BulkInviteResponse {
+    pub dry_run: bool,
+    pub rows: Vec<BulkInviteRow>,
+}
+
+#[derive(sqlx::FromRow)]
+struct PendingBulkInvite {
+    tenant_id: Uuid,
+    id: Uuid,
+    bulk_delivery_attempted_at: Option<chrono::DateTime<chrono::Utc>>,
+    bulk_delivery_status: String,
+    recipient_display_name: Option<String>,
 }
 
 #[utoipa::path(get, path="/api/v1/organization-admin/users", params(PageQuery), responses((status=200, body=OrgUsers)))]
@@ -581,4 +625,430 @@ fn group_db_error(error: sqlx::Error) -> AppError {
         }
     }
     db_error(error)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/organization-admin/users/bulk",
+    request_body = BulkInviteRequest,
+    responses((status = 200, body = BulkInviteResponse), (status = 400), (status = 403))
+)]
+pub async fn bulk_invite_users(
+    State(s): State<AppState>,
+    OrganizationAdmin { user_id, tenant_id }: OrganizationAdmin,
+    h: HeaderMap,
+    Json(request): Json<BulkInviteRequest>,
+) -> Result<Json<BulkInviteResponse>, AppError> {
+    if request.users.is_empty() || request.users.len() > MAX_BULK_INVITES {
+        return Err(admin_bad_request(
+            "Batch must contain between 1 and 100 users",
+        ));
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut rows = Vec::new();
+    for (index, row) in request.users.iter().enumerate() {
+        let email = row.email.trim().to_ascii_lowercase();
+        let outcome = if !seen.insert(email) {
+            "duplicate_in_request"
+        } else {
+            let mut conn = s.db_pool.acquire().await.map_err(db_error)?;
+            bulk_invite_validation(&mut conn, tenant_id, row).await?
+        };
+        rows.push(BulkInviteRow {
+            row: index + 1,
+            outcome: outcome.to_string(),
+        });
+    }
+
+    if request.dry_run {
+        return Ok(Json(BulkInviteResponse {
+            dry_run: true,
+            rows,
+        }));
+    }
+
+    let workflow = sqlx::query_as::<_, (Uuid, Option<String>, Option<String>)>(
+        "SELECT id, subject, body FROM workflows WHERE key='invite_email' AND status='active'",
+    )
+    .fetch_optional(&s.db_pool)
+    .await
+    .map_err(db_error)?
+    .ok_or_else(|| admin_bad_request("Invite workflow is not active"))?;
+    let sender_name: String =
+        sqlx::query_scalar("SELECT display_name FROM users WHERE id=$1 AND tenant_id=$2")
+            .bind(user_id)
+            .bind(tenant_id)
+            .fetch_optional(&s.db_pool)
+            .await
+            .map_err(db_error)?
+            .ok_or_else(|| admin_not_found("Organization administrator not found"))?;
+
+    let email_service = Arc::new(rustshare_core::services::EmailService::new(
+        s.db_pool.clone(),
+        s.secret_key.clone(),
+    ));
+    let correlation_id = request_correlation_id(&h);
+    let delivery_results = run_bounded(
+        request.users.into_iter().enumerate().collect(),
+        MAX_BULK_INVITE_DELIVERY_CONCURRENCY,
+        |(index, row)| {
+            let initial_outcome = rows[index].outcome.clone();
+            let email_service = Arc::clone(&email_service);
+            let db_pool = s.db_pool.clone();
+            let sender_name = sender_name.clone();
+            let public_base_url = s.public_base_url.clone();
+            let workflow = workflow.clone();
+            async move {
+                if !matches!(initial_outcome.as_str(), "ready" | "delivery_retry") {
+                    return (index, initial_outcome);
+                }
+                let Ok(_permit) = BULK_INVITE_DELIVERY_SEMAPHORE.acquire().await else {
+                    return (index, "apply_failed".to_string());
+                };
+                let email = row.email.trim().to_ascii_lowercase();
+                let mut commit_attempted = false;
+                let prepared: Result<Result<(Uuid, String, bool), &'static str>, AppError> = async {
+                    let mut tx = db_pool.begin().await.map_err(db_error)?;
+                    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(lower($1), 331))")
+                        .bind(&email)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db_error)?;
+                    let outcome = bulk_invite_validation(&mut tx, tenant_id, &row).await?;
+                    if !matches!(outcome, "ready" | "delivery_retry") {
+                        tx.commit().await.map_err(db_error)?;
+                        return Ok(Err(outcome));
+                    }
+
+                    let prepared = if outcome == "ready" {
+                        let mut token_bytes = [0u8; 32];
+                        rand::rng().fill_bytes(&mut token_bytes);
+                        let token = hex::encode(token_bytes);
+                        let invite_id = Uuid::new_v4();
+                        sqlx::query(
+                            "INSERT INTO invite_tokens (id, tenant_id, token, sender_id, recipient_email, recipient_display_name, workflow_id, expires_at, bulk_delivery_status, bulk_delivery_attempted_at) VALUES ($1,$2,$3,$4,$5,$6,$7,now()+interval '7 days','sending',now())",
+                        )
+                        .bind(invite_id)
+                        .bind(tenant_id)
+                        .bind(&token)
+                        .bind(user_id)
+                        .bind(&email)
+                        .bind(row.display_name.trim())
+                        .bind(workflow.0)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db_error)?;
+                        let assigned = sqlx::query(
+                            "INSERT INTO invite_token_group_assignments (invite_token_id,group_id) SELECT $1,g.id FROM user_groups g WHERE g.tenant_id=$2 AND g.id=ANY($3)",
+                        )
+                        .bind(invite_id)
+                        .bind(tenant_id)
+                        .bind(&row.group_ids)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db_error)?;
+                        if assigned.rows_affected() != row.group_ids.len() as u64 {
+                            return Err(admin_conflict("One or more groups are unavailable"));
+                        }
+                        let expired_invite_ids: Vec<Uuid> = sqlx::query_scalar(
+                            "UPDATE invite_tokens SET revoked_at=now() WHERE tenant_id=$2 AND lower(recipient_email)=lower($1) AND used_at IS NULL AND revoked_at IS NULL AND expires_at<=now() RETURNING id",
+                        )
+                        .bind(&email)
+                        .bind(tenant_id)
+                        .fetch_all(&mut *tx)
+                        .await
+                        .map_err(db_error)?;
+                        if !expired_invite_ids.is_empty() {
+                            sqlx::query(
+                                "DELETE FROM invite_token_group_assignments WHERE invite_token_id=ANY($1)",
+                            )
+                            .bind(&expired_invite_ids)
+                            .execute(&mut *tx)
+                            .await
+                            .map_err(db_error)?;
+                            insert_scoped_admin_action(
+                                &mut tx,
+                                tenant_id,
+                                user_id,
+                                "organization_admin.expired_invites_replaced",
+                                Some("invite"),
+                                Some(invite_id),
+                                json!({"expired_invite_ids": &expired_invite_ids, "count": expired_invite_ids.len()}),
+                                correlation_id,
+                            )
+                            .await
+                            .map_err(db_error)?;
+                        }
+                        insert_scoped_admin_action(
+                            &mut tx,
+                            tenant_id,
+                            user_id,
+                            "organization_admin.user_invited",
+                            Some("invite"),
+                            Some(invite_id),
+                            json!({"row": index + 1}),
+                            correlation_id,
+                        )
+                        .await
+                        .map_err(db_error)?;
+                        (invite_id, token, true)
+                    } else {
+                        let existing = sqlx::query_as::<_, (Uuid, String, String)>(
+                            "SELECT id,token,recipient_display_name FROM invite_tokens WHERE tenant_id=$1 AND lower(recipient_email)=lower($2) AND used_at IS NULL AND revoked_at IS NULL AND bulk_delivery_status IN ('failed','sending') ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
+                        )
+                        .bind(tenant_id)
+                        .bind(&email)
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(db_error)?
+                        .ok_or_else(|| admin_conflict("Invitation is no longer retryable"))?;
+                        if existing.2 != row.display_name.trim() {
+                            return Err(admin_conflict("Pending invitation details do not match"));
+                        }
+                        sqlx::query("UPDATE invite_tokens SET bulk_delivery_status='sending',bulk_delivery_attempted_at=now() WHERE id=$1")
+                            .bind(existing.0)
+                            .execute(&mut *tx)
+                            .await
+                            .map_err(db_error)?;
+                        (existing.0, existing.1, false)
+                    };
+                    commit_attempted = true;
+                    tx.commit().await.map_err(db_error)?;
+                    Ok(Ok(prepared))
+                }
+                .await;
+                let (invite_id, token, is_new) = match prepared {
+                    Ok(Ok(prepared)) => prepared,
+                    Ok(Err(outcome)) => return (index, outcome.to_string()),
+                    Err(_) => {
+                        tracing::error!(row = index + 1, "bulk invitation apply transaction failed");
+                        return (
+                            index,
+                            if commit_attempted { "apply_pending" } else { "apply_failed" }
+                                .to_string(),
+                        );
+                    }
+                };
+
+                let invite_link = format!(
+                    "{}/invite/{token}",
+                    public_base_url.trim_end_matches('/')
+                );
+                let sent = email_service
+                    .send_invite_email(
+                        &sender_name,
+                        row.display_name.trim(),
+                        &email,
+                        &invite_link,
+                        workflow
+                            .1
+                            .as_deref()
+                            .unwrap_or("You've been invited to RustShare"),
+                        workflow.2.as_deref().unwrap_or(""),
+                    )
+                    .await
+                    .is_ok();
+
+                let delivery_recorded: Result<(), AppError> = async {
+                    let mut tx = db_pool.begin().await.map_err(db_error)?;
+                    sqlx::query("UPDATE invite_tokens SET bulk_delivery_status=$2 WHERE id=$1 AND used_at IS NULL AND revoked_at IS NULL")
+                        .bind(invite_id)
+                        .bind(if sent { "sent" } else { "failed" })
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db_error)?;
+                    insert_scoped_admin_action(
+                        &mut tx,
+                        tenant_id,
+                        user_id,
+                        if sent {
+                            "organization_admin.invite_delivery_sent"
+                        } else {
+                            "organization_admin.invite_delivery_failed"
+                        },
+                        Some("invite"),
+                        Some(invite_id),
+                        json!({}),
+                        correlation_id,
+                    )
+                    .await
+                    .map_err(db_error)?;
+                    tx.commit().await.map_err(db_error)?;
+                    Ok(())
+                }
+                .await;
+                let outcome = if delivery_recorded.is_err() {
+                    tracing::error!(row = index + 1, "bulk invitation delivery status transaction failed");
+                    "delivery_pending"
+                } else if sent && is_new {
+                    "invited"
+                } else if sent {
+                    "delivery_retried"
+                } else {
+                    "delivery_failed"
+                };
+                (index, outcome.to_string())
+            }
+        },
+    )
+    .await;
+
+    for (index, outcome) in delivery_results {
+        rows[index].outcome = outcome;
+    }
+
+    Ok(Json(BulkInviteResponse {
+        dry_run: false,
+        rows,
+    }))
+}
+
+async fn run_bounded<T, F, Fut, R>(items: Vec<T>, limit: usize, f: F) -> Vec<R>
+where
+    F: FnMut(T) -> Fut,
+    Fut: std::future::Future<Output = R>,
+{
+    use futures_util::StreamExt;
+
+    futures_util::stream::iter(items.into_iter().map(f))
+        .buffer_unordered(limit)
+        .collect()
+        .await
+}
+
+async fn bulk_invite_validation(
+    conn: &mut sqlx::PgConnection,
+    tenant_id: Uuid,
+    row: &BulkInviteUser,
+) -> Result<&'static str, AppError> {
+    let email = row.email.trim().to_ascii_lowercase();
+    if row.validate().is_err() || email.len() > 255 {
+        return Ok("invalid_email");
+    }
+    if row.display_name.trim().is_empty()
+        || row.display_name.len() > 255
+        || row.display_name.chars().any(char::is_control)
+    {
+        return Ok("invalid_display_name");
+    }
+    if row.group_ids.len() > 20 {
+        return Ok("too_many_groups");
+    }
+    let mut groups = row.group_ids.clone();
+    groups.sort_unstable();
+    groups.dedup();
+    if groups.len() != row.group_ids.len() {
+        return Ok("duplicate_group");
+    }
+    let group_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM user_groups WHERE tenant_id=$1 AND id=ANY($2)")
+            .bind(tenant_id)
+            .bind(&row.group_ids)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(db_error)?;
+    if group_count != row.group_ids.len() as i64 {
+        return Ok("group_unavailable");
+    }
+
+    let (local_user, any_user): (bool, bool) = sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE tenant_id=$1 AND (lower(email)=lower($2) OR lower(username)=lower($2))), EXISTS(SELECT 1 FROM users WHERE lower(email)=lower($2) OR lower(username)=lower($2))",
+    )
+    .bind(tenant_id)
+    .bind(&email)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(db_error)?;
+    if local_user {
+        return Ok("already_exists");
+    }
+    if any_user {
+        return Ok("identifier_unavailable");
+    }
+
+    let pending: Option<PendingBulkInvite> =
+        sqlx::query_as("SELECT tenant_id,id,bulk_delivery_attempted_at,bulk_delivery_status,recipient_display_name FROM invite_tokens WHERE lower(recipient_email)=lower($1) AND used_at IS NULL AND revoked_at IS NULL AND expires_at>now() ORDER BY created_at DESC LIMIT 1")
+            .bind(&email)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(db_error)?;
+    if let Some(pending) = pending {
+        if pending.tenant_id != tenant_id {
+            return Ok("identifier_unavailable");
+        }
+        if let Some(display_name) = pending.recipient_display_name {
+            let mut assigned: Vec<Uuid> = sqlx::query_scalar(
+                "SELECT group_id FROM invite_token_group_assignments WHERE invite_token_id=$1",
+            )
+            .bind(pending.id)
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(db_error)?;
+            let mut requested = row.group_ids.clone();
+            assigned.sort_unstable();
+            requested.sort_unstable();
+            if display_name != row.display_name.trim() || assigned != requested {
+                return Ok("pending_invite_mismatch");
+            }
+        } else if !row.group_ids.is_empty() {
+            return Ok("pending_invite_mismatch");
+        }
+        return Ok(match pending.bulk_delivery_status.as_str() {
+            "failed" => "delivery_retry",
+            "sending"
+                if pending
+                    .bulk_delivery_attempted_at
+                    .is_some_and(|at| at < chrono::Utc::now() - chrono::Duration::minutes(5)) =>
+            {
+                "delivery_retry"
+            }
+            "sending" => "delivery_pending",
+            _ => "already_pending",
+        });
+    }
+    Ok("ready")
+}
+
+#[cfg(test)]
+mod bulk_invite_delivery_tests {
+    use super::{
+        run_bounded, BULK_INVITE_DELIVERY_SEMAPHORE, MAX_BULK_INVITE_DELIVERY_CONCURRENCY,
+    };
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[tokio::test]
+    async fn concurrent_batches_keep_bulk_invite_deliveries_globally_bounded() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let run_batch = |start| {
+            let active = Arc::clone(&active);
+            let maximum = Arc::clone(&maximum);
+            run_bounded(
+                (start..start + 100).collect(),
+                MAX_BULK_INVITE_DELIVERY_CONCURRENCY,
+                move |item| {
+                    let active = Arc::clone(&active);
+                    let maximum = Arc::clone(&maximum);
+                    async move {
+                        let _permit = BULK_INVITE_DELIVERY_SEMAPHORE.acquire().await.unwrap();
+                        let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        maximum.fetch_max(current, Ordering::SeqCst);
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        item
+                    }
+                },
+            )
+        };
+        let (first, second) = tokio::join!(run_batch(0), run_batch(100));
+
+        assert_eq!(first.len(), 100);
+        assert_eq!(second.len(), 100);
+        assert!(maximum.load(Ordering::SeqCst) > 1);
+        assert!(maximum.load(Ordering::SeqCst) <= MAX_BULK_INVITE_DELIVERY_CONCURRENCY);
+    }
 }

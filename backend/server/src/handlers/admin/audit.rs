@@ -430,6 +430,17 @@ pub(crate) fn project_audit_detail(
                     );
                 }
             }
+            "organization_admin.invite_accepted"
+            | "organization_admin.invite_revoked_group_unavailable" => {
+                copy_uuid_array(fields, &mut projected, "group_ids");
+                if action_type == "organization_admin.invite_accepted" {
+                    copy_uuid(fields, &mut projected, "accepted_by_user_id");
+                }
+            }
+            "organization_admin.expired_invites_replaced" => {
+                copy_uuid_array(fields, &mut projected, "expired_invite_ids");
+                copy_nonnegative_integer(fields, &mut projected, "count");
+            }
             "organization_admin.recovered" => {
                 copy_uuid(fields, &mut projected, "grant_id");
                 if matches!(
@@ -515,6 +526,22 @@ fn copy_uuid(
             key.to_string(),
             serde_json::Value::String(value.to_string()),
         );
+    }
+}
+
+fn copy_uuid_array(
+    fields: &serde_json::Map<String, serde_json::Value>,
+    projected: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    if let Some(values) = fields.get(key).and_then(serde_json::Value::as_array) {
+        let values: Vec<_> = values
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .filter(|value| Uuid::parse_str(value).is_ok())
+            .map(str::to_owned)
+            .collect();
+        projected.insert(key.to_string(), serde_json::json!(values));
     }
 }
 
