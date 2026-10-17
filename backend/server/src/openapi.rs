@@ -343,6 +343,8 @@ use utoipa::OpenApi;
     ),
     components(schemas(
         crate::handlers::ErrorResponse,
+        crate::handlers::permission_explanation::EffectivePermissionExplanation,
+        crate::handlers::permission_explanation::EffectivePermissionSource,
         crate::handlers::admin::audit::AuditEntry,
         crate::handlers::admin::audit::AuditLogQuery,
         crate::handlers::admin::audit::PaginatedAuditLog,

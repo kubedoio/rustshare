@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
+use crate::handlers::permission_explanation::EffectivePermissionExplanation;
 use rustshare_core::domain::Folder;
 
 use super::{AppError, AuthenticatedUser};
@@ -51,6 +52,9 @@ pub struct FolderWithShares {
     pub share_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_permission: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[sqlx(skip)]
+    pub effective_access: Option<EffectivePermissionExplanation>,
     pub note_bundle_file_id: Option<Uuid>,
 }
 
@@ -61,6 +65,8 @@ pub struct FolderContentsWithShares {
     pub files: Vec<crate::handlers::files::FileWithShares>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_folder_permission: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_folder_access: Option<EffectivePermissionExplanation>,
 }
 
 /// Folder tree node with share information for sidebar
@@ -80,6 +86,8 @@ pub struct FolderTreeNode {
     pub share_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_permission: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_access: Option<EffectivePermissionExplanation>,
     pub note_bundle_file_id: Option<Uuid>,
 }
 
@@ -314,6 +322,7 @@ pub async fn get_folder_contents(
         folders,
         files,
         current_folder_permission: None,
+        current_folder_access: None,
     }))
 }
 
@@ -435,6 +444,7 @@ pub async fn get_root_contents(
         folders,
         files,
         current_folder_permission: None,
+        current_folder_access: None,
     }))
 }
 
@@ -496,6 +506,7 @@ async fn build_folder_tree_with_shares(
         share_count: folder_row.share_count.unwrap_or(0),
         share_expires_at: folder_row.share_expires_at,
         effective_permission: Some("Admin".to_string()),
+        effective_access: None,
         note_bundle_file_id: folder_row.note_bundle_file_id,
     };
 
@@ -577,6 +588,7 @@ pub async fn get_folder_tree(
         share_count: 0,
         share_expires_at: None,
         effective_permission: Some("Admin".to_string()),
+        effective_access: None,
         note_bundle_file_id: None,
     };
 

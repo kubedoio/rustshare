@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use rustshare_core::{domain::SharePermissions, services::Resource};
 
+use super::permission_explanation::EffectivePermissionExplanation;
 use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 
@@ -591,6 +592,10 @@ pub async fn get_user_shared_folder_contents(
             AppError::internal("failed to resolve permission")
         })?;
 
+    if current_folder_permission.permission.is_none() {
+        return Err(AppError::not_found("Folder not found"));
+    }
+
     let contents = state
         .folder_service
         .list_contents(folder_id, auth.user_id)
@@ -617,8 +622,6 @@ pub async fn get_user_shared_folder_contents(
     // 2. Decorate folders with share information
     let mut folders_with_shares = Vec::with_capacity(contents.folders.len());
     for f in contents.folders {
-        let share_info = load_folder_share_summary(&state.db_pool, f.id).await?;
-        let size = load_folder_size(&state.db_pool, f.id).await?;
         let permission = state
             .permission_resolver
             .resolve_permission_with_source(auth.user_id, auth.tenant_id, Resource::Folder(f.id))
@@ -632,6 +635,12 @@ pub async fn get_user_shared_folder_contents(
                 );
                 AppError::internal("failed to resolve permission")
             })?;
+        if permission.permission.is_none() {
+            continue;
+        }
+
+        let share_info = load_folder_share_summary(&state.db_pool, f.id, auth.tenant_id).await?;
+        let size = load_folder_size(&state.db_pool, f.id).await?;
 
         folders_with_shares.push(FolderWithShares {
             id: f.id,
@@ -648,6 +657,7 @@ pub async fn get_user_shared_folder_contents(
             share_count: share_info.1,
             share_expires_at: share_info.2,
             effective_permission: permission_to_string(permission.permission),
+            effective_access: EffectivePermissionExplanation::from_resolution(permission),
             note_bundle_file_id: None,
         });
     }
@@ -655,7 +665,6 @@ pub async fn get_user_shared_folder_contents(
     // 3. Decorate files with share information
     let mut files_with_shares = Vec::with_capacity(contents.files.len());
     for f in contents.files {
-        let share_info = load_file_share_summary(&state.db_pool, f.id).await?;
         let permission = state
             .permission_resolver
             .resolve_permission_with_source(auth.user_id, auth.tenant_id, Resource::File(f.id))
@@ -669,6 +678,11 @@ pub async fn get_user_shared_folder_contents(
                 );
                 AppError::internal("failed to resolve permission")
             })?;
+        if permission.permission.is_none() {
+            continue;
+        }
+
+        let share_info = load_file_share_summary(&state.db_pool, f.id, auth.tenant_id).await?;
 
         files_with_shares.push(crate::handlers::files::FileWithShares {
             id: f.id,
@@ -688,6 +702,7 @@ pub async fn get_user_shared_folder_contents(
             share_count: share_info.1,
             share_expires_at: share_info.2,
             effective_permission: permission_to_string(permission.permission),
+            effective_access: EffectivePermissionExplanation::from_resolution(permission),
         });
     }
 
@@ -695,6 +710,9 @@ pub async fn get_user_shared_folder_contents(
         folders: folders_with_shares,
         files: files_with_shares,
         current_folder_permission: permission_to_string(current_folder_permission.permission),
+        current_folder_access: EffectivePermissionExplanation::from_resolution(
+            current_folder_permission,
+        ),
     }))
 }
 
@@ -728,9 +746,6 @@ async fn build_user_shared_folder_tree(
     tenant_id: Uuid,
     folder_id: Uuid,
 ) -> Result<FolderTreeWithShares, AppError> {
-    let folder = state.folder_service.get_folder(folder_id, user_id).await?;
-
-    let share_info = load_folder_share_summary(&state.db_pool, folder_id).await?;
     let permission = state
         .permission_resolver
         .resolve_permission_with_source(user_id, tenant_id, Resource::Folder(folder_id))
@@ -744,6 +759,13 @@ async fn build_user_shared_folder_tree(
             );
             AppError::internal("failed to resolve permission")
         })?;
+
+    if permission.permission.is_none() {
+        return Err(AppError::not_found("Folder not found"));
+    }
+
+    let folder = state.folder_service.get_folder(folder_id, user_id).await?;
+    let share_info = load_folder_share_summary(&state.db_pool, folder_id, tenant_id).await?;
 
     let contents = state
         .folder_service
@@ -774,6 +796,7 @@ async fn build_user_shared_folder_tree(
             share_count: share_info.1,
             share_expires_at: share_info.2,
             effective_permission: permission_to_string(permission.permission),
+            effective_access: EffectivePermissionExplanation::from_resolution(permission),
             note_bundle_file_id: None,
         },
         subfolders,
@@ -783,16 +806,18 @@ async fn build_user_shared_folder_tree(
 async fn load_folder_share_summary(
     pool: &sqlx::PgPool,
     folder_id: Uuid,
+    tenant_id: Uuid,
 ) -> Result<(bool, i64, Option<chrono::DateTime<chrono::Utc>>), AppError> {
     sqlx::query_as(
         r#"
         SELECT
-            EXISTS(SELECT 1 FROM shares WHERE folder_id = $1 AND revoked_at IS NULL) as is_shared,
-            (SELECT COUNT(*) FROM shares WHERE folder_id = $1 AND revoked_at IS NULL) as share_count,
-            (SELECT MIN(expires_at) FROM shares WHERE folder_id = $1 AND revoked_at IS NULL AND expires_at IS NOT NULL) as share_expires_at
+            EXISTS(SELECT 1 FROM shares WHERE folder_id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())) as is_shared,
+            (SELECT COUNT(*) FROM shares WHERE folder_id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())) as share_count,
+            (SELECT MIN(expires_at) FROM shares WHERE folder_id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND expires_at > NOW()) as share_expires_at
         "#,
     )
     .bind(folder_id)
+    .bind(tenant_id)
     .fetch_one(pool)
     .await
     .map_err(|error| {
@@ -804,16 +829,18 @@ async fn load_folder_share_summary(
 async fn load_file_share_summary(
     pool: &sqlx::PgPool,
     file_id: Uuid,
+    tenant_id: Uuid,
 ) -> Result<(bool, i64, Option<chrono::DateTime<chrono::Utc>>), AppError> {
     sqlx::query_as(
         r#"
         SELECT
-            EXISTS(SELECT 1 FROM shares WHERE file_id = $1 AND revoked_at IS NULL) as is_shared,
-            (SELECT COUNT(*) FROM shares WHERE file_id = $1 AND revoked_at IS NULL) as share_count,
-            (SELECT MIN(expires_at) FROM shares WHERE file_id = $1 AND revoked_at IS NULL AND expires_at IS NOT NULL) as share_expires_at
+            EXISTS(SELECT 1 FROM shares WHERE file_id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())) as is_shared,
+            (SELECT COUNT(*) FROM shares WHERE file_id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())) as share_count,
+            (SELECT MIN(expires_at) FROM shares WHERE file_id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND expires_at > NOW()) as share_expires_at
         "#,
     )
     .bind(file_id)
+    .bind(tenant_id)
     .fetch_one(pool)
     .await
     .map_err(|error| {

@@ -1,5 +1,6 @@
 //! HTTP handlers for file operations.
 
+use crate::handlers::permission_explanation::EffectivePermissionExplanation;
 use axum::{
     body::Body,
     extract::{Multipart, Path, Query, State},
@@ -990,6 +991,9 @@ pub struct FileWithShares {
     pub share_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_permission: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[sqlx(skip)]
+    pub effective_access: Option<EffectivePermissionExplanation>,
 }
 
 /// List all files for the current user.
@@ -1307,6 +1311,7 @@ pub async fn list_starred_items(
         folders,
         files,
         current_folder_permission: None,
+        current_folder_access: None,
     }))
 }
 
@@ -1427,5 +1432,6 @@ pub async fn list_deleted_items(
         folders,
         files,
         current_folder_permission: None,
+        current_folder_access: None,
     }))
 }

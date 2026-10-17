@@ -29,6 +29,7 @@ pub mod meetings;
 pub mod memory_reconcile;
 pub mod notes;
 pub mod notifications;
+pub mod permission_explanation;
 pub mod profile;
 pub mod public_shares;
 pub mod scim;
