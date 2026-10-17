@@ -8434,6 +8434,15 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStore {
 
 #[allow(async_fn_in_trait)]
 impl rustshare_core::services::ShareMetadataStoreOps for MetadataStore {
+    async fn find_descendant_folders_for_tenant(
+        &self,
+        folder_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        self.find_descendant_folders_for_tenant(folder_id, tenant_id)
+            .await
+    }
+
     async fn find_user_by_id(
         &self,
         id: uuid::Uuid,

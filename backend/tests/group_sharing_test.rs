@@ -2,16 +2,30 @@
 
 mod support;
 
-use rustshare_core::domain::SharePermissions;
+use rustshare_core::domain::{Share, SharePermissions};
 use rustshare_core::events::{AggregateType, EventBroadcaster, EventType};
 use rustshare_core::services::{
-    JwtOps, PermissionResolver, Resource, ShareError, ShareNotificationRepo, ShareService,
+    JwtOps, PermissionResolver, Resource, SearchIndexRepository, SearchResult, SearchService,
+    ShareError, ShareNotificationRepo, ShareService,
 };
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_storage::{EventStore, MetadataStore};
 use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
+
+struct StaticSearchIndex(SearchResult);
+
+impl SearchIndexRepository for StaticSearchIndex {
+    async fn search(
+        &self,
+        _tenant_id: Uuid,
+        _query: &str,
+        _limit: usize,
+    ) -> anyhow::Result<Vec<SearchResult>> {
+        Ok(vec![self.0.clone()])
+    }
+}
 
 async fn test_pool() -> PgPool {
     support::calendar_harness::connect_pool().await
@@ -63,6 +77,9 @@ fn create_test_share_service(
         jwt_manager,
         notification_repo,
     )
+    .with_permission_checker(Arc::new(PermissionResolver::new(Arc::new(
+        PermissionResolverRepository::new(pool),
+    ))))
 }
 
 struct GroupShareFixture {
@@ -348,6 +365,73 @@ async fn test_admin_can_share_with_any_group() {
 
     assert_eq!(share.permissions, SharePermissions::Edit);
 
+    // Resource Admins can manage the share even when they are outside the
+    // recipient group; group membership is only a non-Admin delegation rule.
+    let admin_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users (id, username, email, password_hash, tenant_id, display_name, storage_quota) VALUES ($1,$2,$3,'hash',$4,'Admin',10737418240)")
+        .bind(admin_id)
+        .bind(format!("admin{}", Uuid::new_v4()))
+        .bind(format!("admin{}@example.com", Uuid::new_v4()))
+        .bind(f.tenant_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    MetadataStore::new(pool.clone())
+        .create_share(&Share {
+            id: Uuid::new_v4(),
+            file_id: Some(f.file_id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::Admin,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(admin_id),
+            recipient_group_id: None,
+            created_by: f.owner_id,
+            created_at: chrono::Utc::now(),
+            revoked_at: None,
+            tenant_id: f.tenant_id,
+        })
+        .await
+        .unwrap();
+    let admin_target_group = Uuid::new_v4();
+    sqlx::query("INSERT INTO user_groups (id, name, tenant_id, created_by) VALUES ($1,$2,$3,$4)")
+        .bind(admin_target_group)
+        .bind(format!("Admin Target {}", Uuid::new_v4()))
+        .bind(f.tenant_id)
+        .bind(f.owner_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let admin_share = share_service
+        .create_group_share(
+            Resource::File(f.file_id),
+            admin_target_group,
+            SharePermissions::Admin,
+            admin_id,
+            f.tenant_id,
+        )
+        .await
+        .expect("Resource Admin outside the recipient group can share");
+    assert_eq!(admin_share.permissions, SharePermissions::Admin);
+    sqlx::query("DELETE FROM shares WHERE created_by = $1")
+        .bind(admin_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(admin_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM user_groups WHERE id = $1")
+        .bind(admin_target_group)
+        .execute(&pool)
+        .await
+        .unwrap();
+
     cleanup_group_share_fixture(&pool, &f, Some(share.id)).await;
 }
 
@@ -454,11 +538,12 @@ async fn test_cross_tenant_sharing_blocked() {
         .unwrap();
 
     let other_user_id = Uuid::new_v4();
+    let other_user_suffix = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO users (id, username, email, password_hash, tenant_id, display_name, storage_quota) VALUES ($1, $2, $3, $4, $5, $6, $7)")
         .bind(other_user_id)
-        .bind("other_user")
-        .bind("other@example.com")
+        .bind(format!("other_user_{other_user_suffix}"))
+        .bind(format!("other_{other_user_suffix}@example.com"))
         .bind("hash")
         .bind(other_tenant_id)
         .bind("Other User")
@@ -479,7 +564,7 @@ async fn test_cross_tenant_sharing_blocked() {
         .await;
 
     assert!(
-        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        matches!(result, Err(ShareError::FileNotFound(_))),
         "Cross-tenant sharing should be blocked"
     );
 
@@ -541,7 +626,7 @@ async fn test_group_share_group_from_other_tenant_refused() {
         .await;
 
     assert!(
-        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        matches!(result, Err(ShareError::GroupNotFound(_))),
         "Group from another tenant should be refused"
     );
 
@@ -644,7 +729,7 @@ async fn test_group_folder_share_owner_bypass_still_tenant_checked() {
         .await;
 
     assert!(
-        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        matches!(result, Err(ShareError::GroupNotFound(_))),
         "Owner sharing with a foreign-tenant group should be refused"
     );
 
@@ -804,7 +889,369 @@ async fn test_group_share_access_fails_after_membership_removal() {
         "Member should lose access after being removed from group"
     );
 
+    let file = MetadataStore::new(pool.clone())
+        .find_file_by_id_unchecked(f.file_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let search = SearchService::new(
+        Arc::new(StaticSearchIndex(SearchResult {
+            id: f.file_id,
+            resource_type: "file".into(),
+            name: file.name,
+            path: String::new(),
+            owner_id: f.owner_id,
+            updated_at: chrono::Utc::now(),
+        })),
+        Arc::new(resolver),
+    );
+    assert!(
+        search
+            .search(f.member_id, f.tenant_id, "stale indexed ACL", 10)
+            .await
+            .unwrap()
+            .is_empty(),
+        "stale indexed ACL must not restore access after group removal"
+    );
+
     cleanup_group_share_fixture(&pool, &f, Some(share.id)).await;
+}
+
+#[tokio::test]
+async fn test_inherited_admin_can_create_group_share_and_highest_grant_wins() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    sqlx::query("UPDATE files SET parent_folder_id = $1 WHERE id = $2")
+        .bind(f.folder_id)
+        .bind(f.file_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let metadata = MetadataStore::new(pool.clone());
+    metadata
+        .create_share(&Share {
+            id: Uuid::new_v4(),
+            file_id: None,
+            folder_id: Some(f.folder_id),
+            share_token: None,
+            permissions: SharePermissions::Admin,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(f.member_id),
+            recipient_group_id: None,
+            created_by: f.owner_id,
+            created_at: chrono::Utc::now(),
+            revoked_at: None,
+            tenant_id: f.tenant_id,
+        })
+        .await
+        .unwrap();
+    // A lower direct grant overlaps the inherited Admin grant. The resolver
+    // must preserve the highest live permission and ShareService must use it.
+    metadata
+        .create_share(&Share {
+            id: Uuid::new_v4(),
+            file_id: Some(f.file_id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::View,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(f.member_id),
+            recipient_group_id: None,
+            created_by: f.owner_id,
+            created_at: chrono::Utc::now(),
+            revoked_at: None,
+            tenant_id: f.tenant_id,
+        })
+        .await
+        .unwrap();
+
+    let service = create_test_share_service(pool.clone());
+    let share = service
+        .create_group_share(
+            Resource::File(f.file_id),
+            f.group_id,
+            SharePermissions::Edit,
+            f.member_id,
+            f.tenant_id,
+        )
+        .await
+        .expect("inherited Admin authorizes group sharing");
+    let resolver =
+        PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
+    assert!(resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::Admin)
+        .await
+        .unwrap());
+    service
+        .revoke_group_share(share.id, f.owner_id)
+        .await
+        .unwrap();
+    assert!(resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::Admin)
+        .await
+        .unwrap());
+    cleanup_group_share_fixture(&pool, &f, None).await;
+}
+
+#[tokio::test]
+async fn test_share_creator_cannot_raise_grant_after_losing_source_permission() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let metadata = MetadataStore::new(pool.clone());
+    let source_share_id = Uuid::new_v4();
+    metadata
+        .create_share(&Share {
+            id: source_share_id,
+            file_id: Some(f.file_id),
+            folder_id: None,
+            share_token: None,
+            permissions: SharePermissions::Edit,
+            password_hash: None,
+            expires_at: None,
+            upload_only: false,
+            access_count: 0,
+            recipient_user_id: Some(f.member_id),
+            recipient_group_id: None,
+            created_by: f.owner_id,
+            created_at: chrono::Utc::now(),
+            revoked_at: None,
+            tenant_id: f.tenant_id,
+        })
+        .await
+        .unwrap();
+    let service = create_test_share_service(pool.clone());
+    let delegated = service
+        .create_group_share(
+            Resource::File(f.file_id),
+            f.group_id,
+            SharePermissions::Edit,
+            f.member_id,
+            f.tenant_id,
+        )
+        .await
+        .unwrap();
+    sqlx::query("UPDATE shares SET revoked_at = NOW() WHERE id = $1")
+        .bind(source_share_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(service
+        .update_group_share_permission(delegated.id, SharePermissions::Admin, f.member_id)
+        .await
+        .is_err());
+    service
+        .update_group_share_permission(delegated.id, SharePermissions::Admin, f.owner_id)
+        .await
+        .expect("resource Admin may update the group grant");
+    cleanup_group_share_fixture(&pool, &f, None).await;
+}
+
+#[tokio::test]
+async fn test_legacy_nil_and_malformed_recipient_shares_do_not_grant_access() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let nil_share_id = Uuid::new_v4();
+    let malformed_share_id = Uuid::new_v4();
+    let mismatched_public_share_id = Uuid::new_v4();
+    let mismatched_public_token = format!("tenant-mismatch-{}", Uuid::new_v4());
+    let foreign_tenant = Uuid::new_v4();
+    sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+        .bind(foreign_tenant)
+        .bind(format!("Malformed recipient {}", Uuid::new_v4()))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let foreign_user = Uuid::new_v4();
+    sqlx::query("INSERT INTO users (id, username, email, password_hash, tenant_id, display_name, storage_quota) VALUES ($1,$2,$3,'hash',$4,'Foreign',10737418240)")
+        .bind(foreign_user)
+        .bind(format!("foreign{}", Uuid::new_v4()))
+        .bind(format!("foreign{}@example.com", Uuid::new_v4()))
+        .bind(foreign_tenant)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let foreign_group = Uuid::new_v4();
+    let foreign_folder_group = Uuid::new_v4();
+    sqlx::query("INSERT INTO user_groups (id, name, tenant_id, created_by) VALUES ($1,$2,$3,$4)")
+        .bind(foreign_group)
+        .bind(format!("Foreign group {}", Uuid::new_v4()))
+        .bind(foreign_tenant)
+        .bind(foreign_user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let foreign_child_folder_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO folders (id, name, path, parent_folder_id, owner_id, tenant_id) VALUES ($1,$2,$3,$4,$5,$6)")
+        .bind(foreign_child_folder_id)
+        .bind("foreign-child")
+        .bind(format!("/foreign-child-{}", Uuid::new_v4()))
+        .bind(f.folder_id)
+        .bind(foreign_user)
+        .bind(foreign_tenant)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO user_groups (id, name, tenant_id, created_by) VALUES ($1,$2,$3,$4)")
+        .bind(foreign_folder_group)
+        .bind(format!("Foreign folder group {}", Uuid::new_v4()))
+        .bind(foreign_tenant)
+        .bind(foreign_user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE files SET parent_folder_id = $1 WHERE id = $2")
+        .bind(f.folder_id)
+        .bind(f.file_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO shares (id, file_id, recipient_user_id, permissions, created_by, tenant_id) VALUES ($1,$2,$3,'Admin',$4,$5)")
+        .bind(nil_share_id).bind(f.file_id).bind(f.member_id).bind(f.owner_id).bind(Uuid::nil())
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO shares (id, file_id, recipient_user_id, permissions, created_by, tenant_id) VALUES ($1,$2,$3,'Admin',$4,$5)")
+        .bind(malformed_share_id).bind(f.file_id).bind(foreign_user)
+        .bind(f.owner_id).bind(f.tenant_id).execute(&pool).await.unwrap();
+    let foreign_group_share = Uuid::new_v4();
+    sqlx::query("INSERT INTO shares (id, file_id, recipient_group_id, permissions, created_by, tenant_id) VALUES ($1,$2,$3,'Admin',$4,$5)")
+        .bind(foreign_group_share)
+        .bind(f.file_id)
+        .bind(foreign_group)
+        .bind(f.owner_id)
+        .bind(f.tenant_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO shares (id, file_id, share_token, permissions, created_by, tenant_id) VALUES ($1,$2,$3,'View',$4,$5)")
+        .bind(mismatched_public_share_id)
+        .bind(f.file_id)
+        .bind(&mismatched_public_token)
+        .bind(f.owner_id)
+        .bind(foreign_tenant)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let foreign_folder_group_share = Uuid::new_v4();
+    sqlx::query("INSERT INTO shares (id, folder_id, recipient_group_id, permissions, created_by, tenant_id) VALUES ($1,$2,$3,'Admin',$4,$5)")
+        .bind(foreign_folder_group_share)
+        .bind(f.folder_id)
+        .bind(foreign_folder_group)
+        .bind(f.owner_id)
+        .bind(f.tenant_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let resolver =
+        PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
+    assert!(!resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View,)
+        .await
+        .unwrap());
+
+    let file = MetadataStore::new(pool.clone())
+        .find_file_by_id_unchecked(f.file_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let principals = resolver
+        .resolve_read_principals(&file, f.tenant_id)
+        .await
+        .unwrap();
+    assert!(!principals.contains(&format!("group:{foreign_group}")));
+    assert!(!principals.contains(&format!("group:{foreign_folder_group}")));
+    let service = create_test_share_service(pool.clone());
+    assert!(matches!(
+        service
+            .get_public_share_info(&mismatched_public_token, None)
+            .await,
+        Err(ShareError::ShareNotFoundByToken(_))
+    ));
+    let public_folder_share = service
+        .create_folder_share(
+            f.folder_id,
+            f.owner_id,
+            SharePermissions::View,
+            None,
+            None,
+            false,
+            f.tenant_id,
+        )
+        .await
+        .unwrap();
+    let (_, _, folders, _) = service
+        .list_public_folder_contents(
+            public_folder_share.share_token.as_deref().unwrap(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(folders
+        .iter()
+        .all(|folder| folder.id != foreign_child_folder_id));
+    assert!(matches!(
+        service
+            .list_public_folder_contents(
+                public_folder_share.share_token.as_deref().unwrap(),
+                Some(foreign_child_folder_id),
+                None,
+            )
+            .await,
+        Err(ShareError::FolderNotFound(_))
+    ));
+    let visible = service
+        .list_file_shares(f.file_id, f.owner_id)
+        .await
+        .unwrap();
+    assert!(visible.iter().all(|share| share.id != nil_share_id
+        && share.id != malformed_share_id
+        && share.id != foreign_group_share
+        && share.id != foreign_folder_group_share));
+
+    sqlx::query("DELETE FROM shares WHERE id = ANY($1)")
+        .bind(vec![
+            nil_share_id,
+            malformed_share_id,
+            mismatched_public_share_id,
+            public_folder_share.id,
+            foreign_group_share,
+            foreign_folder_group_share,
+        ])
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM user_groups WHERE id = $1")
+        .bind(foreign_group)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM folders WHERE id = $1")
+        .bind(foreign_child_folder_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM user_groups WHERE id = $1")
+        .bind(foreign_folder_group)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(foreign_user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM tenants WHERE id = $1")
+        .bind(foreign_tenant)
+        .execute(&pool)
+        .await
+        .unwrap();
+    cleanup_group_share_fixture(&pool, &f, None).await;
 }
 
 /// Test updating group share permission
@@ -1105,7 +1552,7 @@ async fn test_public_file_share_cross_tenant_refused() {
         .await;
 
     assert!(
-        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        matches!(result, Err(ShareError::FileNotFound(_))),
         "Cross-tenant public file share should be refused"
     );
 
@@ -1155,7 +1602,7 @@ async fn test_public_folder_share_cross_tenant_refused() {
         .await;
 
     assert!(
-        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        matches!(result, Err(ShareError::FolderNotFound(_))),
         "Cross-tenant public folder share should be refused"
     );
 

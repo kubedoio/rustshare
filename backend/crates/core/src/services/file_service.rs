@@ -2177,7 +2177,11 @@ mod tests {
 
     struct MockPermissionOps;
 
+    #[async_trait::async_trait]
     impl PermissionResolverOps for MockPermissionOps {
+        async fn user_belongs_to_tenant(&self, _user_id: Uuid, _tenant_id: Uuid) -> Result<bool> {
+            Ok(true)
+        }
         async fn find_user_share(
             &self,
             _file_id: Option<FileId>,
@@ -3406,7 +3410,11 @@ mod integration_publish_tests {
     struct StubPermissionOps;
 
     #[allow(async_fn_in_trait)]
+    #[async_trait::async_trait]
     impl PermissionResolverOps for StubPermissionOps {
+        async fn user_belongs_to_tenant(&self, _user_id: Uuid, _tenant_id: Uuid) -> Result<bool> {
+            Ok(true)
+        }
         async fn find_user_share(
             &self,
             _file_id: Option<FileId>,

@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Share management now authorizes through the same live permission resolver as Files and Notes, preserving the highest active direct, group, and inherited grant while enforcing tenant boundaries.
+
 ### Added
 
 - Organization-attributable administrative audit records for user lifecycle,

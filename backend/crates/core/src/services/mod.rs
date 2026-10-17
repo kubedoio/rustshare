@@ -51,7 +51,9 @@ pub use notification_errors::NotificationError;
 pub use notification_service::{
     CreateNotification, NotificationRepositoryOps, NotificationService,
 };
-pub use permission_resolver::{PermissionResolver, PermissionResolverOps, Resource};
+pub use permission_resolver::{
+    PermissionResolver, PermissionResolverOps, Resource, ResourcePermissionChecker,
+};
 pub use scim_service::{
     GroupRecord, ScimAction, ScimEmail, ScimError, ScimGroup, ScimGroupResult, ScimMember,
     ScimName, ScimRepository, ScimService, ScimUser, ScimUserResult,

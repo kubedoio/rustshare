@@ -413,6 +413,7 @@ pub fn create_test_share_service<J: JwtOps>(
         jwt_manager,
         Arc::new(MockNotificationRepo),
     )
+    .with_permission_checker(ctx.permission_resolver())
 }
 
 /// Create a test share for a file
