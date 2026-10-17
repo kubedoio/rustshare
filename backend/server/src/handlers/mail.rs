@@ -3489,6 +3489,22 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_email_html_filters_case_insensitive_css_urls() {
+        let mut builder = ammonia::Builder::default();
+        builder
+            .filter_style_properties(["background-image"].into_iter().collect())
+            .add_generic_attributes(["style"]);
+        builder.url_schemes(["cid"].into_iter().collect());
+
+        let clean = builder
+            .clean(r#"<div style='background-image:URL("https://evil.example/ping")'></div><div style='background-image:URL("cid:inline")'></div>"#)
+            .to_string();
+
+        assert!(!clean.contains("evil.example"));
+        assert!(clean.contains("cid:inline"));
+    }
+
+    #[test]
     fn sanitize_email_html_blocks_remote_images() {
         let raw = r#"<p>Hello</p><img alt="tracker" src="https://tracker.example/pixel.gif"><img alt="upper" src="HTTPS://tracker.example/upper.gif"><img src="//tracker.example/relative.gif"><img src="cid:inline">"#;
         let (clean, blocked) = sanitize_email_html(raw, false);
