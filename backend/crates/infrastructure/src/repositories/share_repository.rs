@@ -76,9 +76,26 @@ impl ShareRepository {
                   SELECT gm.group_id
                   FROM group_members gm
                   JOIN users u ON u.id = gm.user_id
+                  JOIN user_groups g ON g.id = gm.group_id AND g.tenant_id = $2
                   WHERE gm.user_id = $1 AND u.tenant_id = $2
               ))
               AND revoked_at IS NULL
+              AND (expires_at IS NULL OR expires_at > NOW())
+              AND (
+                  (file_id IS NOT NULL AND folder_id IS NULL AND EXISTS (
+                      SELECT 1 FROM files f
+                      WHERE f.id = shares.file_id
+                        AND f.tenant_id = $2
+                        AND f.deleted_at IS NULL
+                  ))
+                  OR
+                  (folder_id IS NOT NULL AND file_id IS NULL AND EXISTS (
+                      SELECT 1 FROM folders f
+                      WHERE f.id = shares.folder_id
+                        AND f.tenant_id = $2
+                        AND f.deleted_at IS NULL
+                  ))
+              )
             ORDER BY created_at DESC
             LIMIT $3 OFFSET $4
             "#,
