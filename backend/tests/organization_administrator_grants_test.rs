@@ -756,6 +756,71 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let foreign_group_name = format!("foreign-collision-{tenant}");
+    sqlx::query("INSERT INTO user_groups (id,name,tenant_id,created_by) VALUES ($1,$2,$3,$4)")
+        .bind(Uuid::new_v4())
+        .bind(&foreign_group_name)
+        .bind(foreign_tenant)
+        .bind(foreign)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        "/api/v1/organization-admin/groups",
+        &org_token,
+        None,
+        serde_json::json!({"name":foreign_group_name}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        "/api/v1/organization-admin/groups",
+        &org_token,
+        None,
+        serde_json::json!({"name":format!("foreign-rename-target-{tenant}")}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    let rename_target_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM user_groups WHERE tenant_id=$1 AND name=$2")
+            .bind(tenant)
+            .bind(format!("foreign-rename-target-{tenant}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let (status, _) = send_json(
+        &app,
+        "PATCH",
+        &format!("/api/v1/organization-admin/groups/{rename_target_id}"),
+        &org_token,
+        None,
+        serde_json::json!({"name":foreign_group_name}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM admin_actions WHERE tenant_id=$1 AND action_type IN ('group.created','group.updated') AND detail->>'name'=$2")
+            .bind(tenant)
+            .bind(&foreign_group_name)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        0,
+        "failed cross-tenant name collisions do not create local audit events"
+    );
+    let (status, _) = send(
+        &app,
+        "DELETE",
+        &format!("/api/v1/organization-admin/groups/{rename_target_id}"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
     let private_file_id = Uuid::new_v4();
     sqlx::query("INSERT INTO files (id,name,path,size,mime_type,content_hash,storage_key,owner_id,tenant_id) VALUES ($1,'group-private.txt','/group-private.txt',5,'text/plain','hash','key',$2,$3)")
         .bind(private_file_id).bind(member).bind(tenant)
