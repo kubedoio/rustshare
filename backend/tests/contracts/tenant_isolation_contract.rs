@@ -680,10 +680,9 @@ async fn test_notifications_do_not_leak_across_tenants() {
 // AR-03: tenant-safe groups and sharing
 // ---------------------------------------------------------------------------
 
-/// G-01-14: Group-share creation with a group from another organization fails
-/// closed and writes no share row. This is the service-level analogue of the
-/// cross-organization add-member refusal: the grant (group membership) must
-/// not bridge organizations.
+/// G-01-14: Group-share creation with a group from another organization is
+/// masked as missing and writes no share row, so the caller cannot learn that
+/// the foreign group exists.
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_group_share_with_foreign_group_refused_no_share_row() {
@@ -723,7 +722,7 @@ async fn test_group_share_with_foreign_group_refused_no_share_row() {
         .await;
 
     assert!(
-        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        matches!(result, Err(ShareError::GroupNotFound(id)) if id == foreign_group_id),
         "Group-share creation with a foreign-organization group must be refused; got {:?}",
         result
     );
@@ -744,7 +743,7 @@ async fn test_group_share_with_foreign_group_refused_no_share_row() {
 }
 
 /// G-01-15: Public-link creation (create_share) for a resource of another
-/// organization is refused and writes no share row.
+/// organization is masked as missing and writes no share row.
 #[tokio::test]
 #[ignore] // Requires database and S3
 async fn test_public_link_for_foreign_resource_refused_no_share_row() {
@@ -783,7 +782,7 @@ async fn test_public_link_for_foreign_resource_refused_no_share_row() {
         .await;
 
     assert!(
-        matches!(result, Err(ShareError::CrossTenantSharingNotAllowed)),
+        matches!(result, Err(ShareError::FileNotFound(id)) if id == file.id),
         "Public-link creation for a foreign-organization resource must be refused; got {:?}",
         result
     );

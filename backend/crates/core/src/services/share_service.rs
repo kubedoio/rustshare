@@ -1081,10 +1081,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     /// * `tenant_id` - Tenant ID for boundary checking
     ///
     /// # Errors
-    /// * `FileNotFound` / `FolderNotFound` - if the resource does not exist
-    /// * `GroupNotFound` - if the group does not exist
-    /// * `CrossTenantSharingNotAllowed` - if the resource or the group is in
-    ///   a different tenant than `tenant_id`
+    /// * `FileNotFound` / `FolderNotFound` - if the resource does not exist or
+    ///   belongs to a different tenant
+    /// * `GroupNotFound` - if the group does not exist or belongs to a
+    ///   different tenant
     /// * `PermissionDenied` - if the user does not hold the granted
     ///   permission on the resource
     /// * `NotGroupMember` - if user is not admin and not group member
