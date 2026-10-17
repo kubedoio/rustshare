@@ -17144,6 +17144,39 @@
           }
         }
       },
+      "EffectivePermissionExplanation": {
+        "type": "object",
+        "description": "Effective resource access as resolved by the live permission resolver.",
+        "required": [
+          "source",
+          "permission"
+        ],
+        "properties": {
+          "permission": {
+            "$ref": "#/components/schemas/SharePermissions"
+          },
+          "share_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Present only for a direct Admin grant, whose id the caller may inspect\nthrough the existing resource grant-management permission gate."
+          },
+          "source": {
+            "$ref": "#/components/schemas/EffectivePermissionSource"
+          }
+        }
+      },
+      "EffectivePermissionSource": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "direct_share",
+          "group_share",
+          "inherited"
+        ]
+      },
       "EnabledApplicationsResponse": {
         "type": "object",
         "required": [
@@ -18512,6 +18545,16 @@
             ],
             "format": "date-time"
           },
+          "effective_access": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EffectivePermissionExplanation"
+              }
+            ]
+          },
           "effective_permission": {
             "type": [
               "string",
@@ -18677,6 +18720,16 @@
           "files"
         ],
         "properties": {
+          "current_folder_access": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EffectivePermissionExplanation"
+              }
+            ]
+          },
           "current_folder_permission": {
             "type": [
               "string",
@@ -18885,6 +18938,16 @@
             "type": "string",
             "format": "date-time"
           },
+          "effective_access": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EffectivePermissionExplanation"
+              }
+            ]
+          },
           "effective_permission": {
             "type": [
               "string",
@@ -18987,6 +19050,16 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "effective_access": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EffectivePermissionExplanation"
+              }
+            ]
           },
           "effective_permission": {
             "type": [

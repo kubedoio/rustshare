@@ -735,8 +735,9 @@ pub async fn get_user_shared_folder_tree(
     auth: AuthenticatedUser,
     Path(folder_id): Path<Uuid>,
 ) -> Result<Json<FolderTreeWithShares>, AppError> {
-    let tree =
-        build_user_shared_folder_tree(&state, auth.user_id, auth.tenant_id, folder_id).await?;
+    let tree = build_user_shared_folder_tree(&state, auth.user_id, auth.tenant_id, folder_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("Folder not found"))?;
     Ok(Json(tree))
 }
 
@@ -745,7 +746,7 @@ async fn build_user_shared_folder_tree(
     user_id: Uuid,
     tenant_id: Uuid,
     folder_id: Uuid,
-) -> Result<FolderTreeWithShares, AppError> {
+) -> Result<Option<FolderTreeWithShares>, AppError> {
     let permission = state
         .permission_resolver
         .resolve_permission_with_source(user_id, tenant_id, Resource::Folder(folder_id))
@@ -761,7 +762,7 @@ async fn build_user_shared_folder_tree(
         })?;
 
     if permission.permission.is_none() {
-        return Err(AppError::not_found("Folder not found"));
+        return Ok(None);
     }
 
     let folder = state.folder_service.get_folder(folder_id, user_id).await?;
@@ -778,10 +779,12 @@ async fn build_user_shared_folder_tree(
             state, user_id, tenant_id, child.id,
         ))
         .await?;
-        subfolders.push(subtree);
+        if let Some(subtree) = subtree {
+            subfolders.push(subtree);
+        }
     }
 
-    Ok(FolderTreeWithShares {
+    Ok(Some(FolderTreeWithShares {
         folder: FolderTreeNode {
             id: folder.id,
             name: folder.name,
@@ -800,7 +803,7 @@ async fn build_user_shared_folder_tree(
             note_bundle_file_id: None,
         },
         subfolders,
-    })
+    }))
 }
 
 async fn load_folder_share_summary(
