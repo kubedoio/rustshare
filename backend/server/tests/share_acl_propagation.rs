@@ -848,7 +848,7 @@ async fn test_share_revoke_triggers_acl_refresh() {
 
 #[tokio::test]
 #[ignore = "Requires PostgreSQL and S3-compatible object storage"]
-async fn test_legacy_nil_tenant_group_admin_add_remove_refreshes_share_tenant() {
+async fn test_legacy_nil_tenant_group_admin_refresh_uses_share_tenant_without_grant() {
     let (state, sink) = setup_with_recording_sink().await;
     // The resource lives in a real tenant...
     let tenant_id = insert_test_tenant(&state.db_pool).await;
@@ -871,7 +871,8 @@ async fn test_legacy_nil_tenant_group_admin_add_remove_refreshes_share_tenant() 
         &format!("ar04-nil-member-{member_id}@example.com"),
     )
     .await;
-    // Legacy group row: nil tenant.
+    // Legacy group row: nil tenant. Its real-tenant share is malformed under
+    // ADR-0041 D2, so refresh must remove (not preserve) its group principal.
     let group_id = insert_test_group(&state.db_pool, Uuid::nil(), None).await;
     let note_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
     // Legacy share seeded directly: the SHARE's tenant is the real tenant even
@@ -906,8 +907,8 @@ async fn test_legacy_nil_tenant_group_admin_add_remove_refreshes_share_tenant() 
     );
     assert_eq!(first.owner_id, owner_id);
     assert!(
-        first.principals.contains(&format!("group:{group_id}")),
-        "projection must carry the group principal, got {}",
+        !first.principals.contains(&format!("group:{group_id}")),
+        "tenant-mismatched legacy group must not appear in the projection, got {}",
         principal_list(&first)
     );
 
@@ -926,8 +927,8 @@ async fn test_legacy_nil_tenant_group_admin_add_remove_refreshes_share_tenant() 
     let second = calls[1].clone();
     assert_eq!(second.tenant_id, tenant_id);
     assert!(
-        second.principals.contains(&format!("group:{group_id}")),
-        "group principal projection is id-based and survives membership removal"
+        !second.principals.contains(&format!("group:{group_id}")),
+        "tenant-mismatched legacy group must remain excluded after member removal"
     );
 }
 
