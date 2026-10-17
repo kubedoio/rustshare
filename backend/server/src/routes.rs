@@ -948,6 +948,14 @@ pub fn admin_routes() -> Router<AppState> {
             "/api/v1/admin/audit",
             get(crate::handlers::admin::audit::list_audit_log),
         )
+        .route("/api/v1/organization-admin/users", get(crate::handlers::organization_admin::users))
+        .route("/api/v1/organization-admin/users/{id}", get(crate::handlers::organization_admin::user))
+        .route("/api/v1/organization-admin/groups", get(crate::handlers::organization_admin::groups).post(crate::handlers::organization_admin::create_group))
+        .route("/api/v1/organization-admin/groups/{id}", get(crate::handlers::organization_admin::group))
+        .route("/api/v1/organization-admin/groups/{id}", patch(crate::handlers::organization_admin::update_group).delete(crate::handlers::organization_admin::delete_group))
+        .route("/api/v1/organization-admin/groups/{id}/members", get(crate::handlers::organization_admin::members).post(crate::handlers::organization_admin::add_member))
+        .route("/api/v1/organization-admin/groups/{id}/members/{user_id}", delete(crate::handlers::organization_admin::remove_member))
+        .route("/api/v1/organization-admin/audit", get(crate::handlers::organization_admin::audit))
         .route(
             "/api/v1/admin/organizations/{tenant_id}/administrators",
             get(crate::handlers::admin::organization_administrators::list_organization_administrators),

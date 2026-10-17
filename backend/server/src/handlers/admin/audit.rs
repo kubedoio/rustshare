@@ -398,6 +398,9 @@ pub(crate) fn project_audit_detail(
             "group.created" | "group.updated" | "group.deleted" => {
                 copy_safe_display_text(fields, &mut projected, "name");
             }
+            "group.member_added" | "group.member_removed" => {
+                copy_uuid(fields, &mut projected, "user_id");
+            }
             "user.created" | "user.invited" => {
                 copy_safe_identifier(fields, &mut projected, "username");
             }
@@ -455,9 +458,6 @@ pub(crate) fn project_audit_detail(
             }
             "application.enabled" | "application.disabled" | "application.updated" => {
                 copy_safe_identifier(fields, &mut projected, "application_id");
-            }
-            "group.member_added" | "group.member_removed" => {
-                copy_uuid(fields, &mut projected, "user_id");
             }
             "template.created" | "template.updated" => {
                 copy_safe_identifier(fields, &mut projected, "template_key");
