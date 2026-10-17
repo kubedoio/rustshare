@@ -34,13 +34,24 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 [advisories]
 version = 2
 yanked = "deny"
-# Temporarily ignored advisories — these require upstream dependency updates
-# that are out of scope for the open-source-readiness PR. Track removal in a follow-up issue.
 ignore = [
     # rustls-webpki v0.101.7 — pulled in by rustls v0.21.12 via AWS SDK; fixed in v0.103+
     { id = "RUSTSEC-2026-0098", reason = "rustls-webpki v0.101.7 blocked by AWS SDK rustls 0.21 dependency" },
     { id = "RUSTSEC-2026-0099", reason = "rustls-webpki v0.101.7 blocked by AWS SDK rustls 0.21 dependency" },
     { id = "RUSTSEC-2026-0104", reason = "rustls-webpki v0.101.7 blocked by AWS SDK rustls 0.21 dependency" },
+    # rustls v0.21.12 — pulled in by the AWS SDK; both advisories are patched only in
+    # rustls 0.23.46+. 0346 is a local, high-privilege Debug-logging exposure of TLS
+    # session secrets by custom ClientSessionStore impls; 0349 is a low-severity
+    # post-quantum downgrade in the client key-share predictor. Same blocker as
+    # RUSTSEC-2026-0098/0099/0104 above; re-evaluate when the AWS SDK moves off rustls 0.21.
+    { id = "RUSTSEC-2026-0346", reason = "rustls 0.21.12 via AWS SDK; patched only in 0.23.46+" },
+    { id = "RUSTSEC-2026-0349", reason = "rustls 0.21.12 via AWS SDK; patched only in 0.23.46+" },
+    # Same rustls 0.21.12 blocker, same batch of advisories (2026-10-14): 0347 is an
+    # ECH-rejection ordering issue affecting only clients that enable ECH with early
+    # application data; 0348 is a Brotli-certificate DoS affecting only builds that
+    # enable the non-default `brotli` feature. Neither configuration is used here.
+    { id = "RUSTSEC-2026-0347", reason = "rustls 0.21.12 via AWS SDK; patched only in 0.23.46+" },
+    { id = "RUSTSEC-2026-0348", reason = "rustls 0.21.12 via AWS SDK; patched only in 0.23.46+" },
     # rsa crate — no patch available yet (Marvin Attack timing sidechannel)
     { id = "RUSTSEC-2023-0071", reason = "No patched version of rsa crate available yet" },
     # proc-macro-error2 — unmaintained; pulled in by validator_derive v0.20.0 (latest validator release)
@@ -191,7 +202,3 @@ reason = "ring version split via AWS SDK (rustls 0.21) and other deps"
 [[bans.skip]]
 name = "webpki-roots"
 reason = "webpki-roots version split via rustls 0.21 vs 0.23"
-
-[[bans.skip]]
-name = "zip"
-reason = "zip 2.x vs 3.x split via rustshare-server direct dep and utoipa-swagger-ui build dep"

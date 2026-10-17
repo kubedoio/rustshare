@@ -202,6 +202,11 @@ pub struct AppState {
     pub oidc_runtime_cache: OidcRuntimeCache,
     pub poll_rate_limiter: Arc<Mutex<HashMap<String, Instant>>>,
     pub default_tenant_id: Uuid,
+    /// Startup-resolved state of `RUSTSHARE_DEFAULT_TENANT_ID` (AR-01;
+    /// ADR-0040 D4). Principal-creating handlers resolve the organization of
+    /// a new row from this value — never from the request — and fail closed
+    /// when it cannot produce an organization.
+    pub default_tenant_config: crate::config::DefaultTenantConfig,
     pub note_service: Arc<services::note_service::NoteService>,
     pub decision_service: Arc<services::decision_service::DecisionService>,
     pub meeting_service: Arc<services::meeting_service::MeetingService>,

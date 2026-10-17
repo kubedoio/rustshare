@@ -86,13 +86,16 @@ pub async fn setup_test_server() -> (AppState, String) {
         rustshare_storage::repos::ShareNotificationRepoImpl::new(pool.clone()),
     );
 
-    let share_service = Arc::new(ShareService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        broadcaster.clone(),
-        jwt_manager.clone(),
-        share_notification_repo.clone(),
-    ));
+    let share_service = Arc::new(
+        ShareService::new(
+            event_store.clone(),
+            metadata_store.clone(),
+            broadcaster.clone(),
+            jwt_manager.clone(),
+            share_notification_repo.clone(),
+        )
+        .with_permission_checker(permission_resolver.clone()),
+    );
 
     let thumbnail_service = Arc::new(ThumbnailService::new(pool.clone(), object_store.clone()));
     let notification_service = Arc::new(NotificationService::new(NotificationRepository::new(
@@ -281,6 +284,7 @@ pub async fn setup_test_server() -> (AppState, String) {
         oidc_runtime_cache: rustshare_server::oidc_runtime::OidcRuntimeCache::new(),
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
         default_tenant_id: Uuid::nil(),
+        default_tenant_config: rustshare_server::config::DefaultTenantConfig::Unset,
         note_service,
         decision_service,
         meeting_service,

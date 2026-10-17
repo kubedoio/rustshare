@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use rustshare_auth::PasswordHasher;
@@ -10,11 +10,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
+use super::organization_administrators::{
+    lock_tenant_admin_grants, removal_would_leave_no_enabled_admin, revoke_for_lifecycle,
+};
 use super::{
-    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, insert_admin_action,
+    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found,
+    insert_scoped_admin_action, request_correlation_id, resolve_creation_tenant,
 };
 use crate::{
     handlers::{AdminUser, AppError},
+    user_disable::{set_user_disabled_at, DisableUserTarget},
     AppState,
 };
 
@@ -323,6 +328,7 @@ pub async fn list_admin_users(
 pub async fn create_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     crate::handlers::ValidatedJson(req): crate::handlers::ValidatedJson<CreateUserRequest>,
 ) -> Result<(StatusCode, Json<AdminUserResponse>), AppError> {
     // Check username uniqueness
@@ -365,12 +371,16 @@ pub async fn create_admin_user(
         .to_string();
     let is_admin = req.is_admin.unwrap_or(false);
     let storage_quota = req.storage_quota_bytes.unwrap_or(10_737_418_240_i64);
+    // AR-01 (ADR-0040 D4, ADR-0043 D-D2 I1): the organization is resolved
+    // explicitly and bound on the INSERT; the nil column default is never the
+    // effective source of a new row.
+    let tenant_id = resolve_creation_tenant(&state)?;
 
     let cols = "id, username, email, display_name, is_admin, storage_quota, disabled_at, created_at, updated_at";
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let row = sqlx::query_as::<_, UserRow>(&format!(
-        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "INSERT INTO users (id, username, email, password_hash, display_name, is_admin, storage_quota, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING {cols}"
     ))
     .bind(new_id)
@@ -380,17 +390,20 @@ pub async fn create_admin_user(
     .bind(&display_name)
     .bind(is_admin)
     .bind(storage_quota)
+    .bind(tenant_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(db_error)?;
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        tenant_id,
         actor_id,
         "user.created",
         Some("user"),
         Some(new_id),
         json!({"username": req.username}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;
@@ -467,6 +480,7 @@ pub async fn get_admin_user(
 pub async fn update_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Path(user_id): Path<Uuid>,
     Json(req): Json<UpdateUserRequest>,
 ) -> Result<Json<AdminUserResponse>, AppError> {
@@ -494,6 +508,11 @@ pub async fn update_admin_user(
     .await
     .map_err(db_error)?
     .ok_or_else(|| admin_not_found("User not found"))?;
+    let tenant_id: Uuid = sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db_error)?;
 
     let new_display_name = req
         .display_name
@@ -553,21 +572,24 @@ pub async fn update_admin_user(
         .await
         .map_err(db_error)?;
 
-        insert_admin_action(
+        insert_scoped_admin_action(
             &mut tx,
+            tenant_id,
             actor_id,
             "user.password_changed",
             Some("user"),
             Some(user_id),
             json!({"username": current.username}),
+            request_correlation_id(&headers),
         )
         .await
         .map_err(db_error)?;
     }
 
     if quota_changed {
-        insert_admin_action(
+        insert_scoped_admin_action(
             &mut tx,
+            tenant_id,
             actor_id,
             "user.quota_changed",
             Some("user"),
@@ -576,14 +598,16 @@ pub async fn update_admin_user(
                 "old_quota": current.storage_quota,
                 "new_quota": new_quota,
             }),
+            request_correlation_id(&headers),
         )
         .await
         .map_err(db_error)?;
     }
 
     if new_is_admin != current.is_admin {
-        insert_admin_action(
+        insert_scoped_admin_action(
             &mut tx,
+            tenant_id,
             actor_id,
             "user.admin_status_changed",
             Some("user"),
@@ -592,6 +616,7 @@ pub async fn update_admin_user(
                 "old_is_admin": current.is_admin,
                 "new_is_admin": new_is_admin,
             }),
+            request_correlation_id(&headers),
         )
         .await
         .map_err(db_error)?;
@@ -615,6 +640,7 @@ pub async fn update_admin_user(
 pub async fn disable_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Path(user_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     if user_id == actor_id {
@@ -622,39 +648,67 @@ pub async fn disable_admin_user(
     }
 
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
+    let tenant_id: Uuid = sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| admin_not_found("User not found"))?;
+    lock_tenant_admin_grants(&mut tx, tenant_id)
+        .await
+        .map_err(db_error)?;
+    sqlx::query("SELECT id FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE")
+        .bind(user_id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| admin_not_found("User not found"))?;
 
-    let updated = sqlx::query!(
-        "UPDATE users SET disabled_at = NOW() WHERE id = $1",
-        user_id
+    if removal_would_leave_no_enabled_admin(&mut tx, tenant_id, user_id)
+        .await
+        .map_err(db_error)?
+    {
+        return Err(admin_conflict(
+            "Grant a replacement enabled administrator before disabling the last one",
+        ));
+    }
+    revoke_for_lifecycle(
+        &mut tx,
+        tenant_id,
+        Some(actor_id),
+        user_id,
+        "operator",
+        request_correlation_id(&headers),
     )
-    .execute(&mut *tx)
     .await
     .map_err(db_error)?;
-    if updated.rows_affected() == 0 {
+
+    // Shared write (AR-01 disable parity). Session deletion and device-token
+    // revocation for this and every other writer are guaranteed by the
+    // `users_disable_revokes_credentials` trigger, so no explicit cleanup
+    // happens here.
+    let updated = set_user_disabled_at(
+        &mut *tx,
+        DisableUserTarget::Id(user_id),
+        None,
+        Some(chrono::Utc::now()),
+    )
+    .await
+    .map_err(db_error)?;
+    if updated == 0 {
         return Err(admin_not_found("User not found"));
     }
 
-    sqlx::query!("DELETE FROM user_sessions WHERE user_id = $1", user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db_error)?;
-
-    // Revoke all device tokens for the disabled user
-    sqlx::query!(
-        "UPDATE device_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL",
-        user_id
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(db_error)?;
-
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        tenant_id,
         actor_id,
         "user.disabled",
         Some("user"),
         Some(user_id),
         json!({}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;
@@ -677,24 +731,33 @@ pub async fn disable_admin_user(
 pub async fn enable_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Path(user_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
-    let updated = sqlx::query!("UPDATE users SET disabled_at = NULL WHERE id = $1", user_id)
-        .execute(&mut *tx)
+    let tenant_id: Uuid =
+        sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_error)?
+            .ok_or_else(|| admin_not_found("User not found"))?;
+    let updated = set_user_disabled_at(&mut *tx, DisableUserTarget::Id(user_id), None, None)
         .await
         .map_err(db_error)?;
-    if updated.rows_affected() == 0 {
+    if updated == 0 {
         return Err(admin_not_found("User not found"));
     }
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        tenant_id,
         actor_id,
         "user.enabled",
         Some("user"),
         Some(user_id),
         json!({}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;
@@ -717,6 +780,7 @@ pub async fn enable_admin_user(
 pub async fn delete_admin_user(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Path(user_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     if user_id == actor_id {
@@ -734,6 +798,40 @@ pub async fn delete_admin_user(
     .map_err(db_error)?;
 
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
+    let tenant_id: Uuid = sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| admin_not_found("User not found"))?;
+    lock_tenant_admin_grants(&mut tx, tenant_id)
+        .await
+        .map_err(db_error)?;
+    sqlx::query("SELECT id FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE")
+        .bind(user_id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(|| admin_not_found("User not found"))?;
+    if removal_would_leave_no_enabled_admin(&mut tx, tenant_id, user_id)
+        .await
+        .map_err(db_error)?
+    {
+        return Err(admin_conflict(
+            "Grant a replacement enabled administrator before deleting the last one",
+        ));
+    }
+    revoke_for_lifecycle(
+        &mut tx,
+        tenant_id,
+        Some(actor_id),
+        user_id,
+        "operator",
+        request_correlation_id(&headers),
+    )
+    .await
+    .map_err(db_error)?;
     // Delete user (CASCADE handles files, file_versions, shares, etc.)
     let deleted = sqlx::query!("DELETE FROM users WHERE id = $1", user_id)
         .execute(&mut *tx)
@@ -743,13 +841,15 @@ pub async fn delete_admin_user(
         return Err(admin_not_found("User not found"));
     }
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        tenant_id,
         actor_id,
         "user.deleted",
         Some("user"),
         Some(user_id),
         json!({"storage_keys_count": storage_keys.len()}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;

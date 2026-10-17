@@ -10,4 +10,4 @@ pub use csrf::{csrf_cookie_refresh_middleware, csrf_middleware};
 pub use metrics_layer::metrics_middleware;
 pub use rate_limit::{rate_limit_middleware, RateLimitConfig};
 pub use security_headers::security_headers_middleware;
-pub use trace::trace_middleware;
+pub use trace::{trace_middleware, REQUEST_ID_HEADER};

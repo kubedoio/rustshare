@@ -7,7 +7,9 @@ use std::{
 
 use bytes::Bytes;
 use rustshare_server::object_gc::{tick, ObjectGcConfig};
-use rustshare_storage::{MetadataStore, ObjectStore, ObjectStoreOptions};
+use rustshare_storage::{
+    metadata::ObjectGcCandidateRow, MetadataStore, ObjectStore, ObjectStoreOptions,
+};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -550,6 +552,70 @@ async fn exhausted_candidate_moves_to_operator_hold() {
     assert_eq!(error.as_deref(), Some("permanent test failure"));
 }
 
+/// Characterization proof for the existing `enqueue_object_gc_candidate`
+/// reset-on-conflict behavior: re-enqueueing an operator-held candidate
+/// clears the hold, resets the attempt history, and clears any lease.
+///
+/// This documents why the orphan-reconciliation producer must NOT reuse that
+/// function: it would silently release operator holds and worker leases. The
+/// producer must use `enqueue_object_gc_candidate_if_absent` instead, which
+/// leaves existing rows completely untouched.
+#[allow(clippy::type_complexity)]
+#[tokio::test]
+#[ignore = "Requires PostgreSQL"]
+async fn characterization_enqueue_resets_operator_held_row() {
+    let (_test_guard, pool, metadata, _objects) = setup().await;
+    let key = format!("blobs/{}", Uuid::new_v4());
+
+    // Simulate a candidate that failed repeatedly and was operator-held with
+    // an active lease, a completed run, and a future schedule.
+    sqlx::query(
+        r#"
+        INSERT INTO object_gc_queue
+            (object_key, reason, state, attempt_count, last_attempt_at, last_error,
+             operator_hold, locked_at, locked_by, completed_at,
+             not_before, created_at, updated_at)
+        VALUES ($1, 'object_gc_test:characterization', 'operator_hold', 5,
+                NOW(), 'permanent test failure',
+                true, NOW(), 'held-worker', NOW(),
+                NOW() + INTERVAL '30 hours', NOW(), NOW())
+        "#,
+    )
+    .bind(&key)
+    .execute(&pool)
+    .await
+    .expect("insert operator-held candidate");
+
+    metadata
+        .enqueue_object_gc_candidate(&key, "object_gc_test:characterization", 1)
+        .await
+        .expect("re-enqueue candidate");
+
+    let (state, attempt_count, operator_hold, locked_at, locked_by, completed_at, last_attempt_at): (
+        String,
+        i32,
+        bool,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) = sqlx::query_as(
+        "SELECT state, attempt_count, operator_hold, locked_at, locked_by, completed_at, last_attempt_at FROM object_gc_queue WHERE object_key = $1",
+    )
+    .bind(&key)
+    .fetch_one(&pool)
+    .await
+    .expect("candidate row");
+
+    assert_eq!(state, "pending", "state resets on conflict");
+    assert_eq!(attempt_count, 0, "attempt history resets on conflict");
+    assert!(!operator_hold, "operator hold clears on conflict");
+    assert!(locked_at.is_none(), "lease clears on conflict");
+    assert!(locked_by.is_none(), "lease owner clears on conflict");
+    assert!(completed_at.is_none(), "completion clears on conflict");
+    assert!(last_attempt_at.is_none(), "last attempt clears on conflict");
+}
+
 /// Re-enqueueing a candidate that previously exhausted retries (and was
 /// operator-held) must reset its attempt history so it starts a fresh grace
 /// period instead of being re-held after a single transient failure.
@@ -601,4 +667,290 @@ async fn reenqueue_resets_failed_candidate_attempt_history() {
     assert!(last_attempt_at.is_none());
     assert!(locked_at.is_none());
     assert!(completed_at.is_none());
+}
+
+fn assert_candidate_row_unchanged(before: &ObjectGcCandidateRow, after: &ObjectGcCandidateRow) {
+    assert_eq!(before.id, after.id, "id changed");
+    assert_eq!(before.object_key, after.object_key, "object_key changed");
+    assert_eq!(before.reason, after.reason, "reason changed");
+    assert_eq!(before.not_before, after.not_before, "not_before changed");
+    assert_eq!(before.created_at, after.created_at, "created_at changed");
+    assert_eq!(
+        before.first_seen_at, after.first_seen_at,
+        "first_seen_at changed"
+    );
+    assert_eq!(
+        before.last_seen_at, after.last_seen_at,
+        "last_seen_at changed"
+    );
+    assert_eq!(
+        before.attempt_count, after.attempt_count,
+        "attempt_count changed"
+    );
+    assert_eq!(
+        before.last_attempt_at, after.last_attempt_at,
+        "last_attempt_at changed"
+    );
+    assert_eq!(before.last_error, after.last_error, "last_error changed");
+    assert_eq!(before.state, after.state, "state changed");
+    assert_eq!(before.locked_at, after.locked_at, "locked_at changed");
+    assert_eq!(before.locked_by, after.locked_by, "locked_by changed");
+    assert_eq!(
+        before.completed_at, after.completed_at,
+        "completed_at changed"
+    );
+    assert_eq!(before.updated_at, after.updated_at, "updated_at changed");
+    assert_eq!(
+        before.operator_hold, after.operator_hold,
+        "operator_hold changed"
+    );
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL"]
+async fn enqueue_if_absent_inserts_pending_candidate() {
+    let (_test_guard, pool, metadata, _objects) = setup().await;
+    let key = format!("blobs/{}", Uuid::new_v4());
+
+    let inserted = metadata
+        .enqueue_object_gc_candidate_if_absent(&key, "object_gc_test:if-absent-insert", 24)
+        .await
+        .expect("insert absent candidate");
+    assert!(inserted, "absent key must report a fresh insert");
+
+    let (state, reason, operator_hold, attempt_count, grace_seconds): (
+        String,
+        String,
+        bool,
+        i32,
+        f64,
+    ) = sqlx::query_as(
+        "SELECT state, reason, operator_hold, attempt_count, EXTRACT(EPOCH FROM not_before - NOW())::DOUBLE PRECISION FROM object_gc_queue WHERE object_key = $1",
+    )
+    .bind(&key)
+    .fetch_one(&pool)
+    .await
+    .expect("candidate row");
+    assert_eq!(state, "pending");
+    assert_eq!(reason, "object_gc_test:if-absent-insert");
+    assert!(!operator_hold);
+    assert_eq!(attempt_count, 0);
+    assert!(
+        grace_seconds > 24.0 * 3600.0 - 5.0 && grace_seconds < 24.0 * 3600.0 + 5.0,
+        "not_before must be approximately now + 24h, got {grace_seconds}s"
+    );
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL"]
+async fn enqueue_if_absent_leaves_operator_held_row_untouched() {
+    let (_test_guard, pool, metadata, _objects) = setup().await;
+    let key = format!("blobs/{}", Uuid::new_v4());
+    sqlx::query(
+        r#"
+        INSERT INTO object_gc_queue
+            (object_key, reason, state, attempt_count, last_attempt_at, last_error,
+             operator_hold, locked_at, locked_by, completed_at,
+             not_before, created_at, updated_at)
+        VALUES ($1, 'object_gc_test:if-absent-held', 'operator_hold', 5,
+                NOW(), 'permanent test failure',
+                true, NOW(), 'held-worker', NOW(),
+                NOW() + INTERVAL '30 hours', NOW(), NOW())
+        "#,
+    )
+    .bind(&key)
+    .execute(&pool)
+    .await
+    .expect("insert operator-held candidate");
+    let before = metadata
+        .get_object_gc_candidate(&key)
+        .await
+        .expect("read candidate before")
+        .expect("candidate exists before");
+
+    let inserted = metadata
+        .enqueue_object_gc_candidate_if_absent(&key, "object_gc_test:if-absent-held", 1)
+        .await
+        .expect("attempt insert over held row");
+    assert!(!inserted, "held key must not report a fresh insert");
+
+    let after = metadata
+        .get_object_gc_candidate(&key)
+        .await
+        .expect("read candidate after")
+        .expect("candidate exists after");
+    assert_candidate_row_unchanged(&before, &after);
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL"]
+async fn enqueue_if_absent_leaves_processing_lease_untouched() {
+    let (_test_guard, pool, metadata, _objects) = setup().await;
+    let key = format!("blobs/{}", Uuid::new_v4());
+    sqlx::query(
+        r#"
+        INSERT INTO object_gc_queue
+            (object_key, reason, state, attempt_count,
+             locked_at, locked_by, not_before, created_at, updated_at)
+        VALUES ($1, 'object_gc_test:if-absent-processing', 'processing', 3,
+                NOW(), 'worker-x', NOW() + INTERVAL '2 hours', NOW(), NOW())
+        "#,
+    )
+    .bind(&key)
+    .execute(&pool)
+    .await
+    .expect("insert processing candidate");
+    let before = metadata
+        .get_object_gc_candidate(&key)
+        .await
+        .expect("read candidate before")
+        .expect("candidate exists before");
+
+    let inserted = metadata
+        .enqueue_object_gc_candidate_if_absent(&key, "object_gc_test:if-absent-processing", 48)
+        .await
+        .expect("attempt insert over leased row");
+    assert!(!inserted, "leased key must not report a fresh insert");
+
+    let after = metadata
+        .get_object_gc_candidate(&key)
+        .await
+        .expect("read candidate after")
+        .expect("candidate exists after");
+    assert_candidate_row_unchanged(&before, &after);
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL"]
+async fn enqueue_if_absent_preserves_retry_backoff_floor() {
+    let (_test_guard, pool, metadata, _objects) = setup().await;
+    let key = format!("blobs/{}", Uuid::new_v4());
+    sqlx::query(
+        r#"
+        INSERT INTO object_gc_queue
+            (object_key, reason, state, attempt_count, last_error,
+             not_before, created_at, updated_at)
+        VALUES ($1, 'object_gc_test:if-absent-retry', 'retry', 2, 'boom',
+                NOW() + INTERVAL '5 hours', NOW(), NOW())
+        "#,
+    )
+    .bind(&key)
+    .execute(&pool)
+    .await
+    .expect("insert retry candidate");
+    let before = metadata
+        .get_object_gc_candidate(&key)
+        .await
+        .expect("read candidate before")
+        .expect("candidate exists before");
+
+    let inserted = metadata
+        .enqueue_object_gc_candidate_if_absent(&key, "object_gc_test:if-absent-retry", 1)
+        .await
+        .expect("attempt insert over retry row");
+    assert!(!inserted, "retry key must not report a fresh insert");
+
+    let after = metadata
+        .get_object_gc_candidate(&key)
+        .await
+        .expect("read candidate after")
+        .expect("candidate exists after");
+    assert_candidate_row_unchanged(&before, &after);
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL"]
+async fn enqueue_if_absent_leaves_terminal_states_untouched() {
+    let (_test_guard, pool, metadata, _objects) = setup().await;
+    for state in ["referenced", "deleted", "missing", "invalid_key"] {
+        let key = format!("blobs/{}", Uuid::new_v4());
+        sqlx::query(
+            r#"
+            INSERT INTO object_gc_queue
+                (object_key, reason, state, attempt_count, completed_at,
+                 not_before, created_at, updated_at)
+            VALUES ($1, 'object_gc_test:if-absent-terminal', $2, 1, NOW(),
+                    NOW() + INTERVAL '1 hour', NOW(), NOW())
+            "#,
+        )
+        .bind(&key)
+        .bind(state)
+        .execute(&pool)
+        .await
+        .expect("insert terminal candidate");
+
+        let inserted = metadata
+            .enqueue_object_gc_candidate_if_absent(&key, "object_gc_test:if-absent-terminal", 1)
+            .await
+            .expect("attempt insert over terminal row");
+        assert!(!inserted, "{state} key must not report a fresh insert");
+
+        let (row_state, completed_at): (String, Option<chrono::DateTime<chrono::Utc>>) =
+            sqlx::query_as("SELECT state, completed_at FROM object_gc_queue WHERE object_key = $1")
+                .bind(&key)
+                .fetch_one(&pool)
+                .await
+                .expect("terminal candidate row");
+        assert_eq!(row_state, state, "state must not change");
+        assert!(
+            completed_at.is_some(),
+            "completed_at must not change for {state}"
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL"]
+async fn enqueue_if_absent_concurrent_inserts_elect_single_winner() {
+    let (_test_guard, pool, metadata, _objects) = setup().await;
+    let key = format!("blobs/{}", Uuid::new_v4());
+
+    let left = {
+        let metadata = metadata.clone();
+        let key = key.clone();
+        tokio::spawn(async move {
+            metadata
+                .enqueue_object_gc_candidate_if_absent(
+                    &key,
+                    "object_gc_test:if-absent-concurrent",
+                    1,
+                )
+                .await
+                .expect("left insert attempt")
+        })
+    };
+    let right = {
+        let metadata = metadata.clone();
+        let key = key.clone();
+        tokio::spawn(async move {
+            metadata
+                .enqueue_object_gc_candidate_if_absent(
+                    &key,
+                    "object_gc_test:if-absent-concurrent",
+                    1,
+                )
+                .await
+                .expect("right insert attempt")
+        })
+    };
+    let outcomes = tokio::join!(left, right);
+    let winners = [
+        outcomes.0.expect("left task"),
+        outcomes.1.expect("right task"),
+    ]
+    .iter()
+    .filter(|outcome| **outcome)
+    .count();
+    assert_eq!(winners, 1, "exactly one racing insert may win");
+
+    let (count, state, attempt_count): (i64, String, i32) = sqlx::query_as(
+        "SELECT COUNT(*)::BIGINT, state, attempt_count FROM object_gc_queue WHERE object_key = $1 GROUP BY state, attempt_count",
+    )
+    .bind(&key)
+    .fetch_one(&pool)
+    .await
+    .expect("candidate row");
+    assert_eq!(count, 1, "exactly one queue row may exist");
+    assert_eq!(state, "pending");
+    assert_eq!(attempt_count, 0);
 }

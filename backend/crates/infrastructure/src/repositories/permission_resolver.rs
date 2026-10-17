@@ -49,7 +49,30 @@ impl PermissionResolverRepository {
     }
 }
 
+#[async_trait::async_trait]
 impl PermissionResolverOps for PermissionResolverRepository {
+    async fn group_belongs_to_tenant(&self, group_id: Uuid, tenant_id: Uuid) -> Result<bool> {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1 AND tenant_id = $2)",
+        )
+        .bind(group_id)
+        .bind(tenant_id)
+        .fetch_one(&self.share_repo.pool)
+        .await
+        .map_err(Into::into)
+    }
+
+    async fn user_belongs_to_tenant(&self, user_id: UserId, tenant_id: Uuid) -> Result<bool> {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND tenant_id = $2)",
+        )
+        .bind(user_id)
+        .bind(tenant_id)
+        .fetch_one(&self.user_repo.pool)
+        .await
+        .map_err(Into::into)
+    }
+
     async fn find_user_share(
         &self,
         file_id: Option<FileId>,
@@ -163,7 +186,10 @@ impl PermissionResolverOps for PermissionResolverRepository {
             SELECT gm.group_id
             FROM group_members gm
             JOIN users u ON u.id = gm.user_id
-            WHERE gm.user_id = $1 AND u.tenant_id = $2
+            JOIN user_groups g ON g.id = gm.group_id
+            WHERE gm.user_id = $1
+              AND u.tenant_id = $2
+              AND g.tenant_id = $2
             "#,
             user_id,
             tenant_id
@@ -217,6 +243,10 @@ impl PermissionResolverOps for PermissionResolverRepository {
               AND folder_id IS NULL
               AND recipient_group_id IS NOT NULL
               AND tenant_id = $2
+              AND EXISTS (
+                  SELECT 1 FROM user_groups g
+                  WHERE g.id = shares.recipient_group_id AND g.tenant_id = $2
+              )
               AND revoked_at IS NULL
               AND (expires_at IS NULL OR expires_at > NOW())
             "#,
@@ -269,6 +299,10 @@ impl PermissionResolverOps for PermissionResolverRepository {
             WHERE folder_id = ANY($1)
               AND recipient_group_id IS NOT NULL
               AND tenant_id = $2
+              AND EXISTS (
+                  SELECT 1 FROM user_groups g
+                  WHERE g.id = shares.recipient_group_id AND g.tenant_id = $2
+              )
               AND revoked_at IS NULL
               AND (expires_at IS NULL OR expires_at > NOW())
             "#,
@@ -288,10 +322,20 @@ mod tests {
     use sqlx::PgPool;
     use uuid::Uuid;
 
-    const TEST_DATABASE_URL: &str = "postgres://rustshare:changeme@localhost:5432/rustshare";
-
     async fn test_pool() -> PgPool {
-        let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| TEST_DATABASE_URL.to_string());
+        let url = std::env::var("DATABASE_URL")
+            .expect("set DATABASE_URL explicitly to a disposable PostgreSQL database");
+        let database_name = url
+            .rsplit('/')
+            .next()
+            .and_then(|name| name.split('?').next())
+            .unwrap_or_default();
+        assert!(
+            std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB").as_deref() == Ok("1")
+                && database_name.starts_with("rustshare_test")
+                && (url.contains("@localhost:") || url.contains("@127.0.0.1:")),
+            "set RUSTSHARE_TEST_DISPOSABLE_DB=1 only for a disposable rustshare_test database"
+        );
         PgPool::connect(&url).await.expect("DB connect failed")
     }
 
@@ -328,6 +372,7 @@ mod tests {
         let owner_a = Uuid::new_v4();
         let recipient_a = Uuid::new_v4();
         let group_a = Uuid::new_v4();
+        let foreign_group = Uuid::new_v4();
 
         for (user_id, username, tenant_id) in [
             (owner_a, format!("owner-a-{suffix}"), tenant_a),
@@ -368,6 +413,23 @@ mod tests {
         .await
         .expect("create group");
 
+        // Keep a mismatched legacy membership fixture: the membership row
+        // points at a group in another tenant even though its user belongs to
+        // tenant A. Group expansion must ignore this row.
+        sqlx::query(
+            r#"
+            INSERT INTO user_groups (id, name, created_by, tenant_id)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(foreign_group)
+        .bind(format!("foreign-group-{suffix}"))
+        .bind(owner_a)
+        .bind(tenant_b)
+        .execute(&pool)
+        .await
+        .expect("create foreign group");
+
         sqlx::query(
             r#"
             INSERT INTO group_members (id, group_id, user_id, added_by)
@@ -381,6 +443,20 @@ mod tests {
         .execute(&pool)
         .await
         .expect("create group member");
+
+        sqlx::query(
+            r#"
+            INSERT INTO group_members (id, group_id, user_id, added_by)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(foreign_group)
+        .bind(recipient_a)
+        .bind(owner_a)
+        .execute(&pool)
+        .await
+        .expect("create mismatched legacy membership");
 
         let folder_a = Uuid::new_v4();
         sqlx::query(
@@ -511,7 +587,6 @@ mod tests {
                 .unwrap(),
             vec![group_a]
         );
-
         // Wrong tenant must not see any data.
         assert!(
             repo.find_file_by_id(file_a, tenant_b)
@@ -580,13 +655,19 @@ mod tests {
             .execute(&pool)
             .await
             .ok();
-        sqlx::query("DELETE FROM group_members WHERE group_id = $1")
+        sqlx::query("DELETE FROM group_members WHERE group_id IN ($1, $2)")
             .bind(group_a)
+            .bind(foreign_group)
             .execute(&pool)
             .await
             .ok();
         sqlx::query("DELETE FROM user_groups WHERE id = $1")
             .bind(group_a)
+            .execute(&pool)
+            .await
+            .ok();
+        sqlx::query("DELETE FROM user_groups WHERE id = $1")
+            .bind(foreign_group)
             .execute(&pool)
             .await
             .ok();

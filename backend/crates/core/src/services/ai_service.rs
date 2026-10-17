@@ -627,7 +627,15 @@ mod tests {
     // Mock PermissionResolverOps for testing
     struct MockPermissionOps;
 
+    #[async_trait::async_trait]
     impl PermissionResolverOps for MockPermissionOps {
+        async fn user_belongs_to_tenant(
+            &self,
+            _user_id: Uuid,
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<bool> {
+            Ok(true)
+        }
         async fn find_user_share(
             &self,
             _file_id: Option<FileId>,
@@ -817,11 +825,25 @@ mod tests {
         }
 
         fn add_share(&self, share: Share) {
+            let mut share = share;
+            if let Some(file_id) = share.file_id {
+                if let Some(file) = self.files.lock().unwrap().get(&file_id) {
+                    share.tenant_id = file.tenant_id;
+                }
+            }
             self.shares.lock().unwrap().push(share);
         }
     }
 
+    #[async_trait::async_trait]
     impl PermissionResolverOps for ConfigurableMockOps {
+        async fn user_belongs_to_tenant(
+            &self,
+            _user_id: Uuid,
+            _tenant_id: Uuid,
+        ) -> anyhow::Result<bool> {
+            Ok(true)
+        }
         async fn find_user_share(
             &self,
             file_id: Option<Uuid>,

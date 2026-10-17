@@ -538,11 +538,31 @@
         "summary": "POST /api/v1/admin/groups/:id/members",
         "operationId": "add_member",
         "responses": {
-          "200": {
+          "204": {
             "description": "Success"
+          },
+          "400": {
+            "description": "User and group belong to different organizations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group or user not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -565,8 +585,28 @@
           "204": {
             "description": "Deleted"
           },
+          "400": {
+            "description": "User and group belong to different organizations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Group, user, or membership not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -974,6 +1014,258 @@
           },
           "502": {
             "description": "Webhook returned non-success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/organizations/{tenant_id}/administrators": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List current grants for one tenant. This endpoint remains installation-operator-only.",
+        "operationId": "list_organization_administrators",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "Tenant UUID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Page number, starting at 1",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "Page size, capped at 100",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current tenant administrator grants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedOrganizationAdministrators"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Installation operator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/organizations/{tenant_id}/administrators/{user_id}": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Grant or re-grant administration to an enabled principal in the selected tenant.",
+        "operationId": "grant_organization_administrator",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "Tenant UUID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "Principal UUID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationAdministratorGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Administrator grant created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationAdministrator"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Recovery reason is required for recovery grants and forbidden otherwise",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Installation operator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Enabled principal not found in tenant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Self-grants are prohibited or an active grant already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Revoke a grant while preserving its history. The final enabled administrator\ncan only be replaced by granting a successor first.",
+        "operationId": "revoke_organization_administrator",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "path",
+            "description": "Tenant UUID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "Principal UUID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Grant revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Installation operator required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Active grant not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Cannot revoke the last enabled administrator",
             "content": {
               "application/json": {
                 "schema": {
@@ -4675,11 +4967,28 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "Success"
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient permission or cross-organization sharing",
             "content": {
               "application/json": {
                 "schema": {
@@ -5534,8 +5843,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "Success",
+          "201": {
+            "description": "Created",
             "content": {
               "application/json": {
                 "schema": {
@@ -5546,6 +5855,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient permission or cross-organization sharing",
             "content": {
               "application/json": {
                 "schema": {
@@ -5947,11 +6266,28 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "Success"
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient permission or cross-organization sharing",
             "content": {
               "application/json": {
                 "schema": {
@@ -6516,8 +6852,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "Success",
+          "201": {
+            "description": "Created",
             "content": {
               "application/json": {
                 "schema": {
@@ -6528,6 +6864,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient permission or cross-organization sharing",
             "content": {
               "application/json": {
                 "schema": {
@@ -6729,6 +7075,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a member of this organization group",
             "content": {
               "application/json": {
                 "schema": {
@@ -10947,8 +11303,28 @@
               }
             }
           },
+          "403": {
+            "description": "Forbidden: ownership or an Admin-level share permission is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict: the public share id is registered to a different note",
             "content": {
               "application/json": {
                 "schema": {
@@ -14787,14 +15163,28 @@
           "type",
           "actor_label",
           "action_type",
+          "outcome",
           "detail"
         ],
         "properties": {
           "action_type": {
             "type": "string"
           },
+          "actor_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
           "actor_label": {
             "type": "string"
+          },
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "detail": {},
           "id": {
@@ -14804,11 +15194,27 @@
             "type": "string",
             "format": "date-time"
           },
+          "outcome": {
+            "type": "string"
+          },
           "target_label": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "target_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenant_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "type": {
             "type": "string"
@@ -14839,6 +15245,14 @@
               "null"
             ],
             "format": "int64"
+          },
+          "tenant_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Restrict an installation operator's view to one organization."
           },
           "to": {
             "type": [
@@ -21977,6 +22391,77 @@
           }
         }
       },
+      "OrganizationAdministrator": {
+        "type": "object",
+        "required": [
+          "grant_id",
+          "tenant_id",
+          "user_id",
+          "username",
+          "display_name",
+          "granted_by",
+          "granted_at"
+        ],
+        "properties": {
+          "disabled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "grant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "granted_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "granted_by": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "username": {
+            "type": "string"
+          }
+        }
+      },
+      "OrganizationAdministratorGrantRequest": {
+        "type": "object",
+        "properties": {
+          "recovery_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/OrganizationAdministratorRecoveryReason",
+                "description": "Required only when recovering a tenant with grant history and no active administrator."
+              }
+            ]
+          }
+        }
+      },
+      "OrganizationAdministratorRecoveryReason": {
+        "type": "string",
+        "enum": [
+          "administrator_unavailable",
+          "security_incident",
+          "administrative_continuity"
+        ]
+      },
       "OwnedShareResponse": {
         "type": "object",
         "required": [
@@ -22065,6 +22550,36 @@
           "page": {
             "type": "integer",
             "format": "int64"
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "PaginatedOrganizationAdministrators": {
+        "type": "object",
+        "required": [
+          "administrators",
+          "total",
+          "page",
+          "per_page"
+        ],
+        "properties": {
+          "administrators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrganizationAdministrator"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           },
           "per_page": {
             "type": "integer",

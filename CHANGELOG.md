@@ -13,8 +13,146 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Share management now authorizes through the same live permission resolver as Files and Notes, preserving the highest active direct, group, and inherited grant while enforcing tenant boundaries.
+
+### Added
+
+- Organization-attributable administrative audit records for user lifecycle,
+  groups, group membership, and share creation/revocation. Audit writes share
+  mutation transactions, tenant-filtered reads preserve installation-operator
+  access, and responses expose safe attribution with allowlisted detail.
+- Tenant-scoped organization-administrator grants managed by installation
+  operators, with append-only grant/revoke history, transactional audit events,
+  last-admin protection, and grant revocation on disable or deletion. The new
+  role grants do not authorize organization-admin access yet.
+- Admin-only, read-only orphan-blob discovery: `POST /api/admin/object-gc/orphan-scan`
+  (requires `dry_run: true`) lists content-addressed blobs in budgeted pages and
+  reports aggregate classifications (`referenced`, `queued_<state>`,
+  `potential_orphan`, `recent`, `excluded_invalid_key`, `uncertain_db_error`).
+  It never deletes, never enqueues, and never mutates; `potential_orphan` is a
+  point-in-time observation, not deletion-safe. A listing failure aborts the
+  invocation with a bounded 503 error and no partial report. See ADR-0039.
+- Disabled-by-default orphan-blob reconciliation producer (Phase 3.4B): the
+  read-only dry-run scanner gains an operator-gated enqueue path
+  (`POST /api/admin/object-gc/orphan-reconcile`) with insert-only queue
+  semantics, a bucket-versioning gate, and per-key advisory-lock rechecks.
+  Deletion authority unchanged (GC worker only). Disabled unless
+  `RUSTSHARE_ORPHAN_RECONCILIATION_ENABLED=true`. See ADR-0039.
+
+### Documentation
+
+- Accept the revised Phase 4.0 architecture (ADR-0040–0043) and aligned
+  milestone/contract amendments following explicit approval on 2026-10-15;
+  implementation evidence and separate operational activation gates remain.
+- Correct the Proposed Phase 4.0 architecture: defer first-class workspaces
+  explicitly, retain Application-owned authorization, distinguish absent database
+  context from the valid nil tenant, and gate global blob maintenance independently
+  from pilot delivery. Reconcile merged authorization fixes with dated evidence;
+  no production behavior or ADR approval changes in this documentation update.
+- Phase 4.0 institutional authorization decision gate (design and evidence only —
+  no schema migration, no authorization change, object GC and orphan
+  reconciliation remain disabled). Four decision-ready ADRs: ADR-0040
+  (organization, tenant and workspace identity), ADR-0041 (groups and
+  authorization), ADR-0042 (PostgreSQL tenant isolation and RLS staging),
+  ADR-0043 (legacy nil-tenant compatibility). Supporting evidence under
+  `docs/audits/2026-10-13-phase4-0-*`: a verified tenant-isolation evidence
+  matrix, five baseline audits, and an executed negative-test run against a
+  disposable PostgreSQL 16. Planning artifacts: the nil-tenant inventory plan
+  (`docs/migrations/2026-10-13-phase4-0-nil-tenant-inventory-plan.md`), the
+  dependency-ordered implementation roadmap
+  (`docs/plans/2026-10-13-phase4-0-institutional-implementation-roadmap.md`),
+  and the Gate A/B/C institutional acceptance checklist
+  (`docs/pilot/2026-10-13-institutional-acceptance-gates.md`).
+
 ### Security
 
+- Share management now tenant-scopes owner and grant checks, ignores revoked
+  and expired grants, rejects cross-tenant group grants, and filters
+  mismatched rows from share listings.
+- Permission-resolver group expansion now requires the user and each group to
+  belong to the requested organization. Legacy mismatched membership rows no
+  longer add foreign groups to a user's authorization context.
+- Group rosters scoped to the requester's organization (AR-03; ADR-0041
+  D3): `GET /api/v1/groups/my` and `GET /api/v1/groups/my/{id}` now filter
+  groups, members, and `member_count` by the requester's organization, so a
+  roster can no longer contain a principal from another organization. A
+  group outside the requester's organization returns the same 404 as a
+  missing one; 403 is returned only for a same-organization group the
+  requester is not a member of.
+- Cross-organization group membership refused (AR-03; ADR-0040 D4 strict
+  organization equality): `POST /api/v1/admin/groups/{id}/members` now
+  compares the target user's `users.tenant_id` with the group's
+  `user_groups.tenant_id` and rejects the request with HTTP 400 when they
+  differ, writing no `group_members` row. Unknown target users still return
+  HTTP 404 and nothing is written.
+- Cross-organization group membership removals refused (AR-03; ADR-0040
+  D4 strict organization equality): `DELETE
+  /api/v1/admin/groups/{id}/members/{user_id}` now compares the target
+  user's `users.tenant_id` with the group's `user_groups.tenant_id` and
+  rejects the request with HTTP 400 when they differ, deleting no
+  `group_members` row.
+- Group membership endpoints report a missing group as HTTP 404 (AR-03):
+  `POST /api/v1/admin/groups/{id}/members` previously raised a `RowNotFound`
+  database error for an unknown group id (HTTP 500) and `DELETE
+  /api/v1/admin/groups/{id}/members/{user_id}` now distinguishes a missing
+  group (404) from an unknown user (404) instead of conflating them. The
+  `POST …/members` OpenAPI response is corrected from `200` to `204`, which
+  is the status the handler has always returned. Group and share OpenAPI
+  responses also document organization-boundary refusals and the existing
+  `201` success status for public and group share creation.
+- Cross-organization group shares refused (AR-03; ADR-0041 D2 grant
+  equality): `create_group_share` now loads the recipient group's
+  `user_groups.tenant_id` before any share row is written and requires it
+  to equal both the resource's and the requester's organization. A missing
+  group returns HTTP 404 (`GroupNotFound`) and a foreign-organization group
+  returns HTTP 403 (`CrossTenantSharingNotAllowed`), with no `shares` row
+  written in either case. The check also applies to resource owners, who
+  bypass the membership requirement but not organization equality.
+- Cross-organization public-link creation refused (AR-03; ADR-0041 D2):
+  `create_share` (file links) and `create_folder_share` (folder links) now
+  compare the resource's `tenant_id` with the requester's organization
+  before any share row is written and reject with HTTP 403
+  (`CrossTenantSharingNotAllowed`), writing no `shares` row. The check
+  applies to every caller, including resource owners and holders of Admin
+  permission.
+- Organization-explicit principal creation and credential consistency
+  (AR-01; ADR-0040 D3/D4/A3/A7, ADR-0043 D-D2 I1): `POST /api/v1/admin/users`
+  and `POST /api/v1/admin/groups` resolve the organization explicitly from
+  `RUSTSHARE_DEFAULT_TENANT_ID` and bind `tenant_id` on the INSERT — the nil
+  column default is never the effective source of a new row; where no
+  organization can be resolved, creation fails closed and writes nothing.
+  The resolved configuration state (`set to <uuid>` / `unset` / `unparsable`)
+  is logged at startup with no new failure mode or readiness change, and is
+  documented in `docs/configuration.md`. A web session whose `tenant_id`
+  disagrees with the user's row is now invalidated at resolution, and the
+  WebSocket path validates the JWT `tenant_id` claim against `users.tenant_id`,
+  rejecting foreign-claim credentials immediately instead of trusting the
+  claim or falling through to another presented credential. Admin user
+  disable/enable and the SCIM v1 `set_user_disabled` / SCIM v2 `active` patch
+  now share one disable/enable write; session deletion and device-token
+  revocation remain guaranteed for every writer by the
+  `users_disable_revokes_credentials` trigger (parity and handler
+  consistency, not a new revocation mechanism).
+- Fixed SCIM endpoint authorization to enforce a single configured
+  organization scope: the SCIM v1/v2 bearer token is now bound to one
+  organization via `RUSTSHARE_SCIM_TENANT_ID` (falling back to an explicitly
+  configured `RUSTSHARE_DEFAULT_TENANT_ID`). Every SCIM list, count, lookup,
+  create, update, disable, delete and group-membership operation is scoped to
+  that organization, request-supplied tenant input can no longer widen scope,
+  and a missing or invalid organization scope fails closed instead of
+  operating across the whole installation. Operators using SCIM must set
+  `RUSTSHARE_SCIM_TENANT_ID`; unsetting `RUSTSHARE_SCIM_BEARER_TOKEN`
+  disables the integration as before.
+- Fixed note publication authorization: changing a note's public visibility
+  now requires ownership or an Admin-level share permission. Read-only and
+  Edit share recipients can no longer publish (or unpublish) a note they do
+  not own, and denied requests leave the note's visibility, public share
+  index, and search index unchanged. Publishing also allocates a fresh
+  public share id every time, so unpublishing and republishing rotates the
+  public URL instead of reusing the previous one. Reported via
+  GHSA-rvj5-hgxh-w7m7.
 - Replaced the unmaintained `serde_yaml` 0.9 / `unsafe-libyaml` dependency
   (RUSTSEC-2024-0449) with `yaml_serde` 0.10, the continuation maintained by
   the YAML Organization, via Cargo's package-rename mechanism. All
@@ -69,6 +207,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value (the `localhost:5173` default is rejected outside local development)
   and logs the effective OAuth redirect URIs so operators can register them
   verbatim (issue #315 QA follow-up).
+
+### Fixed
+
+- Group membership changes now refresh the AI index ACL for every resource
+  shared with the group (AR-04, issue #367). Admin member add/remove, admin
+  group deletion, and SCIM v1/v2 group provisioning, PUT replacement, PATCH,
+  and deletion all dispatch one shared best-effort refresh per affected group.
+  Refresh targets are the active shares (`recipient_group_id`,
+  `revoked_at IS NULL`) and each share's own tenant scopes the refresh, so
+  legacy nil-tenant groups with real-tenant shares are indexed again; the
+  previous group-tenant filter silently skipped them. Share/resource tenant
+  equality is validated before any content is read or indexed (file and
+  folder targets), the refresh context is the resource owner rather than the
+  historical share creator, and group deletion captures its targets while
+  holding the group row lock, dispatching only after a successful commit so a
+  rolled-back deletion never refreshes. Revoked or expired grants remain
+  excluded from rebuilt projections (the permission resolver's pre-existing
+  invariant, now covered by tests), and SCIM failures after committed
+  membership writes still trigger the refresh. Existing ACL hash/version
+  semantics are unchanged.
+- Isolated library test database setup from repository dotenv settings
+  (issue #366): `handlers::auth` login tests no longer dotenv-load, read
+  `DATABASE_URL` only from the explicitly supplied environment, refuse
+  non-disposable destinations (anything but `rustshare_test`/`rustshare_test_*`
+  on loopback, and only plain `postgres`/`postgresql` URLs without connection
+  parameters such as `?host=`/`?dbname=` that could redirect the connection)
+  before connecting, and are `#[ignore]`-gated so the documented
+  database-free library baseline passes without a live PostgreSQL. The same
+  disposable-destination guard is shared with the integration-test harness,
+  and child-process regression tests pin the isolation (they fail if dotenv
+  loading is restored). This also removes the process-wide `.env` pollution
+  that made the chat_identity relay-rejection test fail environmentally.
+  Refusal messages redact all connection-query contents, including malformed
+  credential-shaped keys; the parity probe checks for imports in the same
+  child process that exercises auth database setup.
 
 ### Changed
 

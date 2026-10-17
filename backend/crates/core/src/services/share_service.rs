@@ -21,6 +21,7 @@ use crate::events::{
     ShareUpdatedPayload,
 };
 use crate::services::permission_resolver::Resource;
+use crate::services::permission_resolver::ResourcePermissionChecker;
 use crate::services::ShareError;
 
 /// Trait for JWT operations needed by ShareService.
@@ -83,6 +84,14 @@ pub trait MetadataStoreOps: Send + Sync {
 
     /// Create a share in the metadata store.
     async fn create_share(&self, share: &Share) -> Result<()>;
+
+    async fn create_share_with_correlation(
+        &self,
+        share: &Share,
+        _correlation_id: Option<&str>,
+    ) -> Result<()> {
+        self.create_share(share).await
+    }
 
     /// Get a share by ID.
     async fn get_share_by_id(&self, id: uuid::Uuid, actor_id: UserId) -> Result<Option<Share>>;
@@ -151,14 +160,35 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn find_descendant_folders_unchecked(&self, folder_id: uuid::Uuid)
         -> Result<Vec<Folder>>;
 
+    /// Find a folder subtree without crossing the tenant boundary.
+    async fn find_descendant_folders_for_tenant(
+        &self,
+        folder_id: uuid::Uuid,
+        tenant_id: Uuid,
+    ) -> Result<Vec<Folder>>;
+
     /// Revoke a share by ID.
     async fn revoke_share(&self, share_id: uuid::Uuid, actor_id: UserId) -> Result<()>;
+
+    async fn revoke_share_with_correlation(
+        &self,
+        share_id: uuid::Uuid,
+        actor_id: UserId,
+        _correlation_id: Option<&str>,
+    ) -> Result<()> {
+        self.revoke_share(share_id, actor_id).await
+    }
 
     /// Update a share.
     async fn update_share(&self, share: &Share) -> Result<()>;
 
     /// Check if a user is a member of a group.
     async fn is_user_in_group(&self, user_id: UserId, group_id: uuid::Uuid) -> Result<bool>;
+
+    /// Find the organization (tenant) a group belongs to.
+    ///
+    /// Returns `Ok(None)` when no group with that ID exists.
+    async fn find_group_tenant_id(&self, group_id: uuid::Uuid) -> Result<Option<Uuid>>;
 }
 
 /// Trait for share notification tracking operations needed by ShareService.
@@ -192,6 +222,7 @@ pub struct ShareService<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: Sha
     broadcaster: Arc<EventBroadcaster>,
     jwt_manager: Arc<J>,
     notification_repo: Arc<N>,
+    permission_checker: Option<Arc<dyn ResourcePermissionChecker>>,
 }
 
 impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
@@ -211,7 +242,16 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             broadcaster,
             jwt_manager,
             notification_repo,
+            permission_checker: None,
         }
+    }
+
+    pub fn with_permission_checker(
+        mut self,
+        permission_checker: Arc<dyn ResourcePermissionChecker>,
+    ) -> Self {
+        self.permission_checker = Some(permission_checker);
+        self
     }
 
     /// Look up a share by ID, enforcing actor authorization.
@@ -257,7 +297,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     /// Looks up the share without tenant scoping. If `tenant_id` is provided, it
     /// must match the share's actual tenant (defense in depth). If it is omitted,
     /// the share's own tenant is used.
-    async fn resolve_public_share(
+    pub async fn resolve_public_share(
         &self,
         share_token: &str,
         tenant_id: Option<Uuid>,
@@ -275,6 +315,32 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             }
         }
 
+        if share.share_token.as_deref() != Some(share_token)
+            || share.recipient_user_id.is_some()
+            || share.recipient_group_id.is_some()
+        {
+            return Err(ShareError::ShareNotFoundByToken(share_token.to_string()));
+        }
+
+        let resource_tenant = match (share.file_id, share.folder_id) {
+            (Some(file_id), None) => self
+                .metadata_store
+                .find_file_by_id_unchecked(file_id)
+                .await
+                .map_err(|e| ShareError::Database(e.to_string()))?
+                .map(|file| file.tenant_id),
+            (None, Some(folder_id)) => self
+                .metadata_store
+                .find_folder_by_id_unchecked(folder_id)
+                .await
+                .map_err(|e| ShareError::Database(e.to_string()))?
+                .map(|folder| folder.tenant_id),
+            _ => None,
+        };
+        if resource_tenant != Some(share.tenant_id) {
+            return Err(ShareError::ShareNotFoundByToken(share_token.to_string()));
+        }
+
         Ok(share)
     }
 
@@ -282,6 +348,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     ///
     /// Verifies that:
     /// - The file exists
+    /// - The requester's organization matches the file's organization
     /// - The user owns the file
     /// - Password is hashed if provided
     ///
@@ -295,6 +362,33 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         expires_at: Option<DateTime<Utc>>,
         tenant_id: Uuid,
     ) -> Result<Share, ShareError> {
+        self.create_share_with_correlation(
+            file_id,
+            user_id,
+            permissions,
+            password,
+            expires_at,
+            tenant_id,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_share_with_correlation(
+        &self,
+        file_id: uuid::Uuid,
+        user_id: UserId,
+        permissions: SharePermissions,
+        password: Option<String>,
+        expires_at: Option<DateTime<Utc>>,
+        tenant_id: Uuid,
+        correlation_id: Option<&str>,
+    ) -> Result<Share, ShareError> {
+        if !self.user_matches_tenant(user_id, tenant_id).await? {
+            return Err(ShareError::FileNotFound(file_id));
+        }
+
         // Verify file exists
         let file = self
             .metadata_store
@@ -302,6 +396,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FileNotFound(file_id))?;
+
+        // Tenant boundary check (ADR-0041 D2): the requester's organization
+        // must equal the file's organization.
+        if file.tenant_id != tenant_id {
+            return Err(ShareError::FileNotFound(file_id));
+        }
 
         // Verify user owns the file
         if file.owner_id != user_id {
@@ -326,7 +426,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         // Store in metadata store
         self.metadata_store
-            .create_share(&share)
+            .create_share_with_correlation(&share, correlation_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -363,6 +463,10 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     }
 
     /// Create a new share link for a folder.
+    ///
+    /// Verifies that the folder exists, the requester's organization matches
+    /// the folder's organization (ADR-0041 D2), and the user owns the folder
+    /// or holds Admin permission on it.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_folder_share(
         &self,
@@ -374,6 +478,34 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         upload_only: bool,
         tenant_id: Uuid,
     ) -> Result<Share, ShareError> {
+        self.create_folder_share_with_correlation(
+            folder_id,
+            user_id,
+            permissions,
+            password,
+            expires_at,
+            upload_only,
+            tenant_id,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_folder_share_with_correlation(
+        &self,
+        folder_id: uuid::Uuid,
+        user_id: UserId,
+        permissions: SharePermissions,
+        password: Option<String>,
+        expires_at: Option<DateTime<Utc>>,
+        upload_only: bool,
+        tenant_id: Uuid,
+        correlation_id: Option<&str>,
+    ) -> Result<Share, ShareError> {
+        if !self.user_matches_tenant(user_id, tenant_id).await? {
+            return Err(ShareError::FolderNotFound(folder_id));
+        }
         let folder = self
             .metadata_store
             .find_folder_by_id_unchecked(folder_id)
@@ -381,17 +513,20 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FolderNotFound(folder_id))?;
 
-        let is_owner = folder.owner_id == user_id;
-        let has_admin = if is_owner {
-            true
-        } else {
-            self.check_resource_permission(
+        // Tenant boundary check (ADR-0041 D2): the requester's organization
+        // must equal the folder's organization.
+        if folder.tenant_id != tenant_id {
+            return Err(ShareError::FolderNotFound(folder_id));
+        }
+
+        let has_admin = self
+            .check_resource_permission(
                 user_id,
                 Resource::Folder(folder_id),
                 SharePermissions::Admin,
+                tenant_id,
             )
-            .await?
-        };
+            .await?;
 
         if !has_admin {
             return Err(ShareError::PermissionDenied {
@@ -415,7 +550,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         share.upload_only = upload_only;
 
         self.metadata_store
-            .create_share(&share)
+            .create_share_with_correlation(&share, correlation_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -543,6 +678,16 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         share_id: uuid::Uuid,
         user_id: UserId,
     ) -> Result<Share, ShareError> {
+        self.revoke_share_with_correlation(share_id, user_id, None)
+            .await
+    }
+
+    pub async fn revoke_share_with_correlation(
+        &self,
+        share_id: uuid::Uuid,
+        user_id: UserId,
+        correlation_id: Option<&str>,
+    ) -> Result<Share, ShareError> {
         // Get share by ID for an explicit authorization decision.
         let share = self
             .metadata_store
@@ -551,31 +696,30 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
-        // Creator can always revoke; otherwise require Admin permission on the resource.
-        if share.created_by != user_id {
-            let resource = if let Some(file_id) = share.file_id {
-                Resource::File(file_id)
-            } else if let Some(folder_id) = share.folder_id {
-                Resource::Folder(folder_id)
-            } else {
-                return Err(ShareError::InvalidState(
-                    "Share has no resource".to_string(),
-                ));
-            };
-            let has_admin = self
-                .check_resource_permission(user_id, resource, SharePermissions::Admin)
+        let resource = Self::share_resource(&share)?;
+        if !self
+            .share_actor_scope_is_valid(user_id, &share, resource)
+            .await?
+        {
+            return Err(ShareError::ShareNotFound(share_id));
+        }
+        let has_admin = self
+            .check_resource_permission(user_id, resource, SharePermissions::Admin, share.tenant_id)
+            .await?;
+        let creator_in_scope = share.created_by == user_id
+            && self
+                .actor_and_resource_match_tenant(user_id, resource, share.tenant_id)
                 .await?;
-            if !has_admin {
-                return Err(ShareError::PermissionDenied {
-                    file_id: share.resource_id().unwrap_or(share.id),
-                    user_id,
-                });
-            }
+        if !has_admin && !creator_in_scope {
+            return Err(ShareError::PermissionDenied {
+                file_id: share.resource_id().unwrap_or(share.id),
+                user_id,
+            });
         }
 
         // Revoke the share
         self.metadata_store
-            .revoke_share(share_id, user_id)
+            .revoke_share_with_correlation(share_id, user_id, correlation_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
@@ -625,35 +769,17 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
-        // Determine resource and check permission using the same pattern as create_group_share
-        let (resource, is_owner) = if let Some(file_id) = share.file_id {
-            let file = self
-                .metadata_store
-                .find_file_by_id_unchecked(file_id)
-                .await
-                .map_err(|e| ShareError::Database(e.to_string()))?
-                .ok_or(ShareError::FileNotFound(file_id))?;
-            (Resource::File(file_id), file.owner_id == user_id)
-        } else if let Some(folder_id) = share.folder_id {
-            let folder = self
-                .metadata_store
-                .find_folder_by_id_unchecked(folder_id)
-                .await
-                .map_err(|e| ShareError::Database(e.to_string()))?
-                .ok_or(ShareError::FolderNotFound(folder_id))?;
-            (Resource::Folder(folder_id), folder.owner_id == user_id)
-        } else {
-            return Err(ShareError::InvalidState(
-                "share has no associated resource".to_string(),
-            ));
-        };
+        let resource = Self::share_resource(&share)?;
+        if !self
+            .share_actor_scope_is_valid(user_id, &share, resource)
+            .await?
+        {
+            return Err(ShareError::ShareNotFound(share_id));
+        }
 
-        let has_admin = if is_owner {
-            true
-        } else {
-            self.check_resource_permission(user_id, resource, SharePermissions::Admin)
-                .await?
-        };
+        let has_admin = self
+            .check_resource_permission(user_id, resource, SharePermissions::Admin, share.tenant_id)
+            .await?;
 
         if !has_admin {
             return Err(ShareError::PermissionDenied {
@@ -729,28 +855,34 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FileNotFound(file_id))?;
 
+        if !self
+            .actor_and_resource_match_tenant(user_id, Resource::File(file_id), file.tenant_id)
+            .await?
+        {
+            return Err(ShareError::FileNotFound(file_id));
+        }
+
         // Check user owns file or has admin permission
-        let is_owner = file.owner_id == user_id;
-        let has_admin = if is_owner {
-            true
-        } else {
-            self.check_resource_permission(
+        let has_admin = self
+            .check_resource_permission(
                 user_id,
                 Resource::File(file_id),
                 SharePermissions::Admin,
+                file.tenant_id,
             )
-            .await?
-        };
+            .await?;
 
         if !has_admin {
             return Err(ShareError::PermissionDenied { file_id, user_id });
         }
 
         // Get all shares for the file
-        self.metadata_store
+        let shares = self
+            .metadata_store
             .get_file_shares(file_id)
             .await
-            .map_err(|e| ShareError::Database(e.to_string()))
+            .map_err(|e| ShareError::Database(e.to_string()))?;
+        self.filter_shares_to_tenant(shares, file.tenant_id).await
     }
 
     /// List all shares for a folder.
@@ -766,17 +898,21 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::FolderNotFound(folder_id))?;
 
-        let is_owner = folder.owner_id == user_id;
-        let has_admin = if is_owner {
-            true
-        } else {
-            self.check_resource_permission(
+        if !self
+            .actor_and_resource_match_tenant(user_id, Resource::Folder(folder_id), folder.tenant_id)
+            .await?
+        {
+            return Err(ShareError::FolderNotFound(folder_id));
+        }
+
+        let has_admin = self
+            .check_resource_permission(
                 user_id,
                 Resource::Folder(folder_id),
                 SharePermissions::Admin,
+                folder.tenant_id,
             )
-            .await?
-        };
+            .await?;
 
         if !has_admin {
             return Err(ShareError::PermissionDenied {
@@ -785,10 +921,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             });
         }
 
-        self.metadata_store
+        let shares = self
+            .metadata_store
             .get_folder_shares(folder_id)
             .await
-            .map_err(|e| ShareError::Database(e.to_string()))
+            .map_err(|e| ShareError::Database(e.to_string()))?;
+        self.filter_shares_to_tenant(shares, folder.tenant_id).await
     }
 
     /// Get public share info for anonymous access.
@@ -825,18 +963,20 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         if let Some(file_id) = share.file_id {
             let file = self
                 .metadata_store
-                .find_file_by_id(file_id, share.created_by)
+                .find_file_by_id_unchecked(file_id)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
+                .filter(|file| file.tenant_id == share.tenant_id)
                 .ok_or(ShareError::FileNotFound(file_id))?;
 
             Ok((share, Some(file), None))
         } else if let Some(folder_id) = share.folder_id {
             let folder = self
                 .metadata_store
-                .find_folder_by_id(folder_id, share.created_by)
+                .find_folder_by_id_unchecked(folder_id)
                 .await
                 .map_err(|e| ShareError::Database(e.to_string()))?
+                .filter(|folder| folder.tenant_id == share.tenant_id)
                 .ok_or(ShareError::FolderNotFound(folder_id))?;
 
             Ok((share, None, Some(folder)))
@@ -874,21 +1014,22 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         ))?;
         let root_folder = self
             .metadata_store
-            .find_folder_by_id(root_folder_id, share.created_by)
+            .find_folder_by_id_unchecked(root_folder_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
+            .filter(|folder| folder.tenant_id == share.tenant_id)
             .ok_or(ShareError::FolderNotFound(root_folder_id))?;
         let target_folder_id = current_folder_id.unwrap_or(root_folder.id);
 
         let descendants = self
             .metadata_store
-            .find_descendant_folders_unchecked(root_folder.id)
+            .find_descendant_folders_for_tenant(root_folder.id, share.tenant_id)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
 
         let target_folder = descendants
             .into_iter()
-            .find(|folder| folder.id == target_folder_id)
+            .find(|folder| folder.id == target_folder_id && folder.tenant_id == share.tenant_id)
             .ok_or(ShareError::FolderNotFound(target_folder_id))?;
 
         let folders = self
@@ -908,6 +1049,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
     /// Create a group share for a resource
     ///
+    /// The group must exist and its organization (`user_groups.tenant_id`)
+    /// must equal both the resource's organization and the requester's
+    /// organization (`tenant_id`) — grant equality (ADR-0041 D2). This
+    /// check applies to every caller, including resource owners bypassing
+    /// the membership requirement below.
+    ///
     /// # Arguments
     /// * `resource` - File or Folder to share
     /// * `group_id` - Group to share with
@@ -916,9 +1063,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
     /// * `tenant_id` - Tenant ID for boundary checking
     ///
     /// # Errors
-    /// * CrossTenantSharingNotAllowed - if group is in different tenant
-    /// * NotGroupMember - if user is not admin and not group member
-    /// * GroupShareAlreadyExists - if group already has access
+    /// * `FileNotFound` / `FolderNotFound` - if the resource does not exist or
+    ///   belongs to a different tenant
+    /// * `GroupNotFound` - if the group does not exist or belongs to a
+    ///   different tenant
+    /// * `PermissionDenied` - if the user does not hold the granted
+    ///   permission on the resource
+    /// * `NotGroupMember` - if user is not admin and not group member
+    /// * `GroupShareAlreadyExists` - if group already has access
     pub async fn create_group_share(
         &self,
         resource: Resource,
@@ -927,6 +1079,12 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         created_by: UserId,
         tenant_id: Uuid,
     ) -> Result<Share, ShareError> {
+        if !self.user_matches_tenant(created_by, tenant_id).await? {
+            return Err(match resource {
+                Resource::File(id) => ShareError::FileNotFound(id),
+                Resource::Folder(id) => ShareError::FolderNotFound(id),
+            });
+        }
         // Verify resource exists and get its owner/tenant.
         // Use unchecked lookups because non-owners with Admin permission may create group shares.
         let (resource_owner, resource_tenant) = match &resource {
@@ -952,7 +1110,25 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 
         // Tenant boundary check
         if resource_tenant != tenant_id {
-            return Err(ShareError::CrossTenantSharingNotAllowed);
+            return Err(match resource {
+                Resource::File(id) => ShareError::FileNotFound(id),
+                Resource::Folder(id) => ShareError::FolderNotFound(id),
+            });
+        }
+
+        // Group boundary check (ADR-0041 D2, grant equality): the group must
+        // exist and live in the same organization as the resource and the
+        // requester. This runs before any branch that can create the share,
+        // including the owner bypass below, which skips the membership check
+        // but not this check.
+        let group_tenant = self
+            .metadata_store
+            .find_group_tenant_id(group_id)
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?
+            .ok_or(ShareError::GroupNotFound(group_id))?;
+        if group_tenant != tenant_id {
+            return Err(ShareError::GroupNotFound(group_id));
         }
 
         // Check if user has admin permission or is resource owner
@@ -961,7 +1137,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             true
         } else {
             // Check if user has admin permission on resource
-            self.check_resource_permission(created_by, resource, SharePermissions::Admin)
+            self.check_resource_permission(created_by, resource, SharePermissions::Admin, tenant_id)
                 .await?
         };
 
@@ -970,7 +1146,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         // themselves — more access than they hold) and must be group members.
         if !has_admin {
             if !self
-                .check_resource_permission(created_by, resource, permissions)
+                .check_resource_permission(created_by, resource, permissions, tenant_id)
                 .await?
             {
                 return Err(ShareError::PermissionDenied {
@@ -999,9 +1175,11 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         }
         .map_err(|e| ShareError::Database(e.to_string()))?;
 
-        let already_exists = existing_shares
-            .iter()
-            .any(|s| s.recipient_group_id == Some(group_id) && s.revoked_at.is_none());
+        let already_exists = existing_shares.iter().any(|s| {
+            s.tenant_id == tenant_id
+                && s.recipient_group_id == Some(group_id)
+                && s.revoked_at.is_none()
+        });
 
         if already_exists {
             return Err(ShareError::GroupShareAlreadyExists);
@@ -1093,26 +1271,32 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
         // Verify it's a group share
-        if share.recipient_group_id.is_none() {
-            return Err(ShareError::InvalidState("Not a group share".to_string()));
-        }
-
-        // Determine resource for permission check
-        let resource = if let Some(file_id) = share.file_id {
-            Resource::File(file_id)
-        } else if let Some(folder_id) = share.folder_id {
-            Resource::Folder(folder_id)
-        } else {
-            return Err(ShareError::InvalidState(
-                "Share has no resource".to_string(),
-            ));
+        let Some(group_id) = share.recipient_group_id else {
+            return Err(ShareError::ShareNotFound(share_id));
         };
+        let resource = Self::share_resource(&share)?;
+        if !self
+            .share_actor_scope_is_valid(requesting_user, &share, resource)
+            .await?
+            || !self.group_matches_tenant(group_id, share.tenant_id).await?
+        {
+            return Err(ShareError::ShareNotFound(share_id));
+        }
 
         // Check admin permission
         let has_admin = self
-            .check_resource_permission(requesting_user, resource, SharePermissions::Admin)
+            .check_resource_permission(
+                requesting_user,
+                resource,
+                SharePermissions::Admin,
+                share.tenant_id,
+            )
             .await?;
-        if !has_admin && share.created_by != requesting_user {
+        let creator_in_scope = share.created_by == requesting_user
+            && self
+                .actor_and_resource_match_tenant(requesting_user, resource, share.tenant_id)
+                .await?;
+        if !has_admin && !creator_in_scope {
             return Err(ShareError::InsufficientPermission {
                 required: SharePermissions::Admin,
                 actual: SharePermissions::View,
@@ -1174,26 +1358,40 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
         // Verify it's a group share
-        if share.recipient_group_id.is_none() {
-            return Err(ShareError::InvalidState("Not a group share".to_string()));
-        }
-
-        // Determine resource for permission check
-        let resource = if let Some(file_id) = share.file_id {
-            Resource::File(file_id)
-        } else if let Some(folder_id) = share.folder_id {
-            Resource::Folder(folder_id)
-        } else {
-            return Err(ShareError::InvalidState(
-                "Share has no resource".to_string(),
-            ));
+        let Some(group_id) = share.recipient_group_id else {
+            return Err(ShareError::ShareNotFound(share_id));
         };
+        let resource = Self::share_resource(&share)?;
+        if !self
+            .share_actor_scope_is_valid(requesting_user, &share, resource)
+            .await?
+            || !self.group_matches_tenant(group_id, share.tenant_id).await?
+        {
+            return Err(ShareError::ShareNotFound(share_id));
+        }
 
         // Check admin permission
         let has_admin = self
-            .check_resource_permission(requesting_user, resource, SharePermissions::Admin)
+            .check_resource_permission(
+                requesting_user,
+                resource,
+                SharePermissions::Admin,
+                share.tenant_id,
+            )
             .await?;
-        if !has_admin && share.created_by != requesting_user {
+        let creator_can_grant = share.created_by == requesting_user
+            && self
+                .actor_and_resource_match_tenant(requesting_user, resource, share.tenant_id)
+                .await?
+            && self
+                .check_resource_permission(
+                    requesting_user,
+                    resource,
+                    new_permission,
+                    share.tenant_id,
+                )
+                .await?;
+        if !has_admin && !creator_can_grant {
             return Err(ShareError::InsufficientPermission {
                 required: SharePermissions::Admin,
                 actual: SharePermissions::View,
@@ -1233,6 +1431,119 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         Ok(share)
     }
 
+    fn share_resource(share: &Share) -> Result<Resource, ShareError> {
+        match (share.file_id, share.folder_id) {
+            (Some(file_id), None) => Ok(Resource::File(file_id)),
+            (None, Some(folder_id)) => Ok(Resource::Folder(folder_id)),
+            _ => Err(ShareError::ShareNotFound(share.id)),
+        }
+    }
+
+    async fn share_actor_scope_is_valid(
+        &self,
+        actor_id: UserId,
+        share: &Share,
+        resource: Resource,
+    ) -> Result<bool, ShareError> {
+        if share.recipient_user_id.is_some() && share.recipient_group_id.is_some() {
+            return Ok(false);
+        }
+        if let Some(user_id) = share.recipient_user_id {
+            if !self.user_matches_tenant(user_id, share.tenant_id).await? {
+                return Ok(false);
+            }
+        }
+        if let Some(group_id) = share.recipient_group_id {
+            if !self.group_matches_tenant(group_id, share.tenant_id).await? {
+                return Ok(false);
+            }
+        }
+        self.actor_and_resource_match_tenant(actor_id, resource, share.tenant_id)
+            .await
+    }
+
+    async fn group_matches_tenant(
+        &self,
+        group_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<bool, ShareError> {
+        Ok(self
+            .metadata_store
+            .find_group_tenant_id(group_id)
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?
+            == Some(tenant_id))
+    }
+
+    async fn filter_shares_to_tenant(
+        &self,
+        shares: Vec<Share>,
+        tenant_id: Uuid,
+    ) -> Result<Vec<Share>, ShareError> {
+        let mut valid = Vec::new();
+        for share in shares {
+            if share.tenant_id != tenant_id {
+                continue;
+            }
+            let recipient_matches = match (share.recipient_user_id, share.recipient_group_id) {
+                (Some(user_id), None) => self
+                    .metadata_store
+                    .find_user_by_id(user_id)
+                    .await
+                    .map_err(|e| ShareError::Database(e.to_string()))?
+                    .is_some_and(|user| user.tenant_id == tenant_id),
+                (None, Some(group_id)) => self.group_matches_tenant(group_id, tenant_id).await?,
+                (None, None) => share.share_token.is_some(),
+                (Some(_), Some(_)) => false,
+            };
+            if recipient_matches {
+                valid.push(share);
+            }
+        }
+        Ok(valid)
+    }
+
+    async fn user_matches_tenant(
+        &self,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<bool, ShareError> {
+        Ok(self
+            .metadata_store
+            .find_user_by_id(user_id)
+            .await
+            .map_err(|e| ShareError::Database(e.to_string()))?
+            .is_some_and(|user| user.tenant_id == tenant_id))
+    }
+
+    async fn actor_and_resource_match_tenant(
+        &self,
+        user_id: UserId,
+        resource: Resource,
+        tenant_id: Uuid,
+    ) -> Result<bool, ShareError> {
+        if !self.user_matches_tenant(user_id, tenant_id).await? {
+            return Ok(false);
+        }
+
+        let resource_tenant = match resource {
+            Resource::File(file_id) => self
+                .metadata_store
+                .find_file_by_id_unchecked(file_id)
+                .await
+                .map_err(|e| ShareError::Database(e.to_string()))?
+                .map(|file| file.tenant_id),
+            Resource::Folder(folder_id) => self
+                .metadata_store
+                .find_folder_by_id_unchecked(folder_id)
+                .await
+                .map_err(|e| ShareError::Database(e.to_string()))?
+                .map(|folder| folder.tenant_id),
+        };
+
+        Ok(resource_tenant == Some(tenant_id))
+    }
+
     /// Check if user has specific permission on resource
     ///
     /// This method checks if the user is the owner or has a direct share
@@ -1242,109 +1553,14 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
         user_id: UserId,
         resource: Resource,
         required: SharePermissions,
+        tenant_id: Uuid,
     ) -> Result<bool, ShareError> {
-        match resource {
-            Resource::File(file_id) => {
-                // Check if user owns the file
-                if let Some(file) = self
-                    .metadata_store
-                    .find_file_by_id(file_id, user_id)
-                    .await
-                    .map_err(|e| ShareError::Database(e.to_string()))?
-                {
-                    if file.owner_id == user_id {
-                        return Ok(true); // Owner has all permissions
-                    }
-                }
-
-                // Check for direct user share with sufficient permission
-                let shares = self
-                    .metadata_store
-                    .get_file_shares(file_id)
-                    .await
-                    .map_err(|e| ShareError::Database(e.to_string()))?;
-
-                // Check direct user shares
-                let has_direct_share = shares.iter().any(|share| {
-                    share.recipient_user_id == Some(user_id)
-                        && share.revoked_at.is_none()
-                        && share.permissions >= required
-                });
-
-                if has_direct_share {
-                    return Ok(true);
-                }
-
-                // Check group shares - user must be member of group with sufficient permission
-                for share in &shares {
-                    if let Some(group_id) = share
-                        .recipient_group_id
-                        .filter(|_| share.revoked_at.is_none() && share.permissions >= required)
-                    {
-                        let is_member = self
-                            .metadata_store
-                            .is_user_in_group(user_id, group_id)
-                            .await
-                            .map_err(|e| ShareError::Database(e.to_string()))?;
-                        if is_member {
-                            return Ok(true);
-                        }
-                    }
-                }
-
-                Ok(false)
-            }
-            Resource::Folder(folder_id) => {
-                // Check if user owns the folder
-                if let Some(folder) = self
-                    .metadata_store
-                    .find_folder_by_id(folder_id, user_id)
-                    .await
-                    .map_err(|e| ShareError::Database(e.to_string()))?
-                {
-                    if folder.owner_id == user_id {
-                        return Ok(true); // Owner has all permissions
-                    }
-                }
-
-                // Check for direct user share with sufficient permission
-                let shares = self
-                    .metadata_store
-                    .get_folder_shares(folder_id)
-                    .await
-                    .map_err(|e| ShareError::Database(e.to_string()))?;
-
-                // Check direct user shares
-                let has_direct_share = shares.iter().any(|share| {
-                    share.recipient_user_id == Some(user_id)
-                        && share.revoked_at.is_none()
-                        && share.permissions >= required
-                });
-
-                if has_direct_share {
-                    return Ok(true);
-                }
-
-                // Check group shares - user must be member of group with sufficient permission
-                for share in &shares {
-                    if let Some(group_id) = share
-                        .recipient_group_id
-                        .filter(|_| share.revoked_at.is_none() && share.permissions >= required)
-                    {
-                        let is_member = self
-                            .metadata_store
-                            .is_user_in_group(user_id, group_id)
-                            .await
-                            .map_err(|e| ShareError::Database(e.to_string()))?;
-                        if is_member {
-                            return Ok(true);
-                        }
-                    }
-                }
-
-                Ok(false)
-            }
-        }
+        self.permission_checker
+            .as_ref()
+            .ok_or_else(|| ShareError::Database("permission resolver is not configured".into()))?
+            .check_permission(user_id, tenant_id, resource, required)
+            .await
+            .map_err(|error| ShareError::Database(error.to_string()))
     }
 
     /// Send first-access notification for group share if needed.
@@ -1484,6 +1700,7 @@ impl<E: EventStoreOps, M: MetadataStoreOps, J: JwtOps, N: ShareNotificationRepo>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::sync::Mutex;
     use uuid::Uuid;
 
@@ -1511,6 +1728,8 @@ mod tests {
         folders: Mutex<Vec<Folder>>,
         shares: Mutex<Vec<Share>>,
         users: Mutex<Vec<crate::domain::User>>,
+        group_tenants: Mutex<HashMap<Uuid, Uuid>>,
+        group_memberships: Mutex<HashMap<(Uuid, Uuid), bool>>,
     }
 
     impl MockMetadataStore {
@@ -1520,22 +1739,198 @@ mod tests {
                 folders: Mutex::new(Vec::new()),
                 shares: Mutex::new(Vec::new()),
                 users: Mutex::new(Vec::new()),
+                group_tenants: Mutex::new(HashMap::new()),
+                group_memberships: Mutex::new(HashMap::new()),
             }
         }
 
         fn add_file(&self, file: File) {
+            let mut users = self.users.lock().unwrap();
+            if !users.iter().any(|user| user.id == file.owner_id) {
+                let mut owner = crate::domain::User::new(
+                    "owner".into(),
+                    "Owner".into(),
+                    "test".into(),
+                    "owner@example.test".into(),
+                    false,
+                    1024,
+                    file.tenant_id,
+                );
+                owner.id = file.owner_id;
+                users.push(owner);
+            }
+            drop(users);
             self.files.lock().unwrap().push(file);
         }
 
         #[allow(dead_code)]
         fn add_folder(&self, folder: Folder) {
+            let mut users = self.users.lock().unwrap();
+            if !users.iter().any(|user| user.id == folder.owner_id) {
+                let mut owner = crate::domain::User::new(
+                    "owner".into(),
+                    "Owner".into(),
+                    "test".into(),
+                    "owner@example.test".into(),
+                    false,
+                    1024,
+                    folder.tenant_id,
+                );
+                owner.id = folder.owner_id;
+                users.push(owner);
+            }
+            drop(users);
             self.folders.lock().unwrap().push(folder);
         }
 
         #[allow(dead_code)]
         fn add_user(&self, user: crate::domain::User) {
-            self.users.lock().unwrap().push(user);
+            let mut users = self.users.lock().unwrap();
+            if let Some(existing) = users.iter_mut().find(|existing| existing.id == user.id) {
+                *existing = user;
+            } else {
+                users.push(user);
+            }
         }
+
+        fn add_user_id(&self, user_id: UserId, tenant_id: Uuid) {
+            let mut user = crate::domain::User::new(
+                "test-user".into(),
+                "Test User".into(),
+                "test".into(),
+                "test-user@example.test".into(),
+                false,
+                1024,
+                tenant_id,
+            );
+            user.id = user_id;
+            self.add_user(user);
+        }
+
+        fn add_group(&self, group_id: Uuid, tenant_id: Uuid) {
+            self.group_tenants
+                .lock()
+                .unwrap()
+                .insert(group_id, tenant_id);
+        }
+
+        fn add_group_member(&self, user_id: UserId, group_id: Uuid) {
+            self.group_memberships
+                .lock()
+                .unwrap()
+                .insert((user_id, group_id), true);
+        }
+    }
+
+    struct MockResourcePermissionChecker(Arc<MockMetadataStore>);
+
+    #[async_trait::async_trait]
+    impl ResourcePermissionChecker for MockResourcePermissionChecker {
+        async fn check_permission(
+            &self,
+            user_id: UserId,
+            tenant_id: Uuid,
+            resource: Resource,
+            required: SharePermissions,
+        ) -> Result<bool> {
+            let actor_tenant = self
+                .0
+                .users
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|user| user.id == user_id)
+                .map(|user| user.tenant_id);
+            if actor_tenant != Some(tenant_id) {
+                return Ok(false);
+            }
+
+            let (owner_id, resource_tenant, mut ancestor_ids): (UserId, Uuid, Vec<Uuid>) =
+                match resource {
+                    Resource::File(id) => {
+                        let files = self.0.files.lock().unwrap();
+                        let Some(file) = files.iter().find(|file| file.id == id) else {
+                            return Ok(false);
+                        };
+                        (
+                            file.owner_id,
+                            file.tenant_id,
+                            file.parent_folder_id.into_iter().collect(),
+                        )
+                    }
+                    Resource::Folder(id) => {
+                        let folders = self.0.folders.lock().unwrap();
+                        let Some(folder) = folders.iter().find(|folder| folder.id == id) else {
+                            return Ok(false);
+                        };
+                        (
+                            folder.owner_id,
+                            folder.tenant_id,
+                            folder.parent_folder_id.into_iter().collect(),
+                        )
+                    }
+                };
+            if resource_tenant != tenant_id || owner_id == user_id {
+                return Ok(resource_tenant == tenant_id);
+            }
+
+            let folders = self.0.folders.lock().unwrap().clone();
+            while let Some(id) = ancestor_ids.last().copied() {
+                if let Some(parent) = folders.iter().find(|folder| folder.id == id) {
+                    if parent.owner_id == user_id {
+                        return Ok(true);
+                    }
+                    if let Some(next) = parent.parent_folder_id {
+                        ancestor_ids.push(next);
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            let shares = self.0.shares.lock().unwrap().clone();
+            let group_tenants = self.0.group_tenants.lock().unwrap().clone();
+            let memberships = self.0.group_memberships.lock().unwrap().clone();
+            let resource_ids = match resource {
+                Resource::File(id) => vec![(Some(id), None)],
+                Resource::Folder(id) => vec![(None, Some(id))],
+            };
+            let permission = shares
+                .iter()
+                .filter(|share| {
+                    share.tenant_id == tenant_id
+                        && share.revoked_at.is_none()
+                        && !share.is_expired()
+                        && (resource_ids.contains(&(share.file_id, share.folder_id))
+                            || ancestor_ids.iter().any(|id| share.folder_id == Some(*id)))
+                        && !(share.recipient_user_id.is_some()
+                            && share.recipient_group_id.is_some())
+                        && (share.recipient_user_id == Some(user_id)
+                            || share.recipient_group_id.is_some_and(|group_id| {
+                                group_tenants.get(&group_id) == Some(&tenant_id)
+                                    && memberships.get(&(user_id, group_id)) == Some(&true)
+                            }))
+                })
+                .map(|share| share.permissions)
+                .max();
+            Ok(permission.is_some_and(|permission| permission >= required))
+        }
+    }
+
+    fn add_tenant_user(metadata_store: &MockMetadataStore, user_id: UserId, tenant_id: Uuid) {
+        let mut user = crate::domain::User::new(
+            "tenant-user".to_string(),
+            "Tenant User".to_string(),
+            "hash".to_string(),
+            format!("{user_id}@example.com"),
+            false,
+            1024,
+            tenant_id,
+        );
+        user.id = user_id;
+        metadata_store.add_user(user);
     }
 
     impl MetadataStoreOps for MockMetadataStore {
@@ -1734,6 +2129,19 @@ mod tests {
             Ok(result)
         }
 
+        async fn find_descendant_folders_for_tenant(
+            &self,
+            folder_id: Uuid,
+            tenant_id: Uuid,
+        ) -> Result<Vec<Folder>> {
+            Ok(self
+                .find_descendant_folders_unchecked(folder_id)
+                .await?
+                .into_iter()
+                .filter(|folder| folder.tenant_id == tenant_id)
+                .collect())
+        }
+
         async fn revoke_share(&self, share_id: Uuid, _actor_id: UserId) -> Result<()> {
             if let Some(share) = self
                 .shares
@@ -1759,10 +2167,18 @@ mod tests {
             }
         }
 
-        async fn is_user_in_group(&self, _user_id: UserId, _group_id: Uuid) -> Result<bool> {
-            // Mock implementation - in tests, users are not group members by default
-            // Tests can override this by using a custom mock if needed
-            Ok(false)
+        async fn is_user_in_group(&self, user_id: UserId, group_id: Uuid) -> Result<bool> {
+            Ok(self
+                .group_memberships
+                .lock()
+                .unwrap()
+                .get(&(user_id, group_id))
+                .copied()
+                .unwrap_or(false))
+        }
+
+        async fn find_group_tenant_id(&self, group_id: Uuid) -> Result<Option<Uuid>> {
+            Ok(self.group_tenants.lock().unwrap().get(&group_id).copied())
         }
 
         async fn list_files_by_parent(
@@ -1841,7 +2257,10 @@ mod tests {
             broadcaster,
             jwt_manager,
             notification_repo,
-        );
+        )
+        .with_permission_checker(Arc::new(MockResourcePermissionChecker(
+            metadata_store.clone(),
+        )));
 
         (service, event_store, metadata_store)
     }
@@ -1937,6 +2356,237 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn group_share_authorization_requires_matching_tenants() {
+        let (service, _, metadata_store) = setup_share_service();
+        let tenant_a = Uuid::new_v4();
+        let tenant_b = Uuid::new_v4();
+        let user_a = crate::domain::User::new(
+            "member-a".to_string(),
+            "Member A".to_string(),
+            "hash".to_string(),
+            "member-a@example.com".to_string(),
+            false,
+            1024,
+            tenant_a,
+        );
+        let user_b = crate::domain::User::new(
+            "member-b".to_string(),
+            "Member B".to_string(),
+            "hash".to_string(),
+            "member-b@example.com".to_string(),
+            false,
+            1024,
+            tenant_b,
+        );
+        let group_id = Uuid::new_v4();
+        let file = File::new(
+            "tenant-a.txt".to_string(),
+            "/tenant-a.txt".to_string(),
+            "hash-a".to_string(),
+            1,
+            "text/plain".to_string(),
+            None,
+            Uuid::new_v4(),
+            tenant_a,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file);
+        let foreign_file = File::new(
+            "tenant-b.txt".to_string(),
+            "/tenant-b.txt".to_string(),
+            "hash-b".to_string(),
+            1,
+            "text/plain".to_string(),
+            None,
+            Uuid::new_v4(),
+            tenant_b,
+        );
+        let foreign_file_id = foreign_file.id;
+        metadata_store.add_file(foreign_file);
+        let legacy_owned_file = File::new(
+            "legacy-tenant-a.txt".to_string(),
+            "/legacy-tenant-a.txt".to_string(),
+            "hash-legacy".to_string(),
+            1,
+            "text/plain".to_string(),
+            None,
+            user_b.id,
+            tenant_a,
+        );
+        let legacy_owned_file_id = legacy_owned_file.id;
+        metadata_store.add_file(legacy_owned_file);
+        metadata_store.add_user(user_a.clone());
+        metadata_store.add_user(user_b.clone());
+        metadata_store.add_group(group_id, tenant_b);
+        metadata_store.add_group_member(user_a.id, group_id);
+        metadata_store.add_group_member(user_b.id, group_id);
+        metadata_store
+            .create_share(&Share {
+                id: Uuid::new_v4(),
+                file_id: Some(file_id),
+                folder_id: None,
+                share_token: None,
+                permissions: SharePermissions::Admin,
+                password_hash: None,
+                expires_at: None,
+                upload_only: false,
+                access_count: 0,
+                recipient_user_id: None,
+                recipient_group_id: Some(group_id),
+                created_by: Uuid::new_v4(),
+                created_at: Utc::now(),
+                revoked_at: None,
+                tenant_id: tenant_a,
+            })
+            .await
+            .unwrap();
+        metadata_store
+            .create_share(&Share {
+                id: Uuid::new_v4(),
+                file_id: Some(foreign_file_id),
+                folder_id: None,
+                share_token: None,
+                permissions: SharePermissions::Admin,
+                password_hash: None,
+                expires_at: None,
+                upload_only: false,
+                access_count: 0,
+                recipient_user_id: None,
+                recipient_group_id: Some(group_id),
+                created_by: Uuid::new_v4(),
+                created_at: Utc::now(),
+                revoked_at: None,
+                tenant_id: tenant_a,
+            })
+            .await
+            .unwrap();
+
+        let foreign_group_share_id = Uuid::new_v4();
+        metadata_store
+            .create_share(&Share {
+                id: foreign_group_share_id,
+                file_id: Some(file_id),
+                folder_id: None,
+                share_token: None,
+                permissions: SharePermissions::View,
+                password_hash: None,
+                expires_at: None,
+                upload_only: false,
+                access_count: 0,
+                recipient_user_id: None,
+                recipient_group_id: Some(group_id),
+                created_by: user_a.id,
+                created_at: Utc::now(),
+                revoked_at: None,
+                tenant_id: tenant_a,
+            })
+            .await
+            .unwrap();
+        metadata_store
+            .create_share(&Share {
+                id: Uuid::new_v4(),
+                file_id: Some(file_id),
+                folder_id: None,
+                share_token: None,
+                permissions: SharePermissions::View,
+                password_hash: None,
+                expires_at: None,
+                upload_only: false,
+                access_count: 0,
+                recipient_user_id: None,
+                recipient_group_id: Some(group_id),
+                created_by: user_b.id,
+                created_at: Utc::now(),
+                revoked_at: None,
+                tenant_id: tenant_b,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            service
+                .update_share(
+                    foreign_group_share_id,
+                    user_a.id,
+                    None,
+                    Some(Utc::now() + chrono::Duration::days(1)),
+                )
+                .await,
+            Err(ShareError::ShareNotFound(_))
+        ));
+        assert!(matches!(
+            service
+                .update_group_share_permission(
+                    foreign_group_share_id,
+                    SharePermissions::Admin,
+                    user_a.id,
+                )
+                .await,
+            Err(ShareError::ShareNotFound(_))
+        ));
+
+        assert!(!service
+            .check_resource_permission(
+                user_a.id,
+                Resource::File(file_id),
+                SharePermissions::Admin,
+                tenant_a,
+            )
+            .await
+            .unwrap());
+
+        metadata_store.add_group(group_id, tenant_a);
+        assert!(service
+            .check_resource_permission(
+                user_a.id,
+                Resource::File(file_id),
+                SharePermissions::Admin,
+                tenant_a,
+            )
+            .await
+            .unwrap());
+        let listed_shares = service.list_file_shares(file_id, user_a.id).await.unwrap();
+        assert_eq!(listed_shares.len(), 2);
+        assert!(listed_shares
+            .iter()
+            .all(|share| share.tenant_id == tenant_a));
+        assert!(!service
+            .check_resource_permission(
+                user_b.id,
+                Resource::File(file_id),
+                SharePermissions::Admin,
+                tenant_a,
+            )
+            .await
+            .unwrap());
+        assert!(!service
+            .check_resource_permission(
+                user_a.id,
+                Resource::File(foreign_file_id),
+                SharePermissions::Admin,
+                tenant_a,
+            )
+            .await
+            .unwrap());
+        assert!(!service
+            .check_resource_permission(
+                user_b.id,
+                Resource::File(legacy_owned_file_id),
+                SharePermissions::Admin,
+                tenant_a,
+            )
+            .await
+            .unwrap());
+        assert!(!service
+            .actor_and_resource_match_tenant(
+                user_b.id,
+                Resource::File(legacy_owned_file_id),
+                tenant_a,
+            )
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
     async fn test_create_share_permission_denied() {
         let (service, _, metadata_store) = setup_share_service();
 
@@ -1957,6 +2607,7 @@ mod tests {
         );
         let file_id = file.id;
         metadata_store.add_file(file);
+        metadata_store.add_user_id(other_user, tenant_id);
 
         // Try to create share as different user
         let result = service
@@ -2115,6 +2766,7 @@ mod tests {
         );
         let file_id = file.id;
         metadata_store.add_file(file.clone());
+        add_tenant_user(&metadata_store, owner_id, tenant_id);
 
         // Create share
         let share = service
@@ -2177,6 +2829,7 @@ mod tests {
         );
         let file_id = file.id;
         metadata_store.add_file(file);
+        metadata_store.add_user_id(other_user_id, tenant_id);
 
         let share = service
             .create_share(
@@ -2222,6 +2875,7 @@ mod tests {
         );
         let file_id = file.id;
         metadata_store.add_file(file.clone());
+        add_tenant_user(&metadata_store, owner_id, tenant_id);
 
         // Create share without password
         let share = service
@@ -2409,6 +3063,7 @@ mod tests {
         );
         let file_id = file.id;
         metadata_store.add_file(file.clone());
+        add_tenant_user(&metadata_store, owner_id, tenant_id);
 
         // Create share
         let share = service
@@ -2742,6 +3397,7 @@ mod tests {
         let folder = Folder::new_root_with_name("Shared Folder", owner_id, tenant_id);
         let folder_id = folder.id;
         metadata_store.add_folder(folder);
+        add_tenant_user(&metadata_store, owner_id, tenant_id);
 
         let share = service
             .create_folder_share(
@@ -2778,6 +3434,7 @@ mod tests {
         let folder = Folder::new_root_with_name("Shared Folder", owner_id, tenant_id);
         let folder_id = folder.id;
         metadata_store.add_folder(folder);
+        add_tenant_user(&metadata_store, owner_id, tenant_id);
 
         let share = service
             .create_folder_share(
@@ -2814,6 +3471,7 @@ mod tests {
         let folder = Folder::new_root_with_name("Protected Folder", owner_id, tenant_id);
         let folder_id = folder.id;
         metadata_store.add_folder(folder);
+        add_tenant_user(&metadata_store, owner_id, tenant_id);
 
         let share = service
             .create_folder_share(
@@ -2860,6 +3518,7 @@ mod tests {
         let folder = Folder::new_root_with_name("Shared Folder", owner_id, tenant_id);
         let folder_id = folder.id;
         metadata_store.add_folder(folder);
+        add_tenant_user(&metadata_store, owner_id, tenant_id);
 
         let share = service
             .create_folder_share(
@@ -2901,6 +3560,7 @@ mod tests {
         );
         let file_id = file.id;
         metadata_store.add_file(file);
+        add_tenant_user(&metadata_store, owner_id, tenant_id);
 
         let share = service
             .create_share(
@@ -2932,7 +3592,20 @@ mod tests {
         let tenant_id = Uuid::new_v4();
         let group_id = Uuid::new_v4();
         let share_id = Uuid::new_v4();
-        let file_id = Uuid::new_v4();
+        let file = File::new(
+            "group-shared.md".to_string(),
+            "/group-shared.md".to_string(),
+            "hash".to_string(),
+            1,
+            "text/markdown".to_string(),
+            None,
+            owner_id,
+            tenant_id,
+        );
+        let file_id = file.id;
+        metadata_store.add_file(file);
+        metadata_store.add_group(group_id, tenant_id);
+        add_tenant_user(&metadata_store, owner_id, tenant_id);
 
         let share = Share {
             id: share_id,

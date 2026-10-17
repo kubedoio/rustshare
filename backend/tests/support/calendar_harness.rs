@@ -256,13 +256,16 @@ async fn setup_test_env_inner(calendar_outbox: bool, providers: TestProviders) -
         rustshare_storage::repos::ShareNotificationRepoImpl::new(pool.clone()),
     );
 
-    let share_service = Arc::new(rustshare_core::services::ShareService::new(
-        event_store.clone(),
-        metadata_store.clone(),
-        broadcaster.clone(),
-        jwt_manager.clone(),
-        share_notification_repo.clone(),
-    ));
+    let share_service = Arc::new(
+        rustshare_core::services::ShareService::new(
+            event_store.clone(),
+            metadata_store.clone(),
+            broadcaster.clone(),
+            jwt_manager.clone(),
+            share_notification_repo.clone(),
+        )
+        .with_permission_checker(permission_resolver.clone()),
+    );
 
     let thumbnail_service = Arc::new(rustshare_core::services::ThumbnailService::new(
         pool.clone(),
@@ -461,6 +464,7 @@ async fn setup_test_env_inner(calendar_outbox: bool, providers: TestProviders) -
         oidc_runtime_cache: rustshare_server::oidc_runtime::OidcRuntimeCache::new(),
         poll_rate_limiter: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         default_tenant_id: Uuid::nil(),
+        default_tenant_config: rustshare_server::config::DefaultTenantConfig::Unset,
         note_service,
         decision_service,
         meeting_service,

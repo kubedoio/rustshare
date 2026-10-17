@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -11,10 +11,12 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::{
-    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found, insert_admin_action,
+    admin_bad_request, admin_conflict, admin_internal_error, admin_not_found,
+    insert_scoped_admin_action, request_correlation_id, resolve_creation_tenant,
 };
 use crate::{
     handlers::{AdminUser, AppError},
+    services::note_service,
     AppState,
 };
 
@@ -87,6 +89,7 @@ struct GroupRow {
 #[derive(sqlx::FromRow)]
 struct GroupDetailRow {
     id: Uuid,
+    tenant_id: Uuid,
     name: String,
     description: Option<String>,
     created_by: Option<Uuid>,
@@ -169,6 +172,7 @@ pub async fn list_groups(
 pub async fn create_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Json(req): Json<CreateGroupRequest>,
 ) -> Result<(StatusCode, Json<GroupResponse>), AppError> {
     if req.name.trim().is_empty() {
@@ -176,19 +180,24 @@ pub async fn create_group(
     }
 
     let new_id = Uuid::new_v4();
+    // AR-01 (ADR-0040 D4, ADR-0043 D-D2 I1): the organization is resolved
+    // explicitly and bound on the INSERT; the nil column default is never the
+    // effective source of a new row.
+    let tenant_id = resolve_creation_tenant(&state)?;
 
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let row = sqlx::query_as::<_, GroupDetailRow>(
         r#"
-        INSERT INTO user_groups (id, name, description, created_by)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id, name, description, created_by, created_at, updated_at
+        INSERT INTO user_groups (id, name, description, created_by, tenant_id)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, tenant_id, name, description, created_by, created_at, updated_at
         "#,
     )
     .bind(new_id)
     .bind(&req.name)
     .bind(&req.description)
     .bind(actor_id)
+    .bind(tenant_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
@@ -200,13 +209,15 @@ pub async fn create_group(
         db_error(e)
     })?;
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        tenant_id,
         actor_id,
         "group.created",
         Some("group"),
         Some(new_id),
         json!({"name": req.name}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;
@@ -242,7 +253,7 @@ pub async fn get_group(
     Path(group_id): Path<Uuid>,
 ) -> Result<Json<GroupDetailResponse>, AppError> {
     let row = sqlx::query_as::<_, GroupDetailRow>(
-        "SELECT id, name, description, created_by, created_at, updated_at
+        "SELECT id, tenant_id, name, description, created_by, created_at, updated_at
          FROM user_groups WHERE id = $1",
     )
     .bind(group_id)
@@ -297,13 +308,14 @@ pub async fn get_group(
 pub async fn update_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Path(group_id): Path<Uuid>,
     Json(req): Json<UpdateGroupRequest>,
 ) -> Result<Json<GroupResponse>, AppError> {
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     // Fetch current group
     let current = sqlx::query_as::<_, GroupDetailRow>(
-        "SELECT id, name, description, created_by, created_at, updated_at
+        "SELECT id, tenant_id, name, description, created_by, created_at, updated_at
          FROM user_groups WHERE id = $1",
     )
     .bind(group_id)
@@ -328,7 +340,7 @@ pub async fn update_group(
         UPDATE user_groups
         SET name = $2, description = $3, updated_at = NOW()
         WHERE id = $1
-        RETURNING id, name, description, created_by, created_at, updated_at
+        RETURNING id, tenant_id, name, description, created_by, created_at, updated_at
         "#,
     )
     .bind(group_id)
@@ -346,13 +358,15 @@ pub async fn update_group(
     })?
     .ok_or_else(|| admin_not_found("Group not found"))?;
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        current.tenant_id,
         actor_id,
         "group.updated",
         Some("group"),
         Some(group_id),
         json!({"name": updated.name}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;
@@ -389,12 +403,13 @@ pub async fn update_group(
 pub async fn delete_group(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Path(group_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     // Lock the row so the audit event and deletion describe the same group.
     let row = sqlx::query_as::<_, GroupDetailRow>(
-        "SELECT id, name, description, created_by, created_at, updated_at
+        "SELECT id, tenant_id, name, description, created_by, created_at, updated_at
          FROM user_groups WHERE id = $1 FOR UPDATE",
     )
     .bind(group_id)
@@ -403,23 +418,36 @@ pub async fn delete_group(
     .map_err(db_error)?
     .ok_or_else(|| admin_not_found("Group not found"))?;
 
+    // AR-04: capture the refresh targets while the group row lock is held, so
+    // a concurrent share creation cannot commit a grant the capture misses.
+    // The shares themselves cascade away on the delete below.
+    let targets = note_service::capture_group_share_targets(&mut tx, group_id)
+        .await
+        .map_err(db_error)?;
+
     // CASCADE on group_members handles membership rows
     sqlx::query!("DELETE FROM user_groups WHERE id = $1", group_id)
         .execute(&mut *tx)
         .await
         .map_err(db_error)?;
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        row.tenant_id,
         actor_id,
         "group.deleted",
         Some("group"),
         Some(group_id),
         json!({"name": row.name}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;
     tx.commit().await.map_err(db_error)?;
+
+    // Best-effort refresh of the captured targets, now that the deletion has
+    // committed and the group principal is gone from the rebuilt projection.
+    note_service::dispatch_share_target_acl_refresh(Arc::clone(&state.note_service), targets);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -430,42 +458,42 @@ pub async fn delete_group(
     path = "/api/v1/admin/groups/{id}/members",
     tag = "Groups",
     responses(
-        (status = 200, description = "Success"),
+        (status = 204, description = "Success"),
+        (status = 400, description = "User and group belong to different organizations", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Group or user not found", body = crate::handlers::ErrorResponse),
     ),
 )]
 pub async fn add_member(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Path(group_id): Path<Uuid>,
     Json(req): Json<AddMemberRequest>,
 ) -> Result<StatusCode, AppError> {
     // Verify group exists and capture tenant for ACL refresh.
-    let group_row = sqlx::query_as::<_, (bool, Option<Uuid>)>(
-        "SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1), tenant_id FROM user_groups WHERE id = $1"
-    )
-    .bind(group_id)
-    .fetch_one(&state.db_pool)
-    .await
-    .map_err(db_error)?;
-    if !group_row.0 {
-        return Err(admin_not_found("Group not found"));
-    }
-    let tenant_id = group_row
-        .1
-        .ok_or_else(|| admin_internal_error("Group missing tenant_id"))?;
+    let group_tenant: Option<Uuid> =
+        sqlx::query_scalar("SELECT tenant_id FROM user_groups WHERE id = $1")
+            .bind(group_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(db_error)?;
+    let tenant_id = group_tenant.ok_or_else(|| admin_not_found("Group not found"))?;
 
-    // Verify user exists
-    let user_exists_row = sqlx::query!(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1) as exists",
-        req.user_id
-    )
-    .fetch_one(&state.db_pool)
-    .await
-    .map_err(db_error)?;
-    let user_exists = user_exists_row.exists.unwrap_or(false);
-    if !user_exists {
-        return Err(admin_not_found("User not found"));
+    // Verify the target user exists and belongs to the group's organization
+    // (ADR-0040: organization = tenant, strict equality). The AdminUser
+    // extractor is installation-wide, so the membership itself must enforce
+    // the organization boundary.
+    let user_tenant: Option<Uuid> =
+        sqlx::query_scalar!("SELECT tenant_id FROM users WHERE id = $1", req.user_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(db_error)?;
+    let user_tenant = user_tenant.ok_or_else(|| admin_not_found("User not found"))?;
+    if user_tenant != tenant_id {
+        return Err(admin_bad_request(
+            "User belongs to a different organization than the group",
+        ));
     }
 
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
@@ -487,25 +515,22 @@ pub async fn add_member(
         return Err(admin_conflict("User is already a member of this group"));
     }
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        tenant_id,
         actor_id,
         "group.member_added",
         Some("group"),
         Some(group_id),
         json!({"user_id": req.user_id}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;
     tx.commit().await.map_err(db_error)?;
 
     // Best-effort ACL refresh so newly added member can search group-shared notes.
-    let note_service = Arc::clone(&state.note_service);
-    tokio::spawn(async move {
-        note_service
-            .refresh_index_acl_for_group(group_id, tenant_id)
-            .await;
-    });
+    note_service::dispatch_group_index_acl_refresh(Arc::clone(&state.note_service), group_id);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -517,22 +542,42 @@ pub async fn add_member(
     tag = "Groups",
     responses(
         (status = 204, description = "Deleted"),
+        (status = 400, description = "User and group belong to different organizations", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Group, user, or membership not found", body = crate::handlers::ErrorResponse),
     ),
 )]
 pub async fn remove_member(
     State(state): State<AppState>,
     AdminUser { user_id: actor_id }: AdminUser,
+    headers: HeaderMap,
     Path((group_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
-    // Capture tenant_id before deleting so we can refresh ACLs afterwards.
-    let tenant_id =
-        sqlx::query_scalar::<_, Option<Uuid>>("SELECT tenant_id FROM user_groups WHERE id = $1")
+    // Verify group exists and capture tenant for ACL refresh.
+    let group_tenant: Option<Uuid> =
+        sqlx::query_scalar("SELECT tenant_id FROM user_groups WHERE id = $1")
             .bind(group_id)
-            .fetch_one(&state.db_pool)
+            .fetch_optional(&state.db_pool)
             .await
-            .map_err(db_error)?
-            .ok_or_else(|| admin_not_found("Group not found"))?;
+            .map_err(db_error)?;
+    let tenant_id = group_tenant.ok_or_else(|| admin_not_found("Group not found"))?;
+
+    // Verify the target user exists and belongs to the group's organization
+    // (ADR-0040: organization = tenant, strict equality). The AdminUser
+    // extractor is installation-wide, so the membership itself must enforce
+    // the organization boundary. Mismatched legacy rows are left for the
+    // separately scoped reconciliation work.
+    let user_tenant: Option<Uuid> =
+        sqlx::query_scalar!("SELECT tenant_id FROM users WHERE id = $1", user_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(db_error)?;
+    let user_tenant = user_tenant.ok_or_else(|| admin_not_found("User not found"))?;
+    if user_tenant != tenant_id {
+        return Err(admin_bad_request(
+            "User belongs to a different organization than the group",
+        ));
+    }
 
     let mut tx = state.db_pool.begin().await.map_err(db_error)?;
     let result = sqlx::query!(
@@ -548,25 +593,22 @@ pub async fn remove_member(
         return Err(admin_not_found("Membership not found"));
     }
 
-    insert_admin_action(
+    insert_scoped_admin_action(
         &mut tx,
+        tenant_id,
         actor_id,
         "group.member_removed",
         Some("group"),
         Some(group_id),
         json!({"user_id": user_id}),
+        request_correlation_id(&headers),
     )
     .await
     .map_err(db_error)?;
     tx.commit().await.map_err(db_error)?;
 
     // Best-effort ACL refresh so removed member stops seeing group-shared notes in search.
-    let note_service = Arc::clone(&state.note_service);
-    tokio::spawn(async move {
-        note_service
-            .refresh_index_acl_for_group(group_id, tenant_id)
-            .await;
-    });
+    note_service::dispatch_group_index_acl_refresh(Arc::clone(&state.note_service), group_id);
 
     Ok(StatusCode::NO_CONTENT)
 }

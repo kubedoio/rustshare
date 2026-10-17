@@ -10,12 +10,16 @@ pub mod buzz_observation;
 pub mod calendar_import_worker;
 pub mod calendar_sync_worker;
 pub mod config;
+#[cfg(test)]
+mod dotenv_isolation;
 pub mod handlers;
 pub mod mail_import_worker;
 pub mod memory_projection;
 pub mod metrics;
 pub mod middleware;
 pub mod object_gc;
+pub mod object_gc_reconcile;
+pub mod object_gc_scan;
 pub mod oidc;
 pub mod oidc_runtime;
 pub mod openapi;
@@ -26,7 +30,10 @@ pub mod retention;
 pub mod routes;
 pub mod services;
 pub mod state;
+#[doc(hidden)]
+pub mod test_guard;
 pub mod trash_cleanup;
+pub mod user_disable;
 pub mod web_session;
 
 pub use bootstrap::default_storage_quota_bytes;

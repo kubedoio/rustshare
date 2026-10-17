@@ -1,7 +1,7 @@
 use crate::authz;
 use crate::buzz_gateway::{BuzzGatewayAuthority, BuzzGatewayClient};
 use crate::buzz_observation::BuzzObservationService;
-use crate::config::{AppConfig, ChatProvisioningMode, OutboxWorkerConfig};
+use crate::config::{AppConfig, ChatProvisioningMode, DefaultTenantConfig, OutboxWorkerConfig};
 use crate::handlers::collab::CollabRooms;
 use crate::handlers::ensure_optional_seed_user;
 use crate::object_gc::{spawn_object_gc_worker, ObjectGcConfig};
@@ -432,13 +432,16 @@ async fn init_services(
         brainstorming_service,
     ) = tokio::join!(
         async {
-            Arc::new(ShareService::new(
-                Arc::clone(&event_store),
-                Arc::clone(&metadata_store),
-                Arc::clone(&broadcaster),
-                Arc::clone(&jwt_manager),
-                Arc::clone(&share_notification_repo),
-            ))
+            Arc::new(
+                ShareService::new(
+                    Arc::clone(&event_store),
+                    Arc::clone(&metadata_store),
+                    Arc::clone(&broadcaster),
+                    Arc::clone(&jwt_manager),
+                    Arc::clone(&share_notification_repo),
+                )
+                .with_permission_checker(permission_resolver.clone()),
+            )
         },
         async {
             Arc::new(
@@ -712,9 +715,17 @@ pub async fn init_app() -> Result<AppState> {
     let rate_limit_config = Arc::new(crate::middleware::RateLimitConfig::new());
     info!("Rate limiting initialized");
 
-    let default_tenant_id = std::env::var("RUSTSHARE_DEFAULT_TENANT_ID")
-        .ok()
-        .and_then(|s| s.parse().ok())
+    let default_tenant_config = DefaultTenantConfig::from_env();
+    // AR-01: report the resolved default-tenant configuration state
+    // explicitly (set-to / unset / unparsable). This is a log-only
+    // observation: it introduces no new failure mode and no readiness
+    // change (ADR-0043 open question 1 stays open).
+    info!(
+        default_tenant_config = %default_tenant_config.describe(),
+        "RUSTSHARE_DEFAULT_TENANT_ID resolved"
+    );
+    let default_tenant_id = default_tenant_config
+        .resolved_tenant()
         .unwrap_or_else(uuid::Uuid::nil);
 
     let prometheus_handle = crate::metrics::init_metrics();
@@ -1022,6 +1033,7 @@ pub async fn init_app() -> Result<AppState> {
         oidc_runtime_cache: OidcRuntimeCache::new(),
         poll_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
         default_tenant_id,
+        default_tenant_config: default_tenant_config.clone(),
         note_service: services.note_service,
         decision_service: services.decision_service,
         meeting_service: services.meeting_service,

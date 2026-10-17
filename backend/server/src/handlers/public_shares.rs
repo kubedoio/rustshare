@@ -291,16 +291,11 @@ async fn resolve_share_for_public_session(
     token: &str,
     claims: &rustshare_auth::ShareSessionClaims,
 ) -> Result<(rustshare_core::domain::Share, Uuid), AppError> {
+    let tenant_assertion = (!claims.tenant_id.is_nil()).then_some(claims.tenant_id);
     let share = state
-        .metadata_store
-        .get_share_by_token_unscoped(token)
-        .await
-        .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
-        .ok_or_else(|| {
-            AppError::from(rustshare_core::services::ShareError::ShareNotFoundByToken(
-                token.to_string(),
-            ))
-        })?;
+        .share_service
+        .resolve_public_share(token, tenant_assertion)
+        .await?;
 
     ensure_share_session_matches(&share, claims)?;
     ensure_share_is_active(&share)?;
@@ -623,15 +618,16 @@ pub async fn download_shared_folder_file(
 
     let descendants = state
         .metadata_store
-        .find_descendant_folders_unchecked(root_folder_id)
+        .find_descendant_folders_for_tenant(root_folder_id, share.tenant_id)
         .await
         .map_err(|e| AppError::internal(format!("Database error: {}", e)))?;
 
     let file = state
         .metadata_store
-        .find_file_by_id(file_id, share.created_by)
+        .find_file_by_id_unchecked(file_id)
         .await
         .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
+        .filter(|file| file.tenant_id == share.tenant_id)
         .ok_or_else(|| {
             AppError::from(rustshare_core::services::ShareError::FileNotFound(file_id))
         })?;
@@ -752,9 +748,10 @@ pub async fn upload_shared_folder_file(
 
     let root_folder = state
         .metadata_store
-        .find_folder_by_id(root_folder_id, share.created_by)
+        .find_folder_by_id_unchecked(root_folder_id)
         .await
         .map_err(|e| AppError::internal(format!("Database error: {}", e)))?
+        .filter(|folder| folder.tenant_id == share.tenant_id)
         .ok_or_else(|| {
             AppError::from(rustshare_core::services::ShareError::FolderNotFound(
                 root_folder_id,
@@ -773,7 +770,7 @@ pub async fn upload_shared_folder_file(
     let target_folder_id = requested_folder_id.unwrap_or(root_folder_id);
     let descendants = state
         .metadata_store
-        .find_descendant_folders_unchecked(root_folder_id)
+        .find_descendant_folders_for_tenant(root_folder_id, share.tenant_id)
         .await
         .map_err(|e| AppError::internal(format!("Database error: {}", e)))?;
 

@@ -8,7 +8,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use rustshare_core::{
-    domain::{Folder, UserId},
+    domain::{Folder, SharePermissions, UserId},
     okf::frontmatter::{
         default_note_frontmatter, merge_required_okf_keys, parse_frontmatter, to_document,
         OkfNoteFrontmatter, RustshareFrontmatter,
@@ -213,6 +213,8 @@ pub enum NoteError {
     InvalidName(String),
     #[error("Invalid ACL metadata: {0}")]
     InvalidAcl(String),
+    #[error("Conflicting resource identity: {0}")]
+    Conflict(String),
 }
 
 impl From<rustshare_core::services::FileError> for NoteError {
@@ -253,6 +255,13 @@ pub struct NoteService {
     pub workspace_name: String,
     pub folder_name: String,
     index_sink: Option<Arc<dyn NoteIndexSink>>,
+    /// Metric-style counters recording best-effort refresh dispatches.
+    /// Production semantics are unchanged; tests use them to prove negative
+    /// cases at the dispatch level instead of inferring silence from sink
+    /// timing. Counts are incremented synchronously before any task spawns,
+    /// so they are deterministic once the dispatching call returns.
+    group_refresh_dispatch_counts: Arc<std::sync::Mutex<std::collections::HashMap<Uuid, usize>>>,
+    share_target_refresh_dispatch_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl NoteService {
@@ -287,7 +296,43 @@ impl NoteService {
             workspace_name: "Workspace".to_string(),
             folder_name: "Notes".to_string(),
             index_sink: None,
+            group_refresh_dispatch_counts: Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            share_target_refresh_dispatch_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
+    }
+
+    /// Record a group index-ACL refresh dispatch (metric-style counter).
+    pub fn record_group_refresh_dispatch(&self, group_id: Uuid) {
+        *self
+            .group_refresh_dispatch_counts
+            .lock()
+            .expect("dispatch counter lock")
+            .entry(group_id)
+            .or_insert(0) += 1;
+    }
+
+    /// Number of group index-ACL refresh dispatches recorded for a group.
+    pub fn group_refresh_dispatch_count(&self, group_id: Uuid) -> usize {
+        self.group_refresh_dispatch_counts
+            .lock()
+            .expect("dispatch counter lock")
+            .get(&group_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Record a captured share-target refresh dispatch (metric-style counter).
+    pub fn record_share_target_refresh_dispatch(&self) {
+        self.share_target_refresh_dispatch_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Number of captured share-target refresh dispatches recorded.
+    pub fn share_target_refresh_dispatch_count(&self) -> usize {
+        self.share_target_refresh_dispatch_count
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Attach an optional indexing callback sink.
@@ -632,6 +677,42 @@ impl NoteService {
         Ok(())
     }
 
+    /// Remove a public share index entry only if it belongs to `file_id`.
+    ///
+    /// The sidecar that carries `public_share_id` is client-writable, so the
+    /// share id must be treated as untrusted input: removing an entry that
+    /// belongs to a different note would unpublish (or, combined with the
+    /// publish branch's old id-reuse, hijack) another note's public URL.
+    /// Entries owned by another note are refused with an error; a missing
+    /// entry (e.g. already removed) is a no-op.
+    ///
+    /// Follow-up: the index key layout (`meta/notes/public/{share_id}.json`)
+    /// is a flat, tenant-less namespace; scoping it per tenant is deferred to
+    /// avoid breaking already-published notes.
+    async fn remove_public_share_index_for_note(
+        &self,
+        share_id: &str,
+        file_id: Uuid,
+    ) -> Result<(), NoteError> {
+        match self.load_public_share_index(share_id).await? {
+            Some(indexed_file_id) if indexed_file_id == file_id => {
+                self.delete_public_share_index(share_id).await
+            }
+            Some(indexed_file_id) => {
+                tracing::error!(
+                    share_id,
+                    %file_id,
+                    %indexed_file_id,
+                    "refusing to remove public share index entry owned by another note"
+                );
+                Err(NoteError::Conflict(
+                    "public share id is registered to a different note".to_string(),
+                ))
+            }
+            None => Ok(()),
+        }
+    }
+
     async fn load_public_share_index(&self, share_id: &str) -> Result<Option<Uuid>, NoteError> {
         let key = Self::public_share_key(share_id);
         match self.object_store.get(&key).await {
@@ -818,7 +899,14 @@ impl NoteService {
         }
         let content = match self.object_store.get(&file.storage_key()).await {
             Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-            Err(_) => String::new(),
+            Err(error) => {
+                // Never index empty content as a substitute for a storage
+                // read failure: that would wipe the note's indexed body and
+                // embedding. Propagate so best-effort callers skip this note.
+                return Err(NoteError::Storage(format!(
+                    "Failed to read note content for index refresh: {error}"
+                )));
+            }
         };
         self.emit_index_note(&file, &meta, &content, tenant_id)
             .await;
@@ -892,28 +980,17 @@ impl NoteService {
     /// Refresh the indexed ACL projection for every resource shared with a group.
     ///
     /// Call after group membership changes so the AI index reflects the new
-    /// effective ACL for all resources shared with that group. Errors are logged
-    /// and do not fail the originating request.
-    pub async fn refresh_index_acl_for_group(&self, group_id: Uuid, tenant_id: Uuid) {
-        let rows = match sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>, UserId)>(
-            r#"
-            SELECT file_id, folder_id, created_by
-            FROM shares
-            WHERE recipient_group_id = $1
-              AND tenant_id = $2
-              AND revoked_at IS NULL
-            "#,
-        )
-        .bind(group_id)
-        .bind(tenant_id)
-        .fetch_all(&self.db_pool)
-        .await
-        {
-            Ok(rows) => rows,
+    /// effective ACL for all resources shared with that group. Targets are the
+    /// active shares (`recipient_group_id`, `revoked_at IS NULL`) and each
+    /// share contributes its own tenant — never the group's tenant, which may
+    /// be the zero UUID on legacy rows. Errors are logged and do not fail the
+    /// originating request.
+    pub async fn refresh_index_acl_for_group(&self, group_id: Uuid) {
+        let targets = match query_group_share_targets(&self.db_pool, group_id).await {
+            Ok(targets) => targets,
             Err(error) => {
                 tracing::error!(
                     object_id = %group_id,
-                    tenant_id = %tenant_id,
                     error_category = "group_share_lookup",
                     error = %error,
                     "Failed to list active shares for group ACL refresh"
@@ -921,27 +998,181 @@ impl NoteService {
                 return;
             }
         };
+        self.refresh_group_share_targets(targets).await;
+    }
 
-        let mut seen = std::collections::HashSet::new();
-        for (file_id, folder_id, created_by) in rows {
-            let resource = if let Some(file_id) = file_id {
-                rustshare_core::services::Resource::File(file_id)
-            } else if let Some(folder_id) = folder_id {
-                rustshare_core::services::Resource::Folder(folder_id)
-            } else {
-                continue;
-            };
+    /// Refresh the indexed ACL projection for a captured set of share targets.
+    ///
+    /// Used by the group deletion path, where the share rows have already
+    /// cascaded away and discovery by group id would find nothing. Only the
+    /// `(resource, tenant)` identifiers were captured; the ACL projection
+    /// itself is rebuilt from the current committed state.
+    pub async fn refresh_index_acl_for_share_targets(&self, targets: Vec<GroupShareTarget>) {
+        self.refresh_group_share_targets(targets).await;
+    }
 
-            let key = match resource {
-                rustshare_core::services::Resource::File(id) => (id, 0i32),
-                rustshare_core::services::Resource::Folder(id) => (id, 1i32),
-            };
-            if !seen.insert(key) {
-                continue;
+    async fn refresh_group_share_targets(&self, targets: Vec<GroupShareTarget>) {
+        for target in targets {
+            match target.resource {
+                rustshare_core::services::Resource::File(file_id) => {
+                    self.refresh_group_file_share_target(file_id, target.tenant_id)
+                        .await;
+                }
+                rustshare_core::services::Resource::Folder(folder_id) => {
+                    self.refresh_group_folder_share_target(folder_id, target.tenant_id)
+                        .await;
+                }
             }
+        }
+    }
 
-            self.refresh_index_acl_for_resource(resource, created_by, tenant_id)
-                .await;
+    /// Refresh one file share target: validate the share/resource tenant
+    /// equality, then reindex with the resource owner's maintenance context so
+    /// a share creator who has since lost access cannot block the refresh.
+    async fn refresh_group_file_share_target(&self, file_id: Uuid, share_tenant_id: Uuid) {
+        let file = match self.metadata_store.find_file_by_id_unchecked(file_id).await {
+            Ok(Some(file)) => file,
+            Ok(None) => {
+                tracing::warn!(
+                    object_id = %file_id,
+                    tenant_id = %share_tenant_id,
+                    "Group share target file missing; skipping ACL refresh"
+                );
+                return;
+            }
+            Err(error) => {
+                tracing::error!(
+                    object_id = %file_id,
+                    tenant_id = %share_tenant_id,
+                    error_category = "file_lookup",
+                    error = %error,
+                    "Failed to load group share target file for ACL refresh"
+                );
+                return;
+            }
+        };
+        if file.tenant_id != share_tenant_id {
+            tracing::error!(
+                object_id = %file_id,
+                tenant_id = %share_tenant_id,
+                resource_tenant_id = %file.tenant_id,
+                error_category = "tenant_mismatch",
+                "Group share tenant does not match resource tenant; skipping ACL refresh"
+            );
+            return;
+        }
+        if let Err(error) = self
+            .refresh_note_index_acl(file.id, file.owner_id, share_tenant_id)
+            .await
+        {
+            tracing::error!(
+                object_id = %file_id,
+                tenant_id = %share_tenant_id,
+                error_category = "acl_refresh",
+                error = %error,
+                "Failed to refresh AI index ACL for group share target"
+            );
+        }
+    }
+
+    /// Refresh one folder share target: validate the folder root's tenant
+    /// equality, then reindex every markdown note in the folder tree with each
+    /// note's owner as the refresh context. Descendant listings stay scoped to
+    /// the share tenant.
+    async fn refresh_group_folder_share_target(&self, folder_id: Uuid, share_tenant_id: Uuid) {
+        let folder = match self
+            .metadata_store
+            .find_folder_by_id_unchecked(folder_id)
+            .await
+        {
+            Ok(Some(folder)) => folder,
+            Ok(None) => {
+                tracing::warn!(
+                    object_id = %folder_id,
+                    tenant_id = %share_tenant_id,
+                    "Group share target folder missing; skipping ACL refresh"
+                );
+                return;
+            }
+            Err(error) => {
+                tracing::error!(
+                    object_id = %folder_id,
+                    tenant_id = %share_tenant_id,
+                    error_category = "folder_lookup",
+                    error = %error,
+                    "Failed to load group share target folder for ACL refresh"
+                );
+                return;
+            }
+        };
+        if folder.tenant_id != share_tenant_id {
+            tracing::error!(
+                object_id = %folder_id,
+                tenant_id = %share_tenant_id,
+                resource_tenant_id = %folder.tenant_id,
+                error_category = "tenant_mismatch",
+                "Group share tenant does not match folder tenant; skipping ACL refresh"
+            );
+            return;
+        }
+
+        // Tenant-scoped traversal: the recursive query filters every step by
+        // the share tenant, so a malformed legacy hierarchy with a
+        // foreign-tenant intermediate folder terminates the walk — its
+        // subtree is never processed.
+        let descendants = match self
+            .metadata_store
+            .find_descendant_folders_for_tenant(folder_id, share_tenant_id)
+            .await
+        {
+            Ok(folders) => folders,
+            Err(error) => {
+                tracing::error!(
+                    object_id = %folder_id,
+                    tenant_id = %share_tenant_id,
+                    error_category = "folder_lookup",
+                    error = %error,
+                    "Failed to list descendant folders for group ACL refresh"
+                );
+                return;
+            }
+        };
+
+        // The scoped query anchors on the root (already tenant-validated
+        // above), so it is included in the result; process it exactly once.
+        let mut folder_ids = vec![folder_id];
+        folder_ids.extend(
+            descendants
+                .iter()
+                .map(|folder| folder.id)
+                .filter(|id| *id != folder_id),
+        );
+
+        for current_folder_id in folder_ids {
+            let files = match self
+                .metadata_store
+                .list_files_by_parent(Some(current_folder_id), share_tenant_id)
+                .await
+            {
+                Ok(files) => files,
+                Err(error) => {
+                    tracing::error!(
+                        object_id = %current_folder_id,
+                        tenant_id = %share_tenant_id,
+                        error_category = "file_listing",
+                        error = %error,
+                        "Failed to list files for group ACL refresh"
+                    );
+                    continue;
+                }
+            };
+
+            for file in files {
+                if file.mime_type == "text/markdown" {
+                    self.refresh_group_file_share_target(file.id, share_tenant_id)
+                        .await;
+                }
+            }
         }
     }
 
@@ -2149,10 +2380,24 @@ impl NoteService {
         let meta = self.load_metadata(file_id, user_id, file.tenant_id).await?;
         let note_id = meta.as_ref().and_then(|m| m.okf_id).unwrap_or(file_id);
 
-        // If public, invalidate share index
+        // If public, invalidate the share index — but only the entry this
+        // note actually owns: the sidecar is client-writable and may claim
+        // a share id registered to another note. Deletion continues without
+        // the cleanup (best-effort, like the steps below) so a crafted
+        // sidecar cannot block the owner from deleting their own note.
         if let Some(ref meta) = meta {
             if let Some(ref share_id) = meta.public_share_id {
-                let _ = self.delete_public_share_index(share_id).await;
+                if let Err(e) = self
+                    .remove_public_share_index_for_note(share_id, file_id)
+                    .await
+                {
+                    tracing::error!(
+                        share_id,
+                        %file_id,
+                        error = %e,
+                        "skipping public share index cleanup during note delete"
+                    );
+                }
             }
 
             // Delete attachment files
@@ -2658,6 +2903,39 @@ impl NoteService {
     }
 
     /// Toggle note visibility between private and public.
+    ///
+    /// Authorization decision (security, GHSA-rvj5-hgxh-w7m7): publishing a
+    /// note — or changing its public visibility in either direction — changes
+    /// the note's exposure boundary (public notes are readable without
+    /// authentication), so it requires ownership or the highest delegated
+    /// share tier, `SharePermissions::Admin`, resolved here in the note
+    /// service through the `PermissionResolver` (owner first, then direct,
+    /// group, and inherited shares). View and Edit shares grant read/content
+    /// access only and do NOT qualify. This mirrors `FileService::delete_file`,
+    /// the existing Admin-tier operation of comparable sensitivity. A
+    /// dedicated publication-capable permission is deferred to the Phase 4.0
+    /// permission-architecture track.
+    ///
+    /// Sidecar trust boundary: `visibility` and `public_share_id` are read
+    /// from the client-writable `{note}.rustshare.json` sidecar, so they are
+    /// untrusted input. Two consequences:
+    ///
+    /// - Publishing ALWAYS allocates a fresh share id; a `public_share_id`
+    ///   found on a Private note is never reused (legitimate unpublish clears
+    ///   it, so reuse could only serve a crafted sidecar). Republishing after
+    ///   unpublish therefore rotates the public URL; the new id is returned
+    ///   in the response.
+    /// - Unpublishing removes the public share index entry only after
+    ///   verifying the entry belongs to this note (see
+    ///   [`Self::remove_public_share_index_for_note`]).
+    ///
+    /// Known availability limitation (intentionally not changed here): an
+    /// owner-side Edit holder can plant `visibility: "private"` in the
+    /// sidecar, which makes `get_public_note` fail closed (404) without any
+    /// toggle call — the public route re-checks the sidecar visibility and
+    /// refuses to serve. This is fail-closed for exposure (a forged `public`
+    /// sidecar cannot publish anything without an index entry) and is kept as
+    /// a defense-in-depth check in case an index entry is ever orphaned.
     pub async fn toggle_visibility(
         &self,
         file_id: Uuid,
@@ -2669,6 +2947,17 @@ impl NoteService {
             return Err(NoteError::PermissionDenied);
         }
 
+        // Deny before any mutation so a denied request can never write the
+        // public share index, sidecar, or search index.
+        let can_change_visibility = self
+            .permission_resolver
+            .check_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Admin)
+            .await
+            .map_err(|e| NoteError::Database(e.to_string()))?;
+        if !can_change_visibility {
+            return Err(NoteError::PermissionDenied);
+        }
+
         let mut meta = self
             .load_metadata(file_id, user_id, file.tenant_id)
             .await?
@@ -2676,20 +2965,24 @@ impl NoteService {
 
         match meta.visibility {
             NoteVisibility::Private => {
-                // Make public
-                let share_id = meta
-                    .public_share_id
-                    .clone()
-                    .unwrap_or_else(generate_share_id);
+                // Make public. Always allocate a fresh share id: the sidecar
+                // is client-writable, so a public_share_id found here is
+                // untrusted and reusing it could clobber another note's
+                // public index entry. Legitimate flows never carry one on a
+                // Private note (unpublish clears it).
+                let share_id = generate_share_id();
                 meta.visibility = NoteVisibility::Public;
                 meta.public_share_id = Some(share_id.clone());
                 meta.updated_at = Utc::now();
                 self.save_public_share_index(&share_id, file_id).await?;
             }
             NoteVisibility::Public => {
-                // Make private
+                // Make private. Only remove the index entry if it actually
+                // belongs to this note; a crafted sidecar may claim a share
+                // id registered to someone else's note.
                 if let Some(ref share_id) = meta.public_share_id {
-                    let _ = self.delete_public_share_index(share_id).await;
+                    self.remove_public_share_index_for_note(share_id, file_id)
+                        .await?;
                 }
                 meta.visibility = NoteVisibility::Private;
                 meta.public_share_id = None;
@@ -2744,6 +3037,15 @@ impl NoteService {
             .await?
             .ok_or(NoteError::NotFound(file_id))?;
 
+        // Re-check visibility from the (client-writable) sidecar. This
+        // check intentionally stays even though the public share index is
+        // the primary gate: it fails CLOSED for exposure — a forged
+        // `visibility: "public"` sidecar cannot publish anything without an
+        // index entry, and the check still guards against serving content if
+        // an index entry is ever orphaned. The known trade-off is an
+        // availability one: an Edit holder can plant
+        // `visibility: "private"` and 404 the public route without a toggle
+        // call; see `toggle_visibility`'s docstring.
         if meta.visibility != NoteVisibility::Public {
             return Err(NoteError::NotFound(file_id));
         }
@@ -2763,6 +3065,111 @@ impl NoteService {
             updated_at: meta.updated_at,
         })
     }
+}
+
+/// One active group-share target: the shared resource plus the tenant stored
+/// on the share row itself (AR-04). The share tenant — not the group's
+/// tenant, which may be the zero UUID on legacy rows — scopes the refresh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupShareTarget {
+    pub resource: rustshare_core::services::Resource,
+    pub tenant_id: Uuid,
+}
+
+/// List the active share targets of a group.
+///
+/// Selects by `recipient_group_id` with `revoked_at IS NULL` and carries each
+/// share's own tenant. Filtering on the group's tenant here would silently
+/// drop legacy groups whose zero-UUID tenant differs from their shares'
+/// real tenant.
+async fn query_group_share_targets(
+    executor: impl sqlx::PgExecutor<'_>,
+    group_id: Uuid,
+) -> Result<Vec<GroupShareTarget>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, (Option<Uuid>, Option<Uuid>, Uuid)>(
+        r#"
+        SELECT file_id, folder_id, tenant_id
+        FROM shares
+        WHERE recipient_group_id = $1
+          AND revoked_at IS NULL
+        "#,
+    )
+    .bind(group_id)
+    .fetch_all(executor)
+    .await?;
+
+    let mut targets = Vec::with_capacity(rows.len());
+    let mut seen = std::collections::HashSet::new();
+    for (file_id, folder_id, tenant_id) in rows {
+        let (kind, resource_id) = if let Some(file_id) = file_id {
+            (0i32, file_id)
+        } else if let Some(folder_id) = folder_id {
+            (1i32, folder_id)
+        } else {
+            continue;
+        };
+        if seen.insert((kind, resource_id, tenant_id)) {
+            let resource = match kind {
+                0 => rustshare_core::services::Resource::File(resource_id),
+                _ => rustshare_core::services::Resource::Folder(resource_id),
+            };
+            targets.push(GroupShareTarget {
+                resource,
+                tenant_id,
+            });
+        }
+    }
+    Ok(targets)
+}
+
+/// Capture the active share targets of a group inside an existing transaction.
+///
+/// Group deletion uses this while holding the group row lock (`FOR UPDATE`)
+/// so a concurrent share creation cannot commit a grant the capture misses:
+/// the share insert's foreign-key lock blocks on the group row until the
+/// deletion commits (group gone, insert rejected) or rolls back.
+pub async fn capture_group_share_targets(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    group_id: Uuid,
+) -> Result<Vec<GroupShareTarget>, sqlx::Error> {
+    query_group_share_targets(&mut **tx, group_id).await
+}
+
+/// Spawn the best-effort AI-index ACL refresh for one group after its
+/// membership mutation has committed.
+///
+/// This is the single refresh entry point shared by the admin and SCIM (v1/v2)
+/// membership mutation paths; future bulk membership operations (AR-09) call
+/// this once per affected group instead of spawning a refresh per member.
+/// Discovery, dispatch, and index failures stay best-effort: they are logged
+/// inside the refresh and never surface to the caller.
+pub fn dispatch_group_index_acl_refresh(note_service: Arc<NoteService>, group_id: Uuid) {
+    note_service.record_group_refresh_dispatch(group_id);
+    tokio::spawn(async move {
+        note_service.refresh_index_acl_for_group(group_id).await;
+    });
+}
+
+/// Spawn the best-effort ACL refresh for a captured share-target set after a
+/// group deletion has committed.
+///
+/// Only valid post-commit: the share rows have cascaded away, so the targets
+/// were captured beforehand (see [`capture_group_share_targets`]). A rolled
+/// back deletion must never reach this function, and an empty capture does
+/// not spawn a task.
+pub fn dispatch_share_target_acl_refresh(
+    note_service: Arc<NoteService>,
+    targets: Vec<GroupShareTarget>,
+) {
+    if targets.is_empty() {
+        return;
+    }
+    note_service.record_share_target_refresh_dispatch();
+    tokio::spawn(async move {
+        note_service
+            .refresh_index_acl_for_share_targets(targets)
+            .await;
+    });
 }
 
 fn compute_acl_hash(tenant_id: Uuid, workspace_id: Uuid, okf_id: Uuid, visibility: &str) -> String {

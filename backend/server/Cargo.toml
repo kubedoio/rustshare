@@ -46,7 +46,7 @@ aws-config.workspace = true
 aws-sdk-s3.workspace = true
 futures-util = "0.3"
 tokio-tungstenite = "0.30"
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 tempfile = "3"
 dotenvy = "0.15"
 envy = "0.4"
@@ -140,6 +140,10 @@ name = "admin_audit_redaction_test"
 path = "../tests/admin_audit_redaction_test.rs"
 
 [[test]]
+name = "organization_administrator_grants_test"
+path = "../tests/organization_administrator_grants_test.rs"
+
+[[test]]
 name = "admin_workflows_test"
 path = "../tests/admin_workflows_test.rs"
 
@@ -150,6 +154,10 @@ path = "../tests/invites_test.rs"
 [[test]]
 name = "notes_test"
 path = "../tests/notes_test.rs"
+
+[[test]]
+name = "note_visibility_http_test"
+path = "../tests/note_visibility_http_test.rs"
 
 [[test]]
 name = "kanban_test"
@@ -296,6 +304,14 @@ name = "object_gc_test"
 path = "../tests/object_gc_test.rs"
 
 [[test]]
+name = "object_gc_orphan_scan_test"
+path = "../tests/object_gc_orphan_scan_test.rs"
+
+[[test]]
+name = "object_gc_orphan_reconcile_test"
+path = "../tests/object_gc_orphan_reconcile_test.rs"
+
+[[test]]
 name = "object_store_failure_atomicity_test"
 path = "../tests/object_store_failure_atomicity_test.rs"
 
@@ -310,6 +326,10 @@ path = "../tests/replication_intent_atomicity_test.rs"
 [[test]]
 name = "replication_lease_recovery_test"
 path = "../tests/replication_lease_recovery_test.rs"
+
+[[test]]
+name = "scim_org_scope_test"
+path = "../tests/scim_org_scope_test.rs"
 
 [[test]]
 name = "chat_observation_memory_catalog_test"
@@ -378,6 +398,10 @@ path = "../tests/calendar_connect_test.rs"
 [[test]]
 name = "vault_webui_content_test"
 path = "../tests/vault_webui_content_test.rs"
+
+[[test]]
+name = "share_authorization_parity"
+path = "tests/share_authorization_parity.rs"
 
 [dev-dependencies]
 ical = { version = "0.11", default-features = false, features = ["ical"] }

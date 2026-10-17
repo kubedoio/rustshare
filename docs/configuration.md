@@ -88,6 +88,14 @@ RustShare supports any S3-compatible store (RustFS, AWS S3, etc.).
 
 ---
 
+## Organizations / Tenancy
+
+| Variable | Description | Default | Required? |
+|----------|-------------|---------|-----------|
+| `RUSTSHARE_DEFAULT_TENANT_ID` | UUID of the deployment's default organization. Principal-creating paths (admin user/group creation, seed, OIDC binding) resolve it explicitly and bind it on the INSERT; the column default is never the source of a new row. Unset or unparsable resolves to the nil UUID, which *is* the default organization of a fresh single-organization deployment (ADR-0040 D4, ADR-0043). The resolved state is logged at startup as `set to <uuid>` / `unset` / `unparsable`. | nil UUID | No |
+
+---
+
 ## Rate Limiting
 
 All rates are **per IP address per minute** using a token-bucket algorithm.
@@ -204,7 +212,8 @@ RUST_LOG=error                   # Quiet: errors only
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `RUSTSHARE_SCIM_BEARER_TOKEN` | Bearer token for SCIM v1/v2 API authentication. | — |
+| `RUSTSHARE_SCIM_BEARER_TOKEN` | Bearer token for SCIM v1/v2 API authentication. Unset disables SCIM (`503`). | — |
+| `RUSTSHARE_SCIM_TENANT_ID` | UUID of the single organization (tenant) this integration is scoped to. One token binds to one organization; multiple independently scoped IdP integrations per installation are not supported. If unset, an explicitly configured `RUSTSHARE_DEFAULT_TENANT_ID` supplies the scope; otherwise every SCIM endpoint fails closed with `500`. | — |
 | `RUSTSHARE_SCIM_BASE_URL` | Base URL used in SCIM resource URLs. | `http://localhost:8080` |
 
 ---
@@ -271,7 +280,7 @@ The following variables **must** be set to strong, unique values. The server ref
 |----------|------|
 | `RUSTSHARE_ADMIN_PASSWORD` | If left empty, a random password is generated on first boot and printed to logs. Retrieve it immediately and change it. |
 | `RUSTSHARE_DEMO_VIEWER_PASSWORD` | If set, creates a publicly accessible demo account. Use a strong password or leave empty. |
-| `RUSTSHARE_SCIM_BEARER_TOKEN` | If leaked, allows provisioning/unprovisioning of users via SCIM. |
+| `RUSTSHARE_SCIM_BEARER_TOKEN` | If leaked, allows provisioning/unprovisioning of users **within the single organization bound via `RUSTSHARE_SCIM_TENANT_ID`** (unset that token or the scope to disable the integration). |
 
 ### Production deployment checklist
 

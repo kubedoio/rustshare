@@ -413,6 +413,7 @@ pub fn create_test_share_service<J: JwtOps>(
         jwt_manager,
         Arc::new(MockNotificationRepo),
     )
+    .with_permission_checker(ctx.permission_resolver())
 }
 
 /// Create a test share for a file
@@ -436,6 +437,105 @@ pub async fn create_test_share<J: JwtOps>(
         )
         .await
         .expect("Failed to create test share")
+}
+
+/// Create a user-to-user share on a file, mirroring what the share
+/// repository's `create_user_share` persists.
+pub async fn share_file_to_user(
+    metadata_store: &MetadataStore,
+    file_id: Uuid,
+    owner_id: Uuid,
+    recipient_id: Uuid,
+    permissions: SharePermissions,
+    tenant_id: Uuid,
+) {
+    let share = Share {
+        id: Uuid::new_v4(),
+        file_id: Some(file_id),
+        folder_id: None,
+        share_token: None,
+        permissions,
+        password_hash: None,
+        expires_at: None,
+        upload_only: false,
+        access_count: 0,
+        recipient_user_id: Some(recipient_id),
+        recipient_group_id: None,
+        created_by: owner_id,
+        created_at: chrono::Utc::now(),
+        revoked_at: None,
+        tenant_id,
+    };
+    metadata_store
+        .create_share(&share)
+        .await
+        .expect("Failed to create user share");
+}
+
+/// Create a group share on a file, mirroring what the share repository's
+/// group-share path persists.
+pub async fn share_file_to_group(
+    metadata_store: &MetadataStore,
+    file_id: Uuid,
+    owner_id: Uuid,
+    group_id: Uuid,
+    permissions: SharePermissions,
+    tenant_id: Uuid,
+) {
+    let share = Share {
+        id: Uuid::new_v4(),
+        file_id: Some(file_id),
+        folder_id: None,
+        share_token: None,
+        permissions,
+        password_hash: None,
+        expires_at: None,
+        upload_only: false,
+        access_count: 0,
+        recipient_user_id: None,
+        recipient_group_id: Some(group_id),
+        created_by: owner_id,
+        created_at: chrono::Utc::now(),
+        revoked_at: None,
+        tenant_id,
+    };
+    metadata_store
+        .create_share(&share)
+        .await
+        .expect("Failed to create group share");
+}
+
+/// Create a user-to-user share on a folder, mirroring what the share
+/// repository's `create_user_share` persists.
+pub async fn share_folder_to_user(
+    metadata_store: &MetadataStore,
+    folder_id: Uuid,
+    owner_id: Uuid,
+    recipient_id: Uuid,
+    permissions: SharePermissions,
+    tenant_id: Uuid,
+) {
+    let share = Share {
+        id: Uuid::new_v4(),
+        file_id: None,
+        folder_id: Some(folder_id),
+        share_token: None,
+        permissions,
+        password_hash: None,
+        expires_at: None,
+        upload_only: false,
+        access_count: 0,
+        recipient_user_id: Some(recipient_id),
+        recipient_group_id: None,
+        created_by: owner_id,
+        created_at: chrono::Utc::now(),
+        revoked_at: None,
+        tenant_id,
+    };
+    metadata_store
+        .create_share(&share)
+        .await
+        .expect("Failed to create folder share");
 }
 
 /// Create a test folder share

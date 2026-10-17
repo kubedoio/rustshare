@@ -26,7 +26,9 @@ pub use metadata::{
     ReplicationAttemptRecord, SecurityConfig, ShareAccessLogEntry, UserSecurityEvent,
     UserSecurityEventRecord,
 };
-pub use object_store::{is_missing_object_error, ObjectStore, ObjectStoreOptions};
+pub use object_store::{
+    is_missing_object_error, BucketVersioningState, ObjectStore, ObjectStoreOptions,
+};
 pub use outbox_store::{
     ClaimedEvent, ConsumerCount, DeadLetterEntry, OutboxConfig, OutboxStore, OutboxStoreError,
 };

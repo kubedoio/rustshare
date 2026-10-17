@@ -19,7 +19,13 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use super::admin::organization_administrators::{
+    lock_tenant_admin_grants, removal_would_leave_no_enabled_admin, revoke_for_scim_lifecycle,
+};
+use super::admin::request_correlation_id;
+use super::scim::resolve_scim_tenant_scope;
 use super::ErrorResponse;
+use crate::user_disable::{set_user_disabled_at, DisableUserTarget};
 use crate::AppState;
 
 // ---------------------------------------------------------------------------
@@ -81,6 +87,22 @@ fn verify_scim_token(headers: &HeaderMap) -> Result<(), ScimV2ErrorResponse> {
     Ok(())
 }
 
+/// Resolve the SCIM organization scope or map the misconfiguration to a
+/// fail-closed 500 response. The specific misconfiguration is logged
+/// server-side; the response body stays generic.
+fn scim_scope_or_response() -> Result<Uuid, Box<Response>> {
+    resolve_scim_tenant_scope().map_err(|detail| {
+        tracing::error!("SCIM organization scope misconfigured: {}", detail);
+        Box::new(scim_json_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ScimV2ErrorResponse::new(
+                500,
+                "SCIM organization scope is not configured correctly".to_string(),
+            ),
+        ))
+    })
+}
+
 /// Create a SCIM JSON response.
 fn scim_json_response<T: serde::Serialize>(status: StatusCode, body: T) -> Response {
     let json = match serde_json::to_string(&body) {
@@ -122,38 +144,51 @@ fn scim_error_response(err: ScimV2Error) -> Response {
 /// SQLx-based implementation of SCIM v2 repository.
 pub struct ScimV2RepositoryImpl {
     pool: PgPool,
+    correlation_id: Option<String>,
 }
 
 impl ScimV2RepositoryImpl {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            correlation_id: None,
+        }
+    }
+
+    pub fn with_correlation_id(pool: PgPool, correlation_id: Option<String>) -> Self {
+        Self {
+            pool,
+            correlation_id,
+        }
     }
 }
 
 impl ScimV2Repository for ScimV2RepositoryImpl {
     async fn list_users(
         &self,
+        tenant_id: Uuid,
         filters: &[rustshare_core::services::ScimFilter],
         start_index: Option<i64>,
         count: Option<i64>,
     ) -> Result<(Vec<rustshare_core::services::ScimV2UserRecord>, i64), sqlx::Error> {
-        let base_select = "SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at 
-             FROM users WHERE 1=1";
-        let base_count = "SELECT COUNT(*) FROM users WHERE 1=1";
+        let base_select = "SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at
+             FROM users WHERE tenant_id = $1";
+        let base_count = "SELECT COUNT(*) FROM users WHERE tenant_id = $1";
 
         let mut conditions: Vec<String> = Vec::new();
         let mut binds: Vec<String> = Vec::new();
 
-        // Apply filters with parameterised binds
+        // Apply filters with parameterised binds. The tenant scope is $1, so
+        // filter binds start at $2.
         for filter in filters {
             match filter.attribute.as_str() {
                 "userName" => {
-                    let idx = binds.len() + 1;
+                    let idx = binds.len() + 2;
                     conditions.push(format!(" AND LOWER(username) LIKE ${}", idx));
                     binds.push(format!("%{}%", filter.value.to_lowercase()));
                 }
                 "externalId" => {
-                    let idx = binds.len() + 1;
+                    let idx = binds.len() + 2;
                     conditions.push(format!(" AND external_id = ${}", idx));
                     binds.push(filter.value.clone());
                 }
@@ -175,20 +210,21 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
         // count query (no LIMIT/OFFSET)
         let count_query = format!("{}{}", base_count, where_clause);
-        let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
+        let mut count_q = sqlx::query_scalar::<_, i64>(&count_query).bind(tenant_id);
         for val in &binds {
             count_q = count_q.bind(val);
         }
         let total: i64 = count_q.fetch_one(&self.pool).await?;
 
         // select query with pagination binds
-        let pag_idx_1 = binds.len() + 1;
-        let pag_idx_2 = binds.len() + 2;
+        let pag_idx_1 = binds.len() + 2;
+        let pag_idx_2 = binds.len() + 3;
         let query = format!(
             "{} {} ORDER BY username LIMIT ${} OFFSET ${}",
             base_select, where_clause, pag_idx_1, pag_idx_2
         );
         let mut q = sqlx::query_as::<_, rustshare_core::services::ScimV2UserRecord>(&query);
+        q = q.bind(tenant_id);
         for val in &binds {
             q = q.bind(val);
         }
@@ -200,15 +236,17 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
     async fn get_user(
         &self,
+        tenant_id: Uuid,
         id: Uuid,
     ) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, sqlx::Error> {
         sqlx::query_as!(
             ScimV2UserRecord,
             r#"
-            SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at 
-            FROM users WHERE id = $1
+            SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at
+            FROM users WHERE id = $1 AND tenant_id = $2
             "#,
-            id
+            id,
+            tenant_id
         )
         .fetch_optional(&self.pool)
         .await
@@ -216,15 +254,17 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
     async fn get_user_by_external_id(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, sqlx::Error> {
         sqlx::query_as!(
             ScimV2UserRecord,
             r#"
-            SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at 
-            FROM users WHERE external_id = $1
+            SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at
+            FROM users WHERE external_id = $1 AND tenant_id = $2
             "#,
-            external_id
+            external_id,
+            tenant_id
         )
         .fetch_optional(&self.pool)
         .await
@@ -298,7 +338,12 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         Ok(id)
     }
 
-    async fn update_user(&self, id: Uuid, user: &ScimV2User) -> Result<(), sqlx::Error> {
+    async fn update_user(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+        user: &ScimV2User,
+    ) -> Result<(), ScimV2Error> {
         let email = user
             .emails
             .as_ref()
@@ -314,9 +359,27 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             (n.given_name.clone(), n.family_name.clone())
         });
 
+        let mut tx = self.pool.begin().await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+        let current_disabled_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "SELECT disabled_at FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if !user.active
+            && matches!(current_disabled_at.as_ref(), Some(None))
+            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id).await?
+        {
+            return Err(ScimV2Error::Conflict(
+                "Cannot deactivate the last enabled organization administrator".into(),
+            ));
+        }
+        let was_disabled = current_disabled_at.flatten().is_some();
         sqlx::query!(
             r#"
-            UPDATE users 
+            UPDATE users
             SET username = $2,
                 display_name = $3,
                 email = $4,
@@ -325,7 +388,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                 surname = $7,
                 external_id = $8,
                 updated_at = NOW()
-            WHERE id = $1
+            WHERE id = $1 AND tenant_id = $9
             "#,
             id,
             user.user_name,
@@ -338,89 +401,170 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             },
             name,
             surname,
-            user.external_id
+            user.external_id,
+            tenant_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+
+        if !user.active || was_disabled {
+            revoke_for_scim_lifecycle(&mut tx, tenant_id, id, self.correlation_id.as_deref())
+                .await?;
+        }
+        tx.commit().await?;
 
         Ok(())
     }
 
     async fn patch_user(
         &self,
+        tenant_id: Uuid,
         id: Uuid,
         operations: &[rustshare_core::services::ScimPatchOperation],
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), ScimV2Error> {
+        let mut tx = self.pool.begin().await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+        let mut was_disabled = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "SELECT disabled_at FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .flatten()
+        .is_some();
         for op in operations {
             if op.op.to_lowercase().as_str() == "replace" {
                 if let Some(ref path) = op.path {
                     if path.as_str() == "active" {
                         if let Some(ref value) = op.value {
                             let active = value.as_bool().unwrap_or(true);
-                            sqlx::query!(
-                                "UPDATE users SET disabled_at = $2, updated_at = NOW() WHERE id = $1",
-                                id,
-                                if active { None::<DateTime<Utc>> } else { Some(Utc::now()) }
+                            if !active
+                                && !was_disabled
+                                && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id)
+                                    .await?
+                            {
+                                return Err(ScimV2Error::Conflict(
+                                    "Cannot deactivate the last enabled organization administrator"
+                                        .into(),
+                                ));
+                            }
+                            // AR-01 disable parity: shared disable/enable
+                            // write (see `crate::user_disable` for which
+                            // entry points share it); the
+                            // `users_disable_revokes_credentials` trigger
+                            // performs credential revocation.
+                            set_user_disabled_at(
+                                &mut *tx,
+                                DisableUserTarget::Id(id),
+                                Some(tenant_id),
+                                if active { None } else { Some(Utc::now()) },
                             )
-                            .execute(&self.pool)
                             .await?;
+                            if !active || was_disabled {
+                                revoke_for_scim_lifecycle(
+                                    &mut tx,
+                                    tenant_id,
+                                    id,
+                                    self.correlation_id.as_deref(),
+                                )
+                                .await?;
+                            }
+                            was_disabled = !active;
                         }
                     }
                 } else if let Some(ref value) = op.value {
                     // Handle value object with multiple attributes
                     if let Some(active) = value.get("active").and_then(|v| v.as_bool()) {
-                        sqlx::query!(
-                            "UPDATE users SET disabled_at = $2, updated_at = NOW() WHERE id = $1",
-                            id,
-                            if active {
-                                None::<DateTime<Utc>>
-                            } else {
-                                Some(Utc::now())
-                            }
+                        if !active
+                            && !was_disabled
+                            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id).await?
+                        {
+                            return Err(ScimV2Error::Conflict(
+                                "Cannot deactivate the last enabled organization administrator"
+                                    .into(),
+                            ));
+                        }
+                        set_user_disabled_at(
+                            &mut *tx,
+                            DisableUserTarget::Id(id),
+                            Some(tenant_id),
+                            if active { None } else { Some(Utc::now()) },
                         )
-                        .execute(&self.pool)
                         .await?;
+                        if !active || was_disabled {
+                            revoke_for_scim_lifecycle(
+                                &mut tx,
+                                tenant_id,
+                                id,
+                                self.correlation_id.as_deref(),
+                            )
+                            .await?;
+                        }
+                        was_disabled = !active;
                     }
                 }
             }
         }
+        tx.commit().await?;
         Ok(())
     }
 
-    async fn delete_user(&self, id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "UPDATE users SET disabled_at = NOW(), updated_at = NOW() \
-             WHERE id = $1 AND disabled_at IS NULL",
+    async fn delete_user(&self, tenant_id: Uuid, id: Uuid) -> Result<(), ScimV2Error> {
+        let mut tx = self.pool.begin().await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+        let current_disabled_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            "SELECT disabled_at FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
         )
         .bind(id)
-        .execute(&self.pool)
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
         .await?;
+        if matches!(current_disabled_at.as_ref(), Some(None))
+            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id).await?
+        {
+            return Err(ScimV2Error::Conflict(
+                "Cannot deactivate the last enabled organization administrator".into(),
+            ));
+        }
+        sqlx::query(
+            "UPDATE users SET disabled_at = NOW(), updated_at = NOW() \
+             WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL",
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .execute(&mut *tx)
+        .await?;
+        revoke_for_scim_lifecycle(&mut tx, tenant_id, id, self.correlation_id.as_deref()).await?;
+        tx.commit().await?;
         Ok(())
     }
 
     async fn list_groups(
         &self,
+        tenant_id: Uuid,
         filters: &[rustshare_core::services::ScimFilter],
         start_index: Option<i64>,
         count: Option<i64>,
     ) -> Result<(Vec<rustshare_core::services::ScimV2GroupRecord>, i64), sqlx::Error> {
-        let base_select = "SELECT id, external_id, name, description, created_at, updated_at 
-             FROM user_groups WHERE 1=1";
-        let base_count = "SELECT COUNT(*) FROM user_groups WHERE 1=1";
+        let base_select = "SELECT id, external_id, name, description, created_at, updated_at
+             FROM user_groups WHERE tenant_id = $1";
+        let base_count = "SELECT COUNT(*) FROM user_groups WHERE tenant_id = $1";
 
         let mut conditions: Vec<String> = Vec::new();
         let mut binds: Vec<String> = Vec::new();
 
-        // Apply filters with parameterised binds
+        // Apply filters with parameterised binds. The tenant scope is $1, so
+        // filter binds start at $2.
         for filter in filters {
             match filter.attribute.as_str() {
                 "displayName" => {
-                    let idx = binds.len() + 1;
+                    let idx = binds.len() + 2;
                     conditions.push(format!(" AND LOWER(name) LIKE ${}", idx));
                     binds.push(format!("%{}%", filter.value.to_lowercase()));
                 }
                 "externalId" => {
-                    let idx = binds.len() + 1;
+                    let idx = binds.len() + 2;
                     conditions.push(format!(" AND external_id = ${}", idx));
                     binds.push(filter.value.clone());
                 }
@@ -434,20 +578,21 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
         // count query (no LIMIT/OFFSET)
         let count_query = format!("{}{}", base_count, where_clause);
-        let mut count_q = sqlx::query_scalar::<_, i64>(&count_query);
+        let mut count_q = sqlx::query_scalar::<_, i64>(&count_query).bind(tenant_id);
         for val in &binds {
             count_q = count_q.bind(val);
         }
         let total: i64 = count_q.fetch_one(&self.pool).await?;
 
         // select query with pagination binds
-        let pag_idx_1 = binds.len() + 1;
-        let pag_idx_2 = binds.len() + 2;
+        let pag_idx_1 = binds.len() + 2;
+        let pag_idx_2 = binds.len() + 3;
         let query = format!(
             "{} {} ORDER BY name LIMIT ${} OFFSET ${}",
             base_select, where_clause, pag_idx_1, pag_idx_2
         );
         let mut q = sqlx::query_as::<_, rustshare_core::services::ScimV2GroupRecord>(&query);
+        q = q.bind(tenant_id);
         for val in &binds {
             q = q.bind(val);
         }
@@ -459,15 +604,17 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
     async fn get_group(
         &self,
+        tenant_id: Uuid,
         id: Uuid,
     ) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, sqlx::Error> {
         sqlx::query_as!(
             ScimV2GroupRecord,
             r#"
-            SELECT id, external_id, name, description, created_at, updated_at 
-            FROM user_groups WHERE id = $1
+            SELECT id, external_id, name, description, created_at, updated_at
+            FROM user_groups WHERE id = $1 AND tenant_id = $2
             "#,
-            id
+            id,
+            tenant_id
         )
         .fetch_optional(&self.pool)
         .await
@@ -475,29 +622,36 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
     async fn get_group_by_external_id(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, sqlx::Error> {
         sqlx::query_as!(
             ScimV2GroupRecord,
             r#"
-            SELECT id, external_id, name, description, created_at, updated_at 
-            FROM user_groups WHERE external_id = $1
+            SELECT id, external_id, name, description, created_at, updated_at
+            FROM user_groups WHERE external_id = $1 AND tenant_id = $2
             "#,
-            external_id
+            external_id,
+            tenant_id
         )
         .fetch_optional(&self.pool)
         .await
     }
 
-    async fn create_group(&self, group: &ScimV2Group) -> Result<Uuid, sqlx::Error> {
+    async fn create_group(
+        &self,
+        tenant_id: Uuid,
+        group: &ScimV2Group,
+    ) -> Result<Uuid, sqlx::Error> {
         let id = Uuid::new_v4();
 
         sqlx::query!(
-            "INSERT INTO user_groups (id, name, external_id, created_at, updated_at) 
-             VALUES ($1, $2, $3, NOW(), NOW())",
+            "INSERT INTO user_groups (id, name, external_id, tenant_id, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, NOW(), NOW())",
             id,
             group.display_name,
-            group.external_id
+            group.external_id,
+            tenant_id
         )
         .execute(&self.pool)
         .await?;
@@ -505,12 +659,19 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         Ok(id)
     }
 
-    async fn update_group(&self, id: Uuid, group: &ScimV2Group) -> Result<(), sqlx::Error> {
+    async fn update_group(
+        &self,
+        tenant_id: Uuid,
+        id: Uuid,
+        group: &ScimV2Group,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query!(
-            "UPDATE user_groups SET name = $2, external_id = $3, updated_at = NOW() WHERE id = $1",
+            "UPDATE user_groups SET name = $2, external_id = $3, updated_at = NOW() \
+             WHERE id = $1 AND tenant_id = $4",
             id,
             group.display_name,
-            group.external_id
+            group.external_id,
+            tenant_id
         )
         .execute(&self.pool)
         .await?;
@@ -520,6 +681,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
     async fn patch_group(
         &self,
+        tenant_id: Uuid,
         id: Uuid,
         operations: &[rustshare_core::services::ScimPatchOperation],
     ) -> Result<(), sqlx::Error> {
@@ -536,8 +698,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                                             member.get("value").and_then(|v| v.as_str())
                                         {
                                             if let Ok(user_id) = Uuid::parse_str(user_id_str) {
-                                                if let Err(e) =
-                                                    self.add_group_member(id, user_id).await
+                                                if let Err(e) = self
+                                                    .add_group_member(tenant_id, id, user_id)
+                                                    .await
                                                 {
                                                     tracing::warn!(group_id = %id, user_id = %user_id, error = %e, "failed to add group member");
                                                 }
@@ -554,7 +717,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                                     member.get("value").and_then(|v| v.as_str())
                                 {
                                     if let Ok(user_id) = Uuid::parse_str(user_id_str) {
-                                        if let Err(e) = self.add_group_member(id, user_id).await {
+                                        if let Err(e) =
+                                            self.add_group_member(tenant_id, id, user_id).await
+                                        {
                                             tracing::warn!(group_id = %id, user_id = %user_id, error = %e, "failed to add group member");
                                         }
                                     }
@@ -573,7 +738,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                                 .and_then(|s| s.split("\"").next())
                             {
                                 if let Ok(user_id) = Uuid::parse_str(user_id_str) {
-                                    if let Err(e) = self.remove_group_member(id, user_id).await {
+                                    if let Err(e) =
+                                        self.remove_group_member(tenant_id, id, user_id).await
+                                    {
                                         tracing::warn!(group_id = %id, user_id = %user_id, error = %e, "failed to remove group member");
                                     }
                                 }
@@ -587,22 +754,37 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         Ok(())
     }
 
-    async fn delete_group(&self, id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query!("DELETE FROM user_groups WHERE id = $1", id)
-            .execute(&self.pool)
-            .await?;
+    async fn delete_group(&self, tenant_id: Uuid, id: Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            "DELETE FROM user_groups WHERE id = $1 AND tenant_id = $2",
+            id,
+            tenant_id
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
-    async fn get_group_members(&self, group_id: Uuid) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    async fn get_group_members(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+    ) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+        // Both legs of the membership must belong to the organization: the
+        // member user and the group (defense in depth).
         let rows = sqlx::query!(
             r#"
-            SELECT u.id, u.display_name 
+            SELECT u.id, u.display_name
             FROM users u
             JOIN group_members gm ON u.id = gm.user_id
-            WHERE gm.group_id = $1
+            WHERE gm.group_id = $1 AND u.tenant_id = $2
+              AND EXISTS (
+                  SELECT 1 FROM user_groups g
+                  WHERE g.id = gm.group_id AND g.tenant_id = $2
+              )
             "#,
-            group_id
+            group_id,
+            tenant_id
         )
         .fetch_all(&self.pool)
         .await?;
@@ -610,15 +792,26 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         Ok(rows.into_iter().map(|r| (r.id, r.display_name)).collect())
     }
 
-    async fn get_user_groups(&self, user_id: Uuid) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    async fn get_user_groups(
+        &self,
+        tenant_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+        // Both legs of the membership must belong to the organization: the
+        // group and the user (defense in depth).
         let rows = sqlx::query!(
             r#"
-            SELECT g.id, g.name 
+            SELECT g.id, g.name
             FROM user_groups g
             JOIN group_members gm ON g.id = gm.group_id
-            WHERE gm.user_id = $1
+            WHERE gm.user_id = $1 AND g.tenant_id = $2
+              AND EXISTS (
+                  SELECT 1 FROM users u
+                  WHERE u.id = gm.user_id AND u.tenant_id = $2
+              )
             "#,
-            user_id
+            user_id,
+            tenant_id
         )
         .fetch_all(&self.pool)
         .await?;
@@ -626,15 +819,29 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         Ok(rows.into_iter().map(|r| (r.id, r.name)).collect())
     }
 
-    async fn add_group_member(&self, group_id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error> {
+    async fn add_group_member(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), sqlx::Error> {
+        // The membership is written only when both the group and the user
+        // belong to the configured organization.
         sqlx::query!(
             r#"
             INSERT INTO group_members (group_id, user_id, added_at)
-            VALUES ($1, $2, NOW())
+            SELECT $1, $2, NOW()
+            WHERE EXISTS (
+                SELECT 1
+                FROM user_groups g
+                JOIN users u ON u.id = $2
+                WHERE g.id = $1 AND g.tenant_id = $3 AND u.tenant_id = $3
+            )
             ON CONFLICT (group_id, user_id) DO NOTHING
             "#,
             group_id,
-            user_id
+            user_id,
+            tenant_id
         )
         .execute(&self.pool)
         .await?;
@@ -642,11 +849,19 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         Ok(())
     }
 
-    async fn remove_group_member(&self, group_id: Uuid, user_id: Uuid) -> Result<(), sqlx::Error> {
+    async fn remove_group_member(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query!(
-            "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2",
+            "DELETE FROM group_members gm WHERE gm.group_id = $1 AND gm.user_id = $2 \
+                AND EXISTS (SELECT 1 FROM user_groups g WHERE g.id = gm.group_id AND g.tenant_id = $3) \
+                AND EXISTS (SELECT 1 FROM users u WHERE u.id = gm.user_id AND u.tenant_id = $3)",
             group_id,
-            user_id
+            user_id,
+            tenant_id
         )
         .execute(&self.pool)
         .await?;
@@ -656,19 +871,36 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
 
     async fn find_user_id_by_external_id(
         &self,
+        tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<Uuid>, sqlx::Error> {
-        let row = sqlx::query!("SELECT id FROM users WHERE external_id = $1", external_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query_scalar!(
+            "SELECT id FROM users WHERE external_id = $1 AND tenant_id = $2",
+            external_id,
+            tenant_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
 
-        Ok(row.map(|r| r.id))
+        Ok(row)
     }
 
-    async fn clear_group_members(&self, group_id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query!("DELETE FROM group_members WHERE group_id = $1", group_id)
-            .execute(&self.pool)
-            .await?;
+    async fn clear_group_members(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+    ) -> Result<(), sqlx::Error> {
+        // Per-row user leg: in-scope memberships are cleared, cross-tenant
+        // member rows survive.
+        sqlx::query!(
+            "DELETE FROM group_members gm WHERE gm.group_id = $1 \
+                AND EXISTS (SELECT 1 FROM user_groups g WHERE g.id = gm.group_id AND g.tenant_id = $2) \
+                AND EXISTS (SELECT 1 FROM users u WHERE u.id = gm.user_id AND u.tenant_id = $2)",
+            group_id,
+            tenant_id
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -738,9 +970,13 @@ pub async fn list_users(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
@@ -767,9 +1003,13 @@ pub async fn get_user(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
@@ -793,9 +1033,13 @@ pub async fn create_user(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
@@ -819,10 +1063,17 @@ pub async fn update_user(
     }
 
     let base_url = get_base_url(&headers);
-    let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let repository = Arc::new(ScimV2RepositoryImpl::with_correlation_id(
+        state.db_pool,
+        request_correlation_id(&headers).map(str::to_owned),
+    ));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
@@ -846,10 +1097,17 @@ pub async fn patch_user(
     }
 
     let base_url = get_base_url(&headers);
-    let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let repository = Arc::new(ScimV2RepositoryImpl::with_correlation_id(
+        state.db_pool,
+        request_correlation_id(&headers).map(str::to_owned),
+    ));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
@@ -872,10 +1130,17 @@ pub async fn delete_user(
     }
 
     let base_url = get_base_url(&headers);
-    let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let repository = Arc::new(ScimV2RepositoryImpl::with_correlation_id(
+        state.db_pool,
+        request_correlation_id(&headers).map(str::to_owned),
+    ));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
@@ -903,9 +1168,13 @@ pub async fn list_groups(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
@@ -932,9 +1201,13 @@ pub async fn get_group(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
@@ -958,14 +1231,66 @@ pub async fn create_group(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
-        repository,
-        state.default_tenant_id,
+        repository.clone(),
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
 
-    match service.create_group(group).await {
+    // AR-04: membership writes commit per statement. On a failure, refresh
+    // only when writes committed (the service reports the boundary via
+    // `writes_committed`); a rejection that committed nothing must not
+    // dispatch (issue #367).
+    let external_id = group.external_id.clone();
+    let outcome = service.create_group(group).await;
+    let affected_group = match &outcome {
+        Ok(created) => created.id.clone(),
+        Err(write_error) if write_error.writes_committed => {
+            match repository
+                .get_group_by_external_id(scope, external_id.as_deref().unwrap_or_default())
+                .await
+            {
+                Ok(Some(record)) => Some(record.id.to_string()),
+                Ok(None) => {
+                    tracing::warn!(
+                        external_id = external_id.as_deref().unwrap_or_default(),
+                        error = %write_error.error,
+                        "SCIM v2 group create failed after committed writes but re-resolved no group; skipping ACL refresh"
+                    );
+                    None
+                }
+                Err(resolution_error) => {
+                    tracing::warn!(
+                        external_id = external_id.as_deref().unwrap_or_default(),
+                        error = %resolution_error,
+                        "SCIM v2 group create failed after committed writes and group re-resolution errored; skipping ACL refresh"
+                    );
+                    None
+                }
+            }
+        }
+        Err(write_error) => {
+            tracing::debug!(
+                external_id = external_id.as_deref().unwrap_or_default(),
+                error = %write_error.error,
+                "SCIM v2 group create rejected before any write; skipping ACL refresh"
+            );
+            None
+        }
+    };
+    if let Some(group_id) = affected_group.and_then(|id| Uuid::parse_str(&id).ok()) {
+        crate::services::note_service::dispatch_group_index_acl_refresh(
+            Arc::clone(&state.note_service),
+            group_id,
+        );
+    }
+
+    match outcome.map_err(|write_error| write_error.error) {
         Ok(group) => scim_json_response(StatusCode::CREATED, group),
         Err(e) => scim_error_response(e),
     }
@@ -985,14 +1310,50 @@ pub async fn update_group(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
 
-    match service.update_group(id, group).await {
+    // AR-04: PUT replaces membership statement by statement. Refresh on
+    // success or when the failure came after writes committed (the service
+    // reports the boundary via `writes_committed`); a rejection that
+    // committed nothing must not dispatch (issue #367). The group id is
+    // known, so no re-resolution is needed — a concurrent deletion leaves
+    // discovery with nothing to refresh.
+    let outcome = service.update_group(id, group).await;
+    match &outcome {
+        Ok(_) => {
+            crate::services::note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&state.note_service),
+                id,
+            );
+        }
+        Err(write_error) if write_error.writes_committed => {
+            // Intentional: no re-resolution here. If a concurrent deletion
+            // removed the group, the refresh is a harmless no-op — share
+            // discovery by group id finds nothing to refresh.
+            crate::services::note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&state.note_service),
+                id,
+            );
+        }
+        Err(write_error) => {
+            tracing::debug!(
+                group_id = %id,
+                error = %write_error.error,
+                "SCIM v2 group replacement rejected before any write; skipping ACL refresh"
+            );
+        }
+    }
+
+    match outcome.map_err(|write_error| write_error.error) {
         Ok(group) => scim_json_response(StatusCode::OK, group),
         Err(e) => scim_error_response(e),
     }
@@ -1012,14 +1373,47 @@ pub async fn patch_group(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
 
-    match service.patch_group(id, &patch.operations).await {
+    // AR-04: PATCH mutates membership statement by statement. Refresh on
+    // success or when the failure came after writes committed (see
+    // `update_group`).
+    let outcome = service.patch_group(id, &patch.operations).await;
+    match &outcome {
+        Ok(_) => {
+            crate::services::note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&state.note_service),
+                id,
+            );
+        }
+        Err(write_error) if write_error.writes_committed => {
+            // Intentional: no re-resolution here. If a concurrent deletion
+            // removed the group, the refresh is a harmless no-op — share
+            // discovery by group id finds nothing to refresh.
+            crate::services::note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&state.note_service),
+                id,
+            );
+        }
+        Err(write_error) => {
+            tracing::debug!(
+                group_id = %id,
+                error = %write_error.error,
+                "SCIM v2 group patch rejected before any write; skipping ACL refresh"
+            );
+        }
+    }
+
+    match outcome.map_err(|write_error| write_error.error) {
         Ok(group) => scim_json_response(StatusCode::OK, group),
         Err(e) => scim_error_response(e),
     }
@@ -1036,19 +1430,58 @@ pub async fn delete_group(
         return scim_json_response(StatusCode::UNAUTHORIZED, err);
     }
 
-    let base_url = get_base_url(&headers);
-    let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
-    let service = ScimV2Service::new(
-        repository,
-        state.default_tenant_id,
-        crate::default_storage_quota_bytes(),
-        base_url,
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
+
+    // AR-04: lock, capture, and delete in one transaction (same observable
+    // semantics as `ScimV2Service::delete_group`, scoped to the organization).
+    // The row lock serializes concurrent share creation, and the refresh of
+    // the captured targets is dispatched only after a successful commit.
+    let mut tx = match state.db_pool.begin().await {
+        Ok(tx) => tx,
+        Err(error) => return scim_error_response(ScimV2Error::Database(error)),
+    };
+    let locked = sqlx::query_scalar!(
+        "SELECT id FROM user_groups WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
+        id,
+        scope
+    )
+    .fetch_optional(&mut *tx)
+    .await;
+    let locked = match locked {
+        Ok(locked) => locked,
+        Err(error) => return scim_error_response(ScimV2Error::Database(error)),
+    };
+    if locked.is_none() {
+        return scim_error_response(ScimV2Error::GroupNotFound(id.to_string()));
+    }
+    let targets =
+        match crate::services::note_service::capture_group_share_targets(&mut tx, id).await {
+            Ok(targets) => targets,
+            Err(error) => return scim_error_response(ScimV2Error::Database(error)),
+        };
+    let delete_result = sqlx::query!(
+        "DELETE FROM user_groups WHERE id = $1 AND tenant_id = $2",
+        id,
+        scope
+    )
+    .execute(&mut *tx)
+    .await;
+    if let Err(error) = delete_result {
+        return scim_error_response(ScimV2Error::Database(error));
+    }
+    if let Err(error) = tx.commit().await {
+        return scim_error_response(ScimV2Error::Database(error));
+    }
+
+    crate::services::note_service::dispatch_share_target_acl_refresh(
+        Arc::clone(&state.note_service),
+        targets,
     );
 
-    match service.delete_group(id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => scim_error_response(e),
-    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -1067,9 +1500,13 @@ pub async fn get_service_provider_config(
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
@@ -1087,9 +1524,13 @@ pub async fn get_resource_types(State(state): State<AppState>, headers: HeaderMa
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );
@@ -1110,9 +1551,13 @@ pub async fn get_schemas(State(state): State<AppState>, headers: HeaderMap) -> R
 
     let base_url = get_base_url(&headers);
     let repository = Arc::new(ScimV2RepositoryImpl::new(state.db_pool));
+    let scope = match scim_scope_or_response() {
+        Ok(scope) => scope,
+        Err(response) => return *response,
+    };
     let service = ScimV2Service::new(
         repository,
-        state.default_tenant_id,
+        scope,
         crate::default_storage_quota_bytes(),
         base_url,
     );

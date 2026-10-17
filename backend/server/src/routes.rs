@@ -237,6 +237,19 @@ pub fn replication_routes() -> Router<AppState> {
         )
 }
 
+pub fn object_gc_routes() -> Router<AppState> {
+    use axum::routing::post;
+    Router::new()
+        .route(
+            "/api/admin/object-gc/orphan-scan",
+            post(crate::object_gc_scan::post_orphan_scan),
+        )
+        .route(
+            "/api/admin/object-gc/orphan-reconcile",
+            post(crate::object_gc_reconcile::post_orphan_reconcile),
+        )
+}
+
 pub fn application_routes() -> Router<AppState> {
     use axum::routing::{get, post};
     Router::new()
@@ -934,6 +947,18 @@ pub fn admin_routes() -> Router<AppState> {
         .route(
             "/api/v1/admin/audit",
             get(crate::handlers::admin::audit::list_audit_log),
+        )
+        .route(
+            "/api/v1/admin/organizations/{tenant_id}/administrators",
+            get(crate::handlers::admin::organization_administrators::list_organization_administrators),
+        )
+        .route(
+            "/api/v1/admin/organizations/{tenant_id}/administrators/{user_id}",
+            post(crate::handlers::admin::organization_administrators::grant_organization_administrator),
+        )
+        .route(
+            "/api/v1/admin/organizations/{tenant_id}/administrators/{user_id}",
+            delete(crate::handlers::admin::organization_administrators::revoke_organization_administrator),
         )
         .route(
             "/api/v1/admin/workflows",

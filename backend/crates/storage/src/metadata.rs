@@ -56,6 +56,28 @@ pub struct ObjectGcCandidate {
     pub locked_by: Option<String>,
 }
 
+/// Full queue row for one object GC candidate. Read-only scans use this to
+/// classify a key without claiming or modifying the queue.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ObjectGcCandidateRow {
+    pub id: Uuid,
+    pub object_key: String,
+    pub reason: String,
+    pub not_before: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub first_seen_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    pub attempt_count: i32,
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub state: String,
+    pub locked_at: Option<DateTime<Utc>>,
+    pub locked_by: Option<String>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+    pub operator_hold: bool,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, sqlx::FromRow)]
 pub struct BlobReferenceSummary {
     pub files: i64,
@@ -4576,6 +4598,29 @@ impl MetadataStore {
         Ok(result.rows_affected())
     }
 
+    /// Read the queue row for one object key without claiming or modifying it.
+    ///
+    /// Used by the read-only orphan-discovery scan to distinguish keys that
+    /// already have a durable candidate from keys the queue has never seen.
+    pub async fn get_object_gc_candidate(
+        &self,
+        object_key: &str,
+    ) -> Result<Option<ObjectGcCandidateRow>> {
+        sqlx::query_as::<_, ObjectGcCandidateRow>(
+            r#"
+            SELECT id, object_key, reason, not_before, created_at, first_seen_at,
+                last_seen_at, attempt_count, last_attempt_at, last_error, state,
+                locked_at, locked_by, completed_at, updated_at, operator_hold
+            FROM object_gc_queue
+            WHERE object_key = $1
+            "#,
+        )
+        .bind(object_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(Into::into)
+    }
+
     pub async fn enqueue_object_gc_candidate(
         &self,
         object_key: &str,
@@ -4617,6 +4662,51 @@ impl MetadataStore {
         metrics::counter!("object_gc_candidates_enqueued_total", "reason" => reason.to_string())
             .increment(1);
         Ok(())
+    }
+
+    /// Enqueue an object GC candidate only when the queue has no row for the
+    /// key yet. Returns `true` when a fresh `pending` row was inserted and
+    /// `false` when a row already existed and was left completely untouched.
+    ///
+    /// Unlike [`Self::enqueue_object_gc_candidate`], the insert-only variant
+    /// never overrides `operator_hold`, never resets worker leases, attempt
+    /// history, `not_before`, or terminal states, and never bumps `updated_at`
+    /// on an existing row. It exists for reconciliation producers (for example
+    /// orphan-blob discovery) that must record a durable candidate without
+    /// disturbing holds or backoff schedules an operator or earlier worker
+    /// already established.
+    pub async fn enqueue_object_gc_candidate_if_absent(
+        &self,
+        object_key: &str,
+        reason: &str,
+        grace_period_hours: i64,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO object_gc_queue (
+                object_key, reason, first_seen_at, last_seen_at, not_before,
+                state, created_at, updated_at
+            ) VALUES (
+                $1, $2, NOW(), NOW(), NOW() + ($3 * INTERVAL '1 hour'),
+                'pending', NOW(), NOW()
+            )
+            ON CONFLICT (object_key) DO NOTHING
+            "#,
+        )
+        .bind(object_key)
+        .bind(reason)
+        .bind(grace_period_hours)
+        .execute(&self.pool)
+        .await?;
+        let inserted = result.rows_affected() == 1;
+        if inserted {
+            metrics::counter!(
+                "object_gc_candidates_enqueued_total",
+                "reason" => reason.to_string()
+            )
+            .increment(1);
+        }
+        Ok(inserted)
     }
 
     pub async fn lease_object_gc_candidates(
@@ -5007,28 +5097,64 @@ impl MetadataStore {
 
     /// Create a new share link for a file
     pub async fn create_share(&self, share: &Share) -> Result<()> {
-        sqlx::query!(
+        self.create_share_with_correlation(share, None).await
+    }
+
+    pub async fn create_share_with_correlation(
+        &self,
+        share: &Share,
+        correlation_id: Option<&str>,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
             r#"
             INSERT INTO shares (id, file_id, folder_id, share_token, recipient_user_id, recipient_group_id, created_by, permissions, password_hash, expires_at, upload_only, access_count, created_at, tenant_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
-            share.id,
-            share.file_id,
-            share.folder_id,
-            share.share_token,
-            share.recipient_user_id,
-            share.recipient_group_id,
-            share.created_by,
-            Self::permission_to_db_value(share.permissions),
-            share.password_hash,
-            share.expires_at,
-            share.upload_only,
-            share.access_count,
-            share.created_at,
-            share.tenant_id
         )
-        .execute(&self.pool)
+        .bind(share.id)
+        .bind(share.file_id)
+        .bind(share.folder_id)
+        .bind(&share.share_token)
+        .bind(share.recipient_user_id)
+        .bind(share.recipient_group_id)
+        .bind(share.created_by)
+        .bind(Self::permission_to_db_value(share.permissions))
+        .bind(&share.password_hash)
+        .bind(share.expires_at)
+        .bind(share.upload_only)
+        .bind(share.access_count)
+        .bind(share.created_at)
+        .bind(share.tenant_id)
+        .execute(&mut *tx)
         .await?;
+
+        let (target_type, target_id) = if let Some(file_id) = share.file_id {
+            ("file", file_id)
+        } else if let Some(folder_id) = share.folder_id {
+            ("folder", folder_id)
+        } else {
+            anyhow::bail!("share must reference a file or folder")
+        };
+        sqlx::query(
+            "INSERT INTO admin_actions
+                (tenant_id, actor_id, actor_principal_id, action_type, target_type, target_id,
+                 detail, correlation_id, outcome)
+             VALUES ($1, $2, $2, 'share.created', $3, $4, $5, $6, 'success')",
+        )
+        .bind(share.tenant_id)
+        .bind(share.created_by)
+        .bind(target_type)
+        .bind(target_id)
+        .bind(serde_json::json!({
+            "share_id": share.id,
+            "permissions": Self::permission_to_db_value(share.permissions),
+            "password_protected": share.password_hash.is_some(),
+        }))
+        .bind(correlation_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
 
         Ok(())
     }
@@ -5356,17 +5482,57 @@ impl MetadataStore {
 
     /// Revoke a share link (soft delete)
     pub async fn revoke_share(&self, share_id: Uuid, actor_id: Uuid) -> Result<()> {
-        sqlx::query!(
-            r#"
-            UPDATE shares
-            SET revoked_at = NOW()
-            WHERE id = $1 AND created_by = $2
-            "#,
-            share_id,
-            actor_id
+        self.revoke_share_with_correlation(share_id, actor_id, None)
+            .await
+    }
+
+    pub async fn revoke_share_with_correlation(
+        &self,
+        share_id: Uuid,
+        actor_id: Uuid,
+        correlation_id: Option<&str>,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        let share = sqlx::query_as::<_, (Uuid, Option<Uuid>, Option<Uuid>, Uuid)>(
+            "SELECT tenant_id, file_id, folder_id, created_by FROM shares WHERE id = $1 FOR UPDATE",
         )
-        .execute(&self.pool)
+        .bind(share_id)
+        .fetch_optional(&mut *tx)
         .await?;
+        let Some((tenant_id, file_id, folder_id, _creator_id)) = share else {
+            tx.rollback().await?;
+            return Ok(());
+        };
+        let changed = sqlx::query(
+            "UPDATE shares SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL",
+        )
+        .bind(share_id)
+        .execute(&mut *tx)
+        .await?;
+        if changed.rows_affected() == 1 {
+            let (target_type, target_id) = if let Some(file_id) = file_id {
+                ("file", file_id)
+            } else if let Some(folder_id) = folder_id {
+                ("folder", folder_id)
+            } else {
+                anyhow::bail!("share must reference a file or folder")
+            };
+            sqlx::query(
+                "INSERT INTO admin_actions
+                    (tenant_id, actor_id, actor_principal_id, action_type, target_type, target_id,
+                     detail, correlation_id, outcome)
+                 VALUES ($1, $2, $2, 'share.revoked', $3, $4, $5, $6, 'success')",
+            )
+            .bind(tenant_id)
+            .bind(actor_id)
+            .bind(target_type)
+            .bind(target_id)
+            .bind(serde_json::json!({ "share_id": share_id }))
+            .bind(correlation_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
 
         Ok(())
     }
@@ -5463,6 +5629,20 @@ impl MetadataStore {
         .await?;
 
         Ok(files)
+    }
+
+    /// Find the organization (tenant) a group belongs to, if the group exists.
+    pub async fn find_group_tenant_id(&self, group_id: Uuid) -> Result<Option<Uuid>> {
+        let tenant_id = sqlx::query_scalar!(
+            r#"
+            SELECT tenant_id FROM user_groups WHERE id = $1
+            "#,
+            group_id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(tenant_id)
     }
 
     /// Check if a user is a member of a group.
@@ -8254,6 +8434,15 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStore {
 
 #[allow(async_fn_in_trait)]
 impl rustshare_core::services::ShareMetadataStoreOps for MetadataStore {
+    async fn find_descendant_folders_for_tenant(
+        &self,
+        folder_id: uuid::Uuid,
+        tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<Vec<rustshare_core::domain::Folder>> {
+        self.find_descendant_folders_for_tenant(folder_id, tenant_id)
+            .await
+    }
+
     async fn find_user_by_id(
         &self,
         id: uuid::Uuid,
@@ -8293,6 +8482,15 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStore {
 
     async fn create_share(&self, share: &rustshare_core::domain::Share) -> anyhow::Result<()> {
         self.create_share(share).await
+    }
+
+    async fn create_share_with_correlation(
+        &self,
+        share: &rustshare_core::domain::Share,
+        correlation_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.create_share_with_correlation(share, correlation_id)
+            .await
     }
 
     async fn get_share_by_id(
@@ -8396,6 +8594,16 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStore {
         self.revoke_share(share_id, actor_id).await
     }
 
+    async fn revoke_share_with_correlation(
+        &self,
+        share_id: uuid::Uuid,
+        actor_id: rustshare_core::domain::UserId,
+        correlation_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.revoke_share_with_correlation(share_id, actor_id, correlation_id)
+            .await
+    }
+
     async fn update_share(&self, share: &rustshare_core::domain::Share) -> anyhow::Result<()> {
         self.update_share(share).await
     }
@@ -8406,6 +8614,13 @@ impl rustshare_core::services::ShareMetadataStoreOps for MetadataStore {
         group_id: uuid::Uuid,
     ) -> anyhow::Result<bool> {
         self.is_user_in_group(user_id, group_id).await
+    }
+
+    async fn find_group_tenant_id(
+        &self,
+        group_id: uuid::Uuid,
+    ) -> anyhow::Result<Option<uuid::Uuid>> {
+        self.find_group_tenant_id(group_id).await
     }
 }
 

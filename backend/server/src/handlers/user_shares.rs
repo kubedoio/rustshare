@@ -138,7 +138,13 @@ pub async fn create_file_share(
 ) -> Result<Response, AppError> {
     let share = state
         .user_share_service
-        .create_file_share(file_id, &req.recipient_email, req.permission, auth.user_id)
+        .create_file_share(
+            file_id,
+            &req.recipient_email,
+            req.permission,
+            auth.user_id,
+            auth.tenant_id,
+        )
         .await?;
 
     // Best-effort ACL refresh so the shared file becomes searchable by the grantee.
@@ -198,6 +204,7 @@ pub async fn create_folder_share(
             &req.recipient_email,
             req.permission,
             auth.user_id,
+            auth.tenant_id,
         )
         .await?;
 
@@ -264,7 +271,7 @@ pub async fn list_received_shares(
         let (resource_name, resource_path) = if let Some(file_id) = share.file_id {
             match state
                 .metadata_store
-                .find_file_by_id_unchecked(file_id)
+                .find_file_by_id_for_tenant(file_id, auth.tenant_id)
                 .await
             {
                 Ok(Some(file)) => (file.name, file.path),
@@ -280,7 +287,10 @@ pub async fn list_received_shares(
                 .find_folder_by_id_unchecked(folder_id)
                 .await
             {
-                Ok(Some(folder)) => (folder.name, folder.path),
+                Ok(Some(folder)) if folder.tenant_id == auth.tenant_id => {
+                    (folder.name, folder.path)
+                }
+                Ok(Some(_)) => continue,
                 Ok(None) => continue,
                 Err(error) => {
                     tracing::warn!("failed to load shared folder {}: {}", folder_id, error);
@@ -291,17 +301,19 @@ pub async fn list_received_shares(
             continue;
         };
 
-        let (shared_by_name, shared_by_email) =
+        let (shared_by, shared_by_name, shared_by_email) =
             match state.metadata_store.find_user_by_id(share.created_by).await {
-                Ok(Some(user)) => (user.display_name, user.email),
-                Ok(None) => ("Unknown user".to_string(), String::new()),
+                Ok(Some(user)) if user.tenant_id == auth.tenant_id => {
+                    (share.created_by, user.display_name, user.email)
+                }
+                Ok(Some(_)) | Ok(None) => (Uuid::nil(), "Unknown user".to_string(), String::new()),
                 Err(error) => {
                     tracing::warn!(
                         "failed to load share creator {}: {}",
                         share.created_by,
                         error
                     );
-                    ("Unknown user".to_string(), String::new())
+                    (Uuid::nil(), "Unknown user".to_string(), String::new())
                 }
             };
 
@@ -312,7 +324,7 @@ pub async fn list_received_shares(
             resource_name,
             resource_path,
             permission: share.permissions,
-            shared_by: share.created_by,
+            shared_by,
             shared_by_name,
             shared_by_email,
             created_at: share.created_at.to_rfc3339(),
