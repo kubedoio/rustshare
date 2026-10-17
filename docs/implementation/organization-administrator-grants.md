@@ -31,6 +31,8 @@ always comes from the authenticated account, including the nil default tenant.
 Foreign IDs return not-found. Audit includes group and organization-admin
 actions only, excluding installation-level actions, and applies the shared
 allowlist detail projection.
+Group names retain the existing global uniqueness rule; a name already used
+by any tenant returns 409 on create or rename.
 
 Organization admins cannot mutate user lifecycle or installation-admin state,
 manage administrator grants, access operator configuration, or read private
