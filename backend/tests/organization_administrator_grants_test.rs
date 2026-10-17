@@ -556,3 +556,262 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
     .expect_err("grant history must reject deletion");
     assert!(integrity_error.to_string().contains("append-only"));
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable local PostgreSQL database and S3-compatible storage"]
+async fn organization_admin_http_scope_and_immediate_revocation() {
+    let _serial = SERIAL.lock().await;
+    let mut state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let tenant = Uuid::new_v4();
+    let foreign_tenant = Uuid::new_v4();
+    let operator = create_user(&pool, tenant, true).await;
+    let org_admin = create_user(&pool, tenant, false).await;
+    let member = create_user(&pool, tenant, false).await;
+    let foreign = create_user(&pool, foreign_tenant, false).await;
+    let nil_admin = create_user(&pool, Uuid::nil(), false).await;
+    let nil_member = create_user(&pool, Uuid::nil(), false).await;
+    let op_token = create_auth_token(&state, operator, tenant);
+    let org_token = create_auth_token(&state, org_admin, tenant);
+    let nil_token = create_auth_token(&state, nil_admin, Uuid::nil());
+    state.default_tenant_config = rustshare_server::config::DefaultTenantConfig::Set(tenant);
+    let app = rustshare_server::routes::admin_routes().with_state(state);
+
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        &format!("/api/v1/admin/organizations/{tenant}/administrators/{org_admin}"),
+        &op_token,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        &format!("/api/v1/admin/organizations/{tenant}/administrators/{member}"),
+        &op_token,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    let (status, users) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/users?per_page=100",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(users["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|u| u["id"] == member.to_string()));
+    assert!(!users["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|u| u["id"] == foreign.to_string()));
+    assert!(users["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|u| u.get("is_admin").is_none()));
+    let (status, _) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/users",
+        &op_token,
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        axum::http::StatusCode::FORBIDDEN,
+        "installation operator status alone does not grant tenant administration"
+    );
+    let (status, _) = send(
+        &app,
+        "GET",
+        "/api/v1/admin/config/security",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        "/api/v1/organization-admin/groups",
+        &org_token,
+        None,
+        serde_json::json!({"name":format!("org-group-{tenant}"),"description":"test"}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    let group_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM user_groups WHERE tenant_id=$1 AND name=$2")
+            .bind(tenant)
+            .bind(format!("org-group-{tenant}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO admin_actions (tenant_id,actor_id,actor_principal_id,action_type,detail) VALUES ($1,$2,$2,'config.security_updated',$3)")
+        .bind(tenant).bind(operator).bind(serde_json::json!({"login_protection_enabled":true,"max_login_attempts":2}))
+        .execute(&pool).await.unwrap();
+    let (status, audit) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/audit?per_page=100",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(!audit["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["action_type"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("config.")));
+    let (status, operator_audit) = send(
+        &app,
+        "GET",
+        "/api/v1/admin/audit?type=admin_action",
+        &op_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(operator_audit["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["action_type"] == "config.security_updated"));
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        &format!("/api/v1/organization-admin/groups/{group_id}/members"),
+        &org_token,
+        None,
+        serde_json::json!({"user_id":foreign}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        &format!("/api/v1/organization-admin/groups/{group_id}/members"),
+        &org_token,
+        None,
+        serde_json::json!({"user_id":member}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM admin_actions WHERE tenant_id=$1 AND action_type='group.member_added' AND target_id=$2").bind(tenant).bind(group_id).fetch_one(&pool).await.unwrap(),1);
+    let (status, audit) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/audit?per_page=100",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(audit["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["action_type"] == "group.member_added"));
+
+    sqlx::query("UPDATE users SET disabled_at=now() WHERE id=$1")
+        .bind(org_admin)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/users",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+    sqlx::query("UPDATE users SET disabled_at=NULL WHERE id=$1")
+        .bind(org_admin)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        &format!(
+            "/api/v1/admin/organizations/{}/administrators/{}",
+            Uuid::nil(),
+            nil_admin
+        ),
+        &op_token,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    let (status, _) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/users",
+        &nil_token,
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        axum::http::StatusCode::OK,
+        "nil tenant remains a valid tenant scope"
+    );
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        &format!(
+            "/api/v1/admin/organizations/{}/administrators/{}",
+            Uuid::nil(),
+            nil_member
+        ),
+        &op_token,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+
+    let (status, _) = send(
+        &app,
+        "DELETE",
+        &format!("/api/v1/admin/organizations/{tenant}/administrators/{org_admin}"),
+        &op_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let (status, _) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/users",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        axum::http::StatusCode::FORBIDDEN,
+        "revocation must apply on the next request"
+    );
+}

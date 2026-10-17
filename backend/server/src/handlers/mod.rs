@@ -29,6 +29,7 @@ pub mod meetings;
 pub mod memory_reconcile;
 pub mod notes;
 pub mod notifications;
+pub mod organization_admin;
 pub mod permission_explanation;
 pub mod profile;
 pub mod public_shares;
@@ -54,7 +55,9 @@ pub use brainstorming::{
 };
 pub use chat_resource::{open_attachment, prepare_attachment, preview_attachment};
 pub use collab::collab_handler;
-pub use extractors::{AdminUser, AuthenticatedSession, AuthenticatedUser, ShareSessionAuth};
+pub use extractors::{
+    AdminUser, AuthenticatedSession, AuthenticatedUser, OrganizationAdmin, ShareSessionAuth,
+};
 pub use files::{
     delete_file, download_file, download_file_content, edit_file, get_file, get_file_thumbnail,
     get_file_versions, list_deleted_items, list_files, list_starred_items, move_file,

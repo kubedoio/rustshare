@@ -274,6 +274,41 @@ pub struct AdminUser {
     pub user_id: Uuid,
 }
 
+/// Tenant administrator whose enabled account and grant are checked live.
+#[derive(Debug, Clone)]
+pub struct OrganizationAdmin {
+    pub user_id: Uuid,
+    pub tenant_id: Uuid,
+}
+
+impl FromRequestParts<AppState> for OrganizationAdmin {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let auth = AuthenticatedUser::from_request_parts(parts, state).await?;
+        let row = sqlx::query_as::<_, (Uuid, Option<chrono::DateTime<chrono::Utc>>)>(
+            "SELECT u.tenant_id, u.disabled_at FROM users u WHERE u.id = $1 AND EXISTS (SELECT 1 FROM organization_administrators oa WHERE oa.tenant_id = u.tenant_id AND oa.user_id = u.id AND oa.revoked_at IS NULL)",
+        )
+        .bind(auth.user_id)
+        .fetch_optional(&state.db_pool)
+        .await
+        .map_err(|_| admin_internal_error("Failed to verify organization administrator status"))?
+        .ok_or_else(|| admin_forbidden_error("Organization administrator access required"))?;
+        if row.1.is_some() || row.0 != auth.tenant_id {
+            return Err(admin_forbidden_error(
+                "Organization administrator access required",
+            ));
+        }
+        Ok(Self {
+            user_id: auth.user_id,
+            tenant_id: row.0,
+        })
+    }
+}
+
 impl FromRequestParts<AppState> for AdminUser {
     type Rejection = Response;
 
