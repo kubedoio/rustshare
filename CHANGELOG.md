@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add effective-access source and permission explanations to shared folder
+  contents and folder-tree responses, using the live resolver decision and
+  restricting share identifiers to inspectable direct Admin grants.
 - Organization-attributable administrative audit records for user lifecycle,
   groups, group membership, and share creation/revocation. Audit writes share
   mutation transactions, tenant-filtered reads preserve installation-operator
