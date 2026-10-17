@@ -4,9 +4,9 @@
 //! New code should use ShareService for all share operations.
 //!
 //! Migration guide:
-//! - `user_share_service.create_file_share(file_id, email, perm, user)`
+//! - `user_share_service.create_file_share(file_id, email, perm, user, tenant)`
 //!   → `share_service.create_user_share(Resource::File(file_id), email, perm, user)`
-//! - `user_share_service.create_folder_share(folder_id, email, perm, user)`
+//! - `user_share_service.create_folder_share(folder_id, email, perm, user, tenant)`
 //!   → `share_service.create_user_share(Resource::Folder(folder_id), email, perm, user)`
 
 use anyhow::Result;
@@ -178,6 +178,69 @@ where
         format!("/shared-with-me/{resource_path}/{resource_id}")
     }
 
+    async fn is_same_tenant_user(
+        &self,
+        user_id: UserId,
+        tenant_id: uuid::Uuid,
+    ) -> Result<bool, ShareError> {
+        Ok(self
+            .user_repo
+            .get_by_id(user_id)
+            .await
+            .map_err(|error| ShareError::Database(error.to_string()))?
+            .is_some_and(|user| user.tenant_id == tenant_id))
+    }
+
+    async fn is_manageable_user_share(
+        &self,
+        share: &Share,
+        tenant_id: uuid::Uuid,
+    ) -> Result<bool, ShareError> {
+        if share.tenant_id != tenant_id
+            || share.recipient_group_id.is_some()
+            || share.recipient_user_id.is_none()
+        {
+            return Ok(false);
+        }
+        self.is_same_tenant_share_resource(share, tenant_id).await
+    }
+
+    async fn is_manageable_group_share(
+        &self,
+        share: &Share,
+        tenant_id: uuid::Uuid,
+    ) -> Result<bool, ShareError> {
+        if share.tenant_id != tenant_id
+            || share.recipient_user_id.is_some()
+            || share.recipient_group_id.is_none()
+        {
+            return Ok(false);
+        }
+        self.is_same_tenant_share_resource(share, tenant_id).await
+    }
+
+    async fn is_same_tenant_share_resource(
+        &self,
+        share: &Share,
+        tenant_id: uuid::Uuid,
+    ) -> Result<bool, ShareError> {
+        match (share.file_id, share.folder_id) {
+            (Some(file_id), None) => Ok(self
+                .file_repo
+                .get_by_id(file_id, tenant_id)
+                .await
+                .map_err(|error| ShareError::Database(error.to_string()))?
+                .is_some_and(|file| file.tenant_id == tenant_id)),
+            (None, Some(folder_id)) => Ok(self
+                .folder_repo
+                .get_by_id(folder_id, tenant_id)
+                .await
+                .map_err(|error| ShareError::Database(error.to_string()))?
+                .is_some_and(|folder| folder.tenant_id == tenant_id)),
+            _ => Ok(false),
+        }
+    }
+
     /// DEPRECATED: Use ShareService::new instead
     #[deprecated(since = "0.2.0", note = "Use ShareService::new instead")]
     pub fn new(deps: UserShareServiceDeps<SR, UR, FR, DR, P, N, E>) -> Self {
@@ -256,15 +319,25 @@ where
         recipient_email: &str,
         permission: SharePermissions,
         created_by: UserId,
+        tenant_id: uuid::Uuid,
     ) -> Result<Share, ShareError> {
-        // Get creator's tenant ID for scoped file lookup
-        let tenant_id = self
+        // Bind the authenticated tenant to the creator's current tenant before
+        // using it to scope resource and recipient lookups.
+        let creator_tenant_id = self
             .user_repo
             .get_tenant_id_for_user(created_by)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
-            .unwrap_or_else(uuid::Uuid::nil);
-
+            .ok_or(ShareError::PermissionDenied {
+                file_id,
+                user_id: created_by,
+            })?;
+        if creator_tenant_id != tenant_id {
+            return Err(ShareError::PermissionDenied {
+                file_id,
+                user_id: created_by,
+            });
+        }
         // Verify file exists
         let file = self
             .file_repo
@@ -383,15 +456,25 @@ where
         recipient_email: &str,
         permission: SharePermissions,
         created_by: UserId,
+        tenant_id: uuid::Uuid,
     ) -> Result<Share, ShareError> {
-        // Get creator's tenant ID for scoped folder lookup
-        let tenant_id = self
+        // Bind the authenticated tenant to the creator's current tenant before
+        // using it to scope resource and recipient lookups.
+        let creator_tenant_id = self
             .user_repo
             .get_tenant_id_for_user(created_by)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
-            .unwrap_or_else(uuid::Uuid::nil);
-
+            .ok_or(ShareError::PermissionDenied {
+                file_id: folder_id,
+                user_id: created_by,
+            })?;
+        if creator_tenant_id != tenant_id {
+            return Err(ShareError::PermissionDenied {
+                file_id: folder_id,
+                user_id: created_by,
+            });
+        }
         // Verify folder exists
         let folder = self
             .folder_repo
@@ -511,12 +594,40 @@ where
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Share>, ShareError> {
+        if !self.is_same_tenant_user(user_id, tenant_id).await? {
+            return Ok(Vec::new());
+        }
         let shares = self
             .share_repo
             .list_received_shares(user_id, tenant_id, limit, offset)
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?;
-        Ok(shares)
+        let group_ids = self
+            .permission_resolver
+            .resolve_user_group_ids(user_id, tenant_id)
+            .await
+            .map_err(|error| ShareError::Database(error.to_string()))?;
+        let mut visible = Vec::with_capacity(shares.len());
+        for share in shares {
+            if !share
+                .expires_at
+                .as_ref()
+                .is_none_or(|expires_at| *expires_at > chrono::Utc::now())
+            {
+                continue;
+            }
+            let is_direct_share = share.recipient_user_id == Some(user_id)
+                && self.is_manageable_user_share(&share, tenant_id).await?;
+            let is_group_share = share.recipient_user_id.is_none()
+                && share
+                    .recipient_group_id
+                    .is_some_and(|group_id| group_ids.contains(&group_id))
+                && self.is_manageable_group_share(&share, tenant_id).await?;
+            if is_direct_share || is_group_share {
+                visible.push(share);
+            }
+        }
+        Ok(visible)
     }
 
     /// DEPRECATED: Use ShareService::list_recipients instead
@@ -529,6 +640,13 @@ where
         requesting_user: UserId,
         tenant_id: uuid::Uuid,
     ) -> Result<Vec<ShareRecipient>, ShareError> {
+        if !self.is_same_tenant_user(requesting_user, tenant_id).await? {
+            return Err(ShareError::InsufficientPermission {
+                required: SharePermissions::Admin,
+                actual: SharePermissions::View,
+            });
+        }
+
         // Determine resource for permission check
         let resource = if let Some(fid) = file_id {
             Resource::File(fid)
@@ -576,22 +694,32 @@ where
         // Convert to ShareRecipient DTOs
         let mut recipients = Vec::new();
         for share in shares {
-            if let Some(recipient_user_id) = share.recipient_user_id {
-                // Fetch user email
-                if let Some(user) = self
-                    .user_repo
-                    .get_by_id(recipient_user_id)
-                    .await
-                    .map_err(|e| ShareError::Database(e.to_string()))?
-                {
-                    recipients.push(ShareRecipient {
-                        share_id: share.id,
-                        user_id: recipient_user_id,
-                        email: user.email,
-                        permission: share.permissions,
-                        added_at: share.created_at,
-                        added_by: share.created_by,
-                    });
+            if share.tenant_id == tenant_id
+                && share.recipient_group_id.is_none()
+                && self.is_manageable_user_share(&share, tenant_id).await?
+            {
+                if let Some(recipient_user_id) = share.recipient_user_id {
+                    if !self
+                        .is_same_tenant_user(recipient_user_id, tenant_id)
+                        .await?
+                    {
+                        continue;
+                    }
+                    if let Some(user) = self
+                        .user_repo
+                        .get_by_id(recipient_user_id)
+                        .await
+                        .map_err(|e| ShareError::Database(e.to_string()))?
+                    {
+                        recipients.push(ShareRecipient {
+                            share_id: share.id,
+                            user_id: recipient_user_id,
+                            email: user.email,
+                            permission: share.permissions,
+                            added_at: share.created_at,
+                            added_by: share.created_by,
+                        });
+                    }
                 }
             }
         }
@@ -619,6 +747,25 @@ where
             .await
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
+
+        if !self.is_manageable_user_share(&share, tenant_id).await? {
+            return Err(ShareError::ShareNotFound(share_id));
+        }
+        let Some(recipient_user_id) = share.recipient_user_id else {
+            return Err(ShareError::ShareNotFound(share_id));
+        };
+        if !self
+            .is_same_tenant_user(recipient_user_id, tenant_id)
+            .await?
+        {
+            return Err(ShareError::ShareNotFound(share_id));
+        }
+        if !self.is_same_tenant_user(requesting_user, tenant_id).await? {
+            return Err(ShareError::InsufficientPermission {
+                required: SharePermissions::Admin,
+                actual: SharePermissions::View,
+            });
+        }
 
         // Determine resource for permission check
         let resource = if let Some(fid) = share.file_id {
@@ -732,6 +879,16 @@ where
             .map_err(|e| ShareError::Database(e.to_string()))?
             .ok_or(ShareError::ShareNotFound(share_id))?;
 
+        if !self.is_manageable_user_share(&share, tenant_id).await? {
+            return Err(ShareError::ShareNotFound(share_id));
+        }
+        if !self.is_same_tenant_user(requesting_user, tenant_id).await? {
+            return Err(ShareError::InsufficientPermission {
+                required: SharePermissions::Admin,
+                actual: SharePermissions::View,
+            });
+        }
+
         // Determine resource for permission check
         let resource = if let Some(fid) = share.file_id {
             Resource::File(fid)
@@ -791,45 +948,47 @@ where
 
         // Create notification for recipient
         if let Some(recipient_id) = share.recipient_user_id {
-            let resource_name = if let Some(fid) = share.file_id {
-                self.file_repo
-                    .get_by_id(fid, tenant_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|f| f.name)
-                    .unwrap_or_else(|| "a file".to_string())
-            } else if let Some(foid) = share.folder_id {
-                self.folder_repo
-                    .get_by_id(foid, tenant_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|f| f.name)
-                    .unwrap_or_else(|| "a folder".to_string())
-            } else {
-                "a resource".to_string()
-            };
+            if self.is_same_tenant_user(recipient_id, tenant_id).await? {
+                let resource_name = if let Some(fid) = share.file_id {
+                    self.file_repo
+                        .get_by_id(fid, tenant_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|f| f.name)
+                        .unwrap_or_else(|| "a file".to_string())
+                } else if let Some(foid) = share.folder_id {
+                    self.folder_repo
+                        .get_by_id(foid, tenant_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|f| f.name)
+                        .unwrap_or_else(|| "a folder".to_string())
+                } else {
+                    "a resource".to_string()
+                };
 
-            if let Ok(notification) = self
-                .notification_service
-                .create_notification(CreateNotification {
-                    user_id: recipient_id,
-                    notification_type: crate::domain::NotificationType::ShareRevoked,
-                    title: "Share access revoked".to_string(),
-                    message: format!("Your access to '{}' was revoked", resource_name),
-                    resource_id: share.resource_id().unwrap_or(share.id),
-                    resource_type: if share.is_file_share() {
-                        crate::domain::ResourceType::File
-                    } else {
-                        crate::domain::ResourceType::Folder
-                    },
-                    action_url: Some("/shared-with-me".to_string()),
-                    tenant_id: share.tenant_id,
-                })
-                .await
-            {
-                self.emit_notification_created_event(&notification).await;
+                if let Ok(notification) = self
+                    .notification_service
+                    .create_notification(CreateNotification {
+                        user_id: recipient_id,
+                        notification_type: crate::domain::NotificationType::ShareRevoked,
+                        title: "Share access revoked".to_string(),
+                        message: format!("Your access to '{}' was revoked", resource_name),
+                        resource_id: share.resource_id().unwrap_or(share.id),
+                        resource_type: if share.is_file_share() {
+                            crate::domain::ResourceType::File
+                        } else {
+                            crate::domain::ResourceType::Folder
+                        },
+                        action_url: Some("/shared-with-me".to_string()),
+                        tenant_id: share.tenant_id,
+                    })
+                    .await
+                {
+                    self.emit_notification_created_event(&notification).await;
+                }
             }
         }
 

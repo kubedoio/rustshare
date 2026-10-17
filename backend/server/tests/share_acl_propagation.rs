@@ -841,6 +841,641 @@ async fn test_share_revoke_triggers_acl_refresh() {
     );
 }
 
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn user_share_create_rejects_authenticated_tenant_mismatch() {
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    let recipient_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        owner_id,
+        "tenant-owner@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        recipient_id,
+        "tenant-recipient@example.com",
+    )
+    .await;
+    let file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+    let other_tenant_id = insert_test_tenant(&state.db_pool).await;
+
+    let file_result = rustshare_server::handlers::user_shares::create_file_share(
+        State(state.clone()),
+        Path(file_id),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: owner_id,
+            tenant_id: other_tenant_id,
+        },
+        ValidatedJson(
+            rustshare_server::handlers::user_shares::CreateFileShareRequest {
+                recipient_email: "tenant-recipient@example.com".to_string(),
+                permission: SharePermissions::View,
+            },
+        ),
+    )
+    .await;
+    assert!(
+        file_result.is_err(),
+        "file share accepted mismatched tenant"
+    );
+
+    let folder = state
+        .folder_service
+        .create_folder("Tenant mismatch".to_string(), None, owner_id, tenant_id)
+        .await
+        .unwrap();
+    let folder_result = rustshare_server::handlers::user_shares::create_folder_share(
+        State(state),
+        Path(folder.id),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: owner_id,
+            tenant_id: other_tenant_id,
+        },
+        ValidatedJson(
+            rustshare_server::handlers::user_shares::CreateFolderShareRequest {
+                recipient_email: "tenant-recipient@example.com".to_string(),
+                permission: SharePermissions::View,
+            },
+        ),
+    )
+    .await;
+    assert!(
+        folder_result.is_err(),
+        "folder share accepted mismatched tenant"
+    );
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn user_share_handlers_hide_recipient_moved_to_another_tenant() {
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let other_tenant_id = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    let recipient_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        owner_id,
+        "move-owner@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        recipient_id,
+        "move-recipient@example.com",
+    )
+    .await;
+    let file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+    let response = rustshare_server::handlers::user_shares::create_file_share(
+        State(state.clone()),
+        Path(file_id),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: owner_id,
+            tenant_id,
+        },
+        ValidatedJson(
+            rustshare_server::handlers::user_shares::CreateFileShareRequest {
+                recipient_email: "move-recipient@example.com".to_string(),
+                permission: SharePermissions::View,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let share_id = Uuid::parse_str(created["share_id"].as_str().unwrap()).unwrap();
+
+    sqlx::query("UPDATE users SET tenant_id = $2 WHERE id = $1")
+        .bind(recipient_id)
+        .bind(other_tenant_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+
+    let recipients = rustshare_server::handlers::user_shares::list_file_recipients(
+        State(state.clone()),
+        Path(file_id),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: owner_id,
+            tenant_id,
+        },
+    )
+    .await
+    .unwrap();
+    let body = axum::body::to_bytes(recipients.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let recipients: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(recipients.as_array().unwrap().len(), 0);
+
+    let received = rustshare_server::handlers::user_shares::list_received_shares(
+        State(state.clone()),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: recipient_id,
+            tenant_id,
+        },
+        axum::extract::Query(
+            rustshare_server::handlers::user_shares::ListReceivedSharesQuery {
+                limit: 50,
+                offset: 0,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let body = axum::body::to_bytes(received.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let received: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(received.as_array().unwrap().len(), 0);
+    assert!(!state
+        .permission_resolver
+        .check_file_permission(recipient_id, tenant_id, file_id, SharePermissions::View)
+        .await
+        .unwrap());
+
+    assert!(
+        rustshare_server::handlers::user_shares::update_recipient_permission(
+            State(state.clone()),
+            Path(share_id),
+            rustshare_server::handlers::AuthenticatedUser {
+                user_id: owner_id,
+                tenant_id,
+            },
+            axum::Json(
+                rustshare_server::handlers::user_shares::UpdatePermissionRequest {
+                    permission: SharePermissions::Admin,
+                },
+            ),
+        )
+        .await
+        .is_err()
+    );
+    rustshare_server::handlers::user_shares::remove_recipient(
+        State(state.clone()),
+        Path(share_id),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: owner_id,
+            tenant_id,
+        },
+    )
+    .await
+    .unwrap();
+
+    let (permission, revoked_at): (String, Option<chrono::DateTime<Utc>>) =
+        sqlx::query_as("SELECT permissions, revoked_at FROM shares WHERE id = $1")
+            .bind(share_id)
+            .fetch_one(&state.db_pool)
+            .await
+            .unwrap();
+    assert_eq!(permission, "View");
+    assert!(revoked_at.is_some());
+    sqlx::query("UPDATE users SET tenant_id = $2 WHERE id = $1")
+        .bind(recipient_id)
+        .bind(tenant_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    state.permission_resolver.clear_cache().await;
+    assert!(!state
+        .permission_resolver
+        .check_file_permission(recipient_id, tenant_id, file_id, SharePermissions::View)
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn received_user_shares_hide_resources_moved_to_another_tenant() {
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let other_tenant_id = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    let recipient_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        owner_id,
+        "resource-move-owner@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        recipient_id,
+        "resource-move-recipient@example.com",
+    )
+    .await;
+    let file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+    let folder = state
+        .folder_service
+        .create_folder("Resource moved".to_string(), None, owner_id, tenant_id)
+        .await
+        .unwrap();
+
+    rustshare_server::handlers::user_shares::create_file_share(
+        State(state.clone()),
+        Path(file_id),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: owner_id,
+            tenant_id,
+        },
+        ValidatedJson(
+            rustshare_server::handlers::user_shares::CreateFileShareRequest {
+                recipient_email: "resource-move-recipient@example.com".to_string(),
+                permission: SharePermissions::View,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    rustshare_server::handlers::user_shares::create_folder_share(
+        State(state.clone()),
+        Path(folder.id),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: owner_id,
+            tenant_id,
+        },
+        ValidatedJson(
+            rustshare_server::handlers::user_shares::CreateFolderShareRequest {
+                recipient_email: "resource-move-recipient@example.com".to_string(),
+                permission: SharePermissions::View,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+
+    sqlx::query("UPDATE files SET tenant_id = $2 WHERE id = $1")
+        .bind(file_id)
+        .bind(other_tenant_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE folders SET tenant_id = $2 WHERE id = $1")
+        .bind(folder.id)
+        .bind(other_tenant_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+
+    let response = rustshare_server::handlers::user_shares::list_received_shares(
+        State(state),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: recipient_id,
+            tenant_id,
+        },
+        axum::extract::Query(
+            rustshare_server::handlers::user_shares::ListReceivedSharesQuery {
+                limit: 50,
+                offset: 0,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let received: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(received.as_array().unwrap().len(), 0);
+    assert!(!received.to_string().contains("Resource moved"));
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn moved_share_creator_does_not_block_admin_revoke_or_leak_identity() {
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let other_tenant_id = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    let admin_id = Uuid::new_v4();
+    let recipient_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        owner_id,
+        "moved-creator@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        admin_id,
+        "share-admin@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        recipient_id,
+        "share-recipient@example.com",
+    )
+    .await;
+    let file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+    for (email, permission) in [
+        ("share-admin@example.com", SharePermissions::Admin),
+        ("share-recipient@example.com", SharePermissions::View),
+    ] {
+        rustshare_server::handlers::user_shares::create_file_share(
+            State(state.clone()),
+            Path(file_id),
+            rustshare_server::handlers::AuthenticatedUser {
+                user_id: owner_id,
+                tenant_id,
+            },
+            ValidatedJson(
+                rustshare_server::handlers::user_shares::CreateFileShareRequest {
+                    recipient_email: email.to_string(),
+                    permission,
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    }
+    let target_share_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM shares WHERE file_id = $1 AND recipient_user_id = $2")
+            .bind(file_id)
+            .bind(recipient_id)
+            .fetch_one(&state.db_pool)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE users SET tenant_id = $2 WHERE id = $1")
+        .bind(owner_id)
+        .bind(other_tenant_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+
+    let received = rustshare_server::handlers::user_shares::list_received_shares(
+        State(state.clone()),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: recipient_id,
+            tenant_id,
+        },
+        axum::extract::Query(
+            rustshare_server::handlers::user_shares::ListReceivedSharesQuery {
+                limit: 50,
+                offset: 0,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let body = axum::body::to_bytes(received.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let received: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let target = received
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|share| share["share_id"] == target_share_id.to_string())
+        .expect("active recipient share should remain visible to its recipient");
+    assert_eq!(target["shared_by"], Uuid::nil().to_string());
+    assert_eq!(target["shared_by_name"], "Unknown user");
+    assert_eq!(target["shared_by_email"], "");
+
+    let recipients = rustshare_server::handlers::user_shares::list_file_recipients(
+        State(state.clone()),
+        Path(file_id),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: admin_id,
+            tenant_id,
+        },
+    )
+    .await
+    .unwrap();
+    let body = axum::body::to_bytes(recipients.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let recipients: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(recipients
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|recipient| recipient["share_id"] == target_share_id.to_string()));
+
+    rustshare_server::handlers::user_shares::remove_recipient(
+        State(state.clone()),
+        Path(target_share_id),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: admin_id,
+            tenant_id,
+        },
+    )
+    .await
+    .unwrap();
+    let revoked_at: Option<chrono::DateTime<Utc>> =
+        sqlx::query_scalar("SELECT revoked_at FROM shares WHERE id = $1")
+            .bind(target_share_id)
+            .fetch_one(&state.db_pool)
+            .await
+            .unwrap();
+    assert!(revoked_at.is_some());
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn received_user_shares_hide_expired_and_revoked_grants() {
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    let recipient_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        owner_id,
+        "inactive-share-owner@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        recipient_id,
+        "inactive-share-recipient@example.com",
+    )
+    .await;
+    let file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+    let folder = state
+        .folder_service
+        .create_folder("Inactive share".to_string(), None, owner_id, tenant_id)
+        .await
+        .unwrap();
+    for (resource_id, is_folder) in [(file_id, false), (folder.id, true)] {
+        let request = rustshare_server::handlers::AuthenticatedUser {
+            user_id: owner_id,
+            tenant_id,
+        };
+        if is_folder {
+            rustshare_server::handlers::user_shares::create_folder_share(
+                State(state.clone()),
+                Path(resource_id),
+                request,
+                ValidatedJson(
+                    rustshare_server::handlers::user_shares::CreateFolderShareRequest {
+                        recipient_email: "inactive-share-recipient@example.com".to_string(),
+                        permission: SharePermissions::View,
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+        } else {
+            rustshare_server::handlers::user_shares::create_file_share(
+                State(state.clone()),
+                Path(resource_id),
+                request,
+                ValidatedJson(
+                    rustshare_server::handlers::user_shares::CreateFileShareRequest {
+                        recipient_email: "inactive-share-recipient@example.com".to_string(),
+                        permission: SharePermissions::View,
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+        }
+    }
+    sqlx::query(
+        "UPDATE shares SET expires_at = NOW() - INTERVAL '1 minute' WHERE file_id = $1 AND recipient_user_id = $2",
+    )
+    .bind(file_id)
+    .bind(recipient_id)
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE shares SET revoked_at = NOW() WHERE folder_id = $1 AND recipient_user_id = $2",
+    )
+    .bind(folder.id)
+    .bind(recipient_id)
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
+
+    let response = rustshare_server::handlers::user_shares::list_received_shares(
+        State(state),
+        rustshare_server::handlers::AuthenticatedUser {
+            user_id: recipient_id,
+            tenant_id,
+        },
+        axum::extract::Query(
+            rustshare_server::handlers::user_shares::ListReceivedSharesQuery {
+                limit: 50,
+                offset: 0,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let received: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(received.as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn received_user_shares_include_only_tenant_valid_group_grants() {
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    let member_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        owner_id,
+        "group-share-owner@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        member_id,
+        "group-share-member@example.com",
+    )
+    .await;
+    let file_id = create_test_note(&state, &sink, tenant_id, owner_id).await;
+    let group_id = insert_test_group(&state.db_pool, tenant_id, None).await;
+    insert_group_member_direct(&state.db_pool, group_id, member_id).await;
+    let share_id = seed_group_share(
+        &state.db_pool,
+        ShareTarget::File(file_id),
+        group_id,
+        tenant_id,
+        owner_id,
+        false,
+        None,
+    )
+    .await;
+
+    let list_received = |state: rustshare_server::AppState| async move {
+        rustshare_server::handlers::user_shares::list_received_shares(
+            State(state),
+            rustshare_server::handlers::AuthenticatedUser {
+                user_id: member_id,
+                tenant_id,
+            },
+            axum::extract::Query(
+                rustshare_server::handlers::user_shares::ListReceivedSharesQuery {
+                    limit: 50,
+                    offset: 0,
+                },
+            ),
+        )
+        .await
+        .unwrap()
+    };
+    let response = list_received(state.clone()).await;
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let received: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(received
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|share| share["share_id"] == share_id.to_string()));
+    assert!(state
+        .permission_resolver
+        .check_file_permission(member_id, tenant_id, file_id, SharePermissions::View)
+        .await
+        .unwrap());
+
+    sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
+        .bind(group_id)
+        .bind(member_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    state.permission_resolver.clear_cache().await;
+    let response = list_received(state.clone()).await;
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let received: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(received.as_array().unwrap().len(), 0);
+    assert!(!state
+        .permission_resolver
+        .check_file_permission(member_id, tenant_id, file_id, SharePermissions::View)
+        .await
+        .unwrap());
+}
+
 // ---------------------------------------------------------------------------
 // AR-04 scenario 1 + 2: legacy nil-tenant group; admin add/remove refresh in
 // the share's tenant. Fails if the original group-tenant filter is restored.
