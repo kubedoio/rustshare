@@ -710,6 +710,52 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
             .fetch_one(&pool)
             .await
             .unwrap();
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        "/api/v1/organization-admin/groups",
+        &org_token,
+        None,
+        serde_json::json!({"name":format!("org-group-{tenant}")}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        "/api/v1/organization-admin/groups",
+        &org_token,
+        None,
+        serde_json::json!({"name":format!("other-group-{tenant}")}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    let other_group_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM user_groups WHERE tenant_id=$1 AND name=$2")
+            .bind(tenant)
+            .bind(format!("other-group-{tenant}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let (status, _) = send_json(
+        &app,
+        "PATCH",
+        &format!("/api/v1/organization-admin/groups/{other_group_id}"),
+        &org_token,
+        None,
+        serde_json::json!({"name":format!("org-group-{tenant}")}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    let (status, _) = send(
+        &app,
+        "DELETE",
+        &format!("/api/v1/organization-admin/groups/{other_group_id}"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
     let private_file_id = Uuid::new_v4();
     sqlx::query("INSERT INTO files (id,name,path,size,mime_type,content_hash,storage_key,owner_id,tenant_id) VALUES ($1,'group-private.txt','/group-private.txt',5,'text/plain','hash','key',$2,$3)")
         .bind(private_file_id).bind(member).bind(tenant)
@@ -848,6 +894,25 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
             .unwrap(),
         Some("test".to_owned()),
         "omitting description preserves its current value"
+    );
+    let (status, _) = send_json(
+        &app,
+        "PATCH",
+        &format!("/api/v1/organization-admin/groups/{group_id}"),
+        &org_token,
+        None,
+        serde_json::json!({"description":null}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<String>>("SELECT description FROM user_groups WHERE id=$1")
+            .bind(group_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        None,
+        "explicit null clears the description"
     );
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM admin_actions WHERE tenant_id=$1 AND action_type='group.member_added' AND target_id=$2").bind(tenant).bind(group_id).fetch_one(&pool).await.unwrap(),1);
     let (status, audit) = send(

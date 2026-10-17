@@ -11584,6 +11584,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": ""
           }
         }
       }
@@ -11644,6 +11647,17 @@
           "crate::handlers::organization_admin"
         ],
         "operationId": "delete_group",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "responses": {
           "204": {
             "description": ""
@@ -11658,6 +11672,17 @@
           "crate::handlers::organization_admin"
         ],
         "operationId": "update_group",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -11681,6 +11706,9 @@
           },
           "404": {
             "description": ""
+          },
+          "409": {
+            "description": ""
           }
         }
       }
@@ -11692,6 +11720,15 @@
         ],
         "operationId": "members",
         "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
           {
             "name": "page",
             "in": "query",
@@ -11729,6 +11766,17 @@
           "crate::handlers::organization_admin"
         ],
         "operationId": "add_member",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -11755,6 +11803,26 @@
           "crate::handlers::organization_admin"
         ],
         "operationId": "remove_member",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "responses": {
           "204": {
             "description": ""

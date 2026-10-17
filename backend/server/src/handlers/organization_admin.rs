@@ -14,7 +14,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -100,7 +100,17 @@ pub struct GroupDetail {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UpdateGroupInput {
     pub name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_present_nullable_string")]
     pub description: Option<Option<String>>,
+}
+
+fn deserialize_present_nullable_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 fn pagination(page: Option<i64>, per_page: Option<i64>) -> Result<(i64, i64, i64), AppError> {
@@ -275,7 +285,7 @@ pub async fn group(
         per_page,
     }))
 }
-#[utoipa::path(post,path="/api/v1/organization-admin/groups",request_body=GroupInput,responses((status=201,body=Group)))]
+#[utoipa::path(post,path="/api/v1/organization-admin/groups",request_body=GroupInput,responses((status=201,body=Group),(status=409)))]
 pub async fn create_group(
     State(s): State<AppState>,
     OrganizationAdmin { user_id, tenant_id }: OrganizationAdmin,
@@ -286,7 +296,7 @@ pub async fn create_group(
         return Err(admin_bad_request("Group name must not be empty"));
     }
     let mut tx = s.db_pool.begin().await.map_err(db_error)?;
-    let r=sqlx::query_as::<_,(Uuid,String,Option<String>,chrono::DateTime<chrono::Utc>,chrono::DateTime<chrono::Utc>)>("INSERT INTO user_groups(id,name,description,created_by,tenant_id) VALUES(gen_random_uuid(),$1,$2,$3,$4) RETURNING id,name,description,created_at,updated_at").bind(&input.name).bind(&input.description).bind(user_id).bind(tenant_id).fetch_one(&mut *tx).await.map_err(db_error)?;
+    let r=sqlx::query_as::<_,(Uuid,String,Option<String>,chrono::DateTime<chrono::Utc>,chrono::DateTime<chrono::Utc>)>("INSERT INTO user_groups(id,name,description,created_by,tenant_id) VALUES(gen_random_uuid(),$1,$2,$3,$4) RETURNING id,name,description,created_at,updated_at").bind(&input.name).bind(&input.description).bind(user_id).bind(tenant_id).fetch_one(&mut *tx).await.map_err(group_db_error)?;
     insert_scoped_admin_action(
         &mut tx,
         tenant_id,
@@ -312,7 +322,7 @@ pub async fn create_group(
         }),
     ))
 }
-#[utoipa::path(patch,path="/api/v1/organization-admin/groups/{id}",request_body=UpdateGroupInput,responses((status=200,body=Group),(status=404)))]
+#[utoipa::path(patch,path="/api/v1/organization-admin/groups/{id}",params(("id"=Uuid,Path)),request_body=UpdateGroupInput,responses((status=200,body=Group),(status=404),(status=409)))]
 pub async fn update_group(
     State(s): State<AppState>,
     OrganizationAdmin { user_id, tenant_id }: OrganizationAdmin,
@@ -335,7 +345,7 @@ pub async fn update_group(
         return Err(admin_bad_request("Group name must not be empty"));
     }
     let description = input.description.unwrap_or(current.1);
-    let r=sqlx::query_as::<_,(Uuid,String,Option<String>,chrono::DateTime<chrono::Utc>,chrono::DateTime<chrono::Utc>,i64)>("UPDATE user_groups g SET name=$3,description=$4,updated_at=now() WHERE g.id=$1 AND g.tenant_id=$2 RETURNING g.id,g.name,g.description,g.created_at,g.updated_at,(SELECT count(*) FROM group_members m JOIN users u ON u.id=m.user_id AND u.tenant_id=$2 WHERE m.group_id=g.id)").bind(id).bind(tenant_id).bind(name).bind(description).fetch_one(&mut *tx).await.map_err(db_error)?;
+    let r=sqlx::query_as::<_,(Uuid,String,Option<String>,chrono::DateTime<chrono::Utc>,chrono::DateTime<chrono::Utc>,i64)>("UPDATE user_groups g SET name=$3,description=$4,updated_at=now() WHERE g.id=$1 AND g.tenant_id=$2 RETURNING g.id,g.name,g.description,g.created_at,g.updated_at,(SELECT count(*) FROM group_members m JOIN users u ON u.id=m.user_id AND u.tenant_id=$2 WHERE m.group_id=g.id)").bind(id).bind(tenant_id).bind(name).bind(description).fetch_one(&mut *tx).await.map_err(group_db_error)?;
     insert_scoped_admin_action(
         &mut tx,
         tenant_id,
@@ -358,7 +368,7 @@ pub async fn update_group(
         member_count: r.5,
     }))
 }
-#[utoipa::path(delete,path="/api/v1/organization-admin/groups/{id}",responses((status=204),(status=404)))]
+#[utoipa::path(delete,path="/api/v1/organization-admin/groups/{id}",params(("id"=Uuid,Path)),responses((status=204),(status=404)))]
 pub async fn delete_group(
     State(s): State<AppState>,
     OrganizationAdmin { user_id, tenant_id }: OrganizationAdmin,
@@ -402,7 +412,7 @@ pub async fn delete_group(
     );
     Ok(StatusCode::NO_CONTENT)
 }
-#[utoipa::path(get,path="/api/v1/organization-admin/groups/{id}/members",params(PaginationQuery),responses((status=200,body=OrgMembers)))]
+#[utoipa::path(get,path="/api/v1/organization-admin/groups/{id}/members",params(("id"=Uuid,Path),PaginationQuery),responses((status=200,body=OrgMembers)))]
 pub async fn members(
     State(s): State<AppState>,
     OrganizationAdmin { tenant_id, .. }: OrganizationAdmin,
@@ -443,7 +453,7 @@ pub async fn members(
         per_page,
     }))
 }
-#[utoipa::path(post,path="/api/v1/organization-admin/groups/{id}/members",request_body=MemberInput,responses((status=204),(status=404)))]
+#[utoipa::path(post,path="/api/v1/organization-admin/groups/{id}/members",params(("id"=Uuid,Path)),request_body=MemberInput,responses((status=204),(status=404)))]
 pub async fn add_member(
     State(s): State<AppState>,
     OrganizationAdmin { user_id, tenant_id }: OrganizationAdmin,
@@ -484,7 +494,7 @@ pub async fn add_member(
     );
     Ok(StatusCode::NO_CONTENT)
 }
-#[utoipa::path(delete,path="/api/v1/organization-admin/groups/{id}/members/{user_id}",responses((status=204),(status=404)))]
+#[utoipa::path(delete,path="/api/v1/organization-admin/groups/{id}/members/{user_id}",params(("id"=Uuid,Path),("user_id"=Uuid,Path)),responses((status=204),(status=404)))]
 pub async fn remove_member(
     State(s): State<AppState>,
     OrganizationAdmin {
@@ -562,4 +572,13 @@ pub async fn audit(
 fn db_error(e: sqlx::Error) -> AppError {
     tracing::error!("Organization admin database error: {e:?}");
     admin_internal_error("Database error")
+}
+
+fn group_db_error(error: sqlx::Error) -> AppError {
+    if let sqlx::Error::Database(db_error) = &error {
+        if db_error.constraint() == Some("user_groups_name_key") {
+            return admin_conflict("Group name is unavailable");
+        }
+    }
+    db_error(error)
 }
