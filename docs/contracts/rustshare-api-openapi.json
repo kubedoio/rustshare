@@ -11520,6 +11520,37 @@
         }
       }
     },
+    "/api/v1/organization-admin/capability": {
+      "get": {
+        "tags": [
+          "Organization Admin"
+        ],
+        "summary": "Live authorization probe for the organization-administration shell.\nThe extractor resolves the active tenant grant from PostgreSQL on each request.",
+        "operationId": "capability",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationAdminCapability"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization-admin/groups": {
       "get": {
         "tags": [
@@ -23670,6 +23701,17 @@
             "items": {
               "$ref": "#/components/schemas/OrgUser"
             }
+          }
+        }
+      },
+      "OrganizationAdminCapability": {
+        "type": "object",
+        "required": [
+          "allowed"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "boolean"
           }
         }
       },

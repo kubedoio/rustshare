@@ -148,6 +148,28 @@ pub struct AuditPage {
     pub per_page: i64,
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct OrganizationAdminCapability {
+    pub allowed: bool,
+}
+
+/// Live authorization probe for the organization-administration shell.
+/// The extractor resolves the active tenant grant from PostgreSQL on each request.
+#[utoipa::path(
+    get,
+    path = "/api/v1/organization-admin/capability",
+    tag = "Organization Admin",
+    responses(
+        (status = 200, body = OrganizationAdminCapability),
+        (status = 403, body = crate::handlers::ErrorResponse)
+    )
+)]
+pub async fn capability(
+    OrganizationAdmin { .. }: OrganizationAdmin,
+) -> Json<OrganizationAdminCapability> {
+    Json(OrganizationAdminCapability { allowed: true })
+}
+
 const MAX_BULK_INVITES: usize = 100;
 const MAX_BULK_INVITE_DELIVERY_CONCURRENCY: usize = 10;
 // shortcut: this cap is per process; use a shared queue for fleet-wide delivery coordination.

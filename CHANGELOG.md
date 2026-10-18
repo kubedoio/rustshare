@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Add dry-run and apply for batches of up to 100 tenant-scoped invitations, with row outcomes, pending-group assignment, retry-safe invitation reuse, and transactional audit.
 - Add tenant-scoped organization invitation listing, idempotent resend, and cancellation with bounded pagination, secret-free responses, delivery-state tracking, and transactional audit.
 - Add bounded tenant-scoped organization-user offboarding with dry-run/apply outcomes, transactional audit, session/device-token/share revocation, group-membership removal, and stale-JWT rejection after reactivation. Existing JWTs require reauthentication once after the migration.
+- Add a separate organization-administration WebUI for users, groups, invitations, offboarding and tenant audit. The shell checks the live organization-admin capability; installation settings/grant management remain in `/admin`.
 
 All notable changes to this project will be documented in this file.
 
