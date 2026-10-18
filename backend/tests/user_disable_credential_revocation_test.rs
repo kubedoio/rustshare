@@ -1236,6 +1236,7 @@ async fn tenant_drift_fails_closed_for_sessions_and_websockets() {
         rustshare_server::handlers::ws_auth::ClientIdentity::User {
             user_id: resolved_user,
             tenant_id,
+            ..
         } => {
             assert_eq!(resolved_user, user_id);
             assert_eq!(

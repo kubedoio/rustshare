@@ -8,14 +8,18 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use super::extractors::bearer_token_from_headers;
-use crate::web_session::{extract_cookie_value, resolve_user_session};
+use crate::web_session::extract_cookie_value;
 use crate::AppState;
 
 /// Identifies the client connected to a WebSocket.
 #[derive(Debug, Clone)]
 pub enum ClientIdentity {
     /// Authenticated user
-    User { user_id: UserId, tenant_id: Uuid },
+    User {
+        user_id: UserId,
+        tenant_id: Uuid,
+        credential_version: i64,
+    },
     /// Anonymous share viewer with session token
     ShareViewer {
         share_id: ShareId,
@@ -70,7 +74,13 @@ pub async fn validate_client_token(
     if let Ok(claims) = state.jwt_manager.validate(token) {
         let user_id =
             UserId::from(Uuid::parse_str(&claims.sub).map_err(|_| WsTokenError::InvalidToken)?);
-        let row_tenant_id = ensure_ws_user_active(state, user_id, Some(claims.iat)).await?;
+        let (row_tenant_id, credential_version) = ensure_ws_user_active(
+            state,
+            user_id,
+            Some(claims.iat),
+            Some(claims.credential_version),
+        )
+        .await?;
         if claims.tenant_id != row_tenant_id {
             return Err(WsTokenError::PrincipalRejected(
                 StatusCode::UNAUTHORIZED,
@@ -80,6 +90,7 @@ pub async fn validate_client_token(
         return Ok(ClientIdentity::User {
             user_id,
             tenant_id: row_tenant_id,
+            credential_version,
         });
     }
 
@@ -136,12 +147,14 @@ async fn ensure_ws_user_active(
     state: &AppState,
     user_id: UserId,
     token_iat: Option<i64>,
-) -> Result<Uuid, (StatusCode, String)> {
-    let row: Option<(bool, Uuid, bool)> = sqlx::query_as(
-        "SELECT disabled_at IS NOT NULL, tenant_id, $2::bigint IS NOT NULL AND credentials_revoked_at IS NOT NULL AND to_timestamp($2) <= credentials_revoked_at FROM users WHERE id = $1",
+    token_credential_version: Option<i64>,
+) -> Result<(Uuid, i64), (StatusCode, String)> {
+    let row: Option<(bool, Uuid, bool, i64)> = sqlx::query_as(
+        "SELECT disabled_at IS NOT NULL, tenant_id, $2::bigint IS NOT NULL AND (credential_version <> $3 OR (credentials_revoked_at IS NOT NULL AND to_timestamp($2) <= credentials_revoked_at)), credential_version FROM users WHERE id = $1",
     )
             .bind(user_id)
             .bind(token_iat)
+            .bind(token_credential_version)
             .fetch_optional(&state.db_pool)
             .await
             .map_err(|_| {
@@ -152,12 +165,111 @@ async fn ensure_ws_user_active(
             })?;
 
     match row {
-        Some((true, _, _)) | Some((false, _, true)) => {
+        Some((true, _, _, _)) | Some((false, _, true, _)) => {
             Err((StatusCode::FORBIDDEN, "Account disabled".to_string()))
         }
-        Some((false, tenant_id, false)) => Ok(tenant_id),
+        Some((false, tenant_id, false, version)) => Ok((tenant_id, version)),
         None => Err((StatusCode::UNAUTHORIZED, "User not found".to_string())),
     }
+}
+
+/// Recheck a live user socket against the credential generation captured at
+/// authentication time. Account reactivation cannot revive the old socket.
+pub async fn user_credential_is_current(
+    state: &AppState,
+    user_id: UserId,
+    tenant_id: Uuid,
+    credential_version: i64,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND tenant_id=$2 AND disabled_at IS NULL AND credential_version=$3)",
+    )
+    .bind(user_id)
+    .bind(tenant_id)
+    .bind(credential_version)
+    .fetch_one(&state.db_pool)
+    .await
+}
+
+async fn resolve_ws_user_session(
+    state: &AppState,
+    session_token: &str,
+) -> Result<Option<(UserId, Uuid, i64)>, (StatusCode, String)> {
+    let session_hash = rustshare_auth::hash_web_session_token(session_token);
+    let mut tx = state.db_pool.begin().await.map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error".to_string(),
+        )
+    })?;
+    let session_owner: Option<(Uuid, Uuid)> =
+        sqlx::query_as("SELECT user_id, tenant_id FROM user_sessions WHERE session_token_hash=$1")
+            .bind(&session_hash)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Database error".to_string(),
+                )
+            })?;
+    let Some((user_id, session_tenant_id)) = session_owner else {
+        return Ok(None);
+    };
+    let user: Option<(bool, Uuid, i64)> = sqlx::query_as(
+        "SELECT disabled_at IS NULL, tenant_id, credential_version FROM users WHERE id=$1 FOR UPDATE",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error".to_string(),
+        )
+    })?;
+    let Some((true, tenant_id, credential_version)) = user else {
+        return Ok(None);
+    };
+    if tenant_id != session_tenant_id {
+        return Ok(None);
+    }
+    let session_is_current: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM user_sessions WHERE session_token_hash=$1 AND user_id=$2 AND tenant_id=$3 AND expires_at > clock_timestamp())",
+    )
+    .bind(&session_hash)
+    .bind(user_id)
+    .bind(tenant_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error".to_string(),
+        )
+    })?;
+    if !session_is_current {
+        return Ok(None);
+    }
+    sqlx::query(
+        "UPDATE user_sessions SET last_seen_at=clock_timestamp() WHERE session_token_hash=$1",
+    )
+    .bind(session_hash)
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error".to_string(),
+        )
+    })?;
+    tx.commit().await.map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database error".to_string(),
+        )
+    })?;
+    Ok(Some((UserId::from(user_id), tenant_id, credential_version)))
 }
 
 /// Resolve a WebSocket client identity from headers + query parameters.
@@ -202,20 +314,16 @@ pub async fn resolve_ws_client_identity(
     if let Some(session_token) =
         extract_cookie_value(headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
     {
-        let Some(session) = resolve_user_session(state, &session_token)
-            .await
-            .map_err(|error| (StatusCode::UNAUTHORIZED, error))?
+        let Some((user_id, tenant_id, credential_version)) =
+            resolve_ws_user_session(state, &session_token).await?
         else {
             return Err((StatusCode::UNAUTHORIZED, "Invalid session".to_string()));
         };
 
-        // resolve_user_session already validated the session's organization
-        // against the user's row (ADR-0040 D3); re-check activity here.
-        ensure_ws_user_active(state, session.user_id, None).await?;
-
         return Ok(ClientIdentity::User {
-            user_id: session.user_id,
-            tenant_id: session.tenant_id,
+            user_id,
+            tenant_id,
+            credential_version,
         });
     }
 

@@ -20,9 +20,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use super::ws_auth::ClientIdentity;
-
-use super::ws_auth::{resolve_ws_client_identity, WsAuthQuery};
+use super::ws_auth::{
+    resolve_ws_client_identity, user_credential_is_current, ClientIdentity, WsAuthQuery,
+};
 use crate::AppState;
 
 // ---------------------------------------------------------------------------
@@ -164,7 +164,10 @@ pub async fn collab_handler(
         query.doc_id, client_identity
     );
 
-    let ClientIdentity::User { user_id, tenant_id } = &client_identity else {
+    let ClientIdentity::User {
+        user_id, tenant_id, ..
+    } = &client_identity
+    else {
         return Err((
             StatusCode::UNAUTHORIZED,
             "note autosave requires an authenticated user".to_string(),
@@ -223,7 +226,46 @@ async fn handle_collab_socket(
         }
     }
 
-    while let Some(Ok(msg)) = socket.next().await {
+    loop {
+        let msg =
+            match tokio::time::timeout(tokio::time::Duration::from_secs(1), socket.next()).await {
+                Ok(Some(Ok(msg))) => msg,
+                Ok(Some(Err(_))) | Ok(None) => break,
+                Err(_) => {
+                    if let ClientIdentity::User {
+                        user_id,
+                        tenant_id,
+                        credential_version,
+                    } = &client_identity
+                    {
+                        if !user_credential_is_current(
+                            &state,
+                            *user_id,
+                            *tenant_id,
+                            *credential_version,
+                        )
+                        .await
+                        .unwrap_or(false)
+                        {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+            };
+        if let ClientIdentity::User {
+            user_id,
+            tenant_id,
+            credential_version,
+        } = &client_identity
+        {
+            if !user_credential_is_current(&state, *user_id, *tenant_id, *credential_version)
+                .await
+                .unwrap_or(false)
+            {
+                break;
+            }
+        }
         match msg {
             WsMessage::Text(text) => {
                 debug!("[collab] doc_id={} recv text: {} bytes", doc_id, text.len());
@@ -276,6 +318,7 @@ async fn handle_collab_socket(
         }
     }
 
+    let _ = socket.send(WsMessage::Close(None)).await;
     state.collab_rooms.leave(&room).await;
     info!("Collab WebSocket disconnected for doc_id={}", doc_id);
 }
@@ -291,7 +334,10 @@ async fn handle_collab_text_message(
 
     match request {
         CollabTextRequest::NoteSave { content } => {
-            let ClientIdentity::User { user_id, tenant_id } = client_identity else {
+            let ClientIdentity::User {
+                user_id, tenant_id, ..
+            } = client_identity
+            else {
                 return Err("note autosave requires an authenticated user".to_string());
             };
             let file_id = Uuid::parse_str(doc_id)

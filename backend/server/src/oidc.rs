@@ -20,7 +20,9 @@ use crate::{
         load_oidc_runtime_settings, load_provider_metadata, oidc_http_client,
         MobileOidcRuntimeConfig, OIDC_PROVIDER_UNAVAILABLE_MESSAGE,
     },
-    web_session::{build_csrf_cookie, build_session_cookie, create_user_session},
+    web_session::{
+        build_csrf_cookie, build_session_cookie, create_user_session, generate_user_jwt,
+    },
     AppState,
 };
 
@@ -260,11 +262,14 @@ pub async fn mobile_oidc_exchange(
         })?;
 
     let user = find_or_create_oidc_user(&state, &email, settings.auto_provision_users).await?;
-    let token = state
-        .jwt_manager
-        .generate(user.id, user.email.clone(), user.tenant_id)
-        .map_err(|_| {
-            internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "mobile_jwt_generation")
+    let token = generate_user_jwt(&state, user.id, &user.email, user.tenant_id)
+        .await
+        .map_err(|error| {
+            if error == "account_disabled" {
+                internal_oidc_error(StatusCode::UNAUTHORIZED, "account_disabled")
+            } else {
+                internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "mobile_jwt_generation")
+            }
         })?;
 
     Ok(Json(MobileOidcExchangeResponse {
@@ -402,7 +407,13 @@ pub async fn oidc_callback(
         ip_address.clone(),
     )
     .await
-    .map_err(|_| internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "session_persist"))?;
+    .map_err(|error| {
+        if error == "account_disabled" {
+            internal_oidc_error(StatusCode::UNAUTHORIZED, "account_disabled")
+        } else {
+            internal_oidc_error(StatusCode::INTERNAL_SERVER_ERROR, "session_persist")
+        }
+    })?;
 
     if state
         .metadata_store

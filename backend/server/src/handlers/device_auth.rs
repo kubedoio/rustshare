@@ -29,7 +29,8 @@ use super::ErrorResponse;
 use crate::handlers::AppError;
 use crate::handlers::AuthenticatedUser;
 use crate::oidc_runtime::load_oidc_runtime_settings;
-use crate::state::{AppConfigState, DatabaseState};
+use crate::state::{AppConfigState, AppState, DatabaseState};
+use crate::web_session::extract_cookie_value;
 
 /// User code alphabet - excludes ambiguous characters: 0, O, 1, I, L
 const USER_CODE_ALPHABET: &[char] = &[
@@ -74,9 +75,10 @@ impl DeviceApprovalLookup {
                 id,
                 user_id,
                 approved_at IS NOT NULL as is_approved,
-                expires_at < NOW() as is_expired
+                expires_at < clock_timestamp() as is_expired
             FROM device_pair_requests
             WHERE UPPER(user_code) = UPPER($1)
+            FOR UPDATE
             "#
             }
             Self::DeviceCode(_) => {
@@ -85,9 +87,10 @@ impl DeviceApprovalLookup {
                 id,
                 user_id,
                 approved_at IS NOT NULL as is_approved,
-                expires_at < NOW() as is_expired
+                expires_at < clock_timestamp() as is_expired
             FROM device_pair_requests
             WHERE device_code = $1
+            FOR UPDATE
             "#
             }
         }
@@ -166,12 +169,21 @@ pub struct DeviceRequestResponse {
     ),
 )]
 pub async fn device_approve(
-    State(db): State<DatabaseState>,
-    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AuthenticatedUser { user_id, tenant_id }: AuthenticatedUser,
     Json(body): Json<DeviceApproveRequest>,
 ) -> Result<Json<DeviceApproveResponse>, AppError> {
     let lookup = validate_device_approval_request(&body)?;
-    approve_device_pair_request(&db.db_pool, user_id, lookup).await?;
+    approve_device_pair_request(
+        &state.db_pool,
+        &state.jwt_manager,
+        user_id,
+        tenant_id,
+        &headers,
+        lookup,
+    )
+    .await?;
 
     // Return device_name - the actual device name is captured at poll time
     // when the token is created, so we return a placeholder here
@@ -180,54 +192,118 @@ pub async fn device_approve(
     }))
 }
 
-async fn fetch_pair_request_for_approval(
-    db_pool: &sqlx::PgPool,
-    lookup: &DeviceApprovalLookup,
-) -> Result<Option<sqlx::postgres::PgRow>, AppError> {
-    Ok(sqlx::query(lookup.query())
-        .bind(lookup.value())
-        .fetch_optional(db_pool)
-        .await?)
-}
-
 async fn approve_device_pair_request(
     db_pool: &sqlx::PgPool,
+    jwt_manager: &rustshare_auth::JwtManager,
     user_id: Uuid,
+    tenant_id: Uuid,
+    headers: &HeaderMap,
     lookup: DeviceApprovalLookup,
 ) -> Result<(), AppError> {
-    let row = fetch_pair_request_for_approval(db_pool, &lookup).await?;
+    let mut tx = db_pool.begin().await?;
+    let user_is_active: Option<bool> = sqlx::query_scalar(
+        "SELECT disabled_at IS NULL AND tenant_id = $2 FROM users WHERE id = $1 FOR UPDATE",
+    )
+    .bind(user_id)
+    .bind(tenant_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if user_is_active != Some(true) {
+        return Err(AppError::forbidden("account_disabled"));
+    }
 
-    let (id, is_approved, is_expired) = match row {
-        Some(row) => {
-            let id: Uuid = row.try_get("id")?;
-            let is_approved: bool = row.try_get("is_approved").unwrap_or(false);
-            let is_expired: bool = row.try_get("is_expired").unwrap_or(true);
-            (id, is_approved, is_expired)
-        }
-        None => {
-            return Err(AppError::not_found("code_not_found"));
+    // The extractor ran before this transaction. Recheck its credential while
+    // holding the same user lock used by offboarding, so an in-flight request
+    // cannot become valid again after disable and reactivation.
+    let session_is_current = if let Some(session_token) =
+        extract_cookie_value(headers, rustshare_auth::WEB_SESSION_COOKIE_NAME)
+    {
+        let session_hash = rustshare_auth::hash_web_session_token(&session_token);
+        Some(sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM user_sessions WHERE user_id=$1 AND tenant_id=$2 AND session_token_hash=$3 AND expires_at > clock_timestamp())",
+        )
+        .bind(user_id)
+        .bind(tenant_id)
+        .bind(session_hash)
+        .fetch_one(&mut *tx)
+        .await?)
+    } else {
+        None
+    };
+    let credential_is_current = if session_is_current == Some(true) {
+        true
+    } else {
+        let bearer = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split_once(' '))
+            .filter(|(scheme, token)| scheme.eq_ignore_ascii_case("Bearer") && !token.is_empty())
+            .map(|(_, token)| token)
+            .ok_or(AppError::Unauthorized)?;
+        match jwt_manager.validate(bearer) {
+            Ok(claims) => {
+                let claim_user_id =
+                    Uuid::parse_str(&claims.sub).map_err(|_| AppError::Unauthorized)?;
+                claim_user_id == user_id
+                    && sqlx::query_scalar::<_, bool>(
+                        "SELECT credential_version=$3 AND (credentials_revoked_at IS NULL OR to_timestamp($2) > credentials_revoked_at) FROM users WHERE id=$1 AND tenant_id=$4",
+                    )
+                    .bind(user_id)
+                    .bind(claims.iat)
+                    .bind(claims.credential_version)
+                    .bind(tenant_id)
+                    .fetch_optional(&mut *tx)
+                    .await?
+                    .unwrap_or(false)
+            }
+            Err(_) => {
+                let token_hash = hex::encode(Sha256::digest(bearer.as_bytes()));
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(SELECT 1 FROM device_tokens WHERE user_id=$1 AND token_hash=$2 AND revoked_at IS NULL)",
+                )
+                .bind(user_id)
+                .bind(token_hash)
+                .fetch_one(&mut *tx)
+                .await?
+            }
         }
     };
+    if !credential_is_current {
+        return Err(AppError::Unauthorized);
+    }
 
+    // Lock and re-read the request after the user lock so concurrent approvals
+    // cannot replace the approving principal.
+    let row = sqlx::query(lookup.query())
+        .bind(lookup.value())
+        .fetch_optional(&mut *tx)
+        .await?;
+    let (id, is_approved, is_expired) = match row {
+        Some(row) => (
+            row.try_get::<Uuid, _>("id")?,
+            row.try_get::<bool, _>("is_approved").unwrap_or(false),
+            row.try_get::<bool, _>("is_expired").unwrap_or(true),
+        ),
+        None => return Err(AppError::not_found("code_not_found")),
+    };
     if is_expired {
         return Err(AppError::not_found("code_not_found"));
     }
-
     if is_approved {
         return Err(AppError::conflict("already_approved"));
     }
 
-    sqlx::query!(
-        r#"
-        UPDATE device_pair_requests
-        SET user_id = $1, approved_at = NOW()
-        WHERE id = $2
-        "#,
-        user_id,
-        id
+    let update = sqlx::query(
+        "UPDATE device_pair_requests SET user_id=$1, approved_at=NOW() WHERE id=$2 AND approved_at IS NULL AND expires_at > clock_timestamp()",
     )
-    .execute(db_pool)
+    .bind(user_id)
+    .bind(id)
+    .execute(&mut *tx)
     .await?;
+    if update.rows_affected() != 1 {
+        return Err(AppError::conflict("already_approved"));
+    }
+    tx.commit().await?;
 
     Ok(())
 }
@@ -510,6 +586,34 @@ async fn device_poll_inner(
 
     // Insert token and delete pair request in a transaction
     let mut tx = db_pool.begin().await?;
+
+    // Serialize token issuance with account disable so an approved pair poll
+    // cannot create a device token after the disable trigger has run.
+    let user_is_active: Option<bool> =
+        sqlx::query_scalar("SELECT disabled_at IS NULL FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if user_is_active != Some(true) {
+        sqlx::query("DELETE FROM device_pair_requests WHERE device_code = $1")
+            .bind(&req.device_code)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Ok(Json(DevicePollResponse::Expired {}).into_response());
+    }
+
+    let pair_request_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM device_pair_requests WHERE device_code=$1 AND user_id=$2 AND approved_at IS NOT NULL AND expires_at > clock_timestamp() FOR UPDATE",
+    )
+    .bind(&req.device_code)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if pair_request_id.is_none() {
+        tx.commit().await?;
+        return Ok(Json(DevicePollResponse::Expired {}).into_response());
+    }
 
     // Insert the device token
     sqlx::query!(
@@ -880,6 +984,26 @@ mod tests {
             .ok();
     }
 
+    fn test_approval_auth(user_id: Uuid) -> (rustshare_auth::JwtManager, HeaderMap) {
+        let manager = rustshare_auth::JwtManager::new(
+            "device_pair_test_secret_at_least_32_chars",
+            "rustshare",
+            "rustshare-api",
+            24,
+        );
+        let token = manager
+            .generate(user_id, "device-pair@test.local", Uuid::nil())
+            .expect("test JWT");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}")
+                .parse()
+                .expect("authorization header"),
+        );
+        (manager, headers)
+    }
+
     async fn device_token_count(pool: &sqlx::PgPool, user_id: Uuid) -> i64 {
         sqlx::query(
             r#"
@@ -932,9 +1056,13 @@ mod tests {
         )
         .await;
 
+        let (jwt_manager, headers) = test_approval_auth(user_id);
         let result = approve_device_pair_request(
             &pool,
+            &jwt_manager,
             user_id,
+            Uuid::nil(),
+            &headers,
             DeviceApprovalLookup::DeviceCode(device_code.to_string()),
         )
         .await;
@@ -971,9 +1099,13 @@ mod tests {
         )
         .await;
 
+        let (jwt_manager, headers) = test_approval_auth(user_id);
         approve_device_pair_request(
             &pool,
+            &jwt_manager,
             user_id,
+            Uuid::nil(),
+            &headers,
             DeviceApprovalLookup::DeviceCode(device_code.to_string()),
         )
         .await

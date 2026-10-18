@@ -22,8 +22,10 @@ pub struct Claims {
     pub sub: String, // Subject (user ID)
     pub email: String,
     pub tenant_id: Uuid,
-    pub exp: i64,    // Expiration time
-    pub iat: i64,    // Issued at
+    pub exp: i64, // Expiration time
+    pub iat: i64, // Issued at
+    #[serde(default)]
+    pub credential_version: i64,
     pub iss: String, // Issuer
     pub aud: String, // Audience
 }
@@ -65,6 +67,17 @@ impl JwtManager {
         email: impl AsRef<str>,
         tenant_id: Uuid,
     ) -> Result<String, JwtError> {
+        self.generate_with_credential_version(user_id, email, tenant_id, 0)
+    }
+
+    /// Generate a user JWT tied to the account's current credential generation.
+    pub fn generate_with_credential_version(
+        &self,
+        user_id: Uuid,
+        email: impl AsRef<str>,
+        tenant_id: Uuid,
+        credential_version: i64,
+    ) -> Result<String, JwtError> {
         let now = Utc::now();
         let expiration = now + Duration::hours(self.expiry_hours);
         let email = email.as_ref();
@@ -75,6 +88,7 @@ impl JwtManager {
             tenant_id,
             exp: expiration.timestamp(),
             iat: now.timestamp(),
+            credential_version,
             iss: self.issuer.clone(),
             aud: self.audience.clone(),
         };

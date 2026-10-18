@@ -18,7 +18,7 @@ use crate::{
     middleware, oidc,
     web_session::{
         build_csrf_cookie, build_expired_csrf_cookie, build_expired_session_cookie,
-        build_session_cookie, create_user_session, extract_cookie_value,
+        build_session_cookie, create_user_session, extract_cookie_value, generate_user_jwt,
     },
     AppState,
 };
@@ -217,10 +217,15 @@ pub async fn login(
 
     let user = validate_credentials(&state.metadata_store, &req, client_ip.as_deref()).await?;
 
-    let token = state
-        .jwt_manager
-        .generate(user.id, user.email.clone(), user.tenant_id)
-        .map_err(|_| AppError::internal("password_login.jwt_generation"))?;
+    let token = generate_user_jwt(&state, user.id, &user.email, user.tenant_id)
+        .await
+        .map_err(|error| {
+            if error == "account_disabled" {
+                AppError::forbidden("account_disabled")
+            } else {
+                AppError::internal("password_login.jwt_generation")
+            }
+        })?;
 
     let user_agent = headers
         .get(header::USER_AGENT)
@@ -235,7 +240,13 @@ pub async fn login(
         ip_address.clone(),
     )
     .await
-    .map_err(|_| AppError::internal("password_login.session_creation"))?;
+    .map_err(|error| {
+        if error == "account_disabled" {
+            AppError::forbidden("account_disabled")
+        } else {
+            AppError::internal("password_login.session_creation")
+        }
+    })?;
 
     if log_user_security_event(
         &state,
