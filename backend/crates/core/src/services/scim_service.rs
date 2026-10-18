@@ -284,6 +284,13 @@ fn directory_conflict(resource: &str, e: sqlx::Error) -> ScimError {
     ScimError::Database(e)
 }
 
+fn identity_write_conflict(error: ScimError) -> ScimError {
+    match error {
+        ScimError::Database(error) => directory_conflict("user", error),
+        error => error,
+    }
+}
+
 /// Group record for SCIM operations.
 #[derive(Debug, Clone)]
 pub struct GroupRecord {
@@ -398,7 +405,8 @@ impl<R: ScimRepository> ScimService<R> {
                         surname.as_deref(),
                         disabled_at,
                     )
-                    .await?;
+                    .await
+                    .map_err(identity_write_conflict)?;
 
                 Ok(ScimUserResult {
                     id: user.id,

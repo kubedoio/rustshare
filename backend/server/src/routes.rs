@@ -866,6 +866,8 @@ pub fn buzz_observation_routes() -> Router<AppState> {
 }
 
 pub fn admin_routes() -> Router<AppState> {
+    const MAX_BULK_ONBOARDING_REQUEST_BYTES: usize = 1024 * 1024;
+    use axum::extract::DefaultBodyLimit;
     use axum::routing::{delete, get, patch, post, put};
     Router::new()
         .route(
@@ -949,6 +951,11 @@ pub fn admin_routes() -> Router<AppState> {
             get(crate::handlers::admin::audit::list_audit_log),
         )
         .route("/api/v1/organization-admin/users", get(crate::handlers::organization_admin::users))
+        .route(
+            "/api/v1/organization-admin/users/bulk",
+            post(crate::handlers::organization_admin::bulk_invite_users)
+                .layer(DefaultBodyLimit::max(MAX_BULK_ONBOARDING_REQUEST_BYTES)),
+        )
         .route("/api/v1/organization-admin/users/{id}", get(crate::handlers::organization_admin::user))
         .route("/api/v1/organization-admin/groups", get(crate::handlers::organization_admin::groups).post(crate::handlers::organization_admin::create_group))
         .route("/api/v1/organization-admin/groups/{id}", get(crate::handlers::organization_admin::group))

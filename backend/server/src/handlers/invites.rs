@@ -68,21 +68,42 @@ pub async fn create_invite(
 
     let tenant_id: Uuid = sqlx::query_scalar!("SELECT tenant_id FROM users WHERE id = $1", user_id)
         .fetch_one(&state.db_pool)
-        .await
-        .unwrap_or_else(|_| Uuid::parse_str("00000000-0000-0000-0000-000000000000").unwrap());
+        .await?;
 
+    let email = req.recipient_email.trim().to_ascii_lowercase();
+    let mut tx = state.db_pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(lower($1), 331))")
+        .bind(&email)
+        .execute(&mut *tx)
+        .await?;
+    let identity_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE lower(email)=lower($1) OR lower(username)=lower($1))",
+    )
+    .bind(&email)
+    .fetch_one(&mut *tx)
+    .await?;
+    let invitation_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM invite_tokens WHERE lower(recipient_email)=lower($1) AND used_at IS NULL AND revoked_at IS NULL AND expires_at>now())",
+    )
+    .bind(&email)
+    .fetch_one(&mut *tx)
+    .await?;
+    if identity_exists || invitation_exists {
+        return Err(AppError::conflict("Invitation identifier is unavailable"));
+    }
     sqlx::query!(
         "INSERT INTO invite_tokens (tenant_id, token, sender_id, recipient_email, workflow_id, expires_at)
          VALUES ($1, $2, $3, $4, $5, $6)",
         tenant_id,
         &token,
         user_id,
-        &req.recipient_email,
+        &email,
         workflow.id,
         expires_at
     )
-    .execute(&state.db_pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     // The invite link must be built from the server's configured public URL,
     // never from client-supplied input: the link is emailed to a third party
@@ -95,8 +116,8 @@ pub async fn create_invite(
     let result = email_service
         .send_invite_email(
             &sender.display_name,
-            &req.recipient_email, // recipient_name fallback
-            &req.recipient_email,
+            &email,
+            &email,
             &invite_link,
             workflow
                 .subject
@@ -223,18 +244,29 @@ pub async fn accept_invite(
     Path(token): Path<String>,
     Json(req): Json<AcceptInviteRequest>,
 ) -> Result<Json<AcceptInviteResponse>, AppError> {
-    let row =
-        sqlx::query_as!(InviteAcceptRow,
-        "SELECT it.id as token_id, it.tenant_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,
+    let mut tx = state.db_pool.begin().await?;
+    let invited_email: String =
+        sqlx::query_scalar("SELECT recipient_email FROM invite_tokens WHERE token = $1")
+            .bind(&token)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| AppError::gone("Invite link has expired or already been used"))?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(lower($1), 331))")
+        .bind(&invited_email)
+        .execute(&mut *tx)
+        .await?;
+    let row = sqlx::query_as::<_, InviteAcceptRow>(
+        "SELECT it.id as token_id, it.tenant_id, it.sender_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,
                 w.terms_enabled, w.terms_text
          FROM invite_tokens it
          JOIN workflows w ON it.workflow_id = w.id
-         WHERE it.token = $1",
-        &token
+         WHERE it.token = $1
+         FOR UPDATE OF it",
     )
-        .fetch_optional(&state.db_pool)
-        .await?
-        .ok_or_else(|| AppError::gone("Invite link has expired or already been used"))?;
+        .bind(&token)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let row = row.ok_or_else(|| AppError::gone("Invite link has expired or already been used"))?;
 
     if row.used_at.is_some() || row.revoked_at.is_some() || row.expires_at < chrono::Utc::now() {
         return Err(AppError::gone(
@@ -242,7 +274,8 @@ pub async fn accept_invite(
         ));
     }
 
-    if req.email != row.recipient_email {
+    let email = req.email.trim().to_ascii_lowercase();
+    if email != row.recipient_email.trim().to_ascii_lowercase() {
         return Err(AppError::bad_request(
             "Email does not match the invited address",
         ));
@@ -266,9 +299,49 @@ pub async fn accept_invite(
         ));
     }
 
+    let group_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT a.group_id FROM invite_token_group_assignments a WHERE a.invite_token_id=$1 ORDER BY a.group_id",
+    )
+    .bind(row.token_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let available_group_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT a.group_id FROM invite_token_group_assignments a JOIN user_groups g ON g.id=a.group_id AND g.tenant_id=$2 WHERE a.invite_token_id=$1 ORDER BY a.group_id FOR SHARE OF g",
+    )
+    .bind(row.token_id)
+    .bind(row.tenant_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    if group_ids != available_group_ids {
+        sqlx::query("UPDATE invite_tokens SET revoked_at=now() WHERE id=$1")
+            .bind(row.token_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM invite_token_group_assignments WHERE invite_token_id=$1")
+            .bind(row.token_id)
+            .execute(&mut *tx)
+            .await?;
+        crate::handlers::admin::insert_scoped_admin_action(
+            &mut tx,
+            row.tenant_id,
+            row.sender_id,
+            "organization_admin.invite_revoked_group_unavailable",
+            Some("invite"),
+            Some(row.token_id),
+            serde_json::json!({"group_ids": group_ids}),
+            None,
+        )
+        .await?;
+        tx.commit().await?;
+        return Err(AppError::conflict(
+            "This invitation is no longer available; request a new invitation",
+        ));
+    }
+
     let existing: Option<Uuid> =
-        sqlx::query_scalar!("SELECT id FROM users WHERE email = $1", &req.email)
-            .fetch_optional(&state.db_pool)
+        sqlx::query_scalar("SELECT id FROM users WHERE lower(email) = lower($1)")
+            .bind(&email)
+            .fetch_optional(&mut *tx)
             .await?;
 
     if existing.is_some() {
@@ -283,20 +356,53 @@ pub async fn accept_invite(
     let user_id = Uuid::new_v4();
     let now = chrono::Utc::now();
 
+    sqlx::query("SELECT set_config('rustshare.accepting_invite_token_id', $1, true)")
+        .bind(row.token_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("SELECT set_config('rustshare.accepting_invite_email', $1, true)")
+        .bind(&email)
+        .execute(&mut *tx)
+        .await?;
+
+    // Older versions allowed multiple active invitations for one address. The
+    // email advisory lock above makes the chosen valid token the deterministic
+    // winner. Revoke active siblings in this tenant before the identifier
+    // trigger checks the new user; leave other tenants' invitations untouched.
+    let siblings: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT id, tenant_id FROM invite_tokens
+         WHERE tenant_id = $3 AND lower(recipient_email) = lower($1)
+           AND id <> $2
+           AND used_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+         ORDER BY tenant_id, id
+         FOR UPDATE",
+    )
+    .bind(&email)
+    .bind(row.token_id)
+    .bind(row.tenant_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (sibling_id, _) in &siblings {
+        sqlx::query("UPDATE invite_tokens SET revoked_at=now() WHERE id=$1")
+            .bind(sibling_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
     // Insert the user into the inviter's tenant (from the token row), not a
     // hardcoded nil tenant, so invitees land in the same tenant as the sender.
-    let insert_result = sqlx::query!(
+    let insert_result = sqlx::query(
         "INSERT INTO users (id, tenant_id, username, email, password_hash, display_name, is_admin, storage_quota, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, false, 10737418240, $7, $7)",
-        user_id,
-        row.tenant_id,
-        &req.email,
-        &req.email,
-        &password_hash,
-        &req.display_name,
-        now
     )
-    .execute(&state.db_pool)
+    .bind(user_id)
+    .bind(row.tenant_id)
+    .bind(&email)
+    .bind(&email)
+    .bind(&password_hash)
+    .bind(&req.display_name)
+    .bind(now)
+    .execute(&mut *tx)
     .await;
 
     // The check-then-insert above is not atomic: two concurrent accepts of the
@@ -312,23 +418,59 @@ pub async fn accept_invite(
     }
     insert_result?;
 
-    // Seed default Application preferences
+    sqlx::query(
+        "INSERT INTO group_members (group_id,user_id,added_by) SELECT a.group_id,$2,$3 FROM invite_token_group_assignments a WHERE a.invite_token_id=$1 ON CONFLICT (group_id,user_id) DO NOTHING",
+    )
+    .bind(row.token_id)
+    .bind(user_id)
+    .bind(row.sender_id)
+    .execute(&mut *tx)
+    .await?;
+    for (sibling_id, sibling_tenant_id) in siblings {
+        crate::handlers::admin::insert_scoped_admin_action(
+            &mut tx,
+            sibling_tenant_id,
+            user_id,
+            "invite.sibling_revoked_on_acceptance",
+            Some("invite"),
+            Some(sibling_id),
+            serde_json::json!({"reason": "accepted_sibling"}),
+            None,
+        )
+        .await?;
+    }
+    crate::handlers::admin::insert_scoped_admin_action(
+        &mut tx,
+        row.tenant_id,
+        user_id,
+        "organization_admin.invite_accepted",
+        Some("user"),
+        Some(user_id),
+        serde_json::json!({"accepted_by_user_id": user_id, "group_ids": group_ids}),
+        None,
+    )
+    .await?;
+    sqlx::query("DELETE FROM invite_token_group_assignments WHERE invite_token_id=$1")
+        .bind(row.token_id)
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query("UPDATE invite_tokens SET used_at = NOW() WHERE id = $1")
+        .bind(row.token_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    // Seed default Application preferences after the identity transaction commits.
     let pref_repo =
         rustshare_infrastructure::repositories::ApplicationUserPreferenceRepository::new(
             state.db_pool.clone(),
         );
     pref_repo.seed_defaults(user_id).await.ok();
 
-    sqlx::query!(
-        "UPDATE invite_tokens SET used_at = NOW() WHERE id = $1",
-        row.token_id
-    )
-    .execute(&state.db_pool)
-    .await?;
-
     Ok(Json(AcceptInviteResponse {
         id: user_id.to_string(),
-        email: req.email,
+        email,
         display_name: req.display_name,
         created_at: now,
     }))
@@ -367,6 +509,7 @@ struct InviteTokenRow {
 struct InviteAcceptRow {
     token_id: Uuid,
     tenant_id: Uuid,
+    sender_id: Uuid,
     recipient_email: String,
     expires_at: chrono::DateTime<chrono::Utc>,
     used_at: Option<chrono::DateTime<chrono::Utc>>,

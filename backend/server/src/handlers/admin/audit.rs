@@ -404,6 +404,9 @@ pub(crate) fn project_audit_detail(
             "user.created" | "user.invited" => {
                 copy_safe_identifier(fields, &mut projected, "username");
             }
+            "invite.sibling_revoked_on_acceptance" => {
+                copy_safe_identifier(fields, &mut projected, "reason");
+            }
             "share.created" | "share.revoked" => {
                 copy_uuid(fields, &mut projected, "share_id");
                 copy_safe_identifier(fields, &mut projected, "permissions");
@@ -429,6 +432,16 @@ pub(crate) fn project_audit_detail(
                         serde_json::Value::String("scim".to_string()),
                     );
                 }
+            }
+            "organization_admin.invite_accepted"
+            | "organization_admin.invite_revoked_group_unavailable" => {
+                copy_uuid_array(fields, &mut projected, "group_ids");
+                if action_type == "organization_admin.invite_accepted" {
+                    copy_uuid(fields, &mut projected, "accepted_by_user_id");
+                }
+            }
+            "organization_admin.expired_invites_replaced" => {
+                copy_nonnegative_integer(fields, &mut projected, "count");
             }
             "organization_admin.recovered" => {
                 copy_uuid(fields, &mut projected, "grant_id");
@@ -515,6 +528,22 @@ fn copy_uuid(
             key.to_string(),
             serde_json::Value::String(value.to_string()),
         );
+    }
+}
+
+fn copy_uuid_array(
+    fields: &serde_json::Map<String, serde_json::Value>,
+    projected: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    if let Some(values) = fields.get(key).and_then(serde_json::Value::as_array) {
+        let values: Vec<_> = values
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .filter(|value| Uuid::parse_str(value).is_ok())
+            .map(str::to_owned)
+            .collect();
+        projected.insert(key.to_string(), serde_json::json!(values));
     }
 }
 

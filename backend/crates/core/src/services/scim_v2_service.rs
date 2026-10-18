@@ -884,6 +884,13 @@ fn directory_conflict(resource: &str, e: sqlx::Error) -> ScimV2Error {
     ScimV2Error::Database(e)
 }
 
+fn identity_write_conflict(error: ScimV2Error) -> ScimV2Error {
+    match error {
+        ScimV2Error::Database(error) => directory_conflict("user", error),
+        error => error,
+    }
+}
+
 /// SCIM v2 Service.
 ///
 /// `tenant_scope` is the single organization this integration is bound to
@@ -1011,7 +1018,8 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
 
         self.repository
             .update_user(self.tenant_scope, id, &user)
-            .await?;
+            .await
+            .map_err(identity_write_conflict)?;
         self.get_user(id).await
     }
 
@@ -1033,7 +1041,8 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
 
         self.repository
             .patch_user(self.tenant_scope, id, operations)
-            .await?;
+            .await
+            .map_err(identity_write_conflict)?;
         self.get_user(id).await
     }
 

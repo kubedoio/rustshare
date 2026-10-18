@@ -31,6 +31,7 @@ use utoipa::OpenApi;
     paths(
         crate::handlers::admin::audit::list_audit_log,
         crate::handlers::organization_admin::users,
+        crate::handlers::organization_admin::bulk_invite_users,
         crate::handlers::organization_admin::user,
         crate::handlers::organization_admin::groups,
         crate::handlers::organization_admin::group,
@@ -374,6 +375,10 @@ use utoipa::OpenApi;
         crate::handlers::organization_admin::PageQuery,
         crate::handlers::organization_admin::PaginationQuery,
         crate::handlers::organization_admin::OrgUser,
+        crate::handlers::organization_admin::BulkInviteRequest,
+        crate::handlers::organization_admin::BulkInviteUser,
+        crate::handlers::organization_admin::BulkInviteResponse,
+        crate::handlers::organization_admin::BulkInviteRow,
         crate::handlers::organization_admin::OrgUsers,
         crate::handlers::organization_admin::OrgGroups,
         crate::handlers::organization_admin::OrgMembers,
