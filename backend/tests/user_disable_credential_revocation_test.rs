@@ -648,14 +648,8 @@ async fn disabling_user_revokes_credentials_and_stale_cookie_cannot_authenticate
     );
 }
 
-/// **DOCUMENTED RESIDUAL RISK — change detector, not an endorsed contract.**
-/// Re-enabling a user makes a JWT minted *before* the disable valid again,
-/// because JWTs are stateless and there is no server-side denylist: the only
-/// bound is the token's own 24 h `exp`. The test below asserts this so the
-/// exposure window stays visible. When the denylist / `tokens_valid_after`
-/// design lands (issue #215, identity/revocation), this field and its
-/// assertion must flip to `UNAUTHORIZED` — a failure there is the intended
-/// signal, not a broken contract.
+/// A JWT minted before disable stays invalid after re-enable because the
+/// user's credential version changes on disable.
 struct LiveCredentialResult {
     jwt_before_disable: StatusCode,
     device_token_before_disable: StatusCode,
@@ -663,7 +657,7 @@ struct LiveCredentialResult {
     jwt_after_disable: StatusCode,
     device_token_after_disable: StatusCode,
     device_token_revoked_at: Option<chrono::DateTime<chrono::Utc>>,
-    jwt_after_reenable_residual_risk: StatusCode,
+    jwt_after_reenable: StatusCode,
     device_token_after_reenable: StatusCode,
 }
 
@@ -761,15 +755,12 @@ async fn live_credentials_issued_before_disable_are_rejected_while_disabled() {
             .fetch_one(&pool)
             .await?;
 
-        // Re-enable: the stateless JWT has no server-side revocation list,
-        // so it is honored again until its own `exp`. The device token is
-        // revoked for good. Asserting both documents the residual exposure
-        // window rather than endorsing it.
+        // Re-enable does not restore credentials issued before the disable.
         sqlx::query("UPDATE users SET disabled_at = NULL WHERE id = $1")
             .bind(user_id)
             .execute(&pool)
             .await?;
-        let jwt_after_reenable_residual_risk = get_me_with_bearer(&app, &jwt).await?;
+        let jwt_after_reenable = get_me_with_bearer(&app, &jwt).await?;
         let device_token_after_reenable = get_me_with_bearer(&app, &device_token).await?;
 
         Ok(LiveCredentialResult {
@@ -779,7 +770,7 @@ async fn live_credentials_issued_before_disable_are_rejected_while_disabled() {
             jwt_after_disable,
             device_token_after_disable,
             device_token_revoked_at,
-            jwt_after_reenable_residual_risk,
+            jwt_after_reenable,
             device_token_after_reenable,
         })
     }
@@ -808,7 +799,7 @@ async fn live_credentials_issued_before_disable_are_rejected_while_disabled() {
         jwt_after_disable,
         device_token_after_disable,
         device_token_revoked_at,
-        jwt_after_reenable_residual_risk,
+        jwt_after_reenable,
         device_token_after_reenable,
     } = attempt.expect("complete live-credential regression");
     assert_eq!(jwt_before_disable, StatusCode::OK);
@@ -828,25 +819,10 @@ async fn live_credentials_issued_before_disable_are_rejected_while_disabled() {
         device_token_revoked_at.is_some(),
         "the disable trigger revokes the device token"
     );
-    // =====================================================================
-    // DOCUMENTED RESIDUAL RISK — CHANGE DETECTOR, NOT A BROKEN CONTRACT.
-    //
-    // This asserts the *current* behavior: a stateless, 24 h-TTL JWT minted
-    // before the disable is honored again after re-enable, because there is
-    // no server-side JWT denylist (only `users.disabled_at`, which is NULL
-    // again). It is here to keep the residual exposure window visible. When
-    // the denylist / `tokens_valid_after` design lands (issue #215,
-    // identity/revocation), this must become `UNAUTHORIZED` and this
-    // assertion (and `LiveCredentialResult::jwt_after_reenable_residual_risk`)
-    // must be updated — do not read a failure here as a regression.
-    // =====================================================================
     assert_eq!(
-        jwt_after_reenable_residual_risk,
-        StatusCode::OK,
-        "DOCUMENTED RESIDUAL RISK: re-enabling currently revives a pre-disable \
-         JWT until its own expiry (stateless token, no server-side denylist). \
-         Update this assertion when the denylist / tokens_valid_after design \
-         (issue #215) lands."
+        jwt_after_reenable,
+        StatusCode::UNAUTHORIZED,
+        "re-enabling must not restore a JWT issued before the disable"
     );
     assert_eq!(
         device_token_after_reenable,
