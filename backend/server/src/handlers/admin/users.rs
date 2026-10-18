@@ -393,7 +393,7 @@ pub async fn create_admin_user(
     .bind(tenant_id)
     .fetch_one(&mut *tx)
     .await
-    .map_err(db_error)?;
+    .map_err(user_write_error)?;
 
     insert_scoped_admin_action(
         &mut tx,
@@ -553,7 +553,7 @@ pub async fn update_admin_user(
     let row = q
         .fetch_optional(&mut *tx)
         .await
-        .map_err(db_error)?
+        .map_err(user_write_error)?
         .ok_or_else(|| admin_not_found("User not found"))?;
 
     if password_changed {
@@ -876,6 +876,15 @@ pub async fn delete_admin_user(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn user_write_error(error: sqlx::Error) -> AppError {
+    if matches!(&error, sqlx::Error::Database(db) if db.constraint() == Some("users_pending_invite_identifier_conflict"))
+    {
+        admin_conflict("Identifier is reserved by a pending invitation")
+    } else {
+        db_error(error)
+    }
+}
 
 fn db_error(e: sqlx::Error) -> AppError {
     tracing::error!("Database error: {:?}", e);

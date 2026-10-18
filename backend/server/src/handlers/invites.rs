@@ -245,6 +245,16 @@ pub async fn accept_invite(
     Json(req): Json<AcceptInviteRequest>,
 ) -> Result<Json<AcceptInviteResponse>, AppError> {
     let mut tx = state.db_pool.begin().await?;
+    let invited_email: String =
+        sqlx::query_scalar("SELECT recipient_email FROM invite_tokens WHERE token = $1")
+            .bind(&token)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| AppError::gone("Invite link has expired or already been used"))?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(lower($1), 331))")
+        .bind(&invited_email)
+        .execute(&mut *tx)
+        .await?;
     let row = sqlx::query_as::<_, InviteAcceptRow>(
         "SELECT it.id as token_id, it.tenant_id, it.sender_id, it.recipient_email, it.expires_at, it.used_at, it.revoked_at,
                 w.terms_enabled, w.terms_text
@@ -345,6 +355,11 @@ pub async fn accept_invite(
 
     let user_id = Uuid::new_v4();
     let now = chrono::Utc::now();
+
+    sqlx::query("SELECT set_config('rustshare.accepting_invite_token_id', $1, true)")
+        .bind(row.token_id.to_string())
+        .execute(&mut *tx)
+        .await?;
 
     // Insert the user into the inviter's tenant (from the token row), not a
     // hardcoded nil tenant, so invitees land in the same tenant as the sender.

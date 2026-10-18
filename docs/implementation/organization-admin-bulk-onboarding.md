@@ -21,7 +21,7 @@ Possible row outcomes include `ready`, `invalid_email`,
 `too_many_groups`, `already_exists`, `identifier_unavailable`,
 `group_unavailable`, `already_pending`, `pending_invite_mismatch`,
 `delivery_pending`, `apply_failed`, `apply_pending`, `invited`,
-`delivery_failed`, and `delivery_retried`.
+`delivery_retry`, `delivery_failed`, and `delivery_retried`.
 Foreign users and groups use the
 same generic outcomes as unavailable identities/groups. The API never returns
 email addresses, invitation tokens, or invite links. Email delivery happens

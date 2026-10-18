@@ -38,6 +38,32 @@ async fn send_json(app: &Router, uri: &str, token: &str, body: Value) -> (u16, V
     )
 }
 
+async fn send_patch_json(app: &Router, uri: &str, token: &str, body: Value) -> (u16, Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::patch(uri)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status().as_u16();
+    let body = axum::body::to_bytes(response.into_body(), 1_000_000)
+        .await
+        .expect("response body");
+    (
+        status,
+        if body.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&body).expect("json response")
+        },
+    )
+}
+
 async fn send_body(app: &Router, uri: &str, token: &str, body: String) -> (u16, Value) {
     let response = app
         .clone()
@@ -195,25 +221,28 @@ async fn bulk_invites_validate_apply_retry_and_isolate_tenants() {
     }
     let expired_email = format!("expired_{}@test.local", Uuid::new_v4().simple());
     let expired_invite = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO invite_tokens (id,tenant_id,token,sender_id,recipient_email,recipient_display_name,workflow_id,expires_at,bulk_delivery_status,bulk_delivery_attempted_at) SELECT $1,$2,$3,$4,$5,'Expired User',id,now()-interval '1 day','failed',now()-interval '1 day' FROM workflows WHERE key='invite_email' LIMIT 1",
-    )
-    .bind(expired_invite)
-    .bind(tenant)
-    .bind(format!("{}", Uuid::new_v4().simple()))
-    .bind(admin)
-    .bind(&expired_email)
-    .execute(&pool)
-    .await
-    .expect("expired invite fixture");
-    sqlx::query(
-        "INSERT INTO invite_token_group_assignments (invite_token_id,group_id) VALUES ($1,$2)",
-    )
-    .bind(expired_invite)
-    .bind(own_group)
-    .execute(&pool)
-    .await
-    .expect("expired assignment fixture");
+    let expired_invites = [expired_invite, Uuid::new_v4(), Uuid::new_v4()];
+    for id in expired_invites {
+        sqlx::query(
+            "INSERT INTO invite_tokens (id,tenant_id,token,sender_id,recipient_email,recipient_display_name,workflow_id,expires_at,bulk_delivery_status,bulk_delivery_attempted_at) SELECT $1,$2,$3,$4,$5,'Expired User',id,now()-interval '1 day','failed',now()-interval '1 day' FROM workflows WHERE key='invite_email' LIMIT 1",
+        )
+        .bind(id)
+        .bind(tenant)
+        .bind(format!("{}", Uuid::new_v4().simple()))
+        .bind(admin)
+        .bind(&expired_email)
+        .execute(&pool)
+        .await
+        .expect("expired invite fixture");
+        sqlx::query(
+            "INSERT INTO invite_token_group_assignments (invite_token_id,group_id) VALUES ($1,$2)",
+        )
+        .bind(id)
+        .bind(own_group)
+        .execute(&pool)
+        .await
+        .expect("expired assignment fixture");
+    }
     let legacy_pending_email = format!("legacy_pending_{}@test.local", Uuid::new_v4().simple());
     sqlx::query(
         "INSERT INTO invite_tokens (tenant_id,token,sender_id,recipient_email,workflow_id,expires_at) SELECT $1,$2,$3,$4,id,now()+interval '7 days' FROM workflows WHERE key='invite_email' LIMIT 1",
@@ -225,10 +254,21 @@ async fn bulk_invites_validate_apply_retry_and_isolate_tenants() {
     .execute(&pool)
     .await
     .expect("legacy invite fixture");
+    let retry_email = format!("retry_{}@test.local", Uuid::new_v4().simple());
+    sqlx::query(
+        "INSERT INTO invite_tokens (tenant_id,token,sender_id,recipient_email,recipient_display_name,workflow_id,expires_at,bulk_delivery_status,bulk_delivery_attempted_at) SELECT $1,$2,$3,$4,'Retry User',id,now()+interval '7 days','failed',now()-interval '10 minutes' FROM workflows WHERE key='invite_email' LIMIT 1",
+    )
+    .bind(tenant)
+    .bind(Uuid::new_v4().simple().to_string())
+    .bind(admin)
+    .bind(&retry_email)
+    .execute(&pool)
+    .await
+    .expect("failed delivery retry fixture");
     let token = create_auth_token(&state, admin, tenant);
     let app = rustshare_server::routes::admin_routes()
         .merge(rustshare_server::routes::invite_routes())
-        .with_state(state);
+        .with_state(state.clone());
     let bulk_uri = "/api/v1/organization-admin/users/bulk";
     let oversized = format!(
         "{{\"dry_run\":true,\"users\":[],\"ignored\":\"{}\"}}",
@@ -296,6 +336,7 @@ async fn bulk_invites_validate_apply_retry_and_isolate_tenants() {
         {"email":foreign_username_collision,"display_name":"Username collision"},
         {"email":format!("group_{}@test.local",Uuid::new_v4().simple()),"display_name":"Foreign group","group_ids":[foreign_group]},
         {"email":format!("unknown_{}@test.local",Uuid::new_v4().simple()),"display_name":"Unknown group","group_ids":[Uuid::new_v4()]},
+        {"email":retry_email,"display_name":"Retry User"},
         {"email":expired_email,"display_name":"Expired User","group_ids":[own_group]},
         {"email":format!("control_{}@test.local",Uuid::new_v4().simple()),"display_name":"Invalid\nName"}
     ]);
@@ -319,6 +360,7 @@ async fn bulk_invites_validate_apply_retry_and_isolate_tenants() {
             "identifier_unavailable",
             "group_unavailable",
             "group_unavailable",
+            "delivery_retry",
             "ready",
             "invalid_display_name"
         ]
@@ -392,13 +434,26 @@ async fn bulk_invites_validate_apply_retry_and_isolate_tenants() {
         applied["rows"][3]["outcome"].as_str(),
         Some("invited" | "delivery_failed")
     ));
-    assert!(sqlx::query_scalar::<_, bool>(
-        "SELECT revoked_at IS NOT NULL FROM invite_tokens WHERE id=$1"
-    )
-    .bind(expired_invite)
-    .fetch_one(&pool)
-    .await
-    .expect("expired invitation replaced"),);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM invite_tokens WHERE id=ANY($1) AND revoked_at IS NOT NULL",
+        )
+        .bind(&expired_invites[..])
+        .fetch_one(&pool)
+        .await
+        .expect("expired invitation replacement count"),
+        expired_invites.len() as i64
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM invite_token_group_assignments WHERE invite_token_id=ANY($1)",
+        )
+        .bind(&expired_invites[..])
+        .fetch_one(&pool)
+        .await
+        .expect("expired invitation assignments removed"),
+        0
+    );
     let replacement_id: Uuid = sqlx::query_scalar(
         "SELECT id FROM invite_tokens WHERE tenant_id=$1 AND lower(recipient_email)=lower($2) AND revoked_at IS NULL",
     )
@@ -414,11 +469,8 @@ async fn bulk_invites_validate_apply_retry_and_isolate_tenants() {
     .fetch_one(&pool)
     .await
     .expect("expired invitation audit");
-    assert_eq!(
-        replaced_audit["expired_invite_ids"],
-        json!([expired_invite])
-    );
-    assert_eq!(replaced_audit["count"], 1);
+    assert_eq!(replaced_audit["count"], expired_invites.len());
+    assert!(replaced_audit.get("expired_invite_ids").is_none());
     assert!(applied.to_string().find("/invite/").is_none());
     assert!(!applied.to_string().contains(&valid_email));
     let (invite_id, invite_token): (Uuid, String) = sqlx::query_as(
@@ -449,6 +501,89 @@ async fn bulk_invites_validate_apply_retry_and_isolate_tenants() {
             .expect("pending group assignment"),
         1
     );
+
+    let competing_user_id = Uuid::new_v4();
+    let competing_insert = sqlx::query(
+        "INSERT INTO users (id,tenant_id,username,email,password_hash,display_name,is_admin,storage_quota) VALUES ($1,$2,$3,$4,'test-hash','Competing user',false,10737418240)",
+    )
+    .bind(competing_user_id)
+    .bind(tenant)
+    .bind(&valid_email)
+    .bind(format!("competing_{}@test.local", Uuid::new_v4().simple()))
+    .execute(&pool)
+    .await;
+    assert!(matches!(
+        competing_insert,
+        Err(sqlx::Error::Database(ref error)) if error.code().as_deref() == Some("23505")
+    ));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM users WHERE id=$1")
+            .bind(competing_user_id)
+            .fetch_one(&pool)
+            .await
+            .expect("competing user was not created"),
+        0
+    );
+    let competing_update = sqlx::query("UPDATE users SET email=$1 WHERE id=$2")
+        .bind(&valid_email)
+        .bind(foreign_existing)
+        .execute(&pool)
+        .await;
+    assert!(matches!(
+        competing_update,
+        Err(sqlx::Error::Database(ref error)) if error.code().as_deref() == Some("23505")
+    ));
+    let root_admin = create_user(&pool, tenant, "root_admin", true).await;
+    let root_token = create_auth_token(&state, root_admin, tenant);
+    let (update_status, update_body) = send_patch_json(
+        &app,
+        &format!("/api/v1/admin/users/{foreign_existing}"),
+        &root_token,
+        json!({"email":valid_email}),
+    )
+    .await;
+    assert_eq!(update_status, 409, "{update_body}");
+    assert!(!update_body.to_string().contains(&valid_email));
+
+    let race_email = format!("registration_race_{}@test.local", Uuid::new_v4().simple());
+    let mut registration = pool.begin().await.expect("registration transaction");
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(lower($1), 331))")
+        .bind(&race_email)
+        .execute(&mut *registration)
+        .await
+        .expect("registration identity lock");
+    sqlx::query(
+        "INSERT INTO users (id,tenant_id,username,email,password_hash,display_name,is_admin,storage_quota) VALUES ($1,$2,$3,$4,'test-hash','Race winner',false,10737418240)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(tenant)
+    .bind(&race_email)
+    .bind(&race_email)
+    .execute(&mut *registration)
+    .await
+    .expect("registration reserves identity first");
+    let mut racing_apply = {
+        let app = app.clone();
+        let token = token.clone();
+        tokio::spawn(async move {
+            send_json(
+                &app,
+                bulk_uri,
+                &token,
+                json!({"dry_run":false,"users":[{"email":race_email,"display_name":"Race winner"}]}),
+            )
+            .await
+        })
+    };
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), &mut racing_apply,)
+            .await
+            .is_err()
+    );
+    registration.commit().await.expect("registration commits");
+    let (race_status, race_result) = racing_apply.await.expect("bulk apply completes");
+    assert_eq!(race_status, 200);
+    assert_eq!(race_result["rows"][0]["outcome"], "already_exists");
 
     let (status, retry) = send_json(
         &app,

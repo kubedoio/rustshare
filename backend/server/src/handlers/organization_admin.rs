@@ -751,22 +751,15 @@ pub async fn bulk_invite_users(
                         if assigned.rows_affected() != row.group_ids.len() as u64 {
                             return Err(admin_conflict("One or more groups are unavailable"));
                         }
-                        let expired_invite_ids: Vec<Uuid> = sqlx::query_scalar(
-                            "UPDATE invite_tokens SET revoked_at=now() WHERE tenant_id=$2 AND lower(recipient_email)=lower($1) AND used_at IS NULL AND revoked_at IS NULL AND expires_at<=now() RETURNING id",
+                        let expired_invite_count: i64 = sqlx::query_scalar(
+                            "WITH expired AS (UPDATE invite_tokens SET revoked_at=now() WHERE tenant_id=$2 AND lower(recipient_email)=lower($1) AND used_at IS NULL AND revoked_at IS NULL AND expires_at<=now() RETURNING id), removed_assignments AS (DELETE FROM invite_token_group_assignments a USING expired e WHERE a.invite_token_id=e.id RETURNING a.invite_token_id) SELECT count(*) FROM expired",
                         )
                         .bind(&email)
                         .bind(tenant_id)
-                        .fetch_all(&mut *tx)
+                        .fetch_one(&mut *tx)
                         .await
                         .map_err(db_error)?;
-                        if !expired_invite_ids.is_empty() {
-                            sqlx::query(
-                                "DELETE FROM invite_token_group_assignments WHERE invite_token_id=ANY($1)",
-                            )
-                            .bind(&expired_invite_ids)
-                            .execute(&mut *tx)
-                            .await
-                            .map_err(db_error)?;
+                        if expired_invite_count > 0 {
                             insert_scoped_admin_action(
                                 &mut tx,
                                 tenant_id,
@@ -774,7 +767,7 @@ pub async fn bulk_invite_users(
                                 "organization_admin.expired_invites_replaced",
                                 Some("invite"),
                                 Some(invite_id),
-                                json!({"expired_invite_ids": &expired_invite_ids, "count": expired_invite_ids.len()}),
+                                json!({"count": expired_invite_count}),
                                 correlation_id,
                             )
                             .await

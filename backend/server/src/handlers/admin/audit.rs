@@ -438,7 +438,6 @@ pub(crate) fn project_audit_detail(
                 }
             }
             "organization_admin.expired_invites_replaced" => {
-                copy_uuid_array(fields, &mut projected, "expired_invite_ids");
                 copy_nonnegative_integer(fields, &mut projected, "count");
             }
             "organization_admin.recovered" => {
