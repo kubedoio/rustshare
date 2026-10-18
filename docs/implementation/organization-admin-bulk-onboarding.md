@@ -58,7 +58,52 @@ audit transaction fails, the invitation remains in `sending`; after five
 minutes a retry may deliver the same one-use link again. No retry creates a
 second invitation or membership.
 
-Workspaces, offboarding, reactivation, resend/cancel controls, and independent
-workspace membership remain outside this slice. PostgreSQL/HTTP
-regressions live in `backend/tests/organization_admin_bulk_invites_test.rs` and
-are guarded for a disposable local database and object store.
+## Invitation lifecycle
+
+Organization administrators can list tenant invitations at
+`GET /api/v1/organization-admin/invitations?page=1&per_page=20`. Pages are
+capped at 100 rows. Each row exposes recipient/sender metadata and one of
+`pending`, `sent`, `failed`, `expired`, `accepted`, or `cancelled`; invitation
+tokens and links are never included. Legacy invitations without bulk delivery
+metadata are listed as sent.
+
+`POST /api/v1/organization-admin/invitations/{id}/resend` requires an
+`Idempotency-Key` header (1–128 ASCII letters, digits, `-`, `_`, `.`, or `:`).
+The server stores only its SHA-256 digest. A repeated key replays the prior
+delivery result and does not send another message. A new key starts a new
+attempt after the previous attempt is complete. Stuck sending attempts become
+retryable after five minutes; because SMTP cannot promise exactly-once delivery,
+a recovery retry may send a link again if the provider accepted the earlier
+message and the server crashed before it recorded the result. Resend reuses the
+existing token and expiry and does not return either to the caller. SMTP
+failures set delivery state to failed and are returned without provider error
+details.
+
+`POST /api/v1/organization-admin/invitations/{id}/cancel` is idempotent. It
+shares the invitee-email advisory lock and invitation row lock used by
+acceptance, marks the token revoked, deletes pending group assignments, and
+records the change in the same transaction. A cancelled link cannot be
+accepted. If acceptance commits first, cancellation returns a conflict; if
+cancellation commits first, acceptance returns gone. A delivery already in
+flight may still reach the mailbox, but its link is revoked and cannot create
+an account.
+
+Invitation listing, resend attempt state, delivery state, cancellation, and
+their mandatory tenant-attributed audit events do not include token material.
+If the initial resend audit insert fails, the attempt and delivery-state
+changes roll back before SMTP is contacted. Final delivery state and its audit
+event commit together. Resend/cancel PostgreSQL/HTTP regressions live in
+`backend/tests/organization_admin_invitation_lifecycle_test.rs` and require a
+disposable database and object store.
+
+## #331 acceptance matrix and deferred work
+
+- Complete: validate a bounded structured import before apply; report invalid,
+  duplicate, existing, and unavailable rows; invite valid users in one bounded
+  operation; assign initial existing groups; list, resend, and cancel pending
+  invitations; safely offboard users; preserve content/provenance; and audit
+  mutations transactionally.
+- Deferred: CSV-file upload, bulk group assignment/removal for existing users,
+  independent workspace identities/membership, and administration UI. ADR-0040
+  keeps organizations tenant-scoped and explicitly defers first-class
+  workspaces; this lifecycle slice introduces no workspace or role system.

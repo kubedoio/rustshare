@@ -11833,6 +11833,209 @@
         }
       }
     },
+    "/api/v1/organization-admin/invitations": {
+      "get": {
+        "tags": [
+          "Organization Admin"
+        ],
+        "operationId": "list_invitations",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant invitations with secret-free lifecycle state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationInvitations"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization-admin/invitations/{id}/cancel": {
+      "post": {
+        "tags": [
+          "Organization Admin"
+        ],
+        "operationId": "cancel_invitation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Invitation identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelInvitationResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization-admin/invitations/{id}/resend": {
+      "post": {
+        "tags": [
+          "Organization Admin"
+        ],
+        "operationId": "resend_invitation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Invitation identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Unique key for safe request retries",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResendInvitationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization-admin/users": {
       "get": {
         "tags": [
@@ -16056,6 +16259,32 @@
               "type": "string",
               "format": "uuid"
             }
+          }
+        }
+      },
+      "CancelInvitationResponse": {
+        "type": "object",
+        "required": [
+          "invitation_id",
+          "status",
+          "changed",
+          "group_assignments_removed"
+        ],
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "group_assignments_removed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "invitation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
           }
         }
       },
@@ -23515,6 +23744,97 @@
           "administrative_continuity"
         ]
       },
+      "OrganizationInvitation": {
+        "type": "object",
+        "required": [
+          "id",
+          "recipient_email",
+          "sender_name",
+          "status",
+          "created_at",
+          "expires_at"
+        ],
+        "properties": {
+          "accepted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "cancelled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "delivery_attempted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "recipient_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipient_email": {
+            "type": "string"
+          },
+          "sender_name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "`pending`, `sent`, `failed`, `expired`, `accepted`, or `cancelled`."
+          }
+        }
+      },
+      "OrganizationInvitations": {
+        "type": "object",
+        "required": [
+          "invitations",
+          "total",
+          "page",
+          "per_page"
+        ],
+        "properties": {
+          "invitations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrganizationInvitation"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "OwnedShareResponse": {
         "type": "object",
         "required": [
@@ -24252,6 +24572,31 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ResendInvitationResponse": {
+        "type": "object",
+        "required": [
+          "invitation_id",
+          "delivery_status",
+          "invitation_status",
+          "replayed"
+        ],
+        "properties": {
+          "delivery_status": {
+            "type": "string",
+            "description": "`sent`, `failed`, `pending`, `expired`, `accepted`, or `cancelled`."
+          },
+          "invitation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "invitation_status": {
+            "type": "string"
+          },
+          "replayed": {
+            "type": "boolean"
           }
         }
       },

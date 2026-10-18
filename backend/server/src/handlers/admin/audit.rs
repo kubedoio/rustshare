@@ -443,6 +443,16 @@ pub(crate) fn project_audit_detail(
             "organization_admin.expired_invites_replaced" => {
                 copy_nonnegative_integer(fields, &mut projected, "count");
             }
+            "organization_admin.invitation_cancelled" => {
+                copy_nonnegative_integer(fields, &mut projected, "group_assignments_removed");
+            }
+            "organization_admin.invitation_resend_recovered" => {
+                copy_nonnegative_integer(fields, &mut projected, "count");
+            }
+            "organization_admin.invitation_resend_requested"
+            | "organization_admin.invitation_resend_sent"
+            | "organization_admin.invitation_resend_failed"
+            | "organization_admin.invitation_resend_superseded" => {}
             "organization_admin.recovered" => {
                 copy_uuid(fields, &mut projected, "grant_id");
                 if matches!(

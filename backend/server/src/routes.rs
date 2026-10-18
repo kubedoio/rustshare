@@ -961,6 +961,18 @@ pub fn admin_routes() -> Router<AppState> {
             post(crate::handlers::organization_admin::offboard_users)
                 .layer(DefaultBodyLimit::max(MAX_BULK_ONBOARDING_REQUEST_BYTES)),
         )
+        .route(
+            "/api/v1/organization-admin/invitations",
+            get(crate::handlers::organization_admin::invitations::list_invitations),
+        )
+        .route(
+            "/api/v1/organization-admin/invitations/{id}/resend",
+            post(crate::handlers::organization_admin::invitations::resend_invitation),
+        )
+        .route(
+            "/api/v1/organization-admin/invitations/{id}/cancel",
+            post(crate::handlers::organization_admin::invitations::cancel_invitation),
+        )
         .route("/api/v1/organization-admin/users/{id}", get(crate::handlers::organization_admin::user))
         .route("/api/v1/organization-admin/groups", get(crate::handlers::organization_admin::groups).post(crate::handlers::organization_admin::create_group))
         .route("/api/v1/organization-admin/groups/{id}", get(crate::handlers::organization_admin::group))
