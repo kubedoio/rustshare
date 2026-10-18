@@ -1,12 +1,16 @@
 //! Bounded tenant administration for explicitly granted organization admins.
 use crate::{
     handlers::{
+        admin::organization_administrators::{
+            lock_tenant_admin_grants, removal_would_leave_no_enabled_admin, revoke_for_lifecycle,
+        },
         admin::{
             admin_bad_request, admin_conflict, admin_internal_error, admin_not_found,
             insert_scoped_admin_action, request_correlation_id,
         },
         AppError, OrganizationAdmin,
     },
+    user_disable::{set_user_disabled_at, DisableUserTarget},
     AppState,
 };
 use axum::{
@@ -175,6 +179,26 @@ pub struct BulkInviteResponse {
     pub rows: Vec<BulkInviteRow>,
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct OffboardUsersRequest {
+    pub dry_run: bool,
+    pub user_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct OffboardUserRow {
+    pub user_id: Uuid,
+    pub outcome: String,
+    pub shares_revoked: u64,
+    pub group_memberships_removed: u64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct OffboardUsersResponse {
+    pub dry_run: bool,
+    pub rows: Vec<OffboardUserRow>,
+}
+
 #[derive(sqlx::FromRow)]
 struct PendingBulkInvite {
     tenant_id: Uuid,
@@ -249,6 +273,203 @@ pub async fn user(
         display_name: r.3,
         disabled_at: r.4,
     }))
+}
+
+/// Disable up to 100 tenant users. Active shares issued by or directly granted
+/// to each user are revoked, and the user's group memberships are removed.
+/// Group shares issued by others remain available to remaining group members.
+#[utoipa::path(post, path="/api/v1/organization-admin/users/offboard", request_body=OffboardUsersRequest, responses((status=200, body=OffboardUsersResponse),(status=400),(status=403)))]
+pub async fn offboard_users(
+    State(state): State<AppState>,
+    OrganizationAdmin {
+        user_id: actor_id,
+        tenant_id,
+    }: OrganizationAdmin,
+    headers: HeaderMap,
+    Json(request): Json<OffboardUsersRequest>,
+) -> Result<Json<OffboardUsersResponse>, AppError> {
+    if request.user_ids.is_empty() || request.user_ids.len() > MAX_BULK_INVITES {
+        return Err(admin_bad_request("Provide between 1 and 100 user IDs"));
+    }
+
+    let mut rows = Vec::with_capacity(MAX_BULK_INVITES);
+    let mut seen = std::collections::HashSet::new();
+    let mut active_admins: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM organization_administrators oa JOIN users u ON u.id=oa.user_id AND u.tenant_id=oa.tenant_id WHERE oa.tenant_id=$1 AND oa.revoked_at IS NULL AND u.disabled_at IS NULL",
+    )
+    .bind(tenant_id)
+    .fetch_one(&state.db_pool)
+    .await
+    .map_err(db_error)?;
+
+    for user_id in request.user_ids {
+        let mut row = OffboardUserRow {
+            user_id,
+            outcome: String::new(),
+            shares_revoked: 0,
+            group_memberships_removed: 0,
+        };
+        if !seen.insert(user_id) {
+            row.outcome = "duplicate".into();
+        } else if user_id == actor_id {
+            row.outcome = "self_offboarding_rejected".into();
+        } else {
+            let target = sqlx::query_as::<_, (bool, bool)>(
+                "SELECT u.disabled_at IS NOT NULL, EXISTS(SELECT 1 FROM organization_administrators oa WHERE oa.tenant_id=u.tenant_id AND oa.user_id=u.id AND oa.revoked_at IS NULL) FROM users u WHERE u.id=$1 AND u.tenant_id=$2",
+            )
+            .bind(user_id)
+            .bind(tenant_id)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(db_error)?;
+            match target {
+                None => row.outcome = "not_found".into(),
+                Some((true, _)) => {
+                    row.outcome = if request.dry_run {
+                        "already_disabled".into()
+                    } else {
+                        match apply_offboarding(&state, tenant_id, actor_id, user_id, &headers)
+                            .await
+                        {
+                            Ok((outcome, _, _)) => outcome,
+                            Err(_) => "apply_failed".into(),
+                        }
+                    };
+                }
+                Some((false, is_admin)) if is_admin && active_admins <= 1 => {
+                    row.outcome = "last_enabled_admin".into();
+                }
+                Some((false, is_admin)) => {
+                    if request.dry_run {
+                        if is_admin {
+                            active_admins -= 1;
+                        }
+                        row.outcome = "ready".into();
+                    } else {
+                        match apply_offboarding(&state, tenant_id, actor_id, user_id, &headers)
+                            .await
+                        {
+                            Ok((outcome, shares, memberships)) => {
+                                if is_admin && outcome == "disabled" {
+                                    active_admins -= 1;
+                                }
+                                row.outcome = outcome;
+                                row.shares_revoked = shares;
+                                row.group_memberships_removed = memberships;
+                            }
+                            Err(_) => row.outcome = "apply_failed".into(),
+                        }
+                    }
+                }
+            }
+        }
+        rows.push(row);
+    }
+
+    Ok(Json(OffboardUsersResponse {
+        dry_run: request.dry_run,
+        rows,
+    }))
+}
+
+async fn apply_offboarding(
+    state: &AppState,
+    tenant_id: Uuid,
+    actor_id: Uuid,
+    user_id: Uuid,
+    headers: &HeaderMap,
+) -> Result<(String, u64, u64), sqlx::Error> {
+    let mut tx = state.db_pool.begin().await?;
+    lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+    let target = sqlx::query_as::<_, (Option<chrono::DateTime<chrono::Utc>>, bool)>(
+        "SELECT u.disabled_at, EXISTS(SELECT 1 FROM organization_administrators oa WHERE oa.tenant_id=u.tenant_id AND oa.user_id=u.id AND oa.revoked_at IS NULL) FROM users u WHERE u.id=$1 AND u.tenant_id=$2 FOR UPDATE",
+    )
+    .bind(user_id)
+    .bind(tenant_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((disabled_at, is_admin)) = target else {
+        tx.rollback().await?;
+        return Ok(("not_found".into(), 0, 0));
+    };
+    if disabled_at.is_some() {
+        insert_scoped_admin_action(
+            &mut tx,
+            tenant_id,
+            actor_id,
+            "organization_admin.user_offboard_retry",
+            Some("user"),
+            Some(user_id),
+            json!({"outcome":"already_disabled"}),
+            request_correlation_id(headers),
+        )
+        .await?;
+        tx.commit().await?;
+        return Ok(("already_disabled".into(), 0, 0));
+    }
+    if is_admin && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, user_id).await? {
+        tx.rollback().await?;
+        return Ok(("last_enabled_admin".into(), 0, 0));
+    }
+    revoke_for_lifecycle(
+        &mut tx,
+        tenant_id,
+        Some(actor_id),
+        user_id,
+        "organization_admin",
+        request_correlation_id(headers),
+    )
+    .await?;
+    let shares = sqlx::query(
+        "UPDATE shares SET revoked_at=COALESCE(revoked_at,NOW()) WHERE tenant_id=$1 AND revoked_at IS NULL AND (created_by=$2 OR recipient_user_id=$2)",
+    ).bind(tenant_id).bind(user_id).execute(&mut *tx).await?.rows_affected();
+    let removed_memberships = sqlx::query_as::<
+        _,
+        (Uuid, Option<Uuid>, chrono::DateTime<chrono::Utc>),
+    >(
+        "DELETE FROM group_members gm USING user_groups g WHERE gm.group_id=g.id AND g.tenant_id=$1 AND gm.user_id=$2 RETURNING gm.group_id,gm.added_by,gm.added_at",
+    )
+    .bind(tenant_id)
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let memberships = removed_memberships.len() as u64;
+    let affected_groups = removed_memberships
+        .iter()
+        .map(|(group_id, _, _)| *group_id)
+        .collect::<Vec<_>>();
+    set_user_disabled_at(
+        &mut *tx,
+        DisableUserTarget::Id(user_id),
+        None,
+        Some(chrono::Utc::now()),
+    )
+    .await?;
+    insert_scoped_admin_action(
+        &mut tx,
+        tenant_id,
+        actor_id,
+        "organization_admin.user_offboarded",
+        Some("user"),
+        Some(user_id),
+        json!({
+            "shares_revoked":shares,
+            "group_memberships_removed":memberships,
+            "group_memberships":removed_memberships.iter().map(|(group_id, added_by, added_at)| {
+                json!({"group_id":group_id,"added_by":added_by,"added_at":added_at})
+            }).collect::<Vec<_>>(),
+        }),
+        request_correlation_id(headers),
+    )
+    .await?;
+    tx.commit().await?;
+    for group_id in affected_groups {
+        crate::services::note_service::dispatch_group_index_acl_refresh(
+            Arc::clone(&state.note_service),
+            group_id,
+        );
+    }
+    Ok(("disabled".into(), shares, memberships))
 }
 
 #[utoipa::path(get,path="/api/v1/organization-admin/groups",params(PaginationQuery),responses((status=200,body=OrgGroups)))]

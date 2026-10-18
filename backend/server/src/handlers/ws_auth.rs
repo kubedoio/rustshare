@@ -21,6 +21,7 @@ pub enum ClientIdentity {
         share_id: ShareId,
         file_id: Option<FileId>,
         permissions: SharePermissions,
+        session_expires_at: i64,
     },
 }
 
@@ -69,7 +70,7 @@ pub async fn validate_client_token(
     if let Ok(claims) = state.jwt_manager.validate(token) {
         let user_id =
             UserId::from(Uuid::parse_str(&claims.sub).map_err(|_| WsTokenError::InvalidToken)?);
-        let row_tenant_id = ensure_ws_user_active(state, user_id).await?;
+        let row_tenant_id = ensure_ws_user_active(state, user_id, Some(claims.iat)).await?;
         if claims.tenant_id != row_tenant_id {
             return Err(WsTokenError::PrincipalRejected(
                 StatusCode::UNAUTHORIZED,
@@ -87,15 +88,42 @@ pub async fn validate_client_token(
         if claims.is_expired() {
             return Err(WsTokenError::InvalidToken);
         }
+        if !share_is_active(state, claims.share_id, claims.exp)
+            .await
+            .map_err(|_| {
+                WsTokenError::PrincipalRejected(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Share access could not be verified".to_string(),
+                )
+            })?
+        {
+            return Err(WsTokenError::PrincipalRejected(
+                StatusCode::UNAUTHORIZED,
+                "Share is no longer active".to_string(),
+            ));
+        }
 
         return Ok(ClientIdentity::ShareViewer {
             share_id: claims.share_id,
             file_id: claims.file_id,
             permissions: claims.permissions,
+            session_expires_at: claims.exp,
         });
     }
 
     Err(WsTokenError::InvalidToken)
+}
+
+pub async fn share_is_active(
+    state: &AppState,
+    share_id: ShareId,
+    session_expires_at: i64,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM shares WHERE id=$1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW()) AND to_timestamp($2) > NOW())")
+        .bind(share_id)
+        .bind(session_expires_at)
+        .fetch_one(&state.db_pool)
+        .await
 }
 
 /// Verify the user still exists and is not disabled, mirroring the HTTP
@@ -107,10 +135,13 @@ pub async fn validate_client_token(
 async fn ensure_ws_user_active(
     state: &AppState,
     user_id: UserId,
+    token_iat: Option<i64>,
 ) -> Result<Uuid, (StatusCode, String)> {
-    let row: Option<(bool, Uuid)> =
-        sqlx::query_as("SELECT disabled_at IS NOT NULL, tenant_id FROM users WHERE id = $1")
+    let row: Option<(bool, Uuid, bool)> = sqlx::query_as(
+        "SELECT disabled_at IS NOT NULL, tenant_id, $2::bigint IS NOT NULL AND credentials_revoked_at IS NOT NULL AND to_timestamp($2) <= credentials_revoked_at FROM users WHERE id = $1",
+    )
             .bind(user_id)
+            .bind(token_iat)
             .fetch_optional(&state.db_pool)
             .await
             .map_err(|_| {
@@ -121,8 +152,10 @@ async fn ensure_ws_user_active(
             })?;
 
     match row {
-        Some((true, _)) => Err((StatusCode::FORBIDDEN, "Account disabled".to_string())),
-        Some((false, tenant_id)) => Ok(tenant_id),
+        Some((true, _, _)) | Some((false, _, true)) => {
+            Err((StatusCode::FORBIDDEN, "Account disabled".to_string()))
+        }
+        Some((false, tenant_id, false)) => Ok(tenant_id),
         None => Err((StatusCode::UNAUTHORIZED, "User not found".to_string())),
     }
 }
@@ -178,7 +211,7 @@ pub async fn resolve_ws_client_identity(
 
         // resolve_user_session already validated the session's organization
         // against the user's row (ADR-0040 D3); re-check activity here.
-        ensure_ws_user_active(state, session.user_id).await?;
+        ensure_ws_user_active(state, session.user_id, None).await?;
 
         return Ok(ClientIdentity::User {
             user_id: session.user_id,

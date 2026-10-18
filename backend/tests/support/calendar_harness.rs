@@ -86,7 +86,7 @@ fn assert_local_object_store_with(endpoint: &str, bucket: &str) {
         .is_some_and(|authority| authority.contains('@'));
     if !matches!(parsed.scheme(), "http" | "https")
         || !is_local_object_store_host(host)
-        || !matches!(parsed.port_or_known_default(), Some(9000 | 19000))
+        || !matches!(parsed.port_or_known_default(), Some(9000 | 19000 | 59000))
         || !parsed.username().is_empty()
         || parsed.password().is_some()
         || authority_has_userinfo

@@ -11925,6 +11925,43 @@
         }
       }
     },
+    "/api/v1/organization-admin/users/offboard": {
+      "post": {
+        "tags": [
+          "crate::handlers::organization_admin"
+        ],
+        "summary": "Disable up to 100 tenant users. Active shares issued by or directly granted\nto each user are revoked, and the user's group memberships are removed.\nGroup shares issued by others remain available to remaining group members.",
+        "operationId": "offboard_users",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OffboardUsersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OffboardUsersResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "403": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/api/v1/organization-admin/users/{id}": {
       "get": {
         "tags": [
@@ -23092,6 +23129,71 @@
           "permission_changed",
           "share_revoked"
         ]
+      },
+      "OffboardUserRow": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "outcome",
+          "shares_revoked",
+          "group_memberships_removed"
+        ],
+        "properties": {
+          "group_memberships_removed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "shares_revoked": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "OffboardUsersRequest": {
+        "type": "object",
+        "required": [
+          "dry_run",
+          "user_ids"
+        ],
+        "properties": {
+          "dry_run": {
+            "type": "boolean"
+          },
+          "user_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "OffboardUsersResponse": {
+        "type": "object",
+        "required": [
+          "dry_run",
+          "rows"
+        ],
+        "properties": {
+          "dry_run": {
+            "type": "boolean"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OffboardUserRow"
+            }
+          }
+        }
       },
       "OidcConfigResponse": {
         "type": "object",

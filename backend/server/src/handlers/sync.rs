@@ -19,7 +19,7 @@ use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use super::ws_auth::{resolve_ws_client_identity, ClientIdentity, WsAuthQuery};
+use super::ws_auth::{resolve_ws_client_identity, share_is_active, ClientIdentity, WsAuthQuery};
 use super::AuthenticatedUser;
 use crate::handlers::AppError;
 use crate::AppState;
@@ -117,6 +117,7 @@ pub async fn sync_handler(
             share_id,
             file_id,
             permissions,
+            ..
         } => {
             info!(
                 "WebSocket connection established for share viewer: share_id={}, file_id={}, permissions={:?}",
@@ -200,6 +201,21 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
         loop {
             match event_rx.recv().await {
                 Ok(event) => {
+                    if let ClientIdentity::ShareViewer {
+                        share_id,
+                        session_expires_at,
+                        ..
+                    } = &client_identity_for_task
+                    {
+                        match share_is_active(&state, *share_id, *session_expires_at).await {
+                            Ok(true) => {}
+                            Ok(false) => break,
+                            Err(e) => {
+                                error!(error = %e, "Failed to verify share access for WebSocket");
+                                break;
+                            }
+                        }
+                    }
                     // Check if this event is relevant to this client
                     match should_send_event_to_client(
                         &event,
@@ -281,9 +297,7 @@ async fn should_send_event_to_client(
             should_send_event_to_user(event, *user_id, *tenant_id, metadata_store).await
         }
         ClientIdentity::ShareViewer {
-            share_id,
-            file_id,
-            permissions: _,
+            share_id, file_id, ..
         } => {
             // Share viewers receive:
             // 1. Events for their specific file
@@ -953,6 +967,7 @@ mod tests {
             share_id,
             file_id: Some(file_id),
             permissions: SharePermissions::View,
+            session_expires_at: i64::MAX,
         };
 
         // Create ShareRevoked event for this share
@@ -999,6 +1014,7 @@ mod tests {
             share_id,
             file_id: Some(file_id),
             permissions: SharePermissions::View,
+            session_expires_at: i64::MAX,
         };
 
         // Create ShareUpdated event for this share
@@ -1048,6 +1064,7 @@ mod tests {
             share_id,
             file_id: Some(file_id),
             permissions: SharePermissions::View,
+            session_expires_at: i64::MAX,
         };
 
         // Create FileModified event for this file
@@ -1101,6 +1118,7 @@ mod tests {
             share_id,
             file_id: Some(file_id),
             permissions: SharePermissions::View,
+            session_expires_at: i64::MAX,
         };
 
         // Create FileModified event for a different file
@@ -1154,6 +1172,7 @@ mod tests {
             share_id,
             file_id: Some(file_id),
             permissions: SharePermissions::View,
+            session_expires_at: i64::MAX,
         };
 
         // Create ShareRevoked event for a different share
@@ -1200,6 +1219,7 @@ mod tests {
             share_id,
             file_id: Some(file_id),
             permissions: SharePermissions::View,
+            session_expires_at: i64::MAX,
         };
 
         // Create UserCreated event
