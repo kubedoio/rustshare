@@ -1,4 +1,6 @@
 //! Bounded tenant administration for explicitly granted organization admins.
+pub mod invitations;
+
 use crate::{
     handlers::{
         admin::organization_administrators::{
