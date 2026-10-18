@@ -14,20 +14,24 @@
 	let loading = $state(true);
 	let busyId = $state('');
 	let error = $state('');
+	let loadVersion = 0;
 	let notice = $state('');
 	const retryKeys = new Map<string, string>();
 
-	async function load() {
+	async function load(requestedPage = page) {
+		const requestVersion = ++loadVersion;
 		loading = true;
 		error = '';
 		try {
-			const result = await listOrganizationInvitations({ page, per_page: perPage });
+			const result = await listOrganizationInvitations({ page: requestedPage, per_page: perPage });
+			if (requestVersion !== loadVersion || requestedPage !== page) return;
 			invitations = result.invitations ?? [];
 			total = result.total;
 		} catch (e) {
+			if (requestVersion !== loadVersion || requestedPage !== page) return;
 			error = e instanceof Error ? e.message : 'Unable to load invitations';
 		} finally {
-			loading = false;
+			if (requestVersion === loadVersion && requestedPage === page) loading = false;
 		}
 	}
 
@@ -127,14 +131,14 @@
 					disabled={page <= 1 || busyId !== ''}
 					onclick={() => {
 						page -= 1;
-						void load();
+						void load(page);
 					}}>Previous</button
 				><button
 					class="btn btn-sm"
 					disabled={page * perPage >= total || busyId !== ''}
 					onclick={() => {
 						page += 1;
-						void load();
+						void load(page);
 					}}>Next</button
 				>
 			</div>

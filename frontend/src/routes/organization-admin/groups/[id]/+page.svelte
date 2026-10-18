@@ -24,34 +24,52 @@
 	let memberSearch = $state('');
 	let matches = $state<OrgUser[]>([]);
 	let selectedUser = $state('');
+	let loadVersion = 0;
+	let loadedGroupId = '';
 
-	async function load() {
+	async function load(requestedGroupId = groupId, requestedPage = page) {
+		const requestVersion = ++loadVersion;
 		loading = true;
 		error = '';
 		try {
-			const result = await getOrganizationGroup(groupId, { page, per_page: perPage });
+			const result = await getOrganizationGroup(requestedGroupId, {
+				page: requestedPage,
+				per_page: perPage
+			});
+			if (requestVersion !== loadVersion || requestedGroupId !== groupId) return;
 			group = result;
 			name = result.name;
 			description = result.description ?? '';
 			members = result.members;
 			total = result.total;
 		} catch (e) {
+			if (requestVersion !== loadVersion || requestedGroupId !== groupId) return;
 			error = e instanceof Error ? e.message : 'Unable to load group';
 		} finally {
-			loading = false;
+			if (requestVersion === loadVersion && requestedGroupId === groupId) loading = false;
 		}
 	}
 
 	$effect(() => {
-		if (groupId) void load();
+		const requestedGroupId = groupId;
+		if (!requestedGroupId) return;
+		if (requestedGroupId !== loadedGroupId) {
+			loadedGroupId = requestedGroupId;
+			page = 1;
+			void load(requestedGroupId, 1);
+		} else {
+			void load(requestedGroupId, page);
+		}
 	});
 
 	async function saveGroup(event: SubmitEvent) {
 		event.preventDefault();
+		const targetGroupId = group?.id;
+		if (!targetGroupId || targetGroupId !== groupId) return;
 		busy = true;
 		error = '';
 		try {
-			await updateOrganizationGroup(groupId, name.trim(), description.trim());
+			await updateOrganizationGroup(targetGroupId, name.trim(), description.trim());
 			await load();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Unable to update group';
@@ -81,11 +99,12 @@
 	}
 
 	async function addMember() {
-		if (!selectedUser) return;
+		const targetGroupId = group?.id;
+		if (!selectedUser || !targetGroupId || targetGroupId !== groupId) return;
 		busy = true;
 		error = '';
 		try {
-			await addOrganizationGroupMember(groupId, selectedUser);
+			await addOrganizationGroupMember(targetGroupId, selectedUser);
 			matches = [];
 			selectedUser = '';
 			await load();
@@ -97,10 +116,12 @@
 	}
 
 	async function removeMember(userId: string) {
+		const targetGroupId = group?.id;
+		if (!targetGroupId || targetGroupId !== groupId) return;
 		busy = true;
 		error = '';
 		try {
-			await removeOrganizationGroupMember(groupId, userId);
+			await removeOrganizationGroupMember(targetGroupId, userId);
 			await load();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Unable to remove member';
@@ -197,20 +218,12 @@
 			<div class="flex items-center justify-between">
 				<span>Page {page} of {Math.max(1, Math.ceil(total / perPage))}</span>
 				<div class="flex gap-2">
-					<button
-						class="btn btn-sm"
-						disabled={page <= 1 || busy}
-						onclick={() => {
-							page -= 1;
-							void load();
-						}}>Previous</button
+					<button class="btn btn-sm" disabled={page <= 1 || busy} onclick={() => (page -= 1)}
+						>Previous</button
 					><button
 						class="btn btn-sm"
 						disabled={page * perPage >= total || busy}
-						onclick={() => {
-							page += 1;
-							void load();
-						}}>Next</button
+						onclick={() => (page += 1)}>Next</button
 					>
 				</div>
 			</div>

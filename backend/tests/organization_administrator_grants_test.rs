@@ -615,6 +615,13 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     .await;
     assert_eq!(status, axum::http::StatusCode::OK);
     assert_eq!(capability, serde_json::json!({"allowed":true}));
+    let searchable_display_name = format!("DisplaySearch{}", member.simple());
+    sqlx::query("UPDATE users SET display_name = $1 WHERE id = $2")
+        .bind(&searchable_display_name)
+        .bind(member)
+        .execute(&pool)
+        .await
+        .expect("set searchable display name");
     let (status, _) = send_json(
         &app,
         "POST",
@@ -649,6 +656,17 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
         .unwrap()
         .iter()
         .all(|u| u.get("is_admin").is_none()));
+    let (status, searched_users) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/organization-admin/users?search={searchable_display_name}"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(searched_users["total"], 1);
+    assert_eq!(searched_users["users"][0]["id"], member.to_string());
     let (status, _) = send(
         &app,
         "GET",

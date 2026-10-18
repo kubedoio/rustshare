@@ -8,18 +8,22 @@
 	let page = $state(1);
 	let loading = $state(true);
 	let error = $state('');
+	let loadVersion = 0;
 
-	async function load() {
+	async function load(requestedPage = page) {
+		const requestVersion = ++loadVersion;
 		loading = true;
 		error = '';
 		try {
-			const result = await listOrganizationAudit({ page, per_page: perPage });
+			const result = await listOrganizationAudit({ page: requestedPage, per_page: perPage });
+			if (requestVersion !== loadVersion || requestedPage !== page) return;
 			entries = result.entries ?? [];
 			total = result.total;
 		} catch (e) {
+			if (requestVersion !== loadVersion || requestedPage !== page) return;
 			error = e instanceof Error ? e.message : 'Unable to load audit activity';
 		} finally {
-			loading = false;
+			if (requestVersion === loadVersion && requestedPage === page) loading = false;
 		}
 	}
 
@@ -58,14 +62,14 @@
 					disabled={page <= 1}
 					onclick={() => {
 						page -= 1;
-						void load();
+						void load(page);
 					}}>Previous</button
 				><button
 					class="btn btn-sm"
 					disabled={page * perPage >= total}
 					onclick={() => {
 						page += 1;
-						void load();
+						void load(page);
 					}}>Next</button
 				>
 			</div>

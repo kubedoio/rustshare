@@ -77,16 +77,27 @@ describe('organization users operations', () => {
 				this.setAttribute('open', '');
 			}
 		});
-		api.offboard.mockResolvedValueOnce({
-			rows: [
-				{
-					user_id: 'u1',
-					outcome: 'would_disable',
-					shares_revoked: 0,
-					group_memberships_removed: 0
-				}
-			]
-		});
+		api.offboard
+			.mockResolvedValueOnce({
+				rows: [
+					{
+						user_id: 'u1',
+						outcome: 'would_disable',
+						shares_revoked: 0,
+						group_memberships_removed: 0
+					}
+				]
+			})
+			.mockResolvedValueOnce({
+				rows: [
+					{
+						user_id: 'u1',
+						outcome: 'disabled',
+						shares_revoked: 0,
+						group_memberships_removed: 0
+					}
+				]
+			});
 		render(UsersPage);
 		await screen.findByText('Alex Example');
 		expect(screen.getByRole('checkbox', { name: 'Select unnamed-user' })).toBeTruthy();
@@ -101,5 +112,105 @@ describe('organization users operations', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Confirm disable' }));
 		await waitFor(() => expect(api.offboard).toHaveBeenCalledTimes(2));
 		expect(api.offboard).toHaveBeenNthCalledWith(2, ['u1'], false);
+		const applied = screen.getByRole('button', { name: 'Applied' }) as HTMLButtonElement;
+		expect(applied.disabled).toBe(true);
+		await fireEvent.click(applied);
+		expect(api.offboard).toHaveBeenCalledTimes(2);
+	});
+
+	it('returns to page one after offboarding shrinks the active list', async () => {
+		Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+			configurable: true,
+			value: function (this: HTMLDialogElement) {
+				this.setAttribute('open', '');
+			}
+		});
+		api.listUsers.mockImplementation(({ page }: { page: number }) =>
+			Promise.resolve(
+				page === 2
+					? {
+							users: [
+								{
+									id: 'last',
+									display_name: 'Last Member',
+									username: 'last',
+									email: 'last@example.org',
+									disabled_at: null
+								}
+							],
+							total: 51
+						}
+					: { users: [], total: api.offboard.mock.calls.length >= 2 ? 50 : 51 }
+			)
+		);
+		api.offboard
+			.mockResolvedValueOnce({ rows: [{ user_id: 'last', outcome: 'would_disable' }] })
+			.mockResolvedValueOnce({ rows: [{ user_id: 'last', outcome: 'disabled' }] });
+		render(UsersPage);
+		await screen.findByText('51 users · Page 1 of 2');
+		await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+		await screen.findByText('Last Member');
+		await fireEvent.click(screen.getByRole('checkbox', { name: 'Select Last Member' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Preview offboarding' }));
+		await screen.findByRole('dialog');
+		await fireEvent.click(screen.getByRole('button', { name: 'Confirm disable' }));
+		await waitFor(() =>
+			expect(api.listUsers).toHaveBeenLastCalledWith(
+				expect.objectContaining({ page: 1, status: 'all' })
+			)
+		);
+	});
+
+	it('resets status pagination and ignores a stale result from the previous filter', async () => {
+		let finishPageTwo!: (result: { users: unknown[]; total: number }) => void;
+		api.listUsers.mockImplementation(({ page, status }: { page: number; status: string }) => {
+			if (status === 'all' && page === 2) {
+				return new Promise((resolve) => {
+					finishPageTwo = resolve;
+				});
+			}
+			return Promise.resolve({
+				users:
+					status === 'disabled'
+						? [
+								{
+									id: 'disabled',
+									display_name: 'Disabled Member',
+									username: 'disabled',
+									email: 'disabled@example.org',
+									disabled_at: '2026-01-01T00:00:00Z'
+								}
+							]
+						: [],
+				total: status === 'disabled' ? 1 : 100
+			});
+		});
+		render(UsersPage);
+		await screen.findByText('100 users · Page 1 of 2');
+		await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+		await waitFor(() =>
+			expect(api.listUsers).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }))
+		);
+		await fireEvent.change(screen.getByLabelText('User status'), { target: { value: 'disabled' } });
+		await screen.findByText('Disabled Member');
+		expect(api.listUsers).toHaveBeenLastCalledWith(
+			expect.objectContaining({ page: 1, status: 'disabled' })
+		);
+
+		finishPageTwo({
+			users: [
+				{
+					id: 'stale',
+					display_name: 'Stale Member',
+					username: 'stale',
+					email: 'stale@example.org',
+					disabled_at: null
+				}
+			],
+			total: 100
+		});
+		await Promise.resolve();
+		expect(screen.queryByText('Stale Member')).toBeNull();
+		expect(screen.getByText('Disabled Member')).toBeTruthy();
 	});
 });

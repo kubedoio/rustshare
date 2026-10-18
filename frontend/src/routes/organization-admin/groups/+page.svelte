@@ -16,18 +16,22 @@
 	let loading = $state(true);
 	let busy = $state(false);
 	let error = $state('');
+	let loadVersion = 0;
 
-	async function load() {
+	async function load(requestedPage = page) {
+		const requestVersion = ++loadVersion;
 		loading = true;
 		error = '';
 		try {
-			const result = await listOrganizationGroups({ page, per_page: perPage });
+			const result = await listOrganizationGroups({ page: requestedPage, per_page: perPage });
+			if (requestVersion !== loadVersion || requestedPage !== page) return;
 			groups = result.groups ?? [];
 			total = result.total;
 		} catch (e) {
+			if (requestVersion !== loadVersion || requestedPage !== page) return;
 			error = e instanceof Error ? e.message : 'Unable to load groups';
 		} finally {
-			loading = false;
+			if (requestVersion === loadVersion && requestedPage === page) loading = false;
 		}
 	}
 
@@ -58,7 +62,8 @@
 		error = '';
 		try {
 			await deleteOrganizationGroup(group.id);
-			await load();
+			page = Math.min(page, Math.max(1, Math.ceil((total - 1) / perPage)));
+			await load(page);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Unable to delete group';
 		} finally {
@@ -131,14 +136,14 @@
 					disabled={page <= 1 || busy}
 					onclick={() => {
 						page -= 1;
-						void load();
+						void load(page);
 					}}>Previous</button
 				><button
 					class="btn btn-sm"
 					disabled={page * perPage >= total || busy}
 					onclick={() => {
 						page += 1;
-						void load();
+						void load(page);
 					}}>Next</button
 				>
 			</div>

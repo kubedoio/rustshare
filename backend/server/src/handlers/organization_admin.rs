@@ -244,11 +244,11 @@ pub async fn users(
         return Err(admin_bad_request("Invalid status"));
     }
     let pat = q.search.map(|x| format!("%{x}%"));
-    let total:i64=sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE tenant_id=$1 AND ($2::text IS NULL OR username ILIKE $2 OR email ILIKE $2) AND ($3='all' OR ($3='active' AND disabled_at IS NULL) OR ($3='disabled' AND disabled_at IS NOT NULL))").bind(tenant_id).bind(&pat).bind(status).fetch_one(&s.db_pool).await.map_err(db_error)?;
+    let total:i64=sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE tenant_id=$1 AND ($2::text IS NULL OR username ILIKE $2 OR email ILIKE $2 OR display_name ILIKE $2) AND ($3='all' OR ($3='active' AND disabled_at IS NULL) OR ($3='disabled' AND disabled_at IS NOT NULL))").bind(tenant_id).bind(&pat).bind(status).fetch_one(&s.db_pool).await.map_err(db_error)?;
     let rows = if off >= total {
         Vec::new()
     } else {
-        sqlx::query_as::<_,(Uuid,String,String,String,Option<chrono::DateTime<chrono::Utc>>)>("SELECT id,username,email,display_name,disabled_at FROM users WHERE tenant_id=$1 AND ($2::text IS NULL OR username ILIKE $2 OR email ILIKE $2) AND ($3='all' OR ($3='active' AND disabled_at IS NULL) OR ($3='disabled' AND disabled_at IS NOT NULL)) ORDER BY created_at DESC,id LIMIT $4 OFFSET $5").bind(tenant_id).bind(pat).bind(status).bind(per).bind(off).fetch_all(&s.db_pool).await.map_err(db_error)?
+        sqlx::query_as::<_,(Uuid,String,String,String,Option<chrono::DateTime<chrono::Utc>>)>("SELECT id,username,email,display_name,disabled_at FROM users WHERE tenant_id=$1 AND ($2::text IS NULL OR username ILIKE $2 OR email ILIKE $2 OR display_name ILIKE $2) AND ($3='all' OR ($3='active' AND disabled_at IS NULL) OR ($3='disabled' AND disabled_at IS NOT NULL)) ORDER BY created_at DESC,id LIMIT $4 OFFSET $5").bind(tenant_id).bind(pat).bind(status).bind(per).bind(off).fetch_all(&s.db_pool).await.map_err(db_error)?
     };
     Ok(Json(OrgUsers {
         users: rows

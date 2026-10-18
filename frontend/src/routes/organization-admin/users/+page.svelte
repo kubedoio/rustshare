@@ -30,18 +30,30 @@
 	let offboardBusy = $state(false);
 	let offboardError = $state('');
 	let dialog: HTMLDialogElement;
+	let loadVersion = 0;
 
 	async function loadUsers() {
+		const requestVersion = ++loadVersion;
+		const requestedPage = page;
+		const requestedSearch = search;
+		const requestedStatus = status;
 		loading = true;
 		error = '';
 		try {
-			const result = await listOrganizationUsers({ page, per_page: perPage, search, status });
+			const result = await listOrganizationUsers({
+				page: requestedPage,
+				per_page: perPage,
+				search: requestedSearch,
+				status: requestedStatus
+			});
+			if (requestVersion !== loadVersion) return;
 			users = result.users ?? [];
 			total = result.total;
 		} catch (e) {
+			if (requestVersion !== loadVersion) return;
 			error = e instanceof Error ? e.message : 'Unable to load users';
 		} finally {
-			loading = false;
+			if (requestVersion === loadVersion) loading = false;
 		}
 	}
 
@@ -56,6 +68,11 @@
 		event.preventDefault();
 		page = 1;
 		search = searchInput.trim();
+	}
+
+	function changeStatus(event: Event) {
+		status = (event.currentTarget as HTMLSelectElement).value as typeof status;
+		page = 1;
 	}
 
 	function toggleUser(user: OrgUser) {
@@ -120,6 +137,7 @@
 			).rows;
 			offboardApplied = true;
 			selected = [];
+			page = 1;
 			await loadUsers();
 		} catch (e) {
 			offboardError = e instanceof Error ? e.message : 'Offboarding failed';
@@ -143,7 +161,12 @@
 				placeholder="Search name or email"
 			/>
 			<label class="sr-only" for="org-user-status">User status</label>
-			<select id="org-user-status" class="select-bordered select select-sm" bind:value={status}>
+			<select
+				id="org-user-status"
+				class="select-bordered select select-sm"
+				value={status}
+				onchange={changeStatus}
+			>
 				<option value="all">All statuses</option><option value="active">Enabled</option><option
 					value="disabled">Disabled</option
 				>
@@ -261,8 +284,9 @@
 			<button class="btn" disabled={offboardBusy} onclick={() => dialog.close()}>Close</button>
 			<button
 				class="btn btn-error"
-				disabled={offboardBusy || !offboardRows?.length}
-				onclick={applyOffboarding}>{offboardBusy ? 'Applying…' : 'Confirm disable'}</button
+				disabled={offboardBusy || offboardApplied || !offboardRows?.length}
+				onclick={applyOffboarding}
+				>{offboardBusy ? 'Applying…' : offboardApplied ? 'Applied' : 'Confirm disable'}</button
 			>
 		</div>
 	</div>
