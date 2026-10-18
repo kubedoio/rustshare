@@ -38,6 +38,33 @@ async fn send_json(app: &Router, uri: &str, token: &str, body: Value) -> (u16, V
     )
 }
 
+async fn insert_legacy_invite_pair(
+    pool: &PgPool,
+    tenant: Uuid,
+    sender: Uuid,
+    email: &str,
+) -> ([Uuid; 2], [String; 2]) {
+    let ids = [Uuid::new_v4(), Uuid::new_v4()];
+    let tokens = [
+        Uuid::new_v4().simple().to_string(),
+        Uuid::new_v4().simple().to_string(),
+    ];
+    for (id, token) in ids.iter().zip(&tokens) {
+        sqlx::query(
+            "INSERT INTO invite_tokens (id,tenant_id,token,sender_id,recipient_email,workflow_id,expires_at) SELECT $1,$2,$3,$4,$5,id,now()+interval '7 days' FROM workflows WHERE key='invite_email' LIMIT 1",
+        )
+        .bind(id)
+        .bind(tenant)
+        .bind(token)
+        .bind(sender)
+        .bind(email)
+        .execute(pool)
+        .await
+        .expect("legacy duplicate invitation fixture");
+    }
+    (ids, tokens)
+}
+
 async fn send_patch_json(app: &Router, uri: &str, token: &str, body: Value) -> (u16, Value) {
     let response = app
         .clone()
@@ -656,6 +683,186 @@ async fn bulk_invites_validate_apply_retry_and_isolate_tenants() {
     assert_eq!(acceptance_audit.0, tenant);
     assert_eq!(acceptance_audit.1, accepted_id);
     assert_eq!(acceptance_audit.2["group_ids"], json!([own_group]));
+
+    // Legacy databases may have multiple active invitations for one email.
+    // The submitted valid token wins; all siblings are revoked and audited.
+    let legacy_email = format!("legacy_duplicate_{}@test.local", Uuid::new_v4().simple());
+    let (legacy_invites, legacy_tokens) =
+        insert_legacy_invite_pair(&pool, tenant, admin, &legacy_email).await;
+    let foreign_legacy_invite = Uuid::new_v4();
+    let foreign_legacy_token = Uuid::new_v4().simple().to_string();
+    sqlx::query(
+        "INSERT INTO invite_tokens (id,tenant_id,token,sender_id,recipient_email,workflow_id,expires_at) SELECT $1,$2,$3,$4,$5,id,now()+interval '7 days' FROM workflows WHERE key='invite_email' LIMIT 1",
+    )
+    .bind(foreign_legacy_invite)
+    .bind(foreign_tenant)
+    .bind(&foreign_legacy_token)
+    .bind(foreign_existing)
+    .bind(&legacy_email)
+    .execute(&pool)
+    .await
+    .expect("foreign legacy invitation fixture");
+    let (status, accepted) = send_json(
+        &app,
+        &format!("/api/v1/invites/{}/accept", legacy_tokens[1]),
+        "",
+        json!({"email":legacy_email,"display_name":"Legacy member","password":"correct-horse-battery","terms_accepted":true}),
+    )
+    .await;
+    assert_eq!(status, 200, "{accepted}");
+    let legacy_user: Uuid = accepted["id"].as_str().unwrap().parse().unwrap();
+    let legacy_states: Vec<(Uuid, bool, bool)> = sqlx::query_as(
+        "SELECT id, used_at IS NOT NULL, revoked_at IS NOT NULL FROM invite_tokens WHERE id=ANY($1) ORDER BY id",
+    )
+    .bind(legacy_invites.as_slice())
+    .fetch_all(&pool)
+    .await
+    .expect("legacy invitation outcomes");
+    assert_eq!(legacy_states.len(), 2);
+    assert!(legacy_states.contains(&(legacy_invites[0], false, true)));
+    assert!(legacy_states.contains(&(legacy_invites[1], true, false)));
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT used_at IS NULL AND revoked_at IS NULL FROM invite_tokens WHERE id=$1"
+    )
+    .bind(foreign_legacy_invite)
+    .fetch_one(&pool)
+    .await
+    .expect("foreign tenant invitation remains untouched"));
+    let sibling_audit: (Uuid, Uuid, Value) = sqlx::query_as(
+        "SELECT tenant_id,actor_principal_id,detail FROM admin_actions WHERE action_type='invite.sibling_revoked_on_acceptance' AND target_id=$1",
+    )
+    .bind(legacy_invites[0])
+    .fetch_one(&pool)
+    .await
+    .expect("legacy sibling audit");
+    assert_eq!(sibling_audit.0, tenant);
+    assert_eq!(sibling_audit.1, legacy_user);
+    assert_eq!(sibling_audit.2["reason"], "accepted_sibling");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM admin_actions WHERE action_type='invite.sibling_revoked_on_acceptance' AND target_id=$1")
+            .bind(foreign_legacy_invite)
+            .fetch_one(&pool)
+            .await
+            .expect("no cross-tenant sibling audit"),
+        0
+    );
+    let (foreign_status, foreign_response) = send_json(
+        &app,
+        &format!("/api/v1/invites/{foreign_legacy_token}/accept"),
+        "",
+        json!({"email":legacy_email,"display_name":"Legacy member","password":"correct-horse-battery","terms_accepted":true}),
+    )
+    .await;
+    assert_eq!(foreign_status, 409);
+    assert!(!foreign_response.to_string().contains(&foreign_legacy_token));
+
+    // A mandatory audit failure rolls back sibling revocation and user creation.
+    let rollback_email = format!("legacy_rollback_{}@test.local", Uuid::new_v4().simple());
+    let (rollback_invites, rollback_tokens) =
+        insert_legacy_invite_pair(&pool, tenant, admin, &rollback_email).await;
+    sqlx::query(
+        r#"CREATE FUNCTION fail_sibling_invite_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            IF NEW.action_type='invite.sibling_revoked_on_acceptance' THEN
+                RAISE EXCEPTION 'injected sibling audit failure';
+            END IF;
+            RETURN NEW;
+        END;
+        $$"#,
+    )
+    .execute(&pool)
+    .await
+    .expect("create sibling audit failure function");
+    sqlx::query("CREATE TRIGGER fail_sibling_invite_audit BEFORE INSERT ON admin_actions FOR EACH ROW EXECUTE FUNCTION fail_sibling_invite_audit()")
+        .execute(&pool)
+        .await
+        .expect("create sibling audit failure trigger");
+    let (status, _) = send_json(
+        &app,
+        &format!("/api/v1/invites/{}/accept", rollback_tokens[0]),
+        "",
+        json!({"email":rollback_email,"display_name":"Rollback member","password":"correct-horse-battery","terms_accepted":true}),
+    )
+    .await;
+    assert_eq!(status, 500);
+    sqlx::query("DROP TRIGGER fail_sibling_invite_audit ON admin_actions")
+        .execute(&pool)
+        .await
+        .expect("drop sibling audit failure trigger");
+    sqlx::query("DROP FUNCTION fail_sibling_invite_audit()")
+        .execute(&pool)
+        .await
+        .expect("drop sibling audit failure function");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM users WHERE lower(email)=lower($1)")
+            .bind(&rollback_email)
+            .fetch_one(&pool)
+            .await
+            .expect("rollback leaves no account"),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM invite_tokens WHERE id=ANY($1) AND used_at IS NULL AND revoked_at IS NULL")
+            .bind(rollback_invites.as_slice())
+            .fetch_one(&pool)
+            .await
+            .expect("rollback restores both invitations"),
+        2
+    );
+
+    // Concurrent acceptance is serialized by the normalized-email advisory lock.
+    let concurrent_accept_email = format!("legacy_race_{}@test.local", Uuid::new_v4().simple());
+    let (concurrent_invites, concurrent_tokens) =
+        insert_legacy_invite_pair(&pool, tenant, admin, &concurrent_accept_email).await;
+    let accept_legacy = |invite_token: &str| {
+        let app = app.clone();
+        let uri = format!("/api/v1/invites/{invite_token}/accept");
+        let email = concurrent_accept_email.clone();
+        async move {
+            send_json(
+                &app,
+                &uri,
+                "",
+                json!({"email":email,"display_name":"Concurrent legacy member","password":"correct-horse-battery","terms_accepted":true}),
+            )
+            .await
+        }
+    };
+    let (first_accept, second_accept) = tokio::join!(
+        accept_legacy(&concurrent_tokens[0]),
+        accept_legacy(&concurrent_tokens[1])
+    );
+    let statuses = [first_accept.0, second_accept.0];
+    assert!(statuses.contains(&200));
+    assert!(statuses.contains(&410));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM users WHERE lower(email)=lower($1)")
+            .bind(&concurrent_accept_email)
+            .fetch_one(&pool)
+            .await
+            .expect("one concurrent acceptance account"),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM invite_tokens WHERE id=ANY($1) AND used_at IS NOT NULL"
+        )
+        .bind(concurrent_invites.as_slice())
+        .fetch_one(&pool)
+        .await
+        .expect("one concurrent winner"),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM invite_tokens WHERE id=ANY($1) AND revoked_at IS NOT NULL"
+        )
+        .bind(concurrent_invites.as_slice())
+        .fetch_one(&pool)
+        .await
+        .expect("one concurrent sibling revocation"),
+        1
+    );
 
     let deleted_group = Uuid::new_v4();
     sqlx::query("INSERT INTO user_groups (id,name,created_by,tenant_id) VALUES ($1,$2,$3,$4)")

@@ -6,6 +6,7 @@ DECLARE
     identifier TEXT;
     identifiers TEXT[] := ARRAY[lower(NEW.email), lower(NEW.username)];
     accepting_invite_id TEXT := current_setting('rustshare.accepting_invite_token_id', true);
+    accepting_invite_email TEXT := current_setting('rustshare.accepting_invite_email', true);
 BEGIN
     IF TG_OP = 'UPDATE'
        AND NEW.email IS NOT DISTINCT FROM OLD.email
@@ -28,6 +29,7 @@ BEGIN
           AND used_at IS NULL
           AND revoked_at IS NULL
           AND expires_at > now()
+          AND lower(recipient_email) IS DISTINCT FROM lower(accepting_invite_email)
           AND id::text IS DISTINCT FROM accepting_invite_id
     ) THEN
         RAISE EXCEPTION 'User identifier is reserved by a pending invitation'

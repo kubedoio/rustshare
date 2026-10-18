@@ -360,6 +360,34 @@ pub async fn accept_invite(
         .bind(row.token_id.to_string())
         .execute(&mut *tx)
         .await?;
+    sqlx::query("SELECT set_config('rustshare.accepting_invite_email', $1, true)")
+        .bind(&email)
+        .execute(&mut *tx)
+        .await?;
+
+    // Older versions allowed multiple active invitations for one address. The
+    // email advisory lock above makes the chosen valid token the deterministic
+    // winner. Revoke active siblings in this tenant before the identifier
+    // trigger checks the new user; leave other tenants' invitations untouched.
+    let siblings: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT id, tenant_id FROM invite_tokens
+         WHERE tenant_id = $3 AND lower(recipient_email) = lower($1)
+           AND id <> $2
+           AND used_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+         ORDER BY tenant_id, id
+         FOR UPDATE",
+    )
+    .bind(&email)
+    .bind(row.token_id)
+    .bind(row.tenant_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (sibling_id, _) in &siblings {
+        sqlx::query("UPDATE invite_tokens SET revoked_at=now() WHERE id=$1")
+            .bind(sibling_id)
+            .execute(&mut *tx)
+            .await?;
+    }
 
     // Insert the user into the inviter's tenant (from the token row), not a
     // hardcoded nil tenant, so invitees land in the same tenant as the sender.
@@ -398,6 +426,19 @@ pub async fn accept_invite(
     .bind(row.sender_id)
     .execute(&mut *tx)
     .await?;
+    for (sibling_id, sibling_tenant_id) in siblings {
+        crate::handlers::admin::insert_scoped_admin_action(
+            &mut tx,
+            sibling_tenant_id,
+            user_id,
+            "invite.sibling_revoked_on_acceptance",
+            Some("invite"),
+            Some(sibling_id),
+            serde_json::json!({"reason": "accepted_sibling"}),
+            None,
+        )
+        .await?;
+    }
     crate::handlers::admin::insert_scoped_admin_action(
         &mut tx,
         row.tenant_id,

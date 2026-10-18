@@ -404,6 +404,9 @@ pub(crate) fn project_audit_detail(
             "user.created" | "user.invited" => {
                 copy_safe_identifier(fields, &mut projected, "username");
             }
+            "invite.sibling_revoked_on_acceptance" => {
+                copy_safe_identifier(fields, &mut projected, "reason");
+            }
             "share.created" | "share.revoked" => {
                 copy_uuid(fields, &mut projected, "share_id");
                 copy_safe_identifier(fields, &mut projected, "permissions");
