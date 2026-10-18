@@ -61,17 +61,18 @@ pub async fn resolve_bearer_token(
         Ok(claims) => {
             let user_id = Uuid::parse_str(&claims.sub).map_err(|_| AuthError::InvalidToken)?;
 
-            // Check disabled status and get tenant_id
-            let row: (bool, Uuid) = sqlx::query_as(
-                "SELECT disabled_at IS NOT NULL, tenant_id FROM users WHERE id = $1",
+            // Disabled accounts and JWTs issued before the last disable are rejected.
+            let row: (bool, Uuid, bool, i64) = sqlx::query_as(
+                "SELECT disabled_at IS NOT NULL, tenant_id, credentials_revoked_at IS NOT NULL AND to_timestamp($2) <= credentials_revoked_at, credential_version FROM users WHERE id = $1",
             )
             .bind(user_id)
+            .bind(claims.iat)
             .fetch_optional(&state.db_pool)
             .await
             .map_err(|_| AuthError::DatabaseError)?
             .ok_or(AuthError::UserNotFound)?;
 
-            if row.0 {
+            if row.0 || row.2 || row.3 != claims.credential_version {
                 return Err(AuthError::AccountDisabled);
             }
 

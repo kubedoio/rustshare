@@ -19,7 +19,10 @@ use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use super::ws_auth::{resolve_ws_client_identity, ClientIdentity, WsAuthQuery};
+use super::ws_auth::{
+    resolve_ws_client_identity, share_is_active, user_credential_is_current, ClientIdentity,
+    WsAuthQuery,
+};
 use super::AuthenticatedUser;
 use crate::handlers::AppError;
 use crate::AppState;
@@ -117,6 +120,7 @@ pub async fn sync_handler(
             share_id,
             file_id,
             permissions,
+            ..
         } => {
             info!(
                 "WebSocket connection established for share viewer: share_id={}, file_id={}, permissions={:?}",
@@ -171,6 +175,11 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
                                 Ok(events) => {
                                     info!("Sending {} catch-up events to user {}", events.len(), user_id);
                                     for event in events {
+                                        if let ClientIdentity::User { user_id, tenant_id, credential_version } = &client_identity_for_task {
+                                            if !user_credential_is_current(&state, *user_id, *tenant_id, *credential_version).await.unwrap_or(false) {
+                                                return;
+                                            }
+                                        }
                                         if let Ok(message) = event_to_sync_message(&event, &metadata_store).await {
                                             if let Ok(json) = serde_json::to_string(&message) {
                                                 if sender.send(Message::Text(json.into())).await.is_err() {
@@ -198,8 +207,62 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
 
         // Stream live events
         loop {
-            match event_rx.recv().await {
+            let received =
+                tokio::time::timeout(tokio::time::Duration::from_secs(1), event_rx.recv()).await;
+            let result = match received {
+                Ok(result) => result,
+                Err(_) => {
+                    if let ClientIdentity::User {
+                        user_id,
+                        tenant_id,
+                        credential_version,
+                    } = &client_identity_for_task
+                    {
+                        match user_credential_is_current(
+                            &state,
+                            *user_id,
+                            *tenant_id,
+                            *credential_version,
+                        )
+                        .await
+                        {
+                            Ok(true) => continue,
+                            Ok(false) | Err(_) => break,
+                        }
+                    }
+                    continue;
+                }
+            };
+            if let ClientIdentity::User {
+                user_id,
+                tenant_id,
+                credential_version,
+            } = &client_identity_for_task
+            {
+                match user_credential_is_current(&state, *user_id, *tenant_id, *credential_version)
+                    .await
+                {
+                    Ok(true) => {}
+                    Ok(false) | Err(_) => break,
+                }
+            }
+            match result {
                 Ok(event) => {
+                    if let ClientIdentity::ShareViewer {
+                        share_id,
+                        session_expires_at,
+                        ..
+                    } = &client_identity_for_task
+                    {
+                        match share_is_active(&state, *share_id, *session_expires_at).await {
+                            Ok(true) => {}
+                            Ok(false) => break,
+                            Err(e) => {
+                                error!(error = %e, "Failed to verify share access for WebSocket");
+                                break;
+                            }
+                        }
+                    }
                     // Check if this event is relevant to this client
                     match should_send_event_to_client(
                         &event,
@@ -249,6 +312,8 @@ async fn handle_socket(socket: WebSocket, client_identity: ClientIdentity, state
                 }
             }
         }
+        recv_task.abort();
+        let _ = sender.send(Message::Close(None)).await;
     });
 
     // Wait for send task to complete - log but don't fail on error
@@ -276,14 +341,14 @@ async fn should_send_event_to_client(
     metadata_store: &rustshare_storage::MetadataStore,
 ) -> Result<bool, String> {
     match client_identity {
-        ClientIdentity::User { user_id, tenant_id } => {
+        ClientIdentity::User {
+            user_id, tenant_id, ..
+        } => {
             // For authenticated users, use existing logic
             should_send_event_to_user(event, *user_id, *tenant_id, metadata_store).await
         }
         ClientIdentity::ShareViewer {
-            share_id,
-            file_id,
-            permissions: _,
+            share_id, file_id, ..
         } => {
             // Share viewers receive:
             // 1. Events for their specific file
@@ -953,6 +1018,7 @@ mod tests {
             share_id,
             file_id: Some(file_id),
             permissions: SharePermissions::View,
+            session_expires_at: i64::MAX,
         };
 
         // Create ShareRevoked event for this share
@@ -999,6 +1065,7 @@ mod tests {
             share_id,
             file_id: Some(file_id),
             permissions: SharePermissions::View,
+            session_expires_at: i64::MAX,
         };
 
         // Create ShareUpdated event for this share
@@ -1048,6 +1115,7 @@ mod tests {
             share_id,
             file_id: Some(file_id),
             permissions: SharePermissions::View,
+            session_expires_at: i64::MAX,
         };
 
         // Create FileModified event for this file
@@ -1101,6 +1169,7 @@ mod tests {
             share_id,
             file_id: Some(file_id),
             permissions: SharePermissions::View,
+            session_expires_at: i64::MAX,
         };
 
         // Create FileModified event for a different file
@@ -1154,6 +1223,7 @@ mod tests {
             share_id,
             file_id: Some(file_id),
             permissions: SharePermissions::View,
+            session_expires_at: i64::MAX,
         };
 
         // Create ShareRevoked event for a different share
@@ -1200,6 +1270,7 @@ mod tests {
             share_id,
             file_id: Some(file_id),
             permissions: SharePermissions::View,
+            session_expires_at: i64::MAX,
         };
 
         // Create UserCreated event

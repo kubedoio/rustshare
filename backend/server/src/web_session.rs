@@ -87,6 +87,23 @@ pub async fn create_user_session(
     user_agent: Option<String>,
     ip_address: Option<String>,
 ) -> Result<(String, String), String> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|error| error.to_string())?;
+    let user: Option<(bool, i64)> = sqlx::query_as(
+        "SELECT disabled_at IS NULL AND tenant_id = $2, credential_version FROM users WHERE id = $1 FOR UPDATE",
+    )
+    .bind(user_id)
+    .bind(tenant_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if !matches!(user, Some((true, _))) {
+        return Err("account_disabled".to_string());
+    }
+
     let session_token = generate_web_session_token();
     let session = UserSession::new(
         user_id,
@@ -97,15 +114,57 @@ pub async fn create_user_session(
         tenant_id,
     );
 
-    state
-        .metadata_store
-        .create_user_session(&session)
-        .await
-        .map_err(|error| error.to_string())?;
+    sqlx::query(
+        "INSERT INTO user_sessions (id, user_id, session_token_hash, expires_at, created_at, last_seen_at, user_agent, ip_address, tenant_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    )
+    .bind(session.id)
+    .bind(session.user_id)
+    .bind(session.session_token_hash)
+    .bind(session.expires_at)
+    .bind(session.created_at)
+    .bind(session.last_seen_at)
+    .bind(session.user_agent.as_deref())
+    .bind(session.ip_address.as_deref())
+    .bind(session.tenant_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
 
     let csrf_token = generate_csrf_token();
+    tx.commit().await.map_err(|error| error.to_string())?;
 
     Ok((session_token, csrf_token))
+}
+
+pub async fn generate_user_jwt(
+    state: &AppState,
+    user_id: uuid::Uuid,
+    email: &str,
+    tenant_id: uuid::Uuid,
+) -> Result<String, String> {
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|error| error.to_string())?;
+    let user: Option<(bool, i64)> = sqlx::query_as(
+        "SELECT disabled_at IS NULL AND tenant_id = $2, credential_version FROM users WHERE id = $1 FOR UPDATE",
+    )
+    .bind(user_id)
+    .bind(tenant_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    let Some((true, credential_version)) = user else {
+        return Err("account_disabled".to_string());
+    };
+
+    let token = state
+        .jwt_manager
+        .generate_with_credential_version(user_id, email, tenant_id, credential_version)
+        .map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(|error| error.to_string())?;
+    Ok(token)
 }
 
 /// Build the session cookie.

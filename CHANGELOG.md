@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 - Add bounded, tenant-scoped organization administration for explicitly granted administrators: user listings/details, group and membership management, and filtered audit history. Installation operator privileges remain separate.
 - Add dry-run and apply for batches of up to 100 tenant-scoped invitations, with row outcomes, pending-group assignment, retry-safe invitation reuse, and transactional audit.
+- Add bounded tenant-scoped organization-user offboarding with dry-run/apply outcomes, transactional audit, session/device-token/share revocation, group-membership removal, and stale-JWT rejection after reactivation. Existing JWTs require reauthentication once after the migration.
 
 All notable changes to this project will be documented in this file.
 

@@ -404,6 +404,10 @@ name = "organization_admin_bulk_invites_test"
 path = "../tests/organization_admin_bulk_invites_test.rs"
 
 [[test]]
+name = "organization_admin_offboarding_test"
+path = "../tests/organization_admin_offboarding_test.rs"
+
+[[test]]
 name = "share_authorization_parity"
 path = "tests/share_authorization_parity.rs"
 

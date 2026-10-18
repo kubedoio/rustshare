@@ -152,7 +152,7 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
     let operator_token = create_auth_token(&state, operator_id, tenant_id);
     let ordinary_token = create_auth_token(&state, ordinary_operator_id, tenant_id);
     state.default_tenant_config = rustshare_server::config::DefaultTenantConfig::Set(tenant_id);
-    let app = rustshare_server::routes::admin_routes().with_state(state);
+    let app = rustshare_server::routes::admin_routes().with_state(state.clone());
     let grant_uri = |target_id: Uuid| {
         format!("/api/v1/admin/organizations/{tenant_id}/administrators/{target_id}")
     };
@@ -575,7 +575,7 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     let org_token = create_auth_token(&state, org_admin, tenant);
     let nil_token = create_auth_token(&state, nil_admin, Uuid::nil());
     state.default_tenant_config = rustshare_server::config::DefaultTenantConfig::Set(tenant);
-    let app = rustshare_server::routes::admin_routes().with_state(state);
+    let app = rustshare_server::routes::admin_routes().with_state(state.clone());
 
     let (status, _) = send_json(
         &app,
@@ -1118,6 +1118,24 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
         "GET",
         "/api/v1/organization-admin/users",
         &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    let fresh_org_token = rustshare_server::web_session::generate_user_jwt(
+        &state,
+        org_admin,
+        "test@example.com",
+        tenant,
+    )
+    .await
+    .expect("reactivated organization admin receives a fresh JWT");
+    let (status, _) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/users",
+        &fresh_org_token,
         None,
     )
     .await;
