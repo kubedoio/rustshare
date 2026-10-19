@@ -22580,7 +22580,16 @@
               "string",
               "null"
             ],
-            "format": "uuid"
+            "format": "uuid",
+            "description": "Compatibility mirror of the canonical association row."
+          },
+          "copied_from_meeting_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Source provenance for a manual copy; this does not link the copy to the event."
           },
           "created_at": {
             "type": "string",

@@ -14,7 +14,10 @@ use rustshare_core::{
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 fn utc_now() -> DateTime<Utc> {
@@ -34,8 +37,12 @@ pub struct MeetingMetadata {
     pub team: String,
     #[serde(default)]
     pub attendees: Vec<String>,
+    /// Compatibility mirror of the canonical association row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calendar_event_id: Option<Uuid>,
+    /// Source provenance for a manual copy; this does not link the copy to the event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copied_from_meeting_id: Option<Uuid>,
     #[serde(default = "utc_now")]
     pub created_at: DateTime<Utc>,
     #[serde(default = "utc_now")]
@@ -52,6 +59,7 @@ impl MeetingMetadata {
             team: team.into(),
             attendees: Vec::new(),
             calendar_event_id: None,
+            copied_from_meeting_id: None,
             created_at: now,
             updated_at: now,
         }
@@ -82,6 +90,49 @@ pub struct MeetingSummary {
     pub modified_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct CalendarMeetingLink {
+    meeting_folder_id: Uuid,
+    created_event_id: Uuid,
+    state: String,
+    creation_event_emitted: bool,
+}
+
+struct CalendarMeetingDraft {
+    event_id: Uuid,
+    title: String,
+    date: DateTime<Utc>,
+    content: String,
+}
+
+enum CalendarMeetingClaim {
+    Ready(CalendarMeetingLink),
+    Creating {
+        link: CalendarMeetingLink,
+        lease_token: Uuid,
+    },
+}
+
+/// Meeting returned by the event opener, with its durable creation-event identity.
+#[derive(Debug, Clone)]
+pub struct CalendarMeetingOpen {
+    pub note: MeetingNote,
+    pub created_event_id: Uuid,
+    pub creation_event_pending: bool,
+}
+
+struct MeetingCreationLease(JoinHandle<()>);
+
+impl Drop for MeetingCreationLease {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+const CALENDAR_MEETING_LEASE_SECONDS: i64 = 30;
+const LEGACY_SCAN_LEASE_SECONDS: i64 = 30;
+const LEGACY_SCAN_WAIT: Duration = Duration::from_secs(5);
+
 #[derive(Debug, thiserror::Error)]
 pub enum MeetingError {
     #[error("Meeting not found: {0}")]
@@ -94,6 +145,8 @@ pub enum MeetingError {
     Database(String),
     #[error("Invalid data: {0}")]
     InvalidData(String),
+    #[error("Legacy meeting links are still being indexed; retry shortly")]
+    RecoveryInProgress,
 }
 
 impl From<rustshare_core::services::FolderError> for MeetingError {
@@ -117,6 +170,7 @@ impl From<rustshare_core::services::FileError> for MeetingError {
 
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 
+#[derive(Clone)]
 pub struct MeetingService {
     file_service: Arc<
         FileService<
@@ -226,7 +280,7 @@ impl MeetingService {
             f
         } else {
             self.folder_service
-                .create_folder(team.to_string(), Some(root_id), owner_id, tenant_id)
+                .create_folder_or_get(team.to_string(), Some(root_id), owner_id, tenant_id)
                 .await
                 .map_err(|e| MeetingError::Storage(e.to_string()))?
         };
@@ -242,7 +296,7 @@ impl MeetingService {
             f
         } else {
             self.folder_service
-                .create_folder(year_str, Some(team_folder.id), owner_id, tenant_id)
+                .create_folder_or_get(year_str, Some(team_folder.id), owner_id, tenant_id)
                 .await
                 .map_err(|e| MeetingError::Storage(e.to_string()))?
         };
@@ -318,6 +372,8 @@ impl MeetingService {
         .await
     }
 
+    /// Create or reopen one event-linked note using a durable, lease-based reservation.
+    /// A retry resumes the reserved folder; it never deletes that folder on write failure.
     pub async fn create_meeting_for_calendar_event(
         &self,
         owner_id: UserId,
@@ -326,27 +382,604 @@ impl MeetingService {
         title: String,
         date: DateTime<Utc>,
         content: String,
-    ) -> Result<MeetingNote, MeetingError> {
-        // shortcut: scans metadata and is not atomic under concurrent first opens; add a unique relation if that becomes common.
-        if let Some(existing) = self
-            .list_meetings(owner_id, tenant_id, i64::MAX, 0)
-            .await?
-            .into_iter()
-            .find(|meeting| meeting.metadata.calendar_event_id == Some(event_id))
-        {
-            return self.get_meeting(existing.id, owner_id, tenant_id).await;
+    ) -> Result<CalendarMeetingOpen, MeetingError> {
+        let draft = CalendarMeetingDraft {
+            event_id,
+            title,
+            date,
+            content,
+        };
+        loop {
+            match self
+                .claim_calendar_meeting(owner_id, tenant_id, draft.event_id)
+                .await?
+            {
+                CalendarMeetingClaim::Ready(link) => {
+                    match self
+                        .get_meeting(link.meeting_folder_id, owner_id, tenant_id)
+                        .await
+                    {
+                        Ok(note) => {
+                            return Ok(CalendarMeetingOpen {
+                                note,
+                                created_event_id: link.created_event_id,
+                                creation_event_pending: !link.creation_event_emitted,
+                            });
+                        }
+                        Err(MeetingError::NotFound(_)) => {
+                            self.forget_missing_calendar_meeting(
+                                owner_id, tenant_id, event_id, &link,
+                            )
+                            .await?;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                CalendarMeetingClaim::Creating { link, lease_token } => {
+                    return self
+                        .create_or_resume_calendar_meeting(
+                            owner_id,
+                            tenant_id,
+                            draft,
+                            link,
+                            lease_token,
+                        )
+                        .await;
+                }
+            }
+        }
+    }
+
+    async fn claim_calendar_meeting(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        event_id: Uuid,
+    ) -> Result<CalendarMeetingClaim, MeetingError> {
+        loop {
+            let existing = sqlx::query_as::<_, CalendarMeetingLink>(
+                "SELECT meeting_folder_id, created_event_id, state, creation_event_emitted
+                   FROM calendar_event_meeting_links
+                  WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3",
+            )
+            .bind(tenant_id)
+            .bind(owner_id)
+            .bind(event_id)
+            .fetch_optional(self.metadata_store.pool())
+            .await
+            .map_err(|error| MeetingError::Database(error.to_string()))?;
+            if existing.is_none() {
+                self.ensure_legacy_calendar_links_scanned(owner_id, tenant_id)
+                    .await?;
+            }
+
+            let lease_token = Uuid::new_v4();
+            let link = sqlx::query_as::<_, CalendarMeetingLink>(
+                "INSERT INTO calendar_event_meeting_links
+                    (tenant_id, owner_id, event_id, meeting_folder_id, state, lease_token, lease_expires_at)
+                 VALUES ($1, $2, $3, gen_random_uuid(), 'creating', $4,
+                         now() + ($5 * interval '1 second'))
+                 ON CONFLICT (tenant_id, owner_id, event_id) DO NOTHING
+                 RETURNING meeting_folder_id, created_event_id, state, creation_event_emitted",
+            )
+            .bind(tenant_id)
+            .bind(owner_id)
+            .bind(event_id)
+            .bind(lease_token)
+            .bind(CALENDAR_MEETING_LEASE_SECONDS as f64)
+            .fetch_optional(self.metadata_store.pool())
+            .await
+            .map_err(|error| MeetingError::Database(error.to_string()))?;
+            if let Some(link) = link {
+                return Ok(CalendarMeetingClaim::Creating { link, lease_token });
+            }
+
+            let reclaimed = sqlx::query_as::<_, CalendarMeetingLink>(
+                "UPDATE calendar_event_meeting_links
+                    SET lease_token = $4,
+                        lease_expires_at = now() + ($5 * interval '1 second'),
+                        updated_at = now()
+                  WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3
+                    AND state = 'creating' AND lease_expires_at <= now()
+                 RETURNING meeting_folder_id, created_event_id, state, creation_event_emitted",
+            )
+            .bind(tenant_id)
+            .bind(owner_id)
+            .bind(event_id)
+            .bind(lease_token)
+            .bind(CALENDAR_MEETING_LEASE_SECONDS as f64)
+            .fetch_optional(self.metadata_store.pool())
+            .await
+            .map_err(|error| MeetingError::Database(error.to_string()))?;
+            if let Some(link) = reclaimed {
+                return Ok(CalendarMeetingClaim::Creating { link, lease_token });
+            }
+
+            let link = sqlx::query_as::<_, CalendarMeetingLink>(
+                "SELECT meeting_folder_id, created_event_id, state, creation_event_emitted
+                   FROM calendar_event_meeting_links
+                  WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3",
+            )
+            .bind(tenant_id)
+            .bind(owner_id)
+            .bind(event_id)
+            .fetch_one(self.metadata_store.pool())
+            .await
+            .map_err(|error| MeetingError::Database(error.to_string()))?;
+            if link.state == "ready" {
+                return Ok(CalendarMeetingClaim::Ready(link));
+            }
+
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    async fn ensure_legacy_calendar_links_scanned(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), MeetingError> {
+        let deadline = tokio::time::Instant::now() + LEGACY_SCAN_WAIT;
+        let mut launched_scan = false;
+        loop {
+            if !launched_scan {
+                let lease_token = Uuid::new_v4();
+                let acquired = sqlx::query_scalar::<_, Uuid>(
+                    "INSERT INTO calendar_event_meeting_legacy_scans
+                        (tenant_id, owner_id, lease_token, lease_expires_at)
+                     VALUES ($1, $2, $3, now() + ($4 * interval '1 second'))
+                     ON CONFLICT (tenant_id, owner_id) DO NOTHING
+                     RETURNING lease_token",
+                )
+                .bind(tenant_id)
+                .bind(owner_id)
+                .bind(lease_token)
+                .bind(LEGACY_SCAN_LEASE_SECONDS as f64)
+                .fetch_optional(self.metadata_store.pool())
+                .await
+                .map_err(|error| MeetingError::Database(error.to_string()))?
+                .is_some();
+
+                let acquired = if acquired {
+                    true
+                } else {
+                    sqlx::query_scalar::<_, Uuid>(
+                        "UPDATE calendar_event_meeting_legacy_scans
+                            SET lease_token = $3, lease_expires_at = now() + ($4 * interval '1 second')
+                          WHERE tenant_id = $1 AND owner_id = $2 AND completed_at IS NULL
+                            AND lease_expires_at <= now()
+                         RETURNING lease_token",
+                    )
+                    .bind(tenant_id)
+                    .bind(owner_id)
+                    .bind(lease_token)
+                    .bind(LEGACY_SCAN_LEASE_SECONDS as f64)
+                    .fetch_optional(self.metadata_store.pool())
+                    .await
+                    .map_err(|error| MeetingError::Database(error.to_string()))?
+                    .is_some()
+                };
+
+                if acquired {
+                    self.start_legacy_calendar_link_scan(owner_id, tenant_id, lease_token);
+                    launched_scan = true;
+                }
+            }
+
+            let scan = sqlx::query_as::<_, (Option<DateTime<Utc>>, Option<DateTime<Utc>>)>(
+                "SELECT completed_at, lease_expires_at
+                   FROM calendar_event_meeting_legacy_scans
+                  WHERE tenant_id = $1 AND owner_id = $2",
+            )
+            .bind(tenant_id)
+            .bind(owner_id)
+            .fetch_optional(self.metadata_store.pool())
+            .await
+            .map_err(|error| MeetingError::Database(error.to_string()))?;
+            if scan.as_ref().is_some_and(|row| row.0.is_some()) {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(MeetingError::RecoveryInProgress);
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    fn start_legacy_calendar_link_scan(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        lease_token: Uuid,
+    ) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            let heartbeat_service = service.clone();
+            let heartbeat = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(10));
+                loop {
+                    interval.tick().await;
+                    let updated = sqlx::query(
+                        "UPDATE calendar_event_meeting_legacy_scans
+                            SET lease_expires_at = now() + ($4 * interval '1 second')
+                          WHERE tenant_id = $1 AND owner_id = $2 AND lease_token = $3
+                            AND completed_at IS NULL",
+                    )
+                    .bind(tenant_id)
+                    .bind(owner_id)
+                    .bind(lease_token)
+                    .bind(LEGACY_SCAN_LEASE_SECONDS as f64)
+                    .execute(heartbeat_service.metadata_store.pool())
+                    .await;
+                    if !matches!(updated, Ok(result) if result.rows_affected() == 1) {
+                        break;
+                    }
+                }
+            });
+
+            let imported = service
+                .import_legacy_calendar_links(owner_id, tenant_id)
+                .await;
+            heartbeat.abort();
+            if let Err(error) = imported {
+                tracing::warn!(%owner_id, %tenant_id, %error, "legacy meeting link scan failed");
+                let _ = sqlx::query(
+                    "UPDATE calendar_event_meeting_legacy_scans
+                        SET lease_expires_at = now() + interval '10 seconds'
+                      WHERE tenant_id = $1 AND owner_id = $2 AND lease_token = $3",
+                )
+                .bind(tenant_id)
+                .bind(owner_id)
+                .bind(lease_token)
+                .execute(service.metadata_store.pool())
+                .await;
+                return;
+            }
+
+            if let Err(error) = sqlx::query(
+                "UPDATE calendar_event_meeting_legacy_scans
+                    SET completed_at = now(), lease_token = NULL, lease_expires_at = NULL
+                  WHERE tenant_id = $1 AND owner_id = $2 AND lease_token = $3
+                    AND completed_at IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(owner_id)
+            .bind(lease_token)
+            .execute(service.metadata_store.pool())
+            .await
+            {
+                tracing::warn!(%owner_id, %tenant_id, %error, "could not finish legacy meeting link scan");
+            }
+        });
+    }
+
+    async fn import_legacy_calendar_links(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), MeetingError> {
+        let folders = self
+            .metadata_store
+            .list_all_folders(owner_id, tenant_id)
+            .await
+            .map_err(|error| MeetingError::Database(error.to_string()))?;
+        let mut legacy = HashMap::<Uuid, (DateTime<Utc>, Uuid)>::new();
+        for folder in folders.into_iter().filter(|folder| {
+            folder.path.starts_with("/Meetings/") || folder.path.starts_with("/Workspace/Meetings/")
+        }) {
+            let metadata = match self.load_metadata(folder.id, owner_id, tenant_id).await {
+                Ok(Some(metadata)) => metadata,
+                Ok(None) | Err(MeetingError::InvalidData(_)) => continue,
+                Err(error) => return Err(error),
+            };
+            let Some(event_id) = metadata.calendar_event_id else {
+                continue;
+            };
+            let candidate = (metadata.created_at, folder.id);
+            if legacy
+                .get(&event_id)
+                .is_none_or(|current| candidate < *current)
+            {
+                legacy.insert(event_id, candidate);
+            }
         }
 
-        self.create_meeting_with_metadata(
-            owner_id,
-            tenant_id,
-            MeetingMetadata {
-                calendar_event_id: Some(event_id),
-                ..MeetingMetadata::new(title, "General", date)
-            },
-            content,
+        for (event_id, (_, meeting_folder_id)) in legacy {
+            sqlx::query(
+                "INSERT INTO calendar_event_meeting_links
+                    (tenant_id, owner_id, event_id, meeting_folder_id, state,
+                     creation_event_emitted)
+                 VALUES ($1, $2, $3, $4, 'ready', true)
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(tenant_id)
+            .bind(owner_id)
+            .bind(event_id)
+            .bind(meeting_folder_id)
+            .execute(self.metadata_store.pool())
+            .await
+            .map_err(|error| MeetingError::Database(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    async fn forget_missing_calendar_meeting(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        event_id: Uuid,
+        link: &CalendarMeetingLink,
+    ) -> Result<(), MeetingError> {
+        sqlx::query(
+            "DELETE FROM calendar_event_meeting_links
+              WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3
+                AND meeting_folder_id = $4 AND state = 'ready'",
         )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(event_id)
+        .bind(link.meeting_folder_id)
+        .execute(self.metadata_store.pool())
         .await
+        .map_err(|error| MeetingError::Database(error.to_string()))?;
+        Ok(())
+    }
+
+    async fn create_or_resume_calendar_meeting(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        draft: CalendarMeetingDraft,
+        link: CalendarMeetingLink,
+        lease_token: Uuid,
+    ) -> Result<CalendarMeetingOpen, MeetingError> {
+        let heartbeat =
+            self.start_calendar_meeting_heartbeat(owner_id, tenant_id, draft.event_id, lease_token);
+        let result = self
+            .write_calendar_meeting(owner_id, tenant_id, &draft, link.meeting_folder_id)
+            .await;
+        drop(heartbeat);
+        let note = match result {
+            Ok(note) => note,
+            Err(error) => {
+                self.release_calendar_meeting_lease(
+                    owner_id,
+                    tenant_id,
+                    draft.event_id,
+                    lease_token,
+                )
+                .await;
+                return Err(error);
+            }
+        };
+
+        let finalized = sqlx::query(
+            "UPDATE calendar_event_meeting_links
+                SET state = 'ready', lease_token = NULL, lease_expires_at = NULL, updated_at = now()
+              WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3
+                AND state = 'creating' AND lease_token = $4",
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(draft.event_id)
+        .bind(lease_token)
+        .execute(self.metadata_store.pool())
+        .await
+        .map_err(|error| MeetingError::Database(error.to_string()))?;
+
+        if finalized.rows_affected() == 1 {
+            return Ok(CalendarMeetingOpen {
+                note,
+                created_event_id: link.created_event_id,
+                creation_event_pending: !link.creation_event_emitted,
+            });
+        }
+
+        loop {
+            match self
+                .claim_calendar_meeting(owner_id, tenant_id, draft.event_id)
+                .await?
+            {
+                CalendarMeetingClaim::Ready(current) => {
+                    let note = self
+                        .get_meeting(current.meeting_folder_id, owner_id, tenant_id)
+                        .await?;
+                    return Ok(CalendarMeetingOpen {
+                        note,
+                        created_event_id: current.created_event_id,
+                        creation_event_pending: !current.creation_event_emitted,
+                    });
+                }
+                CalendarMeetingClaim::Creating {
+                    link: current,
+                    lease_token,
+                } => {
+                    let finalized = sqlx::query(
+                        "UPDATE calendar_event_meeting_links
+                            SET state = 'ready', lease_token = NULL, lease_expires_at = NULL, updated_at = now()
+                          WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3
+                            AND state = 'creating' AND lease_token = $4",
+                    )
+                    .bind(tenant_id)
+                    .bind(owner_id)
+                    .bind(draft.event_id)
+                    .bind(lease_token)
+                    .execute(self.metadata_store.pool())
+                    .await
+                    .map_err(|error| MeetingError::Database(error.to_string()))?;
+                    if finalized.rows_affected() == 1 {
+                        return Ok(CalendarMeetingOpen {
+                            note,
+                            created_event_id: current.created_event_id,
+                            creation_event_pending: !current.creation_event_emitted,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn mark_calendar_meeting_creation_event_emitted(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        event_id: Uuid,
+        created_event_id: Uuid,
+    ) -> Result<(), MeetingError> {
+        sqlx::query(
+            "UPDATE calendar_event_meeting_links
+                SET creation_event_emitted = true, updated_at = now()
+              WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3
+                AND created_event_id = $4 AND state = 'ready'",
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(event_id)
+        .bind(created_event_id)
+        .execute(self.metadata_store.pool())
+        .await
+        .map_err(|error| MeetingError::Database(error.to_string()))?;
+        Ok(())
+    }
+
+    fn start_calendar_meeting_heartbeat(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        event_id: Uuid,
+        lease_token: Uuid,
+    ) -> MeetingCreationLease {
+        let metadata_store = Arc::clone(&self.metadata_store);
+        MeetingCreationLease(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(10));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let result = sqlx::query(
+                    "UPDATE calendar_event_meeting_links
+                        SET lease_expires_at = now() + ($5 * interval '1 second'), updated_at = now()
+                      WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3
+                        AND state = 'creating' AND lease_token = $4",
+                )
+                .bind(tenant_id)
+                .bind(owner_id)
+                .bind(event_id)
+                .bind(lease_token)
+                .bind(CALENDAR_MEETING_LEASE_SECONDS as f64)
+                .execute(metadata_store.pool())
+                .await;
+                if !matches!(result, Ok(query) if query.rows_affected() == 1) {
+                    break;
+                }
+            }
+        }))
+    }
+
+    async fn release_calendar_meeting_lease(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        event_id: Uuid,
+        lease_token: Uuid,
+    ) {
+        let _ = sqlx::query(
+            "UPDATE calendar_event_meeting_links
+                SET lease_expires_at = now(), updated_at = now()
+              WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3
+                AND state = 'creating' AND lease_token = $4",
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(event_id)
+        .bind(lease_token)
+        .execute(self.metadata_store.pool())
+        .await;
+    }
+
+    async fn write_calendar_meeting(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        draft: &CalendarMeetingDraft,
+        folder_id: Uuid,
+    ) -> Result<MeetingNote, MeetingError> {
+        let root = self.ensure_meetings_folder(owner_id, tenant_id).await?;
+        let parent = self
+            .ensure_meeting_path(root.id, "General", draft.date.year(), owner_id, tenant_id)
+            .await?;
+        let folder = match self.folder_service.get_folder(folder_id, owner_id).await {
+            Ok(folder)
+                if folder.tenant_id == tenant_id
+                    && folder.owner_id == owner_id
+                    && folder.parent_folder_id == Some(parent.id) =>
+            {
+                folder
+            }
+            Ok(_) => return Err(MeetingError::PermissionDenied),
+            Err(rustshare_core::services::FolderError::NotFound(_)) => {
+                let slug = slug::slugify(&draft.title);
+                let slug: String = slug.chars().take(120).collect();
+                let name = format!(
+                    "{}-{}-{}",
+                    draft.date.format("%Y-%m-%d"),
+                    slug,
+                    folder_id.simple()
+                );
+                self.folder_service
+                    .create_folder_with_id(folder_id, name, Some(parent.id), owner_id, tenant_id)
+                    .await?
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        let files = self
+            .metadata_store
+            .list_files(Some(folder.id), owner_id, tenant_id)
+            .await
+            .map_err(|error| MeetingError::Database(error.to_string()))?;
+        if !files.iter().any(|file| file.name == "index.md") {
+            self.file_service
+                .upload_file(
+                    owner_id,
+                    "index.md".into(),
+                    Some(folder.id),
+                    Bytes::from(draft.content.clone()),
+                    "text/markdown".into(),
+                    tenant_id,
+                )
+                .await?;
+        }
+        let metadata = self.load_metadata(folder.id, owner_id, tenant_id).await?;
+        if let Some(metadata) = metadata {
+            if metadata.calendar_event_id != Some(draft.event_id) {
+                return Err(MeetingError::InvalidData(
+                    "reserved meeting folder has different calendar provenance".into(),
+                ));
+            }
+        } else {
+            let metadata = MeetingMetadata {
+                calendar_event_id: Some(draft.event_id),
+                ..MeetingMetadata::new(draft.title.clone(), "General", draft.date)
+            };
+            let bytes = serde_json::to_vec_pretty(&metadata)
+                .map_err(|error| MeetingError::InvalidData(error.to_string()))?;
+            if files.iter().any(|file| file.name == ".rustshare.json") {
+                return Err(MeetingError::InvalidData(
+                    "reserved meeting folder contains an unreadable metadata sidecar".into(),
+                ));
+            }
+            self.file_service
+                .upload_file(
+                    owner_id,
+                    ".rustshare.json".into(),
+                    Some(folder.id),
+                    Bytes::from(bytes),
+                    "application/json".into(),
+                    tenant_id,
+                )
+                .await?;
+        }
+        self.get_meeting(folder.id, owner_id, tenant_id).await
     }
 
     async fn create_meeting_with_metadata(
@@ -470,6 +1103,7 @@ impl MeetingService {
                                 team: "General".to_string(),
                                 attendees: Vec::new(),
                                 calendar_event_id: None,
+                                copied_from_meeting_id: None,
                                 created_at: Utc::now(),
                                 updated_at: Utc::now(),
                             }
@@ -527,6 +1161,7 @@ impl MeetingService {
                 team: String::new(),
                 attendees: vec![],
                 calendar_event_id: None,
+                copied_from_meeting_id: None,
                 created_at: folder.created_at,
                 updated_at: folder.updated_at,
             });
@@ -557,6 +1192,16 @@ impl MeetingService {
             .delete_folder(id, user_id)
             .await
             .map_err(MeetingError::from)?;
+        sqlx::query(
+            "DELETE FROM calendar_event_meeting_links
+              WHERE tenant_id = $1 AND owner_id = $2 AND meeting_folder_id = $3",
+        )
+        .bind(tenant_id)
+        .bind(user_id)
+        .bind(id)
+        .execute(self.metadata_store.pool())
+        .await
+        .map_err(|error| MeetingError::Database(error.to_string()))?;
         Ok(())
     }
 
@@ -583,6 +1228,7 @@ impl MeetingService {
                 team: String::new(),
                 attendees: vec![],
                 calendar_event_id: None,
+                copied_from_meeting_id: None,
                 created_at: folder.created_at,
                 updated_at: folder.updated_at,
             });
@@ -685,6 +1331,8 @@ impl MeetingService {
         meta.title = copy_title;
         meta.created_at = Utc::now();
         meta.updated_at = Utc::now();
+        meta.calendar_event_id = None;
+        meta.copied_from_meeting_id = Some(original.id);
         let meta_data = serde_json::to_vec_pretty(&meta)
             .map_err(|e| MeetingError::InvalidData(e.to_string()))?;
         self.file_service

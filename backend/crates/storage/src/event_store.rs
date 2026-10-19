@@ -64,6 +64,37 @@ impl EventStore {
         Ok(())
     }
 
+    /// Append a stable event ID at most once and publish only the winning insert.
+    pub async fn append_if_new(
+        &self,
+        event: &Event,
+        broadcaster: &EventBroadcaster,
+    ) -> Result<bool> {
+        let mut tx = self.begin_transaction().await?;
+        let inserted = sqlx::query(
+            "INSERT INTO events (event_id, event_type, aggregate_id, aggregate_type, payload, user_id, timestamp, version)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (event_id) DO NOTHING",
+        )
+        .bind(event.id)
+        .bind(serde_json::to_string(&event.event_type)?)
+        .bind(event.aggregate_id)
+        .bind(serde_json::to_string(&event.aggregate_type)?)
+        .bind(&event.payload)
+        .bind(event.user_id)
+        .bind(event.timestamp)
+        .bind(event.version)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            == 1;
+        tx.commit().await?;
+        if inserted {
+            broadcaster.publish(event.clone());
+        }
+        Ok(inserted)
+    }
+
     /// Get all events for an aggregate
     pub async fn get_events(
         &self,

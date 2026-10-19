@@ -323,7 +323,10 @@ pub async fn get_calendar_event(
     path = "/api/v1/calendar/events/{id}/meeting",
     tag = "Calendar",
     params(("id" = Uuid, Path, description = "Calendar event id")),
-    responses((status = 200, description = "Meeting note", body = crate::services::meeting_service::MeetingNote))
+    responses(
+        (status = 200, description = "Meeting note", body = crate::services::meeting_service::MeetingNote),
+        (status = 503, description = "Legacy meeting links are still being indexed; retry shortly")
+    )
 )]
 pub async fn create_calendar_event_meeting(
     State(state): State<AppState>,
@@ -340,7 +343,7 @@ pub async fn create_calendar_event_meeting(
         event.title,
         event.description.as_deref().unwrap_or("")
     );
-    let meeting = state
+    let opened = state
         .meeting_service
         .create_meeting_for_calendar_event(
             auth.user_id,
@@ -351,24 +354,36 @@ pub async fn create_calendar_event_meeting(
             content,
         )
         .await?;
-    let payload = rustshare_core::events::MeetingNoteModifiedPayload {
-        meeting_id: meeting.id.to_string(),
-        title: meeting.metadata.title.clone(),
-        modified_by: auth.user_id,
-    };
-    let event = rustshare_core::events::Event::new(
-        rustshare_core::events::EventType::MeetingNoteModified,
-        meeting.id,
-        rustshare_core::events::AggregateType::File,
-        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
-        auth.user_id,
-    );
-    state
-        .event_store
-        .append(&event, &state.broadcaster)
-        .await
-        .map_err(|e| AppError::internal(e.to_string()))?;
-    Ok(Json(meeting))
+    if opened.creation_event_pending {
+        let payload = rustshare_core::events::MeetingNoteModifiedPayload {
+            meeting_id: opened.note.id.to_string(),
+            title: opened.note.metadata.title.clone(),
+            modified_by: auth.user_id,
+        };
+        let mut event = rustshare_core::events::Event::new(
+            rustshare_core::events::EventType::MeetingNoteModified,
+            opened.note.id,
+            rustshare_core::events::AggregateType::File,
+            serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+            auth.user_id,
+        );
+        event.id = opened.created_event_id;
+        state
+            .event_store
+            .append_if_new(&event, &state.broadcaster)
+            .await
+            .map_err(|e| AppError::internal(e.to_string()))?;
+        state
+            .meeting_service
+            .mark_calendar_meeting_creation_event_emitted(
+                auth.user_id,
+                auth.tenant_id,
+                event_id,
+                opened.created_event_id,
+            )
+            .await?;
+    }
+    Ok(Json(opened.note))
 }
 
 /// `GET /api/v1/calendar/events/{id}/export` — export one caller-owned event

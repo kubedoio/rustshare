@@ -37,6 +37,17 @@ mod support;
 
 use support::calendar_harness::*;
 
+async fn meeting_modified_event_count(pool: &PgPool, meeting_id: Uuid) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM events
+          WHERE aggregate_id = $1 AND event_type LIKE '%MeetingNoteModified%'",
+    )
+    .bind(meeting_id)
+    .fetch_one(pool)
+    .await
+    .expect("count meeting modification events")
+}
+
 fn create_event_body() -> Value {
     json!({
         "title": "Sprint review",
@@ -76,6 +87,7 @@ async fn create_accepts_the_minimal_ui_payload() {
     let app = build_app(state.clone());
 
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/v1/calendar/events")
@@ -345,9 +357,27 @@ async fn calendar_event_opens_persistent_meeting_and_denies_other_tenant() {
                 .unwrap(),
         )
     };
-    let response = open().await.unwrap();
-    let (status, meeting) = response_json(response).await;
-    assert_eq!(status, StatusCode::OK);
+    let second_state = setup_test_env().await;
+    let second_app = rustshare_server::routes::calendar_routes()
+        .merge(rustshare_server::routes::meeting_routes())
+        .with_state(second_state);
+    let second_open = || {
+        second_app.clone().oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}/meeting"))
+                .method("POST")
+                .header("Authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+    };
+    let (response_a, response_b) = tokio::join!(open(), second_open());
+    let (status_a, meeting_a) = response_json(response_a.unwrap()).await;
+    let (status_b, meeting_b) = response_json(response_b.unwrap()).await;
+    assert_eq!(status_a, StatusCode::OK, "{meeting_a}");
+    assert_eq!(status_b, StatusCode::OK, "{meeting_b}");
+    assert_eq!(meeting_a["id"], meeting_b["id"]);
+    let meeting = meeting_a;
     assert_eq!(meeting["metadata"]["calendar_event_id"], event_id);
     assert!(meeting["path"]
         .as_str()
@@ -356,10 +386,64 @@ async fn calendar_event_opens_persistent_meeting_and_denies_other_tenant() {
     assert!(meeting["content"].as_str().unwrap().contains("Weekly sync"));
 
     let meeting_id = meeting["id"].as_str().unwrap();
+    assert_eq!(
+        meeting_modified_event_count(&state.db_pool, meeting_id.parse().unwrap()).await,
+        1
+    );
+    let association_count: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM calendar_event_meeting_links
+          WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3 AND meeting_folder_id = $4 AND state = 'ready'",
+    )
+    .bind(tenant_id)
+    .bind(owner.id)
+    .bind(Uuid::parse_str(event_id).unwrap())
+    .bind(Uuid::parse_str(meeting_id).unwrap())
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("one ready canonical event association");
+    assert_eq!(association_count, 1);
+
     let response = open().await.unwrap();
     let (status, reopened) = response_json(response).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(reopened["id"], meeting_id);
+    assert_eq!(
+        meeting_modified_event_count(&state.db_pool, meeting_id.parse().unwrap()).await,
+        1
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/meetings/{meeting_id}/duplicate"))
+                .method("POST")
+                .header("Authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, copied) = response_json(response).await;
+    assert_eq!(status, StatusCode::CREATED, "{copied}");
+    assert!(copied["metadata"]["calendar_event_id"].is_null());
+    assert_eq!(copied["metadata"]["copied_from_meeting_id"], meeting_id);
+    assert_eq!(
+        meeting_modified_event_count(
+            &state.db_pool,
+            copied["id"].as_str().unwrap().parse().unwrap()
+        )
+        .await,
+        1
+    );
+    let response = open().await.unwrap();
+    let (status, still_canonical) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(still_canonical["id"], meeting_id);
+    assert_eq!(
+        meeting_modified_event_count(&state.db_pool, meeting_id.parse().unwrap()).await,
+        1
+    );
 
     let response = app
         .clone()
@@ -378,10 +462,15 @@ async fn calendar_event_opens_persistent_meeting_and_denies_other_tenant() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(edited["metadata"]["calendar_event_id"], event_id);
     assert_eq!(edited["content"], "Edited minutes");
+    assert_eq!(
+        meeting_modified_event_count(&state.db_pool, meeting_id.parse().unwrap()).await,
+        2
+    );
 
     let restarted_state = setup_test_env().await;
     let restarted_token = create_auth_token(&restarted_state, owner.id, tenant_id);
-    let restarted_app = rustshare_server::routes::meeting_routes()
+    let restarted_app = rustshare_server::routes::calendar_routes()
+        .merge(rustshare_server::routes::meeting_routes())
         .with_state(restarted_state)
         .layer(axum::middleware::from_fn(
             rustshare_server::middleware::security_headers_middleware,
@@ -402,6 +491,25 @@ async fn calendar_event_opens_persistent_meeting_and_denies_other_tenant() {
     assert_eq!(restored["content"], "Edited minutes");
     assert_eq!(restored["metadata"]["calendar_event_id"], event_id);
     let response = restarted_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}/meeting"))
+                .method("POST")
+                .header("Authorization", format!("Bearer {restarted_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, reopened_after_restart) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reopened_after_restart["id"], meeting_id);
+    assert_eq!(
+        meeting_modified_event_count(&state.db_pool, meeting_id.parse().unwrap()).await,
+        2
+    );
+    let response = restarted_app
         .oneshot(
             Request::builder()
                 .uri("/api/v1/meetings?per_page=100")
@@ -420,6 +528,7 @@ async fn calendar_event_opens_persistent_meeting_and_denies_other_tenant() {
         .any(|item| item["id"] == meeting_id));
 
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri(format!("/api/v1/calendar/events/{event_id}/meeting"))
@@ -432,6 +541,27 @@ async fn calendar_event_opens_persistent_meeting_and_denies_other_tenant() {
         .unwrap();
     let (status, body) = response_json(response).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    sqlx::query(
+        "UPDATE users SET credentials_revoked_at = now() + interval '1 second' WHERE id = $1",
+    )
+    .bind(owner.id)
+    .execute(&state.db_pool)
+    .await
+    .expect("revoke the owner's credentials");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}/meeting"))
+                .method("POST")
+                .header("Authorization", format!("Bearer {owner_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
 
     sqlx::query("DELETE FROM file_versions WHERE created_by = $1")
         .bind(owner.id)
@@ -454,7 +584,218 @@ async fn calendar_event_opens_persistent_meeting_and_denies_other_tenant() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
-async fn calendar_meeting_upload_failure_removes_partial_meeting() {
+async fn calendar_event_opener_adopts_existing_sidecar_link() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "calendar_meeting_legacy", tenant_id).await;
+    configure_calendar(&state, tenant_id, owner.id, true).await;
+    let token = create_auth_token(&state, owner.id, tenant_id);
+    let event = state
+        .calendar_service
+        .create_event(
+            tenant_id,
+            owner.id,
+            rustshare_server::services::calendar_service::NewCalendarEvent {
+                title: "Legacy linked meeting".into(),
+                description: None,
+                location: None,
+                starts_at: "2026-10-05T14:00:00Z".parse().unwrap(),
+                ends_at: "2026-10-05T15:00:00Z".parse().unwrap(),
+                all_day: false,
+                timezone: "UTC".into(),
+                rrule: None,
+            },
+        )
+        .await
+        .expect("create calendar event");
+    let legacy = state
+        .meeting_service
+        .create_meeting(
+            owner.id,
+            tenant_id,
+            "Legacy linked meeting".into(),
+            "General".into(),
+            event.starts_at,
+            "# Legacy linked meeting\n\nMinutes\n".into(),
+        )
+        .await
+        .expect("create pre-existing meeting note");
+    let mut metadata = legacy.metadata.clone();
+    metadata.calendar_event_id = Some(event.id);
+    state
+        .file_service
+        .upload_file(
+            owner.id,
+            ".rustshare.json".into(),
+            Some(legacy.id),
+            bytes::Bytes::from(serde_json::to_vec(&metadata).unwrap()),
+            "application/json".into(),
+            tenant_id,
+        )
+        .await
+        .expect("write legacy calendar link to sidecar");
+
+    let mut copied_metadata = rustshare_server::services::meeting_service::MeetingMetadata::new(
+        "A copied legacy meeting",
+        "General",
+        event.starts_at,
+    );
+    copied_metadata.calendar_event_id = Some(event.id);
+    let legacy_copy = state
+        .meeting_service
+        .create_meeting(
+            owner.id,
+            tenant_id,
+            copied_metadata.title.clone(),
+            "General".into(),
+            event.starts_at,
+            "# Copied legacy meeting\n\nCopied minutes\n".into(),
+        )
+        .await
+        .expect("create old-style copied meeting note");
+    state
+        .file_service
+        .upload_file(
+            owner.id,
+            ".rustshare.json".into(),
+            Some(legacy_copy.id),
+            bytes::Bytes::from(serde_json::to_vec(&copied_metadata).unwrap()),
+            "application/json".into(),
+            tenant_id,
+        )
+        .await
+        .expect("write stale calendar link to copied note");
+
+    let app = rustshare_server::routes::calendar_routes()
+        .merge(rustshare_server::routes::meeting_routes())
+        .with_state(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{}/meeting", event.id))
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, opened) = response_json(response).await;
+    let link_state: String = sqlx::query_scalar(
+        "SELECT state FROM calendar_event_meeting_links
+          WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3 AND meeting_folder_id = $4",
+    )
+    .bind(tenant_id)
+    .bind(owner.id)
+    .bind(event.id)
+    .bind(legacy.id)
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("adopt sidecar into durable association");
+    let emitted = meeting_modified_event_count(&state.db_pool, legacy.id).await;
+
+    sqlx::query("DELETE FROM file_versions WHERE created_by = $1")
+        .bind(owner.id)
+        .execute(&state.db_pool)
+        .await
+        .expect("clean up meeting file versions");
+    sqlx::query("DELETE FROM files WHERE owner_id = $1")
+        .bind(owner.id)
+        .execute(&state.db_pool)
+        .await
+        .expect("clean up meeting files");
+    sqlx::query("DELETE FROM folders WHERE owner_id = $1")
+        .bind(owner.id)
+        .execute(&state.db_pool)
+        .await
+        .expect("clean up meeting folders");
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+
+    assert_eq!(status, StatusCode::OK, "{opened}");
+    assert_eq!(opened["id"], legacy.id.to_string());
+    assert!(legacy_copy.path < legacy.path);
+    assert_eq!(
+        opened["metadata"]["calendar_event_id"],
+        event.id.to_string()
+    );
+    assert_eq!(link_state, "ready");
+    assert_eq!(
+        emitted, 0,
+        "adopting an existing note is not a modification"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn calendar_event_open_returns_retryable_status_while_legacy_scan_is_active() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "calendar_meeting_scan_busy", tenant_id).await;
+    configure_calendar(&state, tenant_id, owner.id, true).await;
+    let token = create_auth_token(&state, owner.id, tenant_id);
+    let event = state
+        .calendar_service
+        .create_event(
+            tenant_id,
+            owner.id,
+            rustshare_server::services::calendar_service::NewCalendarEvent {
+                title: "Wait for old-link scan".into(),
+                description: None,
+                location: None,
+                starts_at: "2026-10-05T14:00:00Z".parse().unwrap(),
+                ends_at: "2026-10-05T15:00:00Z".parse().unwrap(),
+                all_day: false,
+                timezone: "UTC".into(),
+                rrule: None,
+            },
+        )
+        .await
+        .expect("create calendar event");
+    sqlx::query(
+        "INSERT INTO calendar_event_meeting_legacy_scans
+            (tenant_id, owner_id, lease_token, lease_expires_at)
+         VALUES ($1, $2, $3, now() + interval '5 minutes')",
+    )
+    .bind(tenant_id)
+    .bind(owner.id)
+    .bind(Uuid::new_v4())
+    .execute(&state.db_pool)
+    .await
+    .expect("simulate an active legacy sidecar scan");
+
+    let app = rustshare_server::routes::calendar_routes()
+        .merge(rustshare_server::routes::meeting_routes())
+        .with_state(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{}/meeting", event.id))
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, body) = response_json(response).await;
+    let associations: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM calendar_event_meeting_links WHERE event_id = $1")
+            .bind(event.id)
+            .fetch_one(&state.db_pool)
+            .await
+            .expect("check no competing canonical was reserved");
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(associations, 0);
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn calendar_meeting_upload_failure_recovers_reserved_note_after_restart() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
@@ -467,6 +808,40 @@ async fn calendar_meeting_upload_failure_removes_partial_meeting() {
         .layer(axum::middleware::from_fn(
             rustshare_server::middleware::security_headers_middleware,
         ));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(create_event_body().to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, canonical_event) = response_json(response).await;
+    assert_eq!(status, StatusCode::CREATED, "{canonical_event}");
+    let canonical_event_id = canonical_event["id"].as_str().unwrap();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/calendar/events/{canonical_event_id}/meeting"
+                ))
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, canonical) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK, "{canonical}");
+    let canonical_id = canonical["id"].as_str().unwrap().to_string();
 
     let response = app
         .clone()
@@ -528,7 +903,31 @@ async fn calendar_meeting_upload_failure_removes_partial_meeting() {
         .await
         .expect("remove sidecar upload failure function");
 
+    let reserved_folder_id: Uuid = sqlx::query_scalar(
+        "SELECT meeting_folder_id FROM calendar_event_meeting_links
+          WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3 AND state = 'creating'",
+    )
+    .bind(tenant_id)
+    .bind(owner.id)
+    .bind(Uuid::parse_str(event_id).unwrap())
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("incomplete meeting reservation remains recoverable");
+    sqlx::query(
+        "UPDATE calendar_event_meeting_links
+            SET lease_expires_at = now() - interval '1 second'
+          WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3 AND meeting_folder_id = $4",
+    )
+    .bind(tenant_id)
+    .bind(owner.id)
+    .bind(Uuid::parse_str(event_id).unwrap())
+    .bind(reserved_folder_id)
+    .execute(&state.db_pool)
+    .await
+    .expect("simulate an interrupted server's expired lease");
+
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/v1/meetings?per_page=100")
@@ -538,7 +937,62 @@ async fn calendar_meeting_upload_failure_removes_partial_meeting() {
         )
         .await
         .unwrap();
+    let (before_recovery_status, before_recovery_history) = response_json(response).await;
+    assert_eq!(before_recovery_status, StatusCode::OK);
+    assert!(before_recovery_history
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["id"] == canonical_id));
+
+    let restarted_state = setup_test_env().await;
+    let restarted_token = create_auth_token(&restarted_state, owner.id, tenant_id);
+    let restarted_app = rustshare_server::routes::calendar_routes()
+        .merge(rustshare_server::routes::meeting_routes())
+        .with_state(restarted_state);
+    let response = restarted_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}/meeting"))
+                .method("POST")
+                .header("Authorization", format!("Bearer {restarted_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (recovery_status, recovered) = response_json(response).await;
+    let recovered_id = recovered["id"].as_str().unwrap_or_default().to_string();
+    let emitted_events = meeting_modified_event_count(&state.db_pool, reserved_folder_id).await;
+
+    let response = restarted_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/meetings?per_page=100")
+                .header("Authorization", format!("Bearer {restarted_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let (history_status, history) = response_json(response).await;
+
+    let response = restarted_app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/calendar/events/{canonical_event_id}/meeting"
+                ))
+                .method("POST")
+                .header("Authorization", format!("Bearer {restarted_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (canonical_status, still_canonical) = response_json(response).await;
 
     sqlx::query("DELETE FROM file_versions WHERE created_by = $1")
         .bind(owner.id)
@@ -562,8 +1016,19 @@ async fn calendar_meeting_upload_failure_removes_partial_meeting() {
         StatusCode::INTERNAL_SERVER_ERROR,
         "{failure_body}"
     );
+    assert_eq!(before_recovery_status, StatusCode::OK);
+    assert!(before_recovery_history
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| item["id"] == canonical_id));
+    assert_eq!(recovery_status, StatusCode::OK, "{recovered}");
+    assert_eq!(recovered_id, reserved_folder_id.to_string());
+    assert_eq!(emitted_events, 1);
     assert_eq!(history_status, StatusCode::OK, "{history}");
-    assert!(history.as_array().unwrap().is_empty(), "{history}");
+    assert_eq!(history.as_array().unwrap().len(), 2, "{history}");
+    assert_eq!(canonical_status, StatusCode::OK, "{still_canonical}");
+    assert_eq!(still_canonical["id"], canonical_id);
 }
 
 #[tokio::test]

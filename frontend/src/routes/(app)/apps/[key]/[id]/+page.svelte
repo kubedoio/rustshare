@@ -79,6 +79,7 @@
 			date?: string;
 			attendees?: string[];
 			calendar_event_id?: string | null;
+			copied_from_meeting_id?: string | null;
 			conflict?: NoteConflict | null;
 			color?: string | null;
 		};

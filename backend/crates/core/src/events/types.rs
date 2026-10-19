@@ -63,6 +63,7 @@ pub enum EventType {
 
     // ApplicationConfig events
     BrainstormBoardModified,
+    /// Emitted for a meeting-note create, edit, move, duplicate, or delete; reads do not emit it.
     MeetingNoteModified,
     DecisionModified,
     StandupModified,

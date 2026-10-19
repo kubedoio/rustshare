@@ -551,6 +551,7 @@ impl From<crate::services::meeting_service::MeetingError> for AppError {
             MeetingError::NotFound(_) => AppError::NotFound(err.to_string()),
             MeetingError::PermissionDenied => AppError::Forbidden(err.to_string()),
             MeetingError::InvalidData(_) => AppError::BadRequest(err.to_string()),
+            MeetingError::RecoveryInProgress => AppError::service_unavailable(err.to_string()),
             MeetingError::Database(_) | MeetingError::Storage(_) => {
                 AppError::Internal("Internal server error".to_string())
             }

@@ -195,11 +195,24 @@ where
         owner_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Folder, FolderError> {
+        self.create_folder_with_id(Uuid::new_v4(), name, parent_folder_id, owner_id, tenant_id)
+            .await
+    }
+
+    /// Create a folder using an ID reserved by a durable workflow.
+    pub async fn create_folder_with_id(
+        &self,
+        folder_id: FolderId,
+        name: String,
+        parent_folder_id: Option<FolderId>,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Folder, FolderError> {
         // Validate folder name
         self.validate_folder_name(&name)?;
 
         // Verify parent folder if specified, and construct path and ancestor_ids
-        let (_path, folder) = if let Some(parent_id) = parent_folder_id {
+        let (_path, mut folder) = if let Some(parent_id) = parent_folder_id {
             // Verify parent folder exists and user has access
             let parent = self
                 .metadata_store
@@ -235,6 +248,7 @@ where
             let path = folder.path.clone();
             (path, folder)
         };
+        folder.id = folder_id;
 
         // Emit FolderCreated event
         let payload = FolderCreatedPayload {
