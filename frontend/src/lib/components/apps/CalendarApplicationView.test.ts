@@ -8,6 +8,9 @@ import CalendarApplicationView from './CalendarApplicationView.svelte';
 
 const mocks = vi.hoisted(() => ({
 	listEvents: vi.fn(),
+	getEvent: vi.fn(),
+	openEventMeeting: vi.fn(),
+	goto: vi.fn(),
 	createEvent: vi.fn(),
 	updateEvent: vi.fn(),
 	deleteEvent: vi.fn(),
@@ -17,11 +20,26 @@ const mocks = vi.hoisted(() => ({
 	deleteSource: vi.fn(),
 	uploadIcs: vi.fn(),
 	listImportJobs: vi.fn(),
-	getImportJob: vi.fn()
+	getImportJob: vi.fn(),
+	pageUrl: ''
 }));
 
 vi.mock('$lib/api/calendar', () => ({
 	calendarApi: mocks
+}));
+
+vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
+
+vi.mock('$app/stores', () => ({
+	page: {
+		subscribe: (run: (value: { url: URL; params: Record<string, string> }) => void) => {
+			run({
+				url: new URL(mocks.pageUrl || 'http://localhost/apps/calendar'),
+				params: { key: 'calendar' }
+			});
+			return () => {};
+		}
+	}
 }));
 
 const testModule = {
@@ -98,12 +116,15 @@ function eventAt(date: string, overrides: Partial<CalendarEvent> = {}): Calendar
 describe('CalendarApplicationView', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.pageUrl = '';
 		localStorage.clear();
 		sessionStorage.clear();
 		queryClient.clear();
 		toastStore.clear();
 		mocks.listSources.mockResolvedValue([internalSource, googleSource]);
 		mocks.listEvents.mockResolvedValue([]);
+		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(1)));
+		mocks.openEventMeeting.mockResolvedValue({ id: 'meeting-1' });
 		mocks.createEvent.mockResolvedValue(eventAt(dayFromToday(1)));
 		mocks.updateEvent.mockResolvedValue(eventAt(dayFromToday(1)));
 		mocks.deleteEvent.mockResolvedValue(undefined);
@@ -163,6 +184,26 @@ describe('CalendarApplicationView', () => {
 
 		await fireEvent.click(await screen.findByText(/Sprint review/));
 		expect(await screen.findByRole('button', { name: /Edit event/ })).toBeTruthy();
+	});
+
+	it('opens the event meeting note from its details', async () => {
+		mocks.listEvents.mockResolvedValue([eventAt(dayFromToday(1))]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+		await fireEvent.click(screen.getByRole('button', { name: 'Open meeting note' }));
+
+		await waitFor(() => expect(mocks.openEventMeeting).toHaveBeenCalledWith(expect.any(String)));
+		expect(mocks.goto).toHaveBeenCalledWith('/apps/meetings/meeting-1');
+	});
+
+	it('opens a historical event from its event id in the calendar URL', async () => {
+		mocks.pageUrl = 'http://localhost/apps/calendar?event_id=old-event';
+		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(-60), { id: 'old-event' }));
+		render(CalendarApplicationView, { module: testModule });
+
+		expect(await screen.findByRole('dialog', { name: 'Event details' })).toBeTruthy();
+		expect(mocks.getEvent).toHaveBeenCalledWith('old-event');
 	});
 
 	it('refetches with the source filter when a source chip is toggled', async () => {

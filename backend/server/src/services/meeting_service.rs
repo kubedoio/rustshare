@@ -1,7 +1,7 @@
 //! Meeting service for RustShare meeting notes.
 //!
 //! Meeting notes use a folder-per-meeting pattern:
-//! /Meetings/{team}/{yyyy}/{yyyy-mm-dd}-{slug}/
+//! /Workspace/Meetings/{team}/{yyyy}/{yyyy-mm-dd}-{slug}/
 //!   index.md
 //!   .rustshare.json
 
@@ -34,6 +34,8 @@ pub struct MeetingMetadata {
     pub team: String,
     #[serde(default)]
     pub attendees: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar_event_id: Option<Uuid>,
     #[serde(default = "utc_now")]
     pub created_at: DateTime<Utc>,
     #[serde(default = "utc_now")]
@@ -49,6 +51,7 @@ impl MeetingMetadata {
             date,
             team: team.into(),
             attendees: Vec::new(),
+            calendar_event_id: None,
             created_at: now,
             updated_at: now,
         }
@@ -306,13 +309,63 @@ impl MeetingService {
         date: DateTime<Utc>,
         content: String,
     ) -> Result<MeetingNote, MeetingError> {
+        self.create_meeting_with_metadata(
+            owner_id,
+            tenant_id,
+            MeetingMetadata::new(title, team, date),
+            content,
+        )
+        .await
+    }
+
+    pub async fn create_meeting_for_calendar_event(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        event_id: Uuid,
+        title: String,
+        date: DateTime<Utc>,
+        content: String,
+    ) -> Result<MeetingNote, MeetingError> {
+        // shortcut: scans metadata and is not atomic under concurrent first opens; add a unique relation if that becomes common.
+        if let Some(existing) = self
+            .list_meetings(owner_id, tenant_id, i64::MAX, 0)
+            .await?
+            .into_iter()
+            .find(|meeting| meeting.metadata.calendar_event_id == Some(event_id))
+        {
+            return self.get_meeting(existing.id, owner_id, tenant_id).await;
+        }
+
+        self.create_meeting_with_metadata(
+            owner_id,
+            tenant_id,
+            MeetingMetadata {
+                calendar_event_id: Some(event_id),
+                ..MeetingMetadata::new(title, "General", date)
+            },
+            content,
+        )
+        .await
+    }
+
+    async fn create_meeting_with_metadata(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        meta: MeetingMetadata,
+        content: String,
+    ) -> Result<MeetingNote, MeetingError> {
+        let title = &meta.title;
+        let team = &meta.team;
+        let date = meta.date;
         let root = self.ensure_meetings_folder(owner_id, tenant_id).await?;
         let parent = self
-            .ensure_meeting_path(root.id, &team, date.year(), owner_id, tenant_id)
+            .ensure_meeting_path(root.id, team, date.year(), owner_id, tenant_id)
             .await?;
 
         // Folder name: yyyy-mm-dd-slug
-        let slug = slug::slugify(&title);
+        let slug = slug::slugify(title);
         let folder_name = format!(
             "{}-{}-{}",
             date.format("%Y-%m-%d"),
@@ -326,32 +379,46 @@ impl MeetingService {
             .await
             .map_err(|e| MeetingError::Storage(e.to_string()))?;
 
-        // Create index.md
-        self.file_service
-            .upload_file(
-                owner_id,
-                "index.md".to_string(),
-                Some(meeting_folder.id),
-                Bytes::from(content.clone()),
-                "text/markdown".to_string(),
-                tenant_id,
-            )
-            .await?;
+        let create_files = async {
+            self.file_service
+                .upload_file(
+                    owner_id,
+                    "index.md".to_string(),
+                    Some(meeting_folder.id),
+                    Bytes::from(content.clone()),
+                    "text/markdown".to_string(),
+                    tenant_id,
+                )
+                .await?;
 
-        // Create .rustshare.json
-        let meta = MeetingMetadata::new(title, team, date);
-        let meta_data = serde_json::to_vec_pretty(&meta)
-            .map_err(|e| MeetingError::InvalidData(e.to_string()))?;
-        self.file_service
-            .upload_file(
-                owner_id,
-                ".rustshare.json".to_string(),
-                Some(meeting_folder.id),
-                Bytes::from(meta_data),
-                "application/json".to_string(),
-                tenant_id,
-            )
-            .await?;
+            let meta_data = serde_json::to_vec_pretty(&meta)
+                .map_err(|e| MeetingError::InvalidData(e.to_string()))?;
+            self.file_service
+                .upload_file(
+                    owner_id,
+                    ".rustshare.json".to_string(),
+                    Some(meeting_folder.id),
+                    Bytes::from(meta_data),
+                    "application/json".to_string(),
+                    tenant_id,
+                )
+                .await?;
+            Ok::<(), MeetingError>(())
+        }
+        .await;
+
+        if let Err(error) = create_files {
+            if let Err(rollback_error) = self
+                .folder_service
+                .delete_folder(meeting_folder.id, owner_id)
+                .await
+            {
+                return Err(MeetingError::Storage(format!(
+                    "{error}; failed to remove partial meeting folder: {rollback_error}"
+                )));
+            }
+            return Err(error);
+        }
 
         Ok(MeetingNote {
             id: meeting_folder.id,
@@ -402,6 +469,7 @@ impl MeetingService {
                                 date: Utc::now(),
                                 team: "General".to_string(),
                                 attendees: Vec::new(),
+                                calendar_event_id: None,
                                 created_at: Utc::now(),
                                 updated_at: Utc::now(),
                             }
@@ -458,6 +526,7 @@ impl MeetingService {
                 date: folder.created_at,
                 team: String::new(),
                 attendees: vec![],
+                calendar_event_id: None,
                 created_at: folder.created_at,
                 updated_at: folder.updated_at,
             });
@@ -513,6 +582,7 @@ impl MeetingService {
                 date: folder.created_at,
                 team: String::new(),
                 attendees: vec![],
+                calendar_event_id: None,
                 created_at: folder.created_at,
                 updated_at: folder.updated_at,
             });

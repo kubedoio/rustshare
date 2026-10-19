@@ -317,6 +317,60 @@ pub async fn get_calendar_event(
     Ok(Json(response))
 }
 
+/// `POST /api/v1/calendar/events/{id}/meeting` — create or reopen the caller's meeting note.
+#[utoipa::path(
+    post,
+    path = "/api/v1/calendar/events/{id}/meeting",
+    tag = "Calendar",
+    params(("id" = Uuid, Path, description = "Calendar event id")),
+    responses((status = 200, description = "Meeting note", body = crate::services::meeting_service::MeetingNote))
+)]
+pub async fn create_calendar_event_meeting(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(event_id): Path<Uuid>,
+) -> Result<Json<crate::services::meeting_service::MeetingNote>, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    let event = state
+        .calendar_service
+        .get_event(auth.tenant_id, auth.user_id, event_id)
+        .await?;
+    let content = format!(
+        "# {}\n\n## Agenda\n\n{}\n\n## Notes\n\n",
+        event.title,
+        event.description.as_deref().unwrap_or("")
+    );
+    let meeting = state
+        .meeting_service
+        .create_meeting_for_calendar_event(
+            auth.user_id,
+            auth.tenant_id,
+            event.id,
+            event.title,
+            event.starts_at,
+            content,
+        )
+        .await?;
+    let payload = rustshare_core::events::MeetingNoteModifiedPayload {
+        meeting_id: meeting.id.to_string(),
+        title: meeting.metadata.title.clone(),
+        modified_by: auth.user_id,
+    };
+    let event = rustshare_core::events::Event::new(
+        rustshare_core::events::EventType::MeetingNoteModified,
+        meeting.id,
+        rustshare_core::events::AggregateType::File,
+        serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+        auth.user_id,
+    );
+    state
+        .event_store
+        .append(&event, &state.broadcaster)
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
+    Ok(Json(meeting))
+}
+
 /// `GET /api/v1/calendar/events/{id}/export` — export one caller-owned event
 /// as an iCalendar file. Timed values remain UTC instants; the calendar also
 /// carries the stored timezone as `X-WR-TIMEZONE` because this crate does not

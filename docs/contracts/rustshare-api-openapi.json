@@ -4333,6 +4333,39 @@
         }
       }
     },
+    "/api/v1/calendar/events/{id}/meeting": {
+      "post": {
+        "tags": [
+          "Calendar"
+        ],
+        "summary": "`POST /api/v1/calendar/events/{id}/meeting` — create or reopen the caller's meeting note.",
+        "operationId": "create_calendar_event_meeting",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Calendar event id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meeting note",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingNote"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/decisions": {
       "get": {
         "tags": [
@@ -22541,6 +22574,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "calendar_event_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
           },
           "created_at": {
             "type": "string",

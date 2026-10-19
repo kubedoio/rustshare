@@ -78,6 +78,7 @@
 			attachments?: NoteAttachment[];
 			date?: string;
 			attendees?: string[];
+			calendar_event_id?: string | null;
 			conflict?: NoteConflict | null;
 			color?: string | null;
 		};
@@ -233,6 +234,14 @@
 
 	let breadcrumb = $derived([
 		{ label: module?.displayName || key, onClick: () => goto(`/apps/${key}`) },
+		...(key === 'meetings' && item?.metadata?.calendar_event_id
+			? [
+					{
+						label: 'Calendar event',
+						onClick: () => goto(`/apps/calendar?event_id=${item?.metadata?.calendar_event_id}`)
+					}
+				]
+			: []),
 		{ label: title }
 	]);
 

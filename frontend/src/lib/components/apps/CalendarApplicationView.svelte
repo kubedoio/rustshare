@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import {
 		calendarApi,
@@ -31,6 +33,7 @@
 	let now = $state(new Date());
 	let activeSourceId = $state<string | null>(null);
 	let selectedEvent = $state<CalendarEvent | null>(null);
+	let openingMeeting = $state(false);
 	let editorOpen = $state(false);
 	let editingEvent = $state<CalendarEvent | null>(null);
 	let formTitle = $state('');
@@ -65,6 +68,23 @@
 	);
 
 	const eventsQuery = createQuery<CalendarEvent[]>(buildEventQueryOptions());
+
+	$effect(() => {
+		const eventId = $page.url.searchParams.get('event_id');
+		if (!eventId) return;
+		let cancelled = false;
+		void calendarApi
+			.getEvent(eventId)
+			.then((event) => {
+				if (!cancelled) selectedEvent = event;
+			})
+			.catch(() => {
+				if (!cancelled) toastStore.show('Could not open the calendar event', 'error');
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	$effect(() => {
 		eventsQuery.setOptions(buildEventQueryOptions());
@@ -424,6 +444,23 @@
 			: `Delete "${event.title}"?`;
 		if (!confirm(message)) return;
 		await deleteMutation.mutateAsync(event.id);
+	}
+
+	async function openMeeting(event: CalendarEvent) {
+		if (openingMeeting) return;
+		openingMeeting = true;
+		try {
+			const meeting = await calendarApi.openEventMeeting(event.id);
+			selectedEvent = null;
+			await goto(`/apps/meetings/${meeting.id}`);
+		} catch (error) {
+			toastStore.show(
+				`Could not open meeting note: ${error instanceof Error ? error.message : 'unknown error'}`,
+				'error'
+			);
+		} finally {
+			openingMeeting = false;
+		}
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
@@ -822,6 +859,14 @@
 				<p class="mt-3 text-xs text-base-content/50">{sourceAttribution(selectedEvent)}</p>
 			{/if}
 			<div class="mt-4 flex flex-wrap items-center justify-end gap-2">
+				<button
+					type="button"
+					class="btn btn-outline btn-sm"
+					disabled={openingMeeting}
+					onclick={() => openMeeting(selectedEvent!)}
+				>
+					{openingMeeting ? 'Opening…' : 'Open meeting note'}
+				</button>
 				{#if !selectedEvent.read_only}
 					{#if isOccurrence(selectedEvent)}
 						<button

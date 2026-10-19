@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Open or create a meeting note from a calendar event, retain the event ID in the canonical meeting metadata, and return to the event from the note.
 - Add bounded, tenant-scoped organization administration for explicitly granted administrators: user listings/details, group and membership management, and filtered audit history. Installation operator privileges remain separate.
 - Add dry-run and apply for batches of up to 100 tenant-scoped invitations, with row outcomes, pending-group assignment, retry-safe invitation reuse, and transactional audit.
 - Add tenant-scoped organization invitation listing, idempotent resend, and cancellation with bounded pagination, secret-free responses, delivery-state tracking, and transactional audit.
