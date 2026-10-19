@@ -72,6 +72,17 @@ describe('calendarApi', () => {
 		expect(apiClient.delete).toHaveBeenCalledWith('/calendar/events/evt-1');
 	});
 
+	it('opens a caller-owned event and its meeting note', async () => {
+		vi.mocked(apiClient.get).mockResolvedValueOnce({ id: 'evt-1' });
+		vi.mocked(apiClient.post).mockResolvedValueOnce({ id: 'meeting-1' });
+
+		await calendarApi.getEvent('evt-1');
+		await calendarApi.openEventMeeting('evt-1');
+
+		expect(apiClient.get).toHaveBeenCalledWith('/calendar/events/evt-1');
+		expect(apiClient.post).toHaveBeenCalledWith('/calendar/events/evt-1/meeting');
+	});
+
 	it('lists sources', async () => {
 		vi.mocked(apiClient.get).mockResolvedValueOnce({ sources: [{ id: 'src-1' }] });
 

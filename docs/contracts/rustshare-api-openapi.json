@@ -4333,6 +4333,42 @@
         }
       }
     },
+    "/api/v1/calendar/events/{id}/meeting": {
+      "post": {
+        "tags": [
+          "Calendar"
+        ],
+        "summary": "`POST /api/v1/calendar/events/{id}/meeting` — create or reopen the caller's meeting note.",
+        "operationId": "create_calendar_event_meeting",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Calendar event id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meeting note",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingNote"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Legacy meeting links are still being indexed; retry shortly"
+          }
+        }
+      }
+    },
     "/api/v1/decisions": {
       "get": {
         "tags": [
@@ -22541,6 +22577,22 @@
             "items": {
               "type": "string"
             }
+          },
+          "calendar_event_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Compatibility mirror of the canonical association row."
+          },
+          "copied_from_meeting_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Source provenance for a manual copy; this does not link the copy to the event."
           },
           "created_at": {
             "type": "string",

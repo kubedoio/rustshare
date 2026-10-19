@@ -317,6 +317,75 @@ pub async fn get_calendar_event(
     Ok(Json(response))
 }
 
+/// `POST /api/v1/calendar/events/{id}/meeting` — create or reopen the caller's meeting note.
+#[utoipa::path(
+    post,
+    path = "/api/v1/calendar/events/{id}/meeting",
+    tag = "Calendar",
+    params(("id" = Uuid, Path, description = "Calendar event id")),
+    responses(
+        (status = 200, description = "Meeting note", body = crate::services::meeting_service::MeetingNote),
+        (status = 503, description = "Legacy meeting links are still being indexed; retry shortly")
+    )
+)]
+pub async fn create_calendar_event_meeting(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(event_id): Path<Uuid>,
+) -> Result<Json<crate::services::meeting_service::MeetingNote>, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    let event = state
+        .calendar_service
+        .get_event(auth.tenant_id, auth.user_id, event_id)
+        .await?;
+    let content = format!(
+        "# {}\n\n## Agenda\n\n{}\n\n## Notes\n\n",
+        event.title,
+        event.description.as_deref().unwrap_or("")
+    );
+    let opened = state
+        .meeting_service
+        .create_meeting_for_calendar_event(
+            auth.user_id,
+            auth.tenant_id,
+            event.id,
+            event.title,
+            event.starts_at,
+            content,
+        )
+        .await?;
+    if opened.creation_event_pending {
+        let payload = rustshare_core::events::MeetingNoteModifiedPayload {
+            meeting_id: opened.note.id.to_string(),
+            title: opened.note.metadata.title.clone(),
+            modified_by: auth.user_id,
+        };
+        let mut event = rustshare_core::events::Event::new(
+            rustshare_core::events::EventType::MeetingNoteModified,
+            opened.note.id,
+            rustshare_core::events::AggregateType::File,
+            serde_json::to_value(payload).map_err(|e| AppError::internal(e.to_string()))?,
+            auth.user_id,
+        );
+        event.id = opened.created_event_id;
+        state
+            .event_store
+            .append_if_new(&event, &state.broadcaster)
+            .await
+            .map_err(|e| AppError::internal(e.to_string()))?;
+        state
+            .meeting_service
+            .mark_calendar_meeting_creation_event_emitted(
+                auth.user_id,
+                auth.tenant_id,
+                event_id,
+                opened.created_event_id,
+            )
+            .await?;
+    }
+    Ok(Json(opened.note))
+}
+
 /// `GET /api/v1/calendar/events/{id}/export` — export one caller-owned event
 /// as an iCalendar file. Timed values remain UTC instants; the calendar also
 /// carries the stored timezone as `X-WR-TIMEZONE` because this crate does not

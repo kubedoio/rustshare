@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import type { MeetingNote } from './meetings';
 
 export type CalendarSourceKind = 'internal' | 'ical_import' | 'google' | 'outlook';
 
@@ -103,6 +104,14 @@ export interface CalendarProvidersResponse {
 }
 
 export const calendarApi = {
+	getEvent: async (eventId: string): Promise<CalendarEvent> => {
+		return apiClient.get<CalendarEvent>(`/calendar/events/${eventId}`);
+	},
+
+	openEventMeeting: async (eventId: string): Promise<MeetingNote> => {
+		return apiClient.post<MeetingNote>(`/calendar/events/${eventId}/meeting`);
+	},
+
 	listEvents: async (params: ListCalendarEventsParams): Promise<CalendarEvent[]> => {
 		const query = new URLSearchParams({ from: params.from, to: params.to });
 		for (const sourceId of params.sourceIds ?? []) {

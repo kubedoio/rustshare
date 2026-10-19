@@ -99,6 +99,7 @@ use utoipa::OpenApi;
         crate::handlers::ask_workspace::open_citation,
         crate::handlers::auth::login,
         crate::handlers::auth::logout,
+        crate::handlers::calendar::create_calendar_event_meeting,
         crate::handlers::brainstorming::create_brainstorm_board,
         crate::handlers::brainstorming::delete_brainstorm_board,
         crate::handlers::brainstorming::get_brainstorm_board,

@@ -6,6 +6,8 @@ export interface MeetingMetadata {
 	date: string;
 	team: string;
 	attendees: string[];
+	calendar_event_id?: string | null;
+	copied_from_meeting_id?: string | null;
 	created_at: string;
 	updated_at: string;
 }

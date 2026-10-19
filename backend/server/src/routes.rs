@@ -483,6 +483,10 @@ pub fn calendar_routes() -> Router<AppState> {
             get(crate::handlers::calendar::export_calendar_event),
         )
         .route(
+            "/api/v1/calendar/events/{id}/meeting",
+            post(crate::handlers::calendar::create_calendar_event_meeting),
+        )
+        .route(
             "/api/v1/calendar/sources",
             get(crate::handlers::calendar::list_calendar_sources)
                 .post(crate::handlers::calendar::create_calendar_source),
