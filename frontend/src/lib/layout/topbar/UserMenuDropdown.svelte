@@ -1,5 +1,16 @@
 <script lang="ts">
-	import { ChevronDown, User, Settings, Shield, LogOut, Bell, Smartphone } from 'lucide-svelte';
+	import { onMount } from 'svelte';
+	import { getOrganizationAdminCapability } from '$lib/api/organization-admin';
+	import {
+		Building2,
+		ChevronDown,
+		User,
+		Settings,
+		Shield,
+		LogOut,
+		Bell,
+		Smartphone
+	} from 'lucide-svelte';
 	import type { User as UserType } from '$lib/api/types';
 
 	let {
@@ -13,6 +24,22 @@
 		onLogout: () => void;
 		open?: boolean;
 	} = $props();
+	let canAdministerOrganization = $state(false);
+
+	onMount(() => {
+		let mounted = true;
+		getOrganizationAdminCapability().then(
+			(result) => {
+				if (mounted) canAdministerOrganization = result.allowed;
+			},
+			() => {
+				if (mounted) canAdministerOrganization = false;
+			}
+		);
+		return () => {
+			mounted = false;
+		};
+	});
 
 	function getInitials(name: string): string {
 		return name?.charAt(0).toUpperCase() || '?';
@@ -101,6 +128,15 @@
 						class="flex items-center gap-3 px-4 py-2 text-sm font-medium transition-colors hover:bg-base-200"
 					>
 						<Shield size={16} class="text-brand-500" /> Admin Panel
+					</a>
+				{/if}
+				{#if canAdministerOrganization}
+					<a
+						href="/organization-admin/users"
+						role="menuitem"
+						class="flex items-center gap-3 px-4 py-2 text-sm font-medium transition-colors hover:bg-base-200"
+					>
+						<Building2 size={16} class="text-brand-500" /> Organization administration
 					</a>
 				{/if}
 

@@ -950,6 +950,10 @@ pub fn admin_routes() -> Router<AppState> {
             "/api/v1/admin/audit",
             get(crate::handlers::admin::audit::list_audit_log),
         )
+        .route(
+            "/api/v1/organization-admin/capability",
+            get(crate::handlers::organization_admin::capability),
+        )
         .route("/api/v1/organization-admin/users", get(crate::handlers::organization_admin::users))
         .route(
             "/api/v1/organization-admin/users/bulk",

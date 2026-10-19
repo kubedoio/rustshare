@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import { getOrganizationAdminCapability } from '$lib/api/organization-admin';
 	import { createQuery } from '$lib/query-compat';
 	import { listEnabledApplications } from '$lib/api/applications';
 	import { applicationShellEntryToConfig } from '$lib/applications/registry';
@@ -18,7 +20,8 @@
 		PanelLeftClose,
 		AlertCircle,
 		RefreshCw,
-		Archive
+		Archive,
+		Building2
 	} from 'lucide-svelte';
 	import WorkspaceIcon from '$lib/components/dashboard/WorkspaceIcon.svelte';
 	import RailItem from './RailItem.svelte';
@@ -30,6 +33,22 @@
 	];
 
 	const secondaryItems = [{ icon: Settings, label: 'Settings', href: '/settings' }];
+	let canAdministerOrganization = $state(false);
+
+	onMount(() => {
+		let mounted = true;
+		getOrganizationAdminCapability().then(
+			(result) => {
+				if (mounted) canAdministerOrganization = result.allowed;
+			},
+			() => {
+				if (mounted) canAdministerOrganization = false;
+			}
+		);
+		return () => {
+			mounted = false;
+		};
+	});
 
 	const applicationsQuery = createQuery({
 		queryKey: ['enabled-applications'],
@@ -238,6 +257,16 @@
 				<svelte:component this={item.icon} size={22} strokeWidth={1.75} />
 			</RailItem>
 		{/each}
+		{#if canAdministerOrganization}
+			<RailItem
+				href="/organization-admin/users"
+				label="Organization admin"
+				active={pathname.startsWith('/organization-admin')}
+				expanded={railExpanded}
+			>
+				<Building2 size={22} strokeWidth={1.75} />
+			</RailItem>
+		{/if}
 
 		<!-- Expand / Collapse toggle -->
 		<button

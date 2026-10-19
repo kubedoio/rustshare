@@ -29,6 +29,7 @@ use utoipa::OpenApi;
         (url = "/", description = "Current server")
     ),
     paths(
+        crate::handlers::organization_admin::capability,
         crate::handlers::admin::audit::list_audit_log,
         crate::handlers::organization_admin::users,
         crate::handlers::organization_admin::bulk_invite_users,
@@ -377,6 +378,7 @@ use utoipa::OpenApi;
         crate::handlers::admin::groups::GroupResponse,
         crate::handlers::admin::groups::UpdateGroupRequest,
         crate::handlers::organization_admin::PageQuery,
+        crate::handlers::organization_admin::OrganizationAdminCapability,
         crate::handlers::organization_admin::PaginationQuery,
         crate::handlers::organization_admin::OrgUser,
         crate::handlers::organization_admin::BulkInviteRequest,

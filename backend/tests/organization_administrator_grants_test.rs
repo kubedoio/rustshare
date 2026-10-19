@@ -573,9 +573,27 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     let nil_member = create_user(&pool, Uuid::nil(), false).await;
     let op_token = create_auth_token(&state, operator, tenant);
     let org_token = create_auth_token(&state, org_admin, tenant);
+    let member_token = create_auth_token(&state, member, tenant);
+    let foreign_token = create_auth_token(&state, foreign, foreign_tenant);
     let nil_token = create_auth_token(&state, nil_admin, Uuid::nil());
     state.default_tenant_config = rustshare_server::config::DefaultTenantConfig::Set(tenant);
     let app = rustshare_server::routes::admin_routes().with_state(state.clone());
+
+    for token in [&op_token, &member_token, &foreign_token] {
+        let (status, _) = send(
+            &app,
+            "GET",
+            "/api/v1/organization-admin/capability",
+            token,
+            None,
+        )
+        .await;
+        assert_eq!(
+            status,
+            axum::http::StatusCode::FORBIDDEN,
+            "operator status and ordinary/cross-tenant identity do not imply a tenant grant"
+        );
+    }
 
     let (status, _) = send_json(
         &app,
@@ -587,6 +605,23 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::CREATED);
+    let (status, capability) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/capability",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(capability, serde_json::json!({"allowed":true}));
+    let searchable_display_name = format!("DisplaySearch{}", member.simple());
+    sqlx::query("UPDATE users SET display_name = $1 WHERE id = $2")
+        .bind(&searchable_display_name)
+        .bind(member)
+        .execute(&pool)
+        .await
+        .expect("set searchable display name");
     let (status, _) = send_json(
         &app,
         "POST",
@@ -621,6 +656,17 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
         .unwrap()
         .iter()
         .all(|u| u.get("is_admin").is_none()));
+    let (status, searched_users) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/organization-admin/users?search={searchable_display_name}"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(searched_users["total"], 1);
+    assert_eq!(searched_users["users"][0]["id"], member.to_string());
     let (status, _) = send(
         &app,
         "GET",
@@ -1116,6 +1162,15 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     let (status, _) = send(
         &app,
         "GET",
+        "/api/v1/organization-admin/capability",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+    let (status, _) = send(
+        &app,
+        "GET",
         "/api/v1/organization-admin/users",
         &org_token,
         None,
@@ -1144,4 +1199,13 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
         axum::http::StatusCode::FORBIDDEN,
         "revocation must apply on the next request"
     );
+    let (status, _) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/capability",
+        &fresh_org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
 }
