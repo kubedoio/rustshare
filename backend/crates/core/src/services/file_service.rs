@@ -412,7 +412,8 @@ where
             .await
             .map_err(|e| FileError::Database(format!("failed to publish integration event: {e}")))
     }
-    async fn require_file_permission(
+    /// Check a resource permission using the shared resolver before an Application mutation.
+    pub async fn require_file_permission(
         &self,
         user_id: UserId,
         tenant_id: uuid::Uuid,
@@ -535,6 +536,7 @@ where
             UploadSource::Bytes(content),
             mime_type,
             tenant_id,
+            None,
         )
         .await
     }
@@ -567,12 +569,72 @@ where
             UploadSource::Path(file_path.to_path_buf()),
             mime_type,
             tenant_id,
+            None,
         )
         .await
     }
 
-    /// Shared implementation for file uploads from either in-memory bytes or a
-    /// temporary file on disk.
+    /// Recover a preassigned file identity without overwriting a previous creation or edit.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_file_if_absent(
+        &self,
+        id: Uuid,
+        owner_id: UserId,
+        name: String,
+        parent_folder_id: Option<FolderId>,
+        content: Bytes,
+        mime_type: String,
+        tenant_id: Uuid,
+    ) -> Result<File, FileError> {
+        if let Some(file) = self
+            .metadata_store
+            .find_file_by_id_unchecked(id)
+            .await
+            .map_err(|e| FileError::Database(e.to_string()))?
+        {
+            if file.tenant_id != tenant_id {
+                return Err(FileError::PermissionDenied {
+                    file_id: id,
+                    user_id: owner_id,
+                });
+            }
+            return self.get_file(id, owner_id).await;
+        }
+        self.validate_file_name(&name)?;
+        let content_hash = self.calculate_sha256(&content);
+        let size = content.len() as i64;
+        let result = self
+            .upload_file_with_actor_impl(
+                owner_id,
+                FileUploadActor {
+                    actor_type: "user".into(),
+                    actor_user_id: Some(owner_id),
+                    ..Default::default()
+                },
+                name.clone(),
+                parent_folder_id,
+                content_hash,
+                size,
+                UploadSource::Bytes(content),
+                mime_type,
+                tenant_id,
+                Some(id),
+            )
+            .await;
+        match result {
+            Ok(file) => Ok(file),
+            Err(error) => {
+                // A concurrent creator may have committed the same immutable identity.
+                if let Ok(file) = self.get_file(id, owner_id).await {
+                    if file.tenant_id == tenant_id {
+                        return Ok(file);
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn upload_file_with_actor_impl(
         &self,
@@ -585,6 +647,7 @@ where
         source: UploadSource,
         mime_type: String,
         tenant_id: uuid::Uuid,
+        create_id: Option<Uuid>,
     ) -> Result<File, FileError> {
         // 1. Check parent folder exists (if provided) and verify permissions
         let (parent_path, file_owner_id) = if let Some(folder_id) = parent_folder_id {
@@ -661,6 +724,14 @@ where
             .await
             .map_err(|e| FileError::Database(e.to_string()))?
         {
+            if let Some(id) = create_id {
+                if existing.id != id || existing.tenant_id != tenant_id {
+                    return Err(FileError::InvalidName(
+                        "Creation path is already occupied".into(),
+                    ));
+                }
+                return Ok(existing);
+            }
             if existing.content_hash == content_hash && existing.size == size {
                 return Ok(existing);
             }
@@ -747,7 +818,7 @@ where
         }
 
         // 4. Create File domain object with version=1
-        let file = File::new(
+        let mut file = File::new(
             name.clone(),
             path.clone(),
             content_hash.clone(),
@@ -757,6 +828,9 @@ where
             file_owner_id,
             tenant_id,
         );
+        if let Some(id) = create_id {
+            file.id = id;
+        }
 
         // 5. Emit FileUploaded event to EventStore
         let payload = FileUploadedPayload {
@@ -1530,12 +1604,65 @@ where
         change_description: Option<String>,
     ) -> Result<File, FileError> {
         // 1. Get file and verify access
-        let mut file = self.get_file(file_id, user_id).await?;
+        let file = self.get_file(file_id, user_id).await?;
 
         // 1b. Verify Edit permission
         self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Edit)
             .await?;
 
+        self.persist_file_edit(file, user_id, content, save_mode, change_description)
+            .await
+    }
+
+    /// Edit only the canonical sidecar of an authorized Markdown resource.
+    /// The main resource supplies authority; events retain the actual caller as actor.
+    pub async fn edit_resource_sidecar(
+        &self,
+        primary_id: Uuid,
+        user_id: UserId,
+        content: Bytes,
+    ) -> Result<File, FileError> {
+        let primary = self.get_file(primary_id, user_id).await?;
+        self.require_file_permission(
+            user_id,
+            primary.tenant_id,
+            primary_id,
+            SharePermissions::Edit,
+        )
+        .await?;
+        let stem = primary
+            .name
+            .strip_suffix(".md")
+            .ok_or_else(|| FileError::InvalidName("Primary resource must be Markdown".into()))?;
+        let name = format!("{stem}.rustshare.json");
+        let parent_path = primary
+            .path
+            .rsplit_once('/')
+            .map_or("", |(parent, _)| parent);
+        let sidecar = self
+            .metadata_store
+            .find_file_by_path(&format!("{parent_path}/{name}"), primary.owner_id)
+            .await
+            .map_err(|e| FileError::Database(e.to_string()))?
+            .filter(|file| {
+                file.name == name
+                    && file.owner_id == primary.owner_id
+                    && file.tenant_id == primary.tenant_id
+                    && file.parent_folder_id == primary.parent_folder_id
+            })
+            .ok_or(FileError::NotFound(primary_id))?;
+        self.persist_file_edit(sidecar, user_id, content, "overwrite", None)
+            .await
+    }
+
+    async fn persist_file_edit(
+        &self,
+        mut file: File,
+        user_id: UserId,
+        content: Bytes,
+        save_mode: &str,
+        change_description: Option<String>,
+    ) -> Result<File, FileError> {
         // 2. Validate file is editable based on mime type and extension
         self.validate_file_editable(&file)?;
 

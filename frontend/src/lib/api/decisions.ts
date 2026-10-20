@@ -29,6 +29,13 @@ export interface DecisionSummary {
 	modified_at: string;
 }
 
+export interface DecisionMeetingContext {
+	id: string;
+	title: string;
+	calendar_event_id?: string | null;
+	is_origin: boolean;
+}
+
 async function fetchAllDecisionPages(): Promise<DecisionSummary[]> {
 	const PAGE_SIZE = 100;
 	const decisions: DecisionSummary[] = [];
@@ -63,11 +70,20 @@ export const decisionsApi = {
 		return apiClient.get<Decision>(`/decisions/${id}`);
 	},
 
+	listMeetings: async (id: string, page = 1) => {
+		return apiClient.get<{ items: DecisionMeetingContext[]; next_page?: number | null }>(
+			`/decisions/${id}/meetings?page=${page}`
+		);
+	},
+
 	create: async (req: { title: string; category: string; content: string }) => {
 		return apiClient.post<Decision>('/decisions', req);
 	},
 
-	update: async (id: string, req: { title?: string; content?: string; status?: string }) => {
+	update: async (
+		id: string,
+		req: { title?: string; content?: string; status?: string; decision_date?: string }
+	) => {
 		return apiClient.put<Decision>(`/decisions/${id}`, req);
 	},
 

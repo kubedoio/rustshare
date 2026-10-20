@@ -4647,6 +4647,60 @@
         }
       }
     },
+    "/api/v1/decisions/{id}/meetings": {
+      "get": {
+        "tags": [
+          "Decisions"
+        ],
+        "operationId": "decision_meetings",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionMeetingContexts"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/decisions/{id}/move": {
       "post": {
         "tags": [
@@ -10547,6 +10601,197 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/meetings/{id}/decisions": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "list_meeting_decisions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingDecisionPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Unavailable"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "create_meeting_decision",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMeetingDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingDecisionLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid draft"
+          },
+          "403": {
+            "description": "Meeting mutation denied"
+          },
+          "409": {
+            "description": "Retry key conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/meetings/{id}/decisions/links": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "link_meeting_decision",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkMeetingDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingDecisionLink"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Meeting mutation denied"
+          },
+          "404": {
+            "description": "Resource unavailable"
+          },
+          "409": {
+            "description": "Resource already has a different meeting link"
+          }
+        }
+      }
+    },
+    "/api/v1/meetings/{id}/decisions/{link_id}": {
+      "delete": {
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "unlink_meeting_decision",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Link removed; Decision preserved"
+          },
+          "403": {
+            "description": "Meeting mutation denied"
           }
         }
       }
@@ -17334,6 +17579,30 @@
           }
         }
       },
+      "CreateMeetingDecisionRequest": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "title",
+          "category",
+          "content"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "CreateMeetingRequest": {
         "type": "object",
         "required": [
@@ -17931,6 +18200,55 @@
           },
           "path": {
             "type": "string"
+          }
+        }
+      },
+      "DecisionMeetingContext": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "is_origin"
+        ],
+        "properties": {
+          "calendar_event_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "is_origin": {
+            "type": "boolean"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "DecisionMeetingContexts": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DecisionMeetingContext"
+            }
+          },
+          "next_page": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
@@ -21271,6 +21589,18 @@
           }
         }
       },
+      "LinkMeetingDecisionRequest": {
+        "type": "object",
+        "required": [
+          "decision_id"
+        ],
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "LinkMeetingResourceRequest": {
         "type": "object",
         "required": [
@@ -22783,6 +23113,113 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "MeetingDecisionLink": {
+        "type": "object",
+        "required": [
+          "id",
+          "available",
+          "created_at"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MeetingDecisionSummary"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "MeetingDecisionPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeetingDecisionLink"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "MeetingDecisionSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "title",
+          "status",
+          "owner_id",
+          "open_url"
+        ],
+        "properties": {
+          "decision_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "open_url": {
+            "type": "string"
+          },
+          "owner_display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
           }
         }
       },
@@ -27027,6 +27464,13 @@
               "string",
               "null"
             ]
+          },
+          "decision_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "status": {
             "type": [

@@ -93,7 +93,8 @@ pub async fn get_decision(
     let decision = state
         .decision_service
         .get_decision(decision_id, auth.user_id, auth.tenant_id)
-        .await?;
+        .await
+        .map_err(super::meeting_decisions::decision_read_error)?;
 
     Ok(Json(decision))
 }
@@ -103,6 +104,7 @@ pub struct UpdateDecisionRequest {
     pub title: Option<String>,
     pub content: Option<String>,
     pub status: Option<String>,
+    pub decision_date: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[utoipa::path(
@@ -125,13 +127,14 @@ pub async fn update_decision(
 ) -> Result<Json<crate::services::decision_service::Decision>, AppError> {
     let decision = state
         .decision_service
-        .update_decision(
+        .update_decision_details(
             decision_id,
             auth.user_id,
             auth.tenant_id,
             req.title,
             req.content,
             req.status,
+            req.decision_date,
         )
         .await?;
 

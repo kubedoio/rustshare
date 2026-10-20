@@ -664,6 +664,10 @@ pub fn decision_routes() -> Router<AppState> {
         .route("/api/v1/decisions", post(crate::handlers::create_decision))
         .route("/api/v1/decisions/{id}", get(crate::handlers::get_decision))
         .route(
+            "/api/v1/decisions/{id}/meetings",
+            get(crate::handlers::meeting_decisions::decision_meetings),
+        )
+        .route(
             "/api/v1/decisions/{id}",
             put(crate::handlers::update_decision),
         )
@@ -691,6 +695,19 @@ pub fn meeting_routes() -> Router<AppState> {
         .route("/api/v1/meetings", get(crate::handlers::list_meetings))
         .route("/api/v1/meetings", post(crate::handlers::create_meeting))
         .route("/api/v1/meetings/{id}", get(crate::handlers::get_meeting))
+        .route(
+            "/api/v1/meetings/{id}/decisions",
+            get(crate::handlers::meeting_decisions::list_meeting_decisions)
+                .post(crate::handlers::meeting_decisions::create_meeting_decision),
+        )
+        .route(
+            "/api/v1/meetings/{id}/decisions/links",
+            post(crate::handlers::meeting_decisions::link_meeting_decision),
+        )
+        .route(
+            "/api/v1/meetings/{id}/decisions/{link_id}",
+            delete(crate::handlers::meeting_decisions::unlink_meeting_decision),
+        )
         .route(
             "/api/v1/meetings/{id}",
             put(crate::handlers::update_meeting),

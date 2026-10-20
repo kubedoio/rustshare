@@ -48,7 +48,7 @@ pub struct MeetingResourceLinkPage {
     pub per_page: i64,
 }
 
-fn principal(auth: &AuthenticatedUser) -> PrincipalContext {
+pub(crate) fn principal(auth: &AuthenticatedUser) -> PrincipalContext {
     PrincipalContext::user(
         rustshare_core::domain::PrincipalId(auth.user_id),
         rustshare_core::domain::TenantId(auth.tenant_id),
@@ -172,7 +172,7 @@ async fn meeting_resource_view(
     })
 }
 
-async fn require_meeting_edit(
+pub(crate) async fn require_meeting_edit(
     state: &AppState,
     auth: &AuthenticatedUser,
     meeting_id: Uuid,
@@ -180,7 +180,8 @@ async fn require_meeting_edit(
     state
         .meeting_service
         .get_meeting(meeting_id, auth.user_id, auth.tenant_id)
-        .await?;
+        .await
+        .map_err(meeting_read_error)?;
     let allowed = state
         .permission_resolver
         .check_folder_permission(
@@ -195,6 +196,21 @@ async fn require_meeting_edit(
         return Err(AppError::Forbidden("Permission denied".into()));
     }
     Ok(())
+}
+
+pub(crate) fn meeting_read_error(
+    error: crate::services::meeting_service::MeetingError,
+) -> AppError {
+    use crate::services::meeting_service::MeetingError;
+    match error {
+        MeetingError::NotFound(_) | MeetingError::PermissionDenied => {
+            AppError::not_found("Meeting unavailable")
+        }
+        error => {
+            tracing::error!(%error,"Meeting access failed");
+            AppError::internal("Meeting access failed")
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]

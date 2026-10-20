@@ -236,7 +236,7 @@ impl MeetingService {
         let links = sqlx::query_as::<_, MeetingResourceLink>(
             "SELECT id, resource_ref_uri, created_at
                FROM meeting_resource_links
-              WHERE tenant_id = $1 AND meeting_folder_id = $2
+              WHERE tenant_id = $1 AND meeting_folder_id = $2 AND link_kind = 'resource'
               ORDER BY created_at, id
               LIMIT $3 OFFSET $4",
         )
@@ -249,7 +249,7 @@ impl MeetingService {
         .map_err(|error| MeetingError::Database(error.to_string()))?;
         let total = sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM meeting_resource_links
-              WHERE tenant_id = $1 AND meeting_folder_id = $2",
+              WHERE tenant_id = $1 AND meeting_folder_id = $2 AND link_kind = 'resource'",
         )
         .bind(tenant_id)
         .bind(meeting_id)
