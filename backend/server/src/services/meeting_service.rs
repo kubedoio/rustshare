@@ -90,6 +90,14 @@ pub struct MeetingSummary {
     pub modified_at: DateTime<Utc>,
 }
 
+/// Durable reference from a meeting to a Files-owned resource.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
+pub struct MeetingResourceLink {
+    pub id: Uuid,
+    pub resource_ref_uri: String,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct CalendarMeetingLink {
     meeting_folder_id: Uuid,
@@ -213,6 +221,98 @@ impl MeetingService {
             metadata_store,
             object_store,
         }
+    }
+
+    /// Return a deterministic, bounded page of resource references for a meeting.
+    pub async fn list_resource_links(
+        &self,
+        meeting_id: Uuid,
+        tenant_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<MeetingResourceLink>, i64), MeetingError> {
+        let limit = limit.clamp(1, 100);
+        let offset = offset.max(0);
+        let links = sqlx::query_as::<_, MeetingResourceLink>(
+            "SELECT id, resource_ref_uri, created_at
+               FROM meeting_resource_links
+              WHERE tenant_id = $1 AND meeting_folder_id = $2
+              ORDER BY created_at, id
+              LIMIT $3 OFFSET $4",
+        )
+        .bind(tenant_id)
+        .bind(meeting_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(self.metadata_store.pool())
+        .await
+        .map_err(|error| MeetingError::Database(error.to_string()))?;
+        let total = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM meeting_resource_links
+              WHERE tenant_id = $1 AND meeting_folder_id = $2",
+        )
+        .bind(tenant_id)
+        .bind(meeting_id)
+        .fetch_one(self.metadata_store.pool())
+        .await
+        .map_err(|error| MeetingError::Database(error.to_string()))?;
+        Ok((links, total))
+    }
+
+    /// Insert one canonical resource reference. Repeated submissions return the existing link.
+    pub async fn link_resource(
+        &self,
+        meeting_id: Uuid,
+        tenant_id: Uuid,
+        resource_ref_uri: String,
+    ) -> Result<MeetingResourceLink, MeetingError> {
+        let mut resource = rustshare_resource_auth::ResourceRef::from_uri(&resource_ref_uri)
+            .map_err(|error| MeetingError::InvalidData(error.to_string()))?;
+        if resource.application.0 != "io.elembra.files"
+            || resource.resource_type != "file"
+            || resource.version.is_some()
+        {
+            return Err(MeetingError::InvalidData(
+                "meeting links require a current Files file reference".into(),
+            ));
+        }
+        resource.resource_id = Uuid::parse_str(&resource.resource_id)
+            .map_err(|error| MeetingError::InvalidData(error.to_string()))?
+            .to_string();
+
+        sqlx::query_as::<_, MeetingResourceLink>(
+            "INSERT INTO meeting_resource_links (tenant_id, meeting_folder_id, resource_ref_uri)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (tenant_id, meeting_folder_id, resource_ref_uri)
+             DO UPDATE SET created_at = meeting_resource_links.created_at
+             RETURNING id, resource_ref_uri, created_at",
+        )
+        .bind(tenant_id)
+        .bind(meeting_id)
+        .bind(resource.to_uri())
+        .fetch_one(self.metadata_store.pool())
+        .await
+        .map_err(|error| MeetingError::Database(error.to_string()))
+    }
+
+    /// Remove a meeting reference only; the source resource is never modified.
+    pub async fn unlink_resource(
+        &self,
+        meeting_id: Uuid,
+        tenant_id: Uuid,
+        link_id: Uuid,
+    ) -> Result<(), MeetingError> {
+        sqlx::query(
+            "DELETE FROM meeting_resource_links
+              WHERE tenant_id = $1 AND meeting_folder_id = $2 AND id = $3",
+        )
+        .bind(tenant_id)
+        .bind(meeting_id)
+        .bind(link_id)
+        .execute(self.metadata_store.pool())
+        .await
+        .map_err(|error| MeetingError::Database(error.to_string()))?;
+        Ok(())
     }
 
     /// Ensure the root "Meetings" folder exists under /Workspace.

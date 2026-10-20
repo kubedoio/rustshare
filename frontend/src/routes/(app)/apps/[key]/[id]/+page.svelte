@@ -22,6 +22,7 @@
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { Folder, Share2, Pencil, AlertTriangle, X } from 'lucide-svelte';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
+	import MeetingResourceLinks from '$lib/components/apps/MeetingResourceLinks.svelte';
 	import ShareModal from '$lib/components/modals/ShareModal.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
 	import MoveModal from '$lib/components/modals/MoveModal.svelte';
@@ -642,7 +643,7 @@
 	}
 </script>
 
-<div class="module-detail-page h-full">
+<div class="module-detail-page h-full overflow-y-auto">
 	{#if $query.isLoading || ($query.isFetching && !item)}
 		<div class="flex h-full items-center justify-center">
 			<div class="loading loading-lg loading-spinner text-brand-500"></div>
@@ -789,6 +790,10 @@
 				</button>
 			</svelte:fragment>
 		</MarkdownDocumentPage>
+
+		{#if key === 'meetings'}
+			<MeetingResourceLinks meetingId={id} />
+		{/if}
 
 		<ShareModal
 			open={showShareModal}

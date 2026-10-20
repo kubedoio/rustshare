@@ -21,7 +21,7 @@ use super::{AppError, AuthenticatedUser};
 use crate::AppState;
 
 /// Hidden kanban metadata files that should never be exposed through file APIs.
-fn is_hidden_kanban_file(name: &str) -> bool {
+pub(crate) fn is_hidden_kanban_file(name: &str) -> bool {
     matches!(
         name,
         ".rustshare-board.json"
