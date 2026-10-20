@@ -357,7 +357,16 @@ pub async fn link_meeting_resource(
         .file_service
         .get_file(file_id, auth.user_id)
         .await
-        .map_err(|_| AppError::not_found("Resource unavailable"))?;
+        .map_err(|error| match error {
+            rustshare_core::services::FileError::NotFound(_)
+            | rustshare_core::services::FileError::PermissionDenied { .. } => {
+                AppError::not_found("Resource unavailable")
+            }
+            error => {
+                tracing::error!(%error, "Failed to validate meeting resource link");
+                AppError::internal("Resource access failed")
+            }
+        })?;
     if file.tenant_id != auth.tenant_id || super::files::is_hidden_kanban_file(&file.name) {
         return Err(AppError::not_found("Resource unavailable"));
     }
