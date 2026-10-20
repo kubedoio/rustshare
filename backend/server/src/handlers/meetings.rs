@@ -73,6 +73,19 @@ fn parse_meeting_resource_ref(uri: &str) -> Result<ResourceRef, AppError> {
     Ok(resource)
 }
 
+fn map_resource_lookup_error(error: rustshare_core::services::FileError) -> AppError {
+    match error {
+        rustshare_core::services::FileError::NotFound(_)
+        | rustshare_core::services::FileError::PermissionDenied { .. } => {
+            AppError::not_found("Resource unavailable")
+        }
+        error => {
+            tracing::error!(%error, "Failed to validate meeting resource link");
+            AppError::internal("Resource access failed")
+        }
+    }
+}
+
 async fn meeting_resource_view(
     state: &AppState,
     auth: &AuthenticatedUser,
@@ -357,16 +370,7 @@ pub async fn link_meeting_resource(
         .file_service
         .get_file(file_id, auth.user_id)
         .await
-        .map_err(|error| match error {
-            rustshare_core::services::FileError::NotFound(_)
-            | rustshare_core::services::FileError::PermissionDenied { .. } => {
-                AppError::not_found("Resource unavailable")
-            }
-            error => {
-                tracing::error!(%error, "Failed to validate meeting resource link");
-                AppError::internal("Resource access failed")
-            }
-        })?;
+        .map_err(map_resource_lookup_error)?;
     if file.tenant_id != auth.tenant_id || super::files::is_hidden_kanban_file(&file.name) {
         return Err(AppError::not_found("Resource unavailable"));
     }
@@ -633,4 +637,47 @@ pub async fn duplicate_meeting(
         .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok((StatusCode::CREATED, Json(meeting)))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{body::to_bytes, response::IntoResponse};
+    use rustshare_core::services::FileError;
+    use uuid::Uuid;
+
+    use super::map_resource_lookup_error;
+
+    async fn response(error: FileError) -> (axum::http::StatusCode, String) {
+        let response = map_resource_lookup_error(error).into_response();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1024)
+            .await
+            .expect("read error response body");
+        (
+            status,
+            String::from_utf8(body.to_vec()).expect("JSON response is UTF-8"),
+        )
+    }
+
+    #[tokio::test]
+    async fn resource_lookup_errors_hide_access_and_infrastructure_details() {
+        let file_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let missing = response(FileError::NotFound(file_id)).await;
+        let denied = response(FileError::PermissionDenied { file_id, user_id }).await;
+        assert_eq!(missing.0, axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(missing, denied);
+        assert!(missing.1.contains("Resource unavailable"));
+        assert!(!missing.1.contains(&file_id.to_string()));
+
+        for error in [
+            FileError::Database("db-secret-detail".into()),
+            FileError::Storage("storage-secret-detail".into()),
+        ] {
+            let (status, body) = response(error).await;
+            assert_eq!(status, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+            assert!(body.contains("Internal server error"));
+            assert!(!body.contains("secret-detail"));
+        }
+    }
 }
