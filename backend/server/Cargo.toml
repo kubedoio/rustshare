@@ -415,6 +415,10 @@ path = "../tests/organization_admin_invitation_lifecycle_test.rs"
 name = "share_authorization_parity"
 path = "tests/share_authorization_parity.rs"
 
+[[test]]
+name = "meeting_resource_links_test"
+path = "../tests/meeting_resource_links_test.rs"
+
 [dev-dependencies]
 ical = { version = "0.11", default-features = false, features = ["ical"] }
 rustshare-crypto = { path = "../crates/crypto" }

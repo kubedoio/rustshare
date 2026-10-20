@@ -32,6 +32,32 @@ export interface MeetingSummary {
 	modified_at: string;
 }
 
+export interface MeetingResourceLink {
+	id: string;
+	available: boolean;
+	created_at: string;
+	resource_ref?: string;
+	display_name?: string;
+	media_type?: string;
+	resource_kind?: 'file' | 'note';
+	open_url?: string;
+}
+
+export interface MeetingResourceLinkPage {
+	items: MeetingResourceLink[];
+	total: number;
+	page: number;
+	per_page: number;
+}
+
+export interface MeetingResourceCandidate {
+	resource_ref: string;
+	title: string;
+	location?: string;
+	source_application: string;
+	source_type: string;
+}
+
 async function fetchAllMeetingPages(): Promise<MeetingSummary[]> {
 	const PAGE_SIZE = 100;
 	const meetings: MeetingSummary[] = [];
@@ -64,6 +90,30 @@ export const meetingsApi = {
 
 	get: async (id: string) => {
 		return apiClient.get<MeetingNote>(`/meetings/${id}`);
+	},
+
+	listResources: async (id: string, page = 1, perPage = 50) => {
+		return apiClient.get<MeetingResourceLinkPage>(
+			`/meetings/${id}/resources?page=${page}&per_page=${perPage}`
+		);
+	},
+
+	linkResource: async (id: string, resourceRef: string) => {
+		return apiClient.post<MeetingResourceLink>(`/meetings/${id}/resources`, {
+			resource_ref: resourceRef
+		});
+	},
+
+	unlinkResource: async (id: string, linkId: string) => {
+		return apiClient.delete(`/meetings/${id}/resources/${linkId}`);
+	},
+
+	searchResources: async (query: string) => {
+		const response = await apiClient.post<{
+			results: MeetingResourceCandidate[];
+			total: number;
+		}>('/search', { query, limit: 30, sources: ['files'] });
+		return response.results;
 	},
 
 	create: async (req: { title: string; team: string; date: string; content: string }) => {

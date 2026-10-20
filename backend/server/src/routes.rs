@@ -707,6 +707,15 @@ pub fn meeting_routes() -> Router<AppState> {
             "/api/v1/meetings/{id}/duplicate",
             post(crate::handlers::duplicate_meeting),
         )
+        .route(
+            "/api/v1/meetings/{id}/resources",
+            get(crate::handlers::meetings::list_meeting_resources)
+                .post(crate::handlers::meetings::link_meeting_resource),
+        )
+        .route(
+            "/api/v1/meetings/{id}/resources/{link_id}",
+            delete(crate::handlers::meetings::unlink_meeting_resource),
+        )
 }
 
 pub fn standup_routes() -> Router<AppState> {

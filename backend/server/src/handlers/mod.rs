@@ -78,6 +78,7 @@ pub use kanban::{
     remove_card_label, toggle_checklist_item, unassign_card_member, update_board, update_card,
     update_card_description, update_label,
 };
+pub use meetings::{link_meeting_resource, list_meeting_resources, unlink_meeting_resource};
 pub use notifications::{
     count_unread_notifications, delete_notification, list_activity, list_notifications,
     mark_notification_read,

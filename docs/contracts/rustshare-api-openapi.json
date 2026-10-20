@@ -10665,6 +10665,215 @@
         }
       }
     },
+    "/api/v1/meetings/{id}/resources": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "list_meeting_resources",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Meeting ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "One-based page, defaults to 1",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "Page size, defaults to 50 and is capped at 100",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current permission-aware linked resources",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingResourceLinkPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Meeting not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "link_meeting_resource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Meeting ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkMeetingResourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Existing or newly linked resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingResourceLinkView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid resource reference",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Meeting mutation denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/meetings/{id}/resources/{link_id}": {
+      "delete": {
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "unlink_meeting_resource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Meeting ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "link_id",
+            "in": "path",
+            "description": "Meeting resource link ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Link removed; target resource is unchanged"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Meeting mutation denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/memory/ask": {
       "post": {
         "tags": [
@@ -21062,6 +21271,18 @@
           }
         }
       },
+      "LinkMeetingResourceRequest": {
+        "type": "object",
+        "required": [
+          "resource_ref"
+        ],
+        "properties": {
+          "resource_ref": {
+            "type": "string",
+            "description": "Canonical, credential-free ResourceRef URI returned by the owning Application."
+          }
+        }
+      },
       "ListActivityQuery": {
         "type": "object",
         "description": "Query parameters for the activity feed.",
@@ -22678,6 +22899,87 @@
           },
           "title": {
             "type": "string"
+          }
+        }
+      },
+      "MeetingResourceLinkPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeetingResourceLinkView"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "MeetingResourceLinkView": {
+        "type": "object",
+        "required": [
+          "id",
+          "available",
+          "created_at"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "media_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "open_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resource_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resource_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
