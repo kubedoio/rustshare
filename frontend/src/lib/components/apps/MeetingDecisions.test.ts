@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import MeetingDecisions from './MeetingDecisions.svelte';
 
@@ -93,6 +93,49 @@ describe('MeetingDecisions', () => {
 			expect(mocks.unlinkDecision).toHaveBeenCalledWith('meeting-1', 'hidden-link')
 		);
 		expect(mocks.createDecision).not.toHaveBeenCalled();
+	});
+
+	it('refreshes pagination after unlink and ignores an older next-page response', async () => {
+		let remaining = Array.from({ length: 51 }, (_, index) => ({
+			id: `link-${index + 1}`,
+			available: true,
+			created_at: '2026-10-20T10:00:00Z',
+			decision: {
+				id: `decision-${index + 1}`,
+				name: `DEC-${index + 1}.md`,
+				title: `Decision ${index + 1}`,
+				status: 'accepted',
+				open_url: `/apps/decisions/decision-${index + 1}`
+			}
+		}));
+		const stalePage = { items: remaining.slice(50), total: 51, page: 2, per_page: 50 };
+		let resolvePage: (value: typeof stalePage) => void = () => {};
+		mocks.listDecisions.mockImplementation((_id: string, page: number) => {
+			if (page === 2) return new Promise((resolve) => (resolvePage = resolve));
+			return Promise.resolve({
+				items: remaining.slice(0, 50),
+				total: remaining.length,
+				page,
+				per_page: 50
+			});
+		});
+		mocks.unlinkDecision.mockImplementation(async (_id: string, linkId: string) => {
+			remaining = remaining.filter((link) => link.id !== linkId);
+		});
+
+		render(MeetingDecisions, { props: { meetingId: 'meeting-pagination' } });
+		await screen.findByRole('link', { name: 'Decision 1' });
+		await fireEvent.click(screen.getByRole('button', { name: 'Load more decisions' }));
+		await waitFor(() => expect(mocks.listDecisions).toHaveBeenCalledWith('meeting-pagination', 2));
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Remove decision link' })[0]);
+		await screen.findByRole('link', { name: 'Decision 51' });
+		expect(screen.queryByRole('link', { name: 'Decision 1' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Load more decisions' })).toBeNull();
+
+		await act(() => resolvePage(stalePage));
+		expect(screen.getAllByRole('link')).toHaveLength(50);
+		expect(screen.getAllByRole('link', { name: 'Decision 51' })).toHaveLength(1);
+		expect(screen.queryByRole('button', { name: 'Load more decisions' })).toBeNull();
 	});
 
 	it('recovers the request identity and draft after an ambiguous creation failure and reload', async () => {

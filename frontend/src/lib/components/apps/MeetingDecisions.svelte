@@ -27,6 +27,7 @@
 	let searching = $state(false);
 	let candidates = $state<MeetingResourceCandidate[]>([]);
 	let generation = 0;
+	let listGeneration = 0;
 	let searchGeneration = 0;
 
 	type DraftPrincipal = { id: string; tenant_id?: string };
@@ -97,17 +98,20 @@
 
 	async function loadPage(id: string, requestedPage: number, append: boolean) {
 		const currentGeneration = generation;
+		const currentList = ++listGeneration;
 		loading = true;
 		try {
 			const response = await meetingsApi.listDecisions(id, requestedPage);
-			if (currentGeneration !== generation) return;
+			if (currentGeneration !== generation || currentList !== listGeneration) return;
 			links = append ? [...links, ...response.items] : response.items;
 			total = response.total;
 			page = response.page;
 		} catch {
-			if (currentGeneration === generation) error = 'Could not load meeting decisions.';
+			if (currentGeneration === generation && currentList === listGeneration) {
+				error = 'Could not load meeting decisions.';
+			}
 		} finally {
-			if (currentGeneration === generation) loading = false;
+			if (currentGeneration === generation && currentList === listGeneration) loading = false;
 		}
 	}
 
@@ -206,14 +210,14 @@
 
 	async function unlink(linkId: string) {
 		if (working) return;
+		const id = meetingId;
 		const currentGeneration = generation;
 		working = true;
 		error = '';
 		try {
-			await meetingsApi.unlinkDecision(meetingId, linkId);
+			await meetingsApi.unlinkDecision(id, linkId);
 			if (currentGeneration !== generation) return;
-			links = links.filter((link) => link.id !== linkId);
-			total = Math.max(0, total - 1);
+			await loadPage(id, 1, false);
 		} catch {
 			if (currentGeneration === generation) error = 'Could not remove the meeting link.';
 		} finally {
