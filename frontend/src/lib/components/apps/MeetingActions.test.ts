@@ -334,7 +334,7 @@ describe('MeetingActions', () => {
 		);
 	});
 
-	it('does not erase a newer draft when an older creation resolves after navigating back', async () => {
+	it('does not allow a second create while the first result is ambiguous', async () => {
 		let finishOld: (value: MeetingAction) => void = () => {};
 		mocks.createAction.mockImplementationOnce(
 			() =>
@@ -342,7 +342,6 @@ describe('MeetingActions', () => {
 					finishOld = resolve;
 				})
 		);
-		mocks.createAction.mockRejectedValueOnce(new Error('New response interrupted'));
 		const view = render(MeetingActions, { props: { meetingId: 'meeting-1' } });
 		await fireEvent.click(screen.getByRole('button', { name: 'Create action' }));
 		await fireEvent.input(screen.getByLabelText('Action title'), {
@@ -353,21 +352,17 @@ describe('MeetingActions', () => {
 		await view.rerender({ meetingId: 'meeting-2' });
 		await view.rerender({ meetingId: 'meeting-1' });
 		await fireEvent.click(screen.getByRole('button', { name: 'Create action' }));
-		await fireEvent.click(screen.getByRole('button', { name: 'Start another action' }));
-		await fireEvent.input(screen.getByLabelText('Action title'), {
-			target: { value: 'Newer request' }
-		});
-		await fireEvent.click(screen.getByRole('button', { name: 'Save new action' }));
-		await screen.findByText(
-			'Could not confirm creation. Retry the same details to recover the result.'
+		expect(screen.queryByRole('button', { name: 'Start another action' })).toBeNull();
+		const original = mocks.createAction.mock.calls[0][1];
+		await fireEvent.click(screen.getByRole('button', { name: 'Retry creation' }));
+		await waitFor(() => expect(mocks.createAction).toHaveBeenCalledTimes(2));
+		expect(mocks.createAction.mock.calls[1]).toEqual(['meeting-1', original]);
+		await waitFor(() =>
+			expect(sessionStorage.getItem('meeting-action-request:tenant-1:user-1:meeting-1')).toBeNull()
 		);
-		const newer = mocks.createAction.mock.calls[1][1];
 		await act(() => finishOld(action()));
-		expect(
-			JSON.parse(sessionStorage.getItem('meeting-action-request:tenant-1:user-1:meeting-1')!)
-		).toEqual(newer);
-		expect((screen.getByLabelText('Action title') as HTMLInputElement).value).toBe('Newer request');
-		expect(mocks.toast).not.toHaveBeenCalled();
+		expect(sessionStorage.getItem('meeting-action-request:tenant-1:user-1:meeting-1')).toBeNull();
+		expect(mocks.createAction.mock.calls[0]).toEqual(mocks.createAction.mock.calls[1]);
 	});
 
 	it('reloads action choices on each edit and hides unavailable Decision metadata', async () => {

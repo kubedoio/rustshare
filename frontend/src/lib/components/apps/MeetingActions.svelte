@@ -448,16 +448,6 @@
 							editing = null;
 						}}>Close</button
 					>
-					{#if pendingCreate && !editing}<button
-							type="button"
-							class="btn btn-ghost btn-sm"
-							disabled={working}
-							onclick={() => {
-								remember($currentUser, meetingId, null);
-								pendingCreate = null;
-								fillForm({ title: '', description: null, assignee_id: null, due_date: null });
-							}}>Start another action</button
-						>{/if}
 				</div>
 			</form>
 		{/if}
