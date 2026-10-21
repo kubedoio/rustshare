@@ -82,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Remove vulnerable legacy TLS dependencies and update certificate verification/root
+  packages for RUSTSEC-2026-0381/0382. PostgreSQL and WebSocket clients now use
+  the host's maintained OS certificate store; certificate and hostname verification remain enabled.
 - Share management now tenant-scopes owner and grant checks, ignores revoked
   and expired grants, rejects cross-tenant group grants, and filters
   mismatched rows from share listings.
