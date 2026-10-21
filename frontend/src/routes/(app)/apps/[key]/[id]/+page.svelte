@@ -23,6 +23,8 @@
 	import { Folder, Share2, Pencil, AlertTriangle, X } from 'lucide-svelte';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
 	import MeetingResourceLinks from '$lib/components/apps/MeetingResourceLinks.svelte';
+	import MeetingDecisions from '$lib/components/apps/MeetingDecisions.svelte';
+	import DecisionMeetingContext from '$lib/components/apps/DecisionMeetingContext.svelte';
 	import ShareModal from '$lib/components/modals/ShareModal.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
 	import MoveModal from '$lib/components/modals/MoveModal.svelte';
@@ -75,6 +77,8 @@
 		content: string;
 		metadata?: {
 			title?: string;
+			status?: string;
+			decision_date?: string | null;
 			excerpt?: string;
 			attachments?: NoteAttachment[];
 			date?: string;
@@ -793,6 +797,14 @@
 
 		{#if key === 'meetings'}
 			<MeetingResourceLinks meetingId={id} />
+			<MeetingDecisions meetingId={id} />
+		{:else if key === 'decisions'}
+			<DecisionMeetingContext
+				decisionId={id}
+				status={item.metadata?.status}
+				decisionDate={item.metadata?.decision_date}
+				onUpdated={() => void $query.refetch()}
+			/>
 		{/if}
 
 		<ShareModal

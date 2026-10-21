@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 autotests = false
 
+[[test]]
+name = "meeting_decisions_test"
+path = "../tests/meeting_decisions_test.rs"
+
 [features]
 test-recording-provider = []
 

@@ -40,7 +40,8 @@ tower = "0.5"
 tower-http = { version = "0.7", features = ["trace", "cors", "limit"] }
 
 # Database
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate", "ipnetwork"] }
+# Use OS trust roots instead of the unpatched webpki-roots 0.26 compatibility crate.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "uuid", "chrono", "json", "macros", "migrate", "ipnetwork"] }
 rusqlite = { version = "0.32", features = ["bundled", "chrono", "uuid"] }
 
 # Serialization
@@ -60,7 +61,8 @@ hex = "0.4"
 subtle = "2.6"
 
 # S3 client
-aws-sdk-s3 = "1.17"
+# The default HTTPS client uses modern Rustls; the SDK's `rustls` alias enables legacy TLS.
+aws-sdk-s3 = { version = "1.17", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
 aws-config = "1.1"
 # Pinned to avoid a breaking change in aws-smithy-types 1.5.0 that breaks
 # aws-runtime 1.7.4 compilation. Remove once AWS SDK releases a compatible set.
@@ -84,7 +86,7 @@ glob = "0.3"
 url = "2.5"
 
 # Async
-tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 futures = "0.3"
 futures-util = "0.3"
 

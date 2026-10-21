@@ -25,6 +25,7 @@ pub mod health;
 pub mod invites;
 pub mod kanban;
 pub mod mail;
+pub mod meeting_decisions;
 pub mod meetings;
 pub mod memory_reconcile;
 pub mod notes;

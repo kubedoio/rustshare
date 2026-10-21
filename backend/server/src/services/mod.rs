@@ -13,6 +13,7 @@ pub mod google_calendar;
 pub mod ical_import;
 pub mod kanban_service;
 pub mod mail_service;
+pub mod meeting_decisions;
 pub mod meeting_service;
 pub mod note_index_sink;
 pub mod note_service;

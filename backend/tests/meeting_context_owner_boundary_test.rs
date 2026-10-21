@@ -185,23 +185,27 @@ async fn same_tenant_non_owner_cannot_read_change_or_delete_meeting_context_reso
                 meeting.id,
                 "Owner meeting",
                 "Owner meeting content",
+                StatusCode::FORBIDDEN,
             ),
             (
                 "decisions",
                 decision.id,
                 "Owner decision",
                 "Owner decision content",
+                // Decision reads conceal whether an inaccessible resource exists.
+                StatusCode::NOT_FOUND,
             ),
             (
                 "standups",
                 standup.id,
                 "Owner standup",
                 "Owner standup content",
+                StatusCode::FORBIDDEN,
             ),
         ];
         let mut results = Vec::new();
 
-        for (resource, id, title, content) in resources {
+        for (resource, id, title, content, expected_read_status) in resources {
             let uri = format!("/api/v1/{resource}/{id}");
             let (read_status, read_body) =
                 json_request(&app, Method::GET, uri.clone(), &other_token, None).await?;
@@ -222,6 +226,7 @@ async fn same_tenant_non_owner_cannot_read_change_or_delete_meeting_context_reso
                 json_request(&app, Method::GET, uri, &owner_token, None).await?;
 
             results.push((
+                expected_read_status,
                 read_status,
                 read_body,
                 update_status,
@@ -242,6 +247,7 @@ async fn same_tenant_non_owner_cannot_read_change_or_delete_meeting_context_reso
 
     let results = attempt.expect("create and exercise meeting-context resources");
     for (
+        expected_read_status,
         read_status,
         read_body,
         update_status,
@@ -252,7 +258,7 @@ async fn same_tenant_non_owner_cannot_read_change_or_delete_meeting_context_reso
         content,
     ) in results
     {
-        assert_eq!(read_status, StatusCode::FORBIDDEN);
+        assert_eq!(read_status, expected_read_status);
         let denied_body = read_body.to_string();
         assert!(!denied_body.contains(title));
         assert!(!denied_body.contains(content));

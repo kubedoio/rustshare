@@ -58,6 +58,36 @@ export interface MeetingResourceCandidate {
 	source_type: string;
 }
 
+export interface MeetingDecisionLink {
+	id: string;
+	available: boolean;
+	created_at: string;
+	decision?: {
+		id: string;
+		name: string;
+		title: string;
+		status: string;
+		decision_date?: string | null;
+		owner_id: string;
+		owner_display_name?: string | null;
+		open_url: string;
+	};
+}
+
+export interface MeetingDecisionPage {
+	items: MeetingDecisionLink[];
+	total: number;
+	page: number;
+	per_page: number;
+}
+
+export interface CreateMeetingDecision {
+	request_id: string;
+	title: string;
+	category: string;
+	content: string;
+}
+
 async function fetchAllMeetingPages(): Promise<MeetingSummary[]> {
 	const PAGE_SIZE = 100;
 	const meetings: MeetingSummary[] = [];
@@ -90,6 +120,26 @@ export const meetingsApi = {
 
 	get: async (id: string) => {
 		return apiClient.get<MeetingNote>(`/meetings/${id}`);
+	},
+
+	listDecisions: async (id: string, page = 1, perPage = 50) => {
+		return apiClient.get<MeetingDecisionPage>(
+			`/meetings/${id}/decisions?page=${page}&per_page=${perPage}`
+		);
+	},
+
+	createDecision: async (id: string, req: CreateMeetingDecision) => {
+		return apiClient.post<MeetingDecisionLink>(`/meetings/${id}/decisions`, req);
+	},
+
+	linkDecision: async (id: string, decisionId: string) => {
+		return apiClient.post<MeetingDecisionLink>(`/meetings/${id}/decisions/links`, {
+			decision_id: decisionId
+		});
+	},
+
+	unlinkDecision: async (id: string, linkId: string) => {
+		return apiClient.delete(`/meetings/${id}/decisions/${linkId}`);
 	},
 
 	listResources: async (id: string, page = 1, perPage = 50) => {

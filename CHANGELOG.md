@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Create recoverable Decisions from meetings or link existing Decisions, edit status/date in Decisions, and return to authorized meeting/event context without granting access through links.
+- Keep Decision file/metadata moves and deletes atomic, preserve legacy Decisions after moves, and prevent creation retries from resurrecting purged Decisions.
 - Link existing accessible Files and Notes to canonical meeting notes by reference, with per-resource authorization, safe unavailable entries, and idempotent removal.
 - Open or create one recoverable meeting note per calendar event, retain its event provenance, and return to the event from the note. Reopening is silent; copied notes retain source-meeting provenance without the event link.
 - Add bounded, tenant-scoped organization administration for explicitly granted administrators: user listings/details, group and membership management, and filtered audit history. Installation operator privileges remain separate.
@@ -81,6 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Remove vulnerable legacy TLS dependencies and update certificate verification/root
+  packages for RUSTSEC-2026-0381/0382. PostgreSQL and WebSocket clients now use
+  the host's maintained OS certificate store; certificate and hostname verification remain enabled.
 - Share management now tenant-scopes owner and grant checks, ignores revoked
   and expired grants, rejects cross-tenant group grants, and filters
   mismatched rows from share listings.

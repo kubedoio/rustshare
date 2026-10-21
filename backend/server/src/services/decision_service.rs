@@ -6,7 +6,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use rustshare_core::{
-    domain::{Folder, UserId},
+    domain::{File, Folder, SharePermissions, UserId},
     services::{FileService, FolderService},
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
@@ -18,6 +18,27 @@ fn utc_now() -> DateTime<Utc> {
     Utc::now()
 }
 
+fn normalize_decision_status(status: &str) -> Result<String, DecisionError> {
+    let normalized = status.to_ascii_lowercase();
+    match normalized.as_str() {
+        "" => Ok(normalized),
+        "proposed" | "accepted" | "rejected" | "deprecated" | "superseded" => Ok(normalized),
+        _ => Err(DecisionError::InvalidData("Invalid decision status".into())),
+    }
+}
+
+fn decision_prefix(stem: &str) -> String {
+    let identifier = stem.strip_prefix("DEC-").unwrap_or(stem);
+    if let Some(uuid) = identifier
+        .get(..36)
+        .filter(|value| Uuid::parse_str(value).is_ok())
+    {
+        format!("DEC-{uuid}")
+    } else {
+        stem.split('-').take(2).collect::<Vec<_>>().join("-")
+    }
+}
+
 /// Decision-specific metadata sidecar schema.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DecisionMetadata {
@@ -26,7 +47,7 @@ pub struct DecisionMetadata {
     #[serde(default)]
     pub title: String,
     #[serde(default)]
-    pub status: String, // "Proposed", "Accepted", "Rejected", "Deprecated"
+    pub status: String, // normalized lowercase Decision lifecycle value
     #[serde(default)]
     pub category: String,
     #[serde(default = "utc_now")]
@@ -215,7 +236,7 @@ impl DecisionService {
         }
         let folder = self
             .folder_service
-            .create_folder(category.to_string(), Some(parent_id), owner_id, tenant_id)
+            .create_folder_or_get(category.to_string(), Some(parent_id), owner_id, tenant_id)
             .await
             .map_err(|e| DecisionError::Storage(e.to_string()))?;
         Ok(folder)
@@ -240,11 +261,16 @@ impl DecisionService {
         for file in files {
             if !(file.path.starts_with("/Decisions/")
                 || file.path.starts_with("/Workspace/Decisions/"))
+                || !file.name.starts_with("DEC-")
+                || !file.name.ends_with(".md")
             {
                 continue;
             }
 
             let meta = self.load_metadata(&file, user_id, tenant_id).await?;
+            if meta.kind != "decision" {
+                continue;
+            }
             summaries.push(DecisionSummary {
                 id: file.id,
                 name: file.name,
@@ -333,18 +359,229 @@ impl DecisionService {
         })
     }
 
+    /// Resume a durable meeting creation command without overwriting either file.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_for_meeting_command(
+        &self,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        title: String,
+        category: String,
+        content: String,
+        decision_id: Uuid,
+        sidecar_id: Uuid,
+        created_at: DateTime<Utc>,
+    ) -> Result<Decision, DecisionError> {
+        let previously_uploaded: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM events WHERE aggregate_id=$1 AND event_type=$2)",
+        )
+        .bind(decision_id)
+        .bind(
+            serde_json::to_string(&rustshare_core::events::EventType::FileUploaded)
+                .map_err(|error| DecisionError::InvalidData(error.to_string()))?,
+        )
+        .fetch_one(self.metadata_store.pool())
+        .await
+        .map_err(|error| DecisionError::Database(error.to_string()))?;
+        // Upload history survives trash purges. A removed primary is not an interrupted upload.
+        let existing = if previously_uploaded {
+            Some(self.file_service.get_file(decision_id, owner_id).await?)
+        } else {
+            None
+        };
+        let root = self.ensure_decisions_folder(owner_id, tenant_id).await?;
+        let category_folder = self
+            .ensure_category_folder(root.id, &category, owner_id, tenant_id)
+            .await?;
+        let stem = format!("DEC-{decision_id}");
+        let file = if let Some(file) = existing {
+            file
+        } else {
+            self.file_service
+                .create_file_if_absent(
+                    decision_id,
+                    owner_id,
+                    format!("{stem}.md"),
+                    Some(category_folder.id),
+                    Bytes::from(content),
+                    "text/markdown".into(),
+                    tenant_id,
+                    Some(Uuid::new_v5(
+                        &decision_id,
+                        b"meeting-decision-initial-upload",
+                    )),
+                )
+                .await?
+        };
+        if file.id != decision_id || file.owner_id != owner_id || file.tenant_id != tenant_id {
+            return Err(DecisionError::InvalidData(
+                "Decision identity conflict".into(),
+            ));
+        }
+        let mut metadata = DecisionMetadata::new(title, category);
+        metadata.status = "proposed".into();
+        metadata.created_at = created_at;
+        metadata.updated_at = created_at;
+        metadata.decision_date = Some(created_at);
+        let sidecar = self
+            .file_service
+            .create_file_if_absent(
+                sidecar_id,
+                owner_id,
+                format!(
+                    "{}.rustshare.json",
+                    file.name.strip_suffix(".md").unwrap_or(&file.name)
+                ),
+                file.parent_folder_id,
+                Bytes::from(
+                    serde_json::to_vec_pretty(&metadata)
+                        .map_err(|error| DecisionError::InvalidData(error.to_string()))?,
+                ),
+                "application/json".into(),
+                tenant_id,
+                None,
+            )
+            .await?;
+        if sidecar.id != sidecar_id
+            || sidecar.owner_id != file.owner_id
+            || sidecar.tenant_id != file.tenant_id
+            || sidecar.parent_folder_id != file.parent_folder_id
+            || sidecar.name
+                != format!(
+                    "{}.rustshare.json",
+                    file.name.strip_suffix(".md").unwrap_or(&file.name)
+                )
+        {
+            return Err(DecisionError::InvalidData(
+                "Decision metadata identity conflict".into(),
+            ));
+        }
+        self.get_decision(decision_id, owner_id, tenant_id).await
+    }
+
+    async fn require_decision(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+        required: SharePermissions,
+    ) -> Result<(File, DecisionMetadata), DecisionError> {
+        let file = self.file_service.get_file(id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(DecisionError::PermissionDenied);
+        }
+        if !file.name.starts_with("DEC-") || !file.name.ends_with(".md") {
+            return Err(DecisionError::NotFound(id));
+        }
+        self.file_service
+            .require_file_permission(user_id, tenant_id, id, required)
+            .await?;
+        let metadata = self.load_metadata(&file, user_id, tenant_id).await?;
+        if metadata.kind != "decision" {
+            return Err(DecisionError::NotFound(id));
+        }
+        Ok((file, metadata))
+    }
+
+    async fn save_metadata(
+        &self,
+        file: &File,
+        user_id: UserId,
+        metadata: &DecisionMetadata,
+    ) -> Result<(), DecisionError> {
+        let data = Bytes::from(
+            serde_json::to_vec_pretty(metadata)
+                .map_err(|error| DecisionError::InvalidData(error.to_string()))?,
+        );
+        self.file_service
+            .edit_resource_sidecar(file.id, user_id, data)
+            .await?;
+        Ok(())
+    }
+
+    async fn ensure_metadata_sidecar(
+        &self,
+        file: &File,
+        user_id: UserId,
+        metadata: &DecisionMetadata,
+    ) -> Result<(), DecisionError> {
+        let sidecar_name = format!(
+            "{}.rustshare.json",
+            file.name.strip_suffix(".md").unwrap_or(&file.name)
+        );
+        let siblings = self
+            .metadata_store
+            .list_files(file.parent_folder_id, file.owner_id, file.tenant_id)
+            .await
+            .map_err(|error| DecisionError::Database(error.to_string()))?;
+        if siblings.iter().any(|sidecar| sidecar.name == sidecar_name) {
+            return Ok(());
+        }
+        if let Some(parent_id) = file.parent_folder_id {
+            if self
+                .metadata_store
+                .find_folder_by_id(parent_id, file.owner_id)
+                .await
+                .map_err(|error| DecisionError::Database(error.to_string()))?
+                .is_none()
+            {
+                return Err(DecisionError::PermissionDenied);
+            }
+        } else if user_id != file.owner_id {
+            return Err(DecisionError::PermissionDenied);
+        }
+        // An interrupted meeting Decision already owns a durable sidecar ID. Reuse it
+        // so repairing metadata cannot strand the original creation command.
+        let sidecar_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT sidecar_file_id FROM meeting_decision_creations
+             WHERE tenant_id=$1 AND decision_file_id=$2 AND ready=false",
+        )
+        .bind(file.tenant_id)
+        .bind(file.id)
+        .fetch_optional(self.metadata_store.pool())
+        .await
+        .map_err(|error| DecisionError::Database(error.to_string()))?;
+        // Repair needs the caller's normal folder Edit authority before changing the Decision.
+        let sidecar = self
+            .file_service
+            .create_file_if_absent(
+                sidecar_id.unwrap_or_else(|| Uuid::new_v5(&file.id, b"decision-sidecar")),
+                user_id,
+                sidecar_name.clone(),
+                file.parent_folder_id,
+                Bytes::from(
+                    serde_json::to_vec_pretty(metadata)
+                        .map_err(|error| DecisionError::InvalidData(error.to_string()))?,
+                ),
+                "application/json".into(),
+                file.tenant_id,
+                None,
+            )
+            .await?;
+        if sidecar.name != sidecar_name
+            || sidecar.owner_id != file.owner_id
+            || sidecar.tenant_id != file.tenant_id
+            || sidecar.parent_folder_id != file.parent_folder_id
+        {
+            return Err(DecisionError::InvalidData(
+                "Decision metadata identity conflict".into(),
+            ));
+        }
+        Ok(())
+    }
+
     async fn load_metadata(
         &self,
         file: &rustshare_core::domain::File,
-        user_id: UserId,
+        _user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<DecisionMetadata, DecisionError> {
-        let stem = file.name.trim_end_matches(".md");
+        let stem = file.name.strip_suffix(".md").unwrap_or(&file.name);
         let sidecar_name = format!("{}.rustshare.json", stem);
 
         let siblings = self
             .metadata_store
-            .list_files(file.parent_folder_id, user_id, tenant_id)
+            .list_files(file.parent_folder_id, file.owner_id, tenant_id)
             .await
             .map_err(|e| DecisionError::Database(e.to_string()))?;
 
@@ -358,8 +595,16 @@ impl DecisionService {
                 .map_err(|e| DecisionError::InvalidData(e.to_string()))?;
             Ok(meta)
         } else {
+            if !(file.path.starts_with("/Workspace/Decisions/")
+                || file.path.starts_with("/Decisions/"))
+            {
+                return Err(DecisionError::NotFound(file.id));
+            }
             // Fallback
-            Ok(DecisionMetadata::new(stem, "Uncategorized"))
+            let mut metadata = DecisionMetadata::new(stem, "Uncategorized");
+            metadata.created_at = file.created_at;
+            metadata.updated_at = file.modified_at;
+            Ok(metadata)
         }
     }
 
@@ -389,24 +634,41 @@ impl DecisionService {
         Ok(max_id + 1)
     }
 
+    pub async fn get_decision_summary(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<DecisionSummary, DecisionError> {
+        let (file, metadata) = self
+            .require_decision(id, user_id, tenant_id, SharePermissions::View)
+            .await?;
+        Ok(DecisionSummary {
+            id: file.id,
+            name: file.name,
+            path: file.path,
+            metadata,
+            parent_folder_id: file.parent_folder_id,
+            owner_id: file.owner_id,
+            modified_at: file.modified_at,
+        })
+    }
+
     pub async fn get_decision(
         &self,
         id: Uuid,
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<Decision, DecisionError> {
-        let file = self.file_service.get_file(id, user_id).await?;
-        if file.tenant_id != tenant_id {
-            return Err(DecisionError::PermissionDenied);
-        }
+        let (file, meta) = self
+            .require_decision(id, user_id, tenant_id, SharePermissions::View)
+            .await?;
         let content_bytes = self
             .object_store
             .get(&file.storage_key())
             .await
             .map_err(|e| DecisionError::Storage(e.to_string()))?;
         let content = String::from_utf8_lossy(&content_bytes).to_string();
-        let meta = self.load_metadata(&file, user_id, file.tenant_id).await?;
-
         Ok(Decision {
             id: file.id,
             name: file.name,
@@ -426,28 +688,31 @@ impl DecisionService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<(), DecisionError> {
-        let file = self.file_service.get_file(id, user_id).await?;
-        if file.tenant_id != tenant_id {
-            return Err(DecisionError::PermissionDenied);
-        }
+        let (file, _) = self
+            .require_decision(id, user_id, tenant_id, SharePermissions::Admin)
+            .await?;
         // Delete sidecar if it exists
-        let stem = file.name.trim_end_matches(".md");
+        let stem = file.name.strip_suffix(".md").unwrap_or(&file.name);
         let sidecar_name = format!("{}.rustshare.json", stem);
         let siblings = self
             .metadata_store
-            .list_files(file.parent_folder_id, user_id, tenant_id)
+            .list_files(file.parent_folder_id, file.owner_id, tenant_id)
             .await
             .map_err(|e| DecisionError::Database(e.to_string()))?;
         if let Some(sidecar) = siblings.into_iter().find(|f| f.name == sidecar_name) {
             self.file_service
-                .delete_file(sidecar.id, user_id)
+                .require_file_permission(user_id, tenant_id, sidecar.id, SharePermissions::Admin)
+                .await?;
+            self.file_service
+                .delete_file_pair(file.id, sidecar.id, user_id)
+                .await
+                .map_err(DecisionError::from)?;
+        } else {
+            self.file_service
+                .delete_file(id, user_id)
                 .await
                 .map_err(DecisionError::from)?;
         }
-        self.file_service
-            .delete_file(id, user_id)
-            .await
-            .map_err(DecisionError::from)?;
         Ok(())
     }
 
@@ -460,17 +725,41 @@ impl DecisionService {
         content: Option<String>,
         status: Option<String>,
     ) -> Result<Decision, DecisionError> {
-        let file = self.file_service.get_file(id, user_id).await?;
-        if file.tenant_id != tenant_id {
-            return Err(DecisionError::PermissionDenied);
+        self.update_decision_details(id, user_id, tenant_id, title, content, status, None)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_decision_details(
+        &self,
+        id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+        title: Option<String>,
+        content: Option<String>,
+        status: Option<String>,
+        decision_date: Option<DateTime<Utc>>,
+    ) -> Result<Decision, DecisionError> {
+        let (file, mut meta) = self
+            .require_decision(id, user_id, tenant_id, SharePermissions::Edit)
+            .await?;
+
+        if title.as_ref().is_some_and(|title| title.trim().is_empty()) {
+            return Err(DecisionError::InvalidData("Title cannot be empty".into()));
         }
-        let mut meta = self.load_metadata(&file, user_id, file.tenant_id).await?;
+        let status = status
+            .map(|status| normalize_decision_status(&status))
+            .transpose()?;
+        self.ensure_metadata_sidecar(&file, user_id, &meta).await?;
 
         if let Some(t) = title {
             meta.title = t;
         }
         if let Some(s) = status {
             meta.status = s;
+        }
+        if let Some(date) = decision_date {
+            meta.decision_date = Some(date);
         }
         meta.updated_at = Utc::now();
 
@@ -481,28 +770,7 @@ impl DecisionService {
                 .await?;
         }
 
-        // Update sidecar
-        let stem = file.name.trim_end_matches(".md");
-        let sidecar_name = format!("{}.rustshare.json", stem);
-        let siblings = self
-            .metadata_store
-            .list_files(file.parent_folder_id, user_id, file.tenant_id)
-            .await
-            .map_err(|e| DecisionError::Database(e.to_string()))?;
-
-        if let Some(sidecar_file) = siblings.into_iter().find(|f| f.name == sidecar_name) {
-            let sidecar_data = serde_json::to_vec_pretty(&meta)
-                .map_err(|e| DecisionError::InvalidData(e.to_string()))?;
-            self.file_service
-                .edit_file(
-                    sidecar_file.id,
-                    user_id,
-                    Bytes::from(sidecar_data),
-                    "overwrite",
-                    None,
-                )
-                .await?;
-        }
+        self.save_metadata(&file, user_id, &meta).await?;
 
         self.get_decision(id, user_id, tenant_id).await
     }
@@ -515,10 +783,9 @@ impl DecisionService {
         tenant_id: Uuid,
         new_title: String,
     ) -> Result<Decision, DecisionError> {
-        let file = self.file_service.get_file(id, user_id).await?;
-        if file.tenant_id != tenant_id {
-            return Err(DecisionError::PermissionDenied);
-        }
+        let (file, mut meta) = self
+            .require_decision(id, user_id, tenant_id, SharePermissions::Edit)
+            .await?;
 
         // Validate title
         let trimmed = new_title.trim();
@@ -528,43 +795,46 @@ impl DecisionService {
             ));
         }
 
-        // Extract DEC-ID prefix from current filename (e.g., "DEC-0001" from "DEC-0001-use-rust.md")
-        let stem = file.name.trim_end_matches(".md");
-        let dec_prefix = stem.split('-').take(2).collect::<Vec<_>>().join("-");
+        // Keep command UUIDs intact; legacy records retain their numeric DEC prefix.
+        let stem = file.name.strip_suffix(".md").unwrap_or(&file.name);
+        let dec_prefix = decision_prefix(stem);
 
         // Generate new filename preserving DEC-ID prefix
         let slug = slug::slugify(trimmed);
         let new_name = format!("{}-{}.md", dec_prefix, slug);
 
+        let old_sidecar_name = format!("{}.rustshare.json", stem);
+        let sidecar = self
+            .metadata_store
+            .list_files(file.parent_folder_id, file.owner_id, tenant_id)
+            .await
+            .map_err(|error| DecisionError::Database(error.to_string()))?
+            .into_iter()
+            .find(|entry| entry.name == old_sidecar_name);
+        if let Some(sidecar) = &sidecar {
+            self.file_service
+                .require_file_permission(user_id, tenant_id, sidecar.id, SharePermissions::Edit)
+                .await?;
+        }
+
         // Rename the main file
         let renamed_file = self.file_service.rename_file(id, new_name, user_id).await?;
 
-        // Load and update metadata
-        let mut meta = self
-            .load_metadata(&renamed_file, user_id, renamed_file.tenant_id)
-            .await?;
+        // Metadata was loaded before renaming, while the old sidecar still matched.
         meta.title = trimmed.to_string();
         meta.updated_at = Utc::now();
 
         // Save metadata to sidecar
-        let new_stem = renamed_file.name.trim_end_matches(".md");
+        let new_stem = renamed_file
+            .name
+            .strip_suffix(".md")
+            .unwrap_or(&renamed_file.name);
         let new_sidecar_name = format!("{}.rustshare.json", new_stem);
         let sidecar_data = serde_json::to_vec_pretty(&meta)
             .map_err(|e| DecisionError::InvalidData(e.to_string()))?;
 
         // Find old sidecar, update its content and name
-        let siblings = self
-            .metadata_store
-            .list_files(
-                renamed_file.parent_folder_id,
-                user_id,
-                renamed_file.tenant_id,
-            )
-            .await
-            .map_err(|e| DecisionError::Database(e.to_string()))?;
-
-        let old_sidecar_name = format!("{}.rustshare.json", stem);
-        if let Some(sidecar_file) = siblings.into_iter().find(|f| f.name == old_sidecar_name) {
+        if let Some(sidecar_file) = sidecar {
             // Update sidecar content
             self.file_service
                 .edit_file(
@@ -595,31 +865,36 @@ impl DecisionService {
         tenant_id: Uuid,
         target_folder_id: Option<Uuid>,
     ) -> Result<Decision, DecisionError> {
-        let file = self.file_service.get_file(id, user_id).await?;
-        if file.tenant_id != tenant_id {
-            return Err(DecisionError::PermissionDenied);
-        }
+        let (file, metadata) = self
+            .require_decision(id, user_id, tenant_id, SharePermissions::Edit)
+            .await?;
+
+        // Preserve legacy canonical Decisions before moving them outside the
+        // paths where metadata-less records can be recognized.
+        self.ensure_metadata_sidecar(&file, user_id, &metadata)
+            .await?;
 
         // Locate the sidecar in the original folder before moving the main file.
-        let stem = file.name.trim_end_matches(".md");
+        let stem = file.name.strip_suffix(".md").unwrap_or(&file.name);
         let sidecar_name = format!("{}.rustshare.json", stem);
         let siblings = self
             .metadata_store
-            .list_files(file.parent_folder_id, user_id, tenant_id)
+            .list_files(file.parent_folder_id, file.owner_id, tenant_id)
             .await
             .map_err(|e| DecisionError::Database(e.to_string()))?;
-        let sidecar = siblings.into_iter().find(|f| f.name == sidecar_name);
-
-        // Move the Markdown file; the sidecar follows to the same destination.
+        let sidecar = siblings
+            .into_iter()
+            .find(|f| f.name == sidecar_name)
+            .ok_or(DecisionError::NotFound(id))?;
         self.file_service
-            .move_file(id, target_folder_id, user_id)
+            .require_file_permission(user_id, tenant_id, sidecar.id, SharePermissions::Edit)
             .await?;
 
-        if let Some(sidecar) = sidecar {
-            self.file_service
-                .move_file(sidecar.id, target_folder_id, user_id)
-                .await?;
-        }
+        // Move the Markdown file and metadata as one transaction so collisions
+        // or database failures cannot strand the Decision outside its valid path.
+        self.file_service
+            .move_file_pair(id, sidecar.id, target_folder_id, user_id)
+            .await?;
 
         self.get_decision(id, user_id, tenant_id).await
     }
@@ -642,22 +917,23 @@ impl DecisionService {
         })?;
 
         let copy_title = format!("{} (copy)", original.metadata.title);
-        let next_id = self
-            .get_next_decision_id(parent_folder_id, user_id, tenant_id)
-            .await?;
+        let copy_id = Uuid::new_v4();
+        let sidecar_id = Uuid::new_v4();
         let slug = slug::slugify(&copy_title);
-        let file_name = format!("DEC-{:04}-{}.md", next_id, slug);
-        let sidecar_name = format!("DEC-{:04}-{}.rustshare.json", next_id, slug);
+        let file_name = format!("DEC-{copy_id}-{slug}.md");
+        let sidecar_name = format!("DEC-{copy_id}-{slug}.rustshare.json");
 
         let file = self
             .file_service
-            .upload_file(
+            .create_file_if_absent(
+                copy_id,
                 user_id,
                 file_name,
                 Some(parent_folder_id),
                 Bytes::from(original.content),
                 "text/markdown".to_string(),
                 tenant_id,
+                None,
             )
             .await?;
 
@@ -669,16 +945,59 @@ impl DecisionService {
         let sidecar_data = serde_json::to_vec_pretty(&meta)
             .map_err(|e| DecisionError::InvalidData(e.to_string()))?;
         self.file_service
-            .upload_file(
+            .create_file_if_absent(
+                sidecar_id,
                 user_id,
                 sidecar_name,
                 Some(parent_folder_id),
                 Bytes::from(sidecar_data),
                 "application/json".to_string(),
                 tenant_id,
+                None,
             )
             .await?;
 
         self.get_decision(file.id, user_id, tenant_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decision_prefix, normalize_decision_status};
+    use uuid::Uuid;
+
+    #[test]
+    fn accepted_statuses_are_normalized_without_accepting_arbitrary_states() {
+        for status in [
+            "",
+            "Proposed",
+            "accepted",
+            "Rejected",
+            "Deprecated",
+            "Superseded",
+        ] {
+            assert_eq!(
+                normalize_decision_status(status).unwrap(),
+                status.to_ascii_lowercase()
+            );
+        }
+        assert!(normalize_decision_status("completed").is_err());
+    }
+
+    #[test]
+    fn renamed_decisions_keep_the_entire_command_identity() {
+        let id = Uuid::new_v4();
+        let prefix = format!("DEC-{id}");
+        assert_eq!(decision_prefix(&prefix), prefix);
+        assert_eq!(decision_prefix(&format!("{prefix}-renamed-title")), prefix);
+        assert_eq!(decision_prefix("DEC-0042-original-title"), "DEC-0042");
+    }
+
+    #[test]
+    fn decision_prefix_accepts_unicode_without_panicking() {
+        assert_eq!(
+            decision_prefix("DEC-決定決定決定決定決定決定決定-title"),
+            "DEC-決定決定決定決定決定決定決定"
+        );
     }
 }
