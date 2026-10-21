@@ -8,15 +8,30 @@ const mocks = vi.hoisted(() => ({
 	linkDecision: vi.fn(),
 	unlinkDecision: vi.fn(),
 	searchResources: vi.fn(),
-	toast: vi.fn()
+	toast: vi.fn(),
+	authValue: { id: 'user-1', tenant_id: 'tenant-1' },
+	authSubscribers: [] as Array<(user: { id: string; tenant_id: string } | null) => void>
 }));
 vi.mock('$lib/api/meetings', () => ({ meetingsApi: mocks }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: mocks.toast } }));
+vi.mock('$lib/stores/auth', () => ({
+	currentUser: {
+		subscribe(run: (user: { id: string; tenant_id: string } | null) => void) {
+			run(mocks.authValue);
+			mocks.authSubscribers.push(run);
+			return () => {
+				mocks.authSubscribers = mocks.authSubscribers.filter((subscriber) => subscriber !== run);
+			};
+		}
+	}
+}));
 
 describe('MeetingDecisions', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		sessionStorage.clear();
+		mocks.authValue = { id: 'user-1', tenant_id: 'tenant-1' };
+		mocks.authSubscribers = [];
 		mocks.listDecisions.mockResolvedValue({
 			items: [
 				{
@@ -80,9 +95,9 @@ describe('MeetingDecisions', () => {
 		expect(mocks.createDecision).not.toHaveBeenCalled();
 	});
 
-	it('reuses the request identity and draft after an ambiguous creation failure', async () => {
+	it('recovers the request identity and draft after an ambiguous creation failure and reload', async () => {
 		mocks.createDecision.mockRejectedValueOnce(new Error('response interrupted'));
-		render(MeetingDecisions, { props: { meetingId: 'meeting-1' } });
+		const firstView = render(MeetingDecisions, { props: { meetingId: 'meeting-1' } });
 		await screen.findByText('Linked decision unavailable');
 		await fireEvent.click(screen.getByRole('button', { name: 'Create Decision' }));
 		await fireEvent.input(screen.getByLabelText('Decision title'), {
@@ -95,15 +110,53 @@ describe('MeetingDecisions', () => {
 		await screen.findByRole('button', { name: 'Retry creation' });
 		const firstRequest = mocks.createDecision.mock.calls[0][1];
 		expect(firstRequest.request_id).toMatch(/^[0-9a-f-]{36}$/i);
-		expect(sessionStorage.getItem('meeting-decision-request:meeting-1')).toBe(
-			firstRequest.request_id
+		expect(
+			JSON.parse(sessionStorage.getItem('meeting-decision-request:tenant-1:user-1:meeting-1')!)
+		).toEqual(firstRequest);
+		firstView.unmount();
+		render(MeetingDecisions, { props: { meetingId: 'meeting-1' } });
+		await screen.findByText('Approve budget');
+		await fireEvent.click(screen.getByRole('button', { name: 'Create Decision' }));
+		await screen.findByRole('button', { name: 'Retry creation' });
+		expect((screen.getByLabelText('Decision title') as HTMLInputElement).value).toBe(
+			'Adopt proposal'
+		);
+		expect((screen.getByLabelText('Decision content') as HTMLTextAreaElement).value).toBe(
+			'Approved after review.'
 		);
 		await fireEvent.click(screen.getByRole('button', { name: 'Retry creation' }));
 		await waitFor(() => expect(mocks.createDecision).toHaveBeenCalledTimes(2));
 		expect(mocks.createDecision.mock.calls[1]).toEqual(['meeting-1', firstRequest]);
 		await waitFor(() =>
-			expect(sessionStorage.getItem('meeting-decision-request:meeting-1')).toBeNull()
+			expect(
+				sessionStorage.getItem('meeting-decision-request:tenant-1:user-1:meeting-1')
+			).toBeNull()
 		);
+	});
+
+	it('does not restore a pending draft for a different meeting viewer', async () => {
+		mocks.createDecision.mockRejectedValueOnce(new Error('response interrupted'));
+		const ownerView = render(MeetingDecisions, { props: { meetingId: 'meeting-private-draft' } });
+		await screen.findByText('Linked decision unavailable');
+		await fireEvent.click(screen.getByRole('button', { name: 'Create Decision' }));
+		await fireEvent.input(screen.getByLabelText('Decision title'), {
+			target: { value: 'Private draft title' }
+		});
+		await fireEvent.input(screen.getByLabelText('Decision content'), {
+			target: { value: 'Private draft content' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Create decision' }));
+		await screen.findByRole('button', { name: 'Retry creation' });
+		ownerView.unmount();
+
+		mocks.authValue = { id: 'viewer-2', tenant_id: 'tenant-1' };
+		render(MeetingDecisions, { props: { meetingId: 'meeting-private-draft' } });
+		await screen.findByText('Linked decision unavailable');
+		await fireEvent.click(screen.getByRole('button', { name: 'Create Decision' }));
+		expect((screen.getByLabelText('Decision title') as HTMLInputElement).value).toBe('');
+		expect((screen.getByLabelText('Decision content') as HTMLTextAreaElement).value).toBe('');
+		expect(screen.queryByRole('button', { name: 'Retry creation' })).toBeNull();
+		expect(screen.queryByText('Private draft content')).toBeNull();
 	});
 
 	it('links an accessible Decision by ID without copying its contents', async () => {

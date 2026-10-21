@@ -6,6 +6,7 @@
 		type MeetingResourceCandidate
 	} from '$lib/api/meetings';
 	import { toastStore } from '$lib/stores/toast';
+	import { currentUser } from '$lib/stores/auth';
 
 	let { meetingId }: { meetingId: string } = $props();
 	let links = $state<MeetingDecisionLink[]>([]);
@@ -28,20 +29,34 @@
 	let generation = 0;
 	let searchGeneration = 0;
 
-	function storageKey(id: string) {
-		return `meeting-decision-request:${id}`;
+	type DraftPrincipal = { id: string; tenant_id?: string };
+
+	function storageKey(principal: DraftPrincipal, id: string) {
+		return `meeting-decision-request:${principal.tenant_id ?? ''}:${principal.id}:${id}`;
 	}
-	function readRequestId(id: string) {
+	function readPendingRequest(principal: DraftPrincipal, id: string): CreateMeetingDecision | null {
 		try {
-			return sessionStorage.getItem(storageKey(id)) ?? '';
+			const stored = sessionStorage.getItem(storageKey(principal, id));
+			if (!stored) return null;
+			const value = JSON.parse(stored) as Partial<CreateMeetingDecision>;
+			return typeof value.request_id === 'string' &&
+				typeof value.title === 'string' &&
+				typeof value.category === 'string' &&
+				typeof value.content === 'string'
+				? (value as CreateMeetingDecision)
+				: null;
 		} catch {
-			return '';
+			return null;
 		}
 	}
-	function rememberRequestId(id: string, value: string) {
+	function rememberPendingRequest(
+		principal: DraftPrincipal,
+		id: string,
+		value: CreateMeetingDecision | null
+	) {
 		try {
-			if (value) sessionStorage.setItem(storageKey(id), value);
-			else sessionStorage.removeItem(storageKey(id));
+			if (value) sessionStorage.setItem(storageKey(principal, id), JSON.stringify(value));
+			else sessionStorage.removeItem(storageKey(principal, id));
 		} catch {
 			/* Retries remain safe while this component stays open. */
 		}
@@ -49,6 +64,7 @@
 
 	$effect(() => {
 		const id = meetingId;
+		const principal = $currentUser;
 		generation += 1;
 		searchGeneration += 1;
 		links = [];
@@ -64,10 +80,15 @@
 		query = '';
 		searching = false;
 		candidates = [];
-		const savedRequestId = readRequestId(id);
-		requestId = savedRequestId;
-		retrying = !!savedRequestId;
-		pendingRequest = null;
+		const savedRequest = principal ? readPendingRequest(principal, id) : null;
+		requestId = savedRequest?.request_id ?? '';
+		retrying = !!savedRequest;
+		pendingRequest = savedRequest;
+		if (savedRequest) {
+			title = savedRequest.title;
+			category = savedRequest.category;
+			content = savedRequest.content;
+		}
 		void loadPage(id, 1, false);
 		return () => {
 			generation += 1;
@@ -91,7 +112,8 @@
 	}
 
 	function newDraft() {
-		rememberRequestId(meetingId, '');
+		const principal = $currentUser;
+		if (principal) rememberPendingRequest(principal, meetingId, null);
 		requestId = '';
 		pendingRequest = null;
 		retrying = false;
@@ -104,6 +126,7 @@
 	async function createDecision() {
 		if (working || !title.trim()) return;
 		const id = meetingId;
+		const principal = $currentUser;
 		const currentGeneration = generation;
 		if (!requestId) requestId = crypto.randomUUID();
 		pendingRequest ??= {
@@ -112,12 +135,12 @@
 			category: category.trim() || 'General',
 			content
 		};
-		rememberRequestId(id, requestId);
+		if (principal) rememberPendingRequest(principal, id, pendingRequest);
 		working = true;
 		error = '';
 		try {
 			await meetingsApi.createDecision(id, pendingRequest);
-			rememberRequestId(id, '');
+			if (principal) rememberPendingRequest(principal, id, null);
 			if (currentGeneration !== generation) return;
 			newDraft();
 			showCreate = false;
