@@ -274,7 +274,7 @@ pub async fn action_assignees(
     Path(id): Path<Uuid>,
     Query(page): Query<PaginationQuery>,
 ) -> Result<Json<ActionAssigneePage>, AppError> {
-    meeting(&state, &auth, id, false).await?;
+    meeting(&state, &auth, id, true).await?;
     let items=sqlx::query_as("SELECT id,COALESCE(NULLIF(display_name,''),username) AS display_name FROM users WHERE tenant_id=$1 AND disabled_at IS NULL ORDER BY id LIMIT $2 OFFSET $3")
         .bind(auth.tenant_id).bind(page.limit()).bind(page.offset()).fetch_all(&state.db_pool).await.map_err(|_|AppError::internal("Assignee list unavailable"))?;
     let total =

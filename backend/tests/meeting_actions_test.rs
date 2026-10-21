@@ -538,6 +538,14 @@ async fn direct_and_group_overlap_revocation_and_disabled_caller_are_live() {
         request(&api, &viewer_token, "GET", &uri, None).await.0,
         StatusCode::OK
     );
+    let assignees_uri = format!("/api/v1/meetings/{meeting_id}/action-assignees");
+    assert_eq!(
+        request(&api, &viewer_token, "GET", &assignees_uri, None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND,
+        "view access must not disclose the tenant user directory"
+    );
     assert!(
         !request(&api, &viewer_token, "PUT", &action_uri, Some(edit(&action)))
             .await
@@ -566,6 +574,13 @@ async fn direct_and_group_overlap_revocation_and_disabled_caller_are_live() {
     change["title"] = json!("Group edit");
     let (status, updated) = request(&api, &viewer_token, "PUT", &action_uri, Some(change)).await;
     assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(
+        request(&api, &viewer_token, "GET", &assignees_uri, None)
+            .await
+            .0,
+        StatusCode::OK,
+        "edit access can load assignee choices"
+    );
     sqlx::query("DELETE FROM shares WHERE id=$1")
         .bind(direct)
         .execute(&state.db_pool)
@@ -585,6 +600,13 @@ async fn direct_and_group_overlap_revocation_and_disabled_caller_are_live() {
     assert_eq!(
         request(&api, &viewer_token, "GET", &uri, None).await.0,
         StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        request(&api, &viewer_token, "GET", &assignees_uri, None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND,
+        "removing the group grant must immediately hide assignee choices"
     );
     assert_eq!(
         request(
