@@ -144,6 +144,18 @@ impl FileMetadataStoreOps for MockMetadataStore {
         Ok(())
     }
 
+    async fn update_file_location_in_tx(
+        &self,
+        _tx: &mut Self::Tx,
+        _id: Uuid,
+        _owner_id: Uuid,
+        _expected_path: &str,
+        _parent_folder_id: Option<Uuid>,
+        _path: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     async fn delete_file(&self, _id: Uuid, _owner_id: Uuid) -> Result<()> {
         unreachable!()
     }

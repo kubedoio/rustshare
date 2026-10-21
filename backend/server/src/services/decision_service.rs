@@ -372,24 +372,48 @@ impl DecisionService {
         sidecar_id: Uuid,
         created_at: DateTime<Utc>,
     ) -> Result<Decision, DecisionError> {
+        let previously_uploaded: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM events WHERE aggregate_id=$1 AND event_type=$2)",
+        )
+        .bind(decision_id)
+        .bind(
+            serde_json::to_string(&rustshare_core::events::EventType::FileUploaded)
+                .map_err(|error| DecisionError::InvalidData(error.to_string()))?,
+        )
+        .fetch_one(self.metadata_store.pool())
+        .await
+        .map_err(|error| DecisionError::Database(error.to_string()))?;
+        // Upload history survives trash purges. A removed primary is not an interrupted upload.
+        let existing = if previously_uploaded {
+            Some(self.file_service.get_file(decision_id, owner_id).await?)
+        } else {
+            None
+        };
         let root = self.ensure_decisions_folder(owner_id, tenant_id).await?;
         let category_folder = self
             .ensure_category_folder(root.id, &category, owner_id, tenant_id)
             .await?;
         let stem = format!("DEC-{decision_id}");
-        let file = self
-            .file_service
-            .create_file_if_absent(
-                decision_id,
-                owner_id,
-                format!("{stem}.md"),
-                Some(category_folder.id),
-                Bytes::from(content),
-                "text/markdown".into(),
-                tenant_id,
-            )
-            .await?;
-        if file.id != decision_id {
+        let file = if let Some(file) = existing {
+            file
+        } else {
+            self.file_service
+                .create_file_if_absent(
+                    decision_id,
+                    owner_id,
+                    format!("{stem}.md"),
+                    Some(category_folder.id),
+                    Bytes::from(content),
+                    "text/markdown".into(),
+                    tenant_id,
+                    Some(Uuid::new_v5(
+                        &decision_id,
+                        b"meeting-decision-initial-upload",
+                    )),
+                )
+                .await?
+        };
+        if file.id != decision_id || file.owner_id != owner_id || file.tenant_id != tenant_id {
             return Err(DecisionError::InvalidData(
                 "Decision identity conflict".into(),
             ));
@@ -415,6 +439,7 @@ impl DecisionService {
                 ),
                 "application/json".into(),
                 tenant_id,
+                None,
             )
             .await?;
         if sidecar.id != sidecar_id
@@ -530,6 +555,7 @@ impl DecisionService {
                 ),
                 "application/json".into(),
                 file.tenant_id,
+                None,
             )
             .await?;
         if sidecar.name != sidecar_name
@@ -678,14 +704,15 @@ impl DecisionService {
                 .require_file_permission(user_id, tenant_id, sidecar.id, SharePermissions::Admin)
                 .await?;
             self.file_service
-                .delete_file(sidecar.id, user_id)
+                .delete_file_pair(file.id, sidecar.id, user_id)
+                .await
+                .map_err(DecisionError::from)?;
+        } else {
+            self.file_service
+                .delete_file(id, user_id)
                 .await
                 .map_err(DecisionError::from)?;
         }
-        self.file_service
-            .delete_file(id, user_id)
-            .await
-            .map_err(DecisionError::from)?;
         Ok(())
     }
 
@@ -838,8 +865,13 @@ impl DecisionService {
         tenant_id: Uuid,
         target_folder_id: Option<Uuid>,
     ) -> Result<Decision, DecisionError> {
-        let (file, _) = self
+        let (file, metadata) = self
             .require_decision(id, user_id, tenant_id, SharePermissions::Edit)
+            .await?;
+
+        // Preserve legacy canonical Decisions before moving them outside the
+        // paths where metadata-less records can be recognized.
+        self.ensure_metadata_sidecar(&file, user_id, &metadata)
             .await?;
 
         // Locate the sidecar in the original folder before moving the main file.
@@ -850,23 +882,19 @@ impl DecisionService {
             .list_files(file.parent_folder_id, file.owner_id, tenant_id)
             .await
             .map_err(|e| DecisionError::Database(e.to_string()))?;
-        let sidecar = siblings.into_iter().find(|f| f.name == sidecar_name);
-        if let Some(sidecar) = &sidecar {
-            self.file_service
-                .require_file_permission(user_id, tenant_id, sidecar.id, SharePermissions::Edit)
-                .await?;
-        }
-
-        // Move the Markdown file; the sidecar follows to the same destination.
+        let sidecar = siblings
+            .into_iter()
+            .find(|f| f.name == sidecar_name)
+            .ok_or(DecisionError::NotFound(id))?;
         self.file_service
-            .move_file(id, target_folder_id, user_id)
+            .require_file_permission(user_id, tenant_id, sidecar.id, SharePermissions::Edit)
             .await?;
 
-        if let Some(sidecar) = sidecar {
-            self.file_service
-                .move_file(sidecar.id, target_folder_id, user_id)
-                .await?;
-        }
+        // Move the Markdown file and metadata as one transaction so collisions
+        // or database failures cannot strand the Decision outside its valid path.
+        self.file_service
+            .move_file_pair(id, sidecar.id, target_folder_id, user_id)
+            .await?;
 
         self.get_decision(id, user_id, tenant_id).await
     }
@@ -905,6 +933,7 @@ impl DecisionService {
                 Bytes::from(original.content),
                 "text/markdown".to_string(),
                 tenant_id,
+                None,
             )
             .await?;
 
@@ -924,6 +953,7 @@ impl DecisionService {
                 Bytes::from(sidecar_data),
                 "application/json".to_string(),
                 tenant_id,
+                None,
             )
             .await?;
 

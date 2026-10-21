@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - Create recoverable Decisions from meetings or link existing Decisions, edit status/date in Decisions, and return to authorized meeting/event context without granting access through links.
+- Keep Decision file/metadata moves and deletes atomic, preserve legacy Decisions after moves, and prevent creation retries from resurrecting purged Decisions.
 - Link existing accessible Files and Notes to canonical meeting notes by reference, with per-resource authorization, safe unavailable entries, and idempotent removal.
 - Open or create one recoverable meeting note per calendar event, retain its event provenance, and return to the event from the note. Reopening is silent; copied notes retain source-meeting provenance without the event link.
 - Add bounded, tenant-scoped organization administration for explicitly granted administrators: user listings/details, group and membership management, and filtered audit history. Installation operator privileges remain separate.

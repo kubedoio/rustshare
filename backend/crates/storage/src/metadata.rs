@@ -2920,6 +2920,32 @@ impl MetadataStore {
         Ok(())
     }
 
+    /// Update only a file's location within an existing transaction.
+    pub async fn update_file_location_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        id: Uuid,
+        owner_id: Uuid,
+        expected_path: &str,
+        parent_folder_id: Option<Uuid>,
+        path: &str,
+    ) -> Result<()> {
+        let result = sqlx::query(
+            "UPDATE files SET path = $4, parent_folder_id = $5 WHERE id = $1 AND owner_id = $2 AND path = $3 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .bind(owner_id)
+        .bind(expected_path)
+        .bind(path)
+        .bind(parent_folder_id)
+        .execute(&mut **tx)
+        .await?;
+        if result.rows_affected() != 1 {
+            anyhow::bail!("File not found while updating location");
+        }
+        Ok(())
+    }
+
     /// Update a file in the projection table
     pub async fn update_file(&self, file: &File) -> Result<()> {
         let mut tx = self.pool.begin().await?;
@@ -8250,6 +8276,19 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStore {
         file: &rustshare_core::domain::File,
     ) -> anyhow::Result<()> {
         self.update_file_in_tx(tx, file).await
+    }
+
+    async fn update_file_location_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+        expected_path: &str,
+        parent_folder_id: Option<uuid::Uuid>,
+        path: &str,
+    ) -> anyhow::Result<()> {
+        self.update_file_location_in_tx(tx, id, owner_id, expected_path, parent_folder_id, path)
+            .await
     }
 
     async fn delete_file(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> anyhow::Result<()> {

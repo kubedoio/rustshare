@@ -126,6 +126,21 @@ async fn direct_grant(pool: &PgPool, resource: Uuid, owner: Uuid, user: Uuid, te
     .expect("grant direct view");
 }
 
+async fn admin_grant(pool: &PgPool, resource: Uuid, owner: Uuid, user: Uuid, tenant: Uuid) {
+    sqlx::query(
+        "INSERT INTO shares (id, file_id, share_token, created_by, permissions, recipient_user_id, tenant_id)
+         VALUES ($1, $2, NULL, $3, 'Admin', $4, $5)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(resource)
+    .bind(owner)
+    .bind(user)
+    .bind(tenant)
+    .execute(pool)
+    .await
+    .expect("grant direct admin");
+}
+
 async fn cleanup(pool: &PgPool, tenant: Uuid) {
     for table in ["shares", "user_groups", "file_versions"] {
         sqlx::query(&format!("DELETE FROM {table} WHERE tenant_id = $1"))
@@ -163,6 +178,135 @@ fn assert_unavailable(item: &Value) {
     for protected in ["Private release", "Confidential", "open_url", "owner_id"] {
         assert!(!rendered.contains(protected), "{item}");
     }
+}
+
+#[tokio::test]
+#[ignore = "requires the guarded disposable PostgreSQL and object-store services"]
+async fn purged_pending_decision_is_not_recreated_by_retry_or_stale_upload() {
+    use sha2::{Digest, Sha256};
+
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "meeting_decision_purged_pending", tenant).await;
+    let meeting_id = meeting(&state, owner.id, tenant).await;
+    let request_id = Uuid::new_v4();
+    let payload = create_payload(request_id);
+    let title = payload["title"].as_str().expect("title");
+    let category = payload["category"].as_str().expect("category");
+    let content = payload["content"].as_str().expect("content");
+    let hash = hex::encode(Sha256::digest(
+        serde_json::to_vec(&(meeting_id, title, category, content)).expect("request hash"),
+    ));
+    let command = rustshare_server::services::meeting_decisions::reserve_creation(
+        &state.db_pool,
+        tenant,
+        owner.id,
+        request_id,
+        meeting_id,
+        &hash,
+    )
+    .await
+    .expect("reserve interrupted creation");
+    state
+        .decision_service
+        .create_for_meeting_command(
+            owner.id,
+            tenant,
+            title.into(),
+            category.into(),
+            content.into(),
+            command.decision_file_id,
+            command.sidecar_file_id,
+            command.created_at,
+        )
+        .await
+        .expect("persist files before process interruption");
+    let primary = state
+        .file_service
+        .get_file(command.decision_file_id, owner.id)
+        .await
+        .expect("pending primary");
+    let token = create_auth_token(&state, owner.id, tenant);
+    let api = app(state.clone());
+    let (status, body) = request(
+        &api,
+        &token,
+        "DELETE",
+        &format!("/api/v1/decisions/{}", primary.id),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let modification_events = decision_events(&state.db_pool, primary.id).await;
+    for id in [primary.id, command.sidecar_file_id] {
+        state
+            .metadata_store
+            .permanently_delete_file(id, owner.id)
+            .await
+            .expect("purge deleted Decision file");
+    }
+    let restarted = app(setup_test_env().await);
+    let (status, body) = request(
+        &restarted,
+        &token,
+        "POST",
+        &format!("/api/v1/meetings/{meeting_id}/decisions"),
+        Some(payload.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    // A creator paused before the history check must also lose to the durable event constraint.
+    let stale_upload = state
+        .file_service
+        .create_file_if_absent(
+            primary.id,
+            owner.id,
+            primary.name,
+            primary.parent_folder_id,
+            Bytes::from(content.to_owned()),
+            "text/markdown".into(),
+            tenant,
+            Some(Uuid::new_v5(
+                &primary.id,
+                b"meeting-decision-initial-upload",
+            )),
+        )
+        .await;
+    assert!(
+        stale_upload.is_err(),
+        "a purged primary must never be recreated"
+    );
+    let files: i64 = sqlx::query_scalar("SELECT count(*) FROM files WHERE id=$1 OR id=$2")
+        .bind(primary.id)
+        .bind(command.sidecar_file_id)
+        .fetch_one(&state.db_pool)
+        .await
+        .expect("removed identities stay removed");
+    assert_eq!(files, 0);
+    let uploads: i64 = sqlx::query_scalar("SELECT count(*) FROM events WHERE event_id=$1")
+        .bind(Uuid::new_v5(
+            &primary.id,
+            b"meeting-decision-initial-upload",
+        ))
+        .fetch_one(&state.db_pool)
+        .await
+        .expect("durable upload tombstone");
+    assert_eq!(uploads, 1);
+    assert_eq!(
+        decision_events(&state.db_pool, primary.id).await,
+        modification_events
+    );
+    let ready: bool = sqlx::query_scalar(
+        "SELECT ready FROM meeting_decision_creations WHERE decision_file_id=$1",
+    )
+    .bind(primary.id)
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("pending command retained");
+    assert!(!ready);
+    cleanup(&state.db_pool, tenant).await;
 }
 
 #[tokio::test]
@@ -1066,5 +1210,580 @@ async fn interrupted_finalization_recovers_same_objects_after_restart_without_de
     assert_eq!(retry["id"], recovered["id"]);
     assert_eq!(retry["decision"]["status"], "accepted");
     assert_eq!(retry["decision"]["decision_date"], "2026-10-22T09:00:00Z");
+    cleanup(&state.db_pool, tenant).await;
+}
+
+#[tokio::test]
+#[ignore = "requires the guarded disposable PostgreSQL and object-store services"]
+async fn moving_legacy_decision_repairs_metadata_before_leaving_canonical_path() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "meeting_decision_legacy_move", tenant).await;
+    let recipient =
+        create_test_user(&state, "meeting_decision_legacy_move_recipient", tenant).await;
+    let decision_id = decision(&state, owner.id, tenant).await;
+    let decision_uri = format!("/api/v1/decisions/{decision_id}");
+    let main = state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .expect("canonical Decision");
+    let stem = main.name.strip_suffix(".md").expect("Markdown suffix");
+    let sidecar_name = format!("{stem}.rustshare.json");
+    let sidecar = state
+        .metadata_store
+        .list_files(main.parent_folder_id, owner.id, tenant)
+        .await
+        .expect("list canonical Decision files")
+        .into_iter()
+        .find(|file| file.name == sidecar_name)
+        .expect("canonical metadata sidecar");
+    state
+        .file_service
+        .delete_file(sidecar.id, owner.id)
+        .await
+        .expect("remove legacy sidecar");
+    state
+        .metadata_store
+        .permanently_delete_file(sidecar.id, owner.id)
+        .await
+        .expect("purge legacy sidecar row");
+
+    let target = state
+        .folder_service
+        .create_folder("Ordinary Decisions".into(), None, owner.id, tenant)
+        .await
+        .expect("recipient destination folder");
+    sqlx::query(
+        "INSERT INTO shares (id,file_id,share_token,created_by,permissions,recipient_user_id,tenant_id)
+         VALUES ($1,$2,NULL,$3,'Edit',$4,$5)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(decision_id)
+    .bind(owner.id)
+    .bind(recipient.id)
+    .bind(tenant)
+    .execute(&state.db_pool)
+    .await
+    .expect("grant Decision-only Edit");
+    let api = app(state.clone());
+    let owner_token = create_auth_token(&state, owner.id, tenant);
+    let (status, legacy) = request(&api, &owner_token, "GET", &decision_uri, None).await;
+    assert_eq!(status, StatusCode::OK, "{legacy}");
+    let legacy_title = legacy["metadata"]["title"].as_str().unwrap().to_owned();
+    let recipient_token = create_auth_token(&state, recipient.id, tenant);
+    let (status, _) = request(
+        &api,
+        &recipient_token,
+        "POST",
+        &format!("{decision_uri}/move"),
+        Some(json!({"target_folder_id":target.id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let unchanged = state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .expect("Decision remains at canonical path after denied repair");
+    assert_eq!(unchanged.parent_folder_id, main.parent_folder_id);
+    assert!(state
+        .metadata_store
+        .list_files(main.parent_folder_id, owner.id, tenant)
+        .await
+        .expect("list after denied repair")
+        .iter()
+        .all(|file| file.name != sidecar_name));
+
+    let meeting_id = meeting(&state, owner.id, tenant).await;
+    let (status, linked) = request(
+        &api,
+        &owner_token,
+        "POST",
+        &format!("/api/v1/meetings/{meeting_id}/decisions/links"),
+        Some(json!({"decision_id":decision_id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+
+    let (status, moved) = request(
+        &api,
+        &owner_token,
+        "POST",
+        &format!("{decision_uri}/move"),
+        Some(json!({"target_folder_id":target.id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{moved}");
+    assert_eq!(moved["metadata"]["title"], legacy_title);
+    let moved_main = state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .expect("moved Decision");
+    assert_eq!(moved_main.parent_folder_id, Some(target.id));
+    let moved_sidecar = state
+        .metadata_store
+        .list_files(Some(target.id), owner.id, tenant)
+        .await
+        .expect("list moved Decision files")
+        .into_iter()
+        .find(|file| file.name == sidecar_name)
+        .expect("repaired sidecar moved with Decision");
+    let stored_metadata: Value = serde_json::from_slice(
+        &state
+            .object_store
+            .get(&moved_sidecar.storage_key())
+            .await
+            .expect("read repaired metadata"),
+    )
+    .expect("valid sidecar JSON");
+    assert_eq!(stored_metadata["title"], legacy_title);
+
+    let (status, reopened) = request(&api, &owner_token, "GET", &decision_uri, None).await;
+    assert_eq!(status, StatusCode::OK, "{reopened}");
+    let (status, linked_page) = request(
+        &api,
+        &owner_token,
+        "GET",
+        &format!("/api/v1/meetings/{meeting_id}/decisions"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{linked_page}");
+    assert_eq!(linked_page["items"][0]["decision"]["title"], legacy_title);
+    let (status, history) = request(
+        &api,
+        &owner_token,
+        "GET",
+        &format!("/api/v1/decisions/{decision_id}/meetings"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{history}");
+    assert_eq!(history["items"][0]["id"], meeting_id.to_string());
+    cleanup(&state.db_pool, tenant).await;
+}
+
+#[tokio::test]
+#[ignore = "requires the guarded disposable PostgreSQL and object-store services"]
+async fn paired_move_rolls_back_both_files_when_destination_sidecar_collides() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "meeting_decision_move_collision", tenant).await;
+    let decision_id = decision(&state, owner.id, tenant).await;
+    let original = state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .expect("original Decision");
+    let sidecar_name = format!(
+        "{}.rustshare.json",
+        original.name.strip_suffix(".md").expect("Markdown suffix")
+    );
+    let original_sidecar = state
+        .metadata_store
+        .list_files(original.parent_folder_id, owner.id, tenant)
+        .await
+        .expect("list Decision files")
+        .into_iter()
+        .find(|file| file.name == sidecar_name)
+        .expect("original sidecar");
+    let target = state
+        .folder_service
+        .create_folder("Move collision target".into(), None, owner.id, tenant)
+        .await
+        .expect("target folder");
+    state
+        .file_service
+        .upload_file(
+            owner.id,
+            sidecar_name.clone(),
+            Some(target.id),
+            Bytes::from_static(b"unrelated destination file"),
+            "application/json".into(),
+            tenant,
+        )
+        .await
+        .expect("create destination collision");
+
+    let api = app(state.clone());
+    let token = create_auth_token(&state, owner.id, tenant);
+    let decision_uri = format!("/api/v1/decisions/{decision_id}");
+    let (status, failure) = request(
+        &api,
+        &token,
+        "POST",
+        &format!("{decision_uri}/move"),
+        Some(json!({"target_folder_id":target.id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{failure}");
+    let unchanged = state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .expect("main file remains at original location");
+    let unchanged_sidecar = state
+        .file_service
+        .get_file(original_sidecar.id, owner.id)
+        .await
+        .expect("sidecar remains at original location");
+    assert_eq!(unchanged.parent_folder_id, original.parent_folder_id);
+    assert_eq!(
+        unchanged_sidecar.parent_folder_id,
+        original.parent_folder_id
+    );
+    assert_eq!(
+        state
+            .decision_service
+            .get_decision(decision_id, owner.id, tenant)
+            .await
+            .expect("Decision remains readable after failed move")
+            .content,
+        "Confidential decision content"
+    );
+
+    let collision = state
+        .metadata_store
+        .list_files(Some(target.id), owner.id, tenant)
+        .await
+        .expect("list target files")
+        .into_iter()
+        .find(|file| file.name == sidecar_name)
+        .expect("collision remains");
+    state
+        .file_service
+        .delete_file(collision.id, owner.id)
+        .await
+        .expect("delete collision");
+    state
+        .metadata_store
+        .permanently_delete_file(collision.id, owner.id)
+        .await
+        .expect("purge collision");
+
+    let (status, moved) = request(
+        &api,
+        &token,
+        "POST",
+        &format!("{decision_uri}/move"),
+        Some(json!({"target_folder_id":target.id})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{moved}");
+    assert_eq!(moved["parent_folder_id"], target.id.to_string());
+    let moved_main = state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .expect("moved Decision");
+    let moved_sidecar = state
+        .file_service
+        .get_file(original_sidecar.id, owner.id)
+        .await
+        .expect("moved sidecar");
+    for (before, after) in [
+        (&original, &moved_main),
+        (&original_sidecar, &moved_sidecar),
+    ] {
+        assert_eq!(after.name, before.name);
+        assert_eq!(after.size, before.size);
+        assert_eq!(after.content_hash, before.content_hash);
+        assert_eq!(after.current_version, before.current_version);
+        assert_eq!(after.storage_key(), before.storage_key());
+        assert_eq!(after.parent_folder_id, Some(target.id));
+    }
+    assert_eq!(
+        state
+            .decision_service
+            .get_decision(decision_id, owner.id, tenant)
+            .await
+            .expect("moved Decision is readable")
+            .content,
+        "Confidential decision content"
+    );
+    cleanup(&state.db_pool, tenant).await;
+}
+
+#[tokio::test]
+#[ignore = "requires the guarded disposable PostgreSQL and object-store services"]
+async fn pair_move_does_not_disclose_destination_folder_existence() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "meeting_decision_move_folder_probe", tenant).await;
+    let foreign_tenant = create_test_tenant(&state.db_pool).await;
+    let foreign_owner = create_test_user(
+        &state,
+        "meeting_decision_move_folder_foreign",
+        foreign_tenant,
+    )
+    .await;
+    let decision_id = decision(&state, owner.id, tenant).await;
+    let foreign_folder = state
+        .folder_service
+        .create_folder(
+            "Foreign folder".into(),
+            None,
+            foreign_owner.id,
+            foreign_tenant,
+        )
+        .await
+        .expect("foreign destination folder");
+    let original = state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .expect("original Decision");
+    let api = app(state.clone());
+    let token = create_auth_token(&state, owner.id, tenant);
+    let uri = format!("/api/v1/decisions/{decision_id}/move");
+    let (missing_status, missing_body) = request(
+        &api,
+        &token,
+        "POST",
+        &uri,
+        Some(json!({"target_folder_id":Uuid::new_v4()})),
+    )
+    .await;
+    let (foreign_status, foreign_body) = request(
+        &api,
+        &token,
+        "POST",
+        &uri,
+        Some(json!({"target_folder_id":foreign_folder.id})),
+    )
+    .await;
+    assert_eq!(missing_status, StatusCode::FORBIDDEN, "{missing_body:?}");
+    assert_eq!(foreign_status, missing_status, "{foreign_body:?}");
+    assert_eq!(foreign_body, missing_body);
+    let unchanged = state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .expect("failed moves preserve Decision");
+    assert_eq!(unchanged.parent_folder_id, original.parent_folder_id);
+    assert_eq!(unchanged.path, original.path);
+    assert_eq!(
+        state
+            .decision_service
+            .get_decision(decision_id, owner.id, tenant)
+            .await
+            .expect("Decision remains readable after failed moves")
+            .content,
+        "Confidential decision content"
+    );
+    cleanup(&state.db_pool, foreign_tenant).await;
+    cleanup(&state.db_pool, tenant).await;
+}
+
+#[tokio::test]
+#[ignore = "requires the guarded disposable PostgreSQL and object-store services"]
+async fn paired_delete_rolls_back_and_can_be_retried_after_transient_sidecar_failure() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "meeting_decision_delete_retry", tenant).await;
+    let decision_id = decision(&state, owner.id, tenant).await;
+    let main = state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .expect("Decision");
+    let sidecar = state
+        .metadata_store
+        .list_files(main.parent_folder_id, owner.id, tenant)
+        .await
+        .expect("list Decision files")
+        .into_iter()
+        .find(|file| file.name.ends_with(".rustshare.json"))
+        .expect("Decision sidecar");
+    let create_failure = format!(
+        "CREATE FUNCTION reject_test_decision_sidecar_delete() RETURNS trigger AS $$
+         BEGIN
+           IF OLD.id = '{}'::uuid AND NEW.deleted_at IS DISTINCT FROM OLD.deleted_at THEN
+             RAISE EXCEPTION 'simulated sidecar delete failure';
+           END IF;
+           RETURN NEW;
+         END; $$ LANGUAGE plpgsql",
+        sidecar.id
+    );
+    sqlx::query(&create_failure)
+        .execute(&state.db_pool)
+        .await
+        .expect("create deletion failure function");
+    sqlx::query(
+        "CREATE TRIGGER reject_test_decision_sidecar_delete BEFORE UPDATE OF deleted_at ON files
+         FOR EACH ROW EXECUTE FUNCTION reject_test_decision_sidecar_delete()",
+    )
+    .execute(&state.db_pool)
+    .await
+    .expect("create deletion failure trigger");
+
+    let api = app(state.clone());
+    let token = create_auth_token(&state, owner.id, tenant);
+    let uri = format!("/api/v1/decisions/{decision_id}");
+    let (status, failure) = request(&api, &token, "DELETE", &uri, None).await;
+    sqlx::query("DROP TRIGGER reject_test_decision_sidecar_delete ON files")
+        .execute(&state.db_pool)
+        .await
+        .expect("drop deletion failure trigger");
+    sqlx::query("DROP FUNCTION reject_test_decision_sidecar_delete()")
+        .execute(&state.db_pool)
+        .await
+        .expect("drop deletion failure function");
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{failure}");
+    assert!(!failure
+        .to_string()
+        .contains("simulated sidecar delete failure"));
+    state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .expect("failed paired delete preserves main");
+    state
+        .file_service
+        .get_file(sidecar.id, owner.id)
+        .await
+        .expect("failed paired delete preserves sidecar");
+    assert_eq!(
+        state
+            .decision_service
+            .get_decision(decision_id, owner.id, tenant)
+            .await
+            .expect("Decision remains readable after failed delete")
+            .content,
+        "Confidential decision content"
+    );
+
+    let (status, _) = request(&api, &token, "DELETE", &uri, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .is_err());
+    assert!(state
+        .file_service
+        .get_file(sidecar.id, owner.id)
+        .await
+        .is_err());
+    cleanup(&state.db_pool, tenant).await;
+}
+
+#[tokio::test]
+#[ignore = "requires the guarded disposable PostgreSQL and object-store services"]
+async fn shared_admin_must_authorize_both_files_for_paired_delete() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "meeting_decision_shared_delete", tenant).await;
+    let admin = create_test_user(&state, "meeting_decision_shared_delete_admin", tenant).await;
+    let decision_id = decision(&state, owner.id, tenant).await;
+    let main = state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .expect("Decision");
+    let sidecar = state
+        .metadata_store
+        .list_files(main.parent_folder_id, owner.id, tenant)
+        .await
+        .expect("list Decision files")
+        .into_iter()
+        .find(|file| file.name.ends_with(".rustshare.json"))
+        .expect("Decision sidecar");
+    admin_grant(&state.db_pool, main.id, owner.id, admin.id, tenant).await;
+
+    let api = app(state.clone());
+    let token = create_auth_token(&state, admin.id, tenant);
+    let uri = format!("/api/v1/decisions/{decision_id}");
+    let (status, _) = request(&api, &token, "DELETE", &uri, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    state
+        .file_service
+        .get_file(main.id, owner.id)
+        .await
+        .expect("main remains when sidecar Admin is missing");
+    state
+        .file_service
+        .get_file(sidecar.id, owner.id)
+        .await
+        .expect("sidecar remains when sidecar Admin is missing");
+
+    admin_grant(&state.db_pool, sidecar.id, owner.id, admin.id, tenant).await;
+    let (status, failure) = request(&api, &token, "DELETE", &uri, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{failure}");
+    assert!(state
+        .file_service
+        .get_file(main.id, owner.id)
+        .await
+        .is_err());
+    assert!(state
+        .file_service
+        .get_file(sidecar.id, owner.id)
+        .await
+        .is_err());
+    cleanup(&state.db_pool, tenant).await;
+}
+
+#[tokio::test]
+#[ignore = "requires the guarded disposable PostgreSQL and object-store services"]
+async fn shared_admin_can_delete_legacy_decision_without_sidecar() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "meeting_decision_legacy_shared_delete", tenant).await;
+    let admin = create_test_user(
+        &state,
+        "meeting_decision_legacy_shared_delete_admin",
+        tenant,
+    )
+    .await;
+    let decision_id = decision(&state, owner.id, tenant).await;
+    let main = state
+        .file_service
+        .get_file(decision_id, owner.id)
+        .await
+        .expect("Decision");
+    let sidecar = state
+        .metadata_store
+        .list_files(main.parent_folder_id, owner.id, tenant)
+        .await
+        .expect("list Decision files")
+        .into_iter()
+        .find(|file| file.name.ends_with(".rustshare.json"))
+        .expect("Decision sidecar");
+    state
+        .file_service
+        .delete_file(sidecar.id, owner.id)
+        .await
+        .expect("remove sidecar");
+    state
+        .metadata_store
+        .permanently_delete_file(sidecar.id, owner.id)
+        .await
+        .expect("purge sidecar row");
+    admin_grant(&state.db_pool, main.id, owner.id, admin.id, tenant).await;
+
+    let api = app(state.clone());
+    let token = create_auth_token(&state, admin.id, tenant);
+    let (status, failure) = request(
+        &api,
+        &token,
+        "DELETE",
+        &format!("/api/v1/decisions/{decision_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{failure}");
+    assert!(state
+        .file_service
+        .get_file(main.id, owner.id)
+        .await
+        .is_err());
     cleanup(&state.db_pool, tenant).await;
 }

@@ -123,6 +123,18 @@ pub trait MetadataStoreOps: Send + Sync {
     /// Update a file in the metadata store inside a transaction.
     async fn update_file_in_tx(&self, tx: &mut Self::Tx, file: &File) -> Result<()>;
 
+    /// Update only a file's location inside a transaction. This avoids writing
+    /// stale content metadata when a move races with an edit.
+    async fn update_file_location_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+        expected_path: &str,
+        parent_folder_id: Option<FolderId>,
+        path: &str,
+    ) -> Result<()>;
+
     /// Delete a file from the metadata store.
     async fn delete_file(&self, id: uuid::Uuid, owner_id: uuid::Uuid) -> Result<()>;
 
@@ -537,6 +549,7 @@ where
             mime_type,
             tenant_id,
             None,
+            None,
         )
         .await
     }
@@ -570,11 +583,13 @@ where
             mime_type,
             tenant_id,
             None,
+            None,
         )
         .await
     }
 
     /// Recover a preassigned file identity without overwriting a previous creation or edit.
+    /// A stable creation event ID also prevents recreating a permanently deleted primary.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_file_if_absent(
         &self,
@@ -585,6 +600,7 @@ where
         content: Bytes,
         mime_type: String,
         tenant_id: Uuid,
+        creation_event_id: Option<Uuid>,
     ) -> Result<File, FileError> {
         if let Some(file) = self
             .metadata_store
@@ -619,6 +635,7 @@ where
                 mime_type,
                 tenant_id,
                 Some(id),
+                creation_event_id,
             )
             .await;
         match result {
@@ -648,6 +665,7 @@ where
         mime_type: String,
         tenant_id: uuid::Uuid,
         create_id: Option<Uuid>,
+        creation_event_id: Option<Uuid>,
     ) -> Result<File, FileError> {
         // 1. Check parent folder exists (if provided) and verify permissions
         let (parent_path, file_owner_id) = if let Some(folder_id) = parent_folder_id {
@@ -852,13 +870,16 @@ where
         let payload_json = serde_json::to_value(&payload)
             .map_err(|e| FileError::Storage(format!("Failed to serialize payload: {}", e)))?;
 
-        let event = Event::new(
+        let mut event = Event::new(
             EventType::FileUploaded,
             file.id,
             AggregateType::File,
             payload_json,
             owner_id,
         );
+        if let Some(id) = creation_event_id {
+            event.id = id;
+        }
 
         // 6. Insert into files and file_versions tables atomically with the event
         let mut version = FileVersion::new(
@@ -1424,6 +1445,140 @@ where
         Ok(file)
     }
 
+    /// Move two companion files as one metadata/event transaction.
+    pub async fn move_file_pair(
+        &self,
+        first_id: uuid::Uuid,
+        second_id: uuid::Uuid,
+        target_folder_id: Option<FolderId>,
+        user_id: UserId,
+    ) -> Result<(), FileError> {
+        let mut first = self.get_file(first_id, user_id).await?;
+        let mut second = self.get_file(second_id, user_id).await?;
+        if first.id == second.id
+            || first.owner_id != second.owner_id
+            || first.tenant_id != second.tenant_id
+        {
+            return Err(FileError::InvalidName(
+                "Files are not a companion pair".into(),
+            ));
+        }
+        for file in [&first, &second] {
+            self.require_file_permission(user_id, file.tenant_id, file.id, SharePermissions::Edit)
+                .await?;
+        }
+
+        let target_path = if let Some(folder_id) = target_folder_id {
+            let folder = self
+                .metadata_store
+                .find_folder_by_id_unchecked(folder_id)
+                .await
+                .map_err(|error| FileError::Database(error.to_string()))?
+                .ok_or(FileError::PermissionDenied {
+                    file_id: folder_id,
+                    user_id,
+                })?;
+            if folder.tenant_id != first.tenant_id {
+                return Err(FileError::PermissionDenied {
+                    file_id: folder_id,
+                    user_id,
+                });
+            }
+            let has_edit = self
+                .permission_resolver
+                .check_folder_permission(
+                    user_id,
+                    folder.tenant_id,
+                    folder_id,
+                    SharePermissions::Edit,
+                )
+                .await
+                .map_err(|error| FileError::Database(error.to_string()))?;
+            if !has_edit {
+                return Err(FileError::PermissionDenied {
+                    file_id: folder_id,
+                    user_id,
+                });
+            }
+            folder.path
+        } else {
+            String::new()
+        };
+
+        let mut events = Vec::with_capacity(2);
+        let expected_paths = [first.path.clone(), second.path.clone()];
+        for file in [&mut first, &mut second] {
+            let old_parent_folder_id = file.parent_folder_id;
+            let old_path = file.path.clone();
+            file.parent_folder_id = target_folder_id;
+            file.path = if target_path.is_empty() || target_path == "/" {
+                format!("/{}", file.name)
+            } else {
+                format!("{}/{}", target_path.trim_end_matches('/'), file.name)
+            };
+            events.push(Event {
+                id: Uuid::new_v4(),
+                event_type: EventType::FileMoved,
+                aggregate_id: file.id,
+                aggregate_type: AggregateType::File,
+                payload: serde_json::to_value(FileMovedPayload {
+                    file_id: file.id,
+                    old_parent_folder_id,
+                    new_parent_folder_id: target_folder_id,
+                    old_path,
+                    new_path: file.path.clone(),
+                    moved_by: user_id,
+                })
+                .map_err(|error| FileError::Storage(error.to_string()))?,
+                user_id,
+                timestamp: chrono::Utc::now(),
+                version: file.current_version,
+            });
+        }
+
+        let mut tx = self
+            .event_store
+            .begin_transaction()
+            .await
+            .map_err(|error| FileError::Storage(error.to_string()))?;
+        for event in &events {
+            self.event_store
+                .append_in_tx(&mut tx, event)
+                .await
+                .map_err(|error| FileError::Storage(error.to_string()))?;
+        }
+        self.metadata_store
+            .update_file_location_in_tx(
+                &mut tx,
+                first.id,
+                first.owner_id,
+                &expected_paths[0],
+                first.parent_folder_id,
+                &first.path,
+            )
+            .await
+            .map_err(|error| FileError::Database(error.to_string()))?;
+        self.metadata_store
+            .update_file_location_in_tx(
+                &mut tx,
+                second.id,
+                second.owner_id,
+                &expected_paths[1],
+                second.parent_folder_id,
+                &second.path,
+            )
+            .await
+            .map_err(|error| FileError::Database(error.to_string()))?;
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|error| FileError::Storage(error.to_string()))?;
+        for event in events {
+            self.broadcaster.publish(event);
+        }
+        Ok(())
+    }
+
     /// Rename a file while keeping its parent folder unchanged.
     pub async fn rename_file(
         &self,
@@ -1561,7 +1716,7 @@ where
             .await
             .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
         self.metadata_store
-            .delete_file_in_tx(&mut tx, file_id, user_id)
+            .delete_file_in_tx(&mut tx, file_id, file.owner_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
         self.event_store
@@ -1573,6 +1728,76 @@ where
         // Note: We don't delete from RustFS (blob storage) because of deduplication
         // The same content hash might be used by other files or versions
 
+        Ok(())
+    }
+
+    /// Soft-delete two companion files with their events in one transaction.
+    pub async fn delete_file_pair(
+        &self,
+        first_id: uuid::Uuid,
+        second_id: uuid::Uuid,
+        user_id: UserId,
+    ) -> Result<(), FileError> {
+        let first = self.get_file(first_id, user_id).await?;
+        let second = self.get_file(second_id, user_id).await?;
+        if first.id == second.id
+            || first.owner_id != second.owner_id
+            || first.tenant_id != second.tenant_id
+        {
+            return Err(FileError::InvalidName(
+                "Files are not a companion pair".into(),
+            ));
+        }
+        for file in [&first, &second] {
+            self.require_file_permission(user_id, file.tenant_id, file.id, SharePermissions::Admin)
+                .await?;
+        }
+        let events = [&first, &second]
+            .into_iter()
+            .map(|file| {
+                Ok(Event {
+                    id: Uuid::new_v4(),
+                    event_type: EventType::FileDeleted,
+                    aggregate_id: file.id,
+                    aggregate_type: AggregateType::File,
+                    payload: serde_json::to_value(FileDeletedPayload {
+                        file_id: file.id,
+                        file_name: file.name.clone(),
+                        folder_id: file.parent_folder_id,
+                    })
+                    .map_err(|error| FileError::Storage(error.to_string()))?,
+                    user_id,
+                    timestamp: chrono::Utc::now(),
+                    version: file.current_version,
+                })
+            })
+            .collect::<Result<Vec<_>, FileError>>()?;
+        let mut tx = self
+            .event_store
+            .begin_transaction()
+            .await
+            .map_err(|error| FileError::Storage(error.to_string()))?;
+        for event in &events {
+            self.event_store
+                .append_in_tx(&mut tx, event)
+                .await
+                .map_err(|error| FileError::Storage(error.to_string()))?;
+        }
+        self.metadata_store
+            .delete_file_in_tx(&mut tx, first_id, first.owner_id)
+            .await
+            .map_err(|error| FileError::Database(error.to_string()))?;
+        self.metadata_store
+            .delete_file_in_tx(&mut tx, second_id, second.owner_id)
+            .await
+            .map_err(|error| FileError::Database(error.to_string()))?;
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|error| FileError::Storage(error.to_string()))?;
+        for event in events {
+            self.broadcaster.publish(event);
+        }
         Ok(())
     }
 
@@ -3444,6 +3669,18 @@ mod integration_publish_tests {
         }
 
         async fn update_file_in_tx(&self, _tx: &mut Self::Tx, _file: &File) -> Result<()> {
+            Ok(())
+        }
+
+        async fn update_file_location_in_tx(
+            &self,
+            _tx: &mut Self::Tx,
+            _id: uuid::Uuid,
+            _owner_id: uuid::Uuid,
+            _expected_path: &str,
+            _parent_folder_id: Option<FolderId>,
+            _path: &str,
+        ) -> Result<()> {
             Ok(())
         }
 
