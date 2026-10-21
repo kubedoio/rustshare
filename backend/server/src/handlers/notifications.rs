@@ -481,6 +481,7 @@ fn event_type_to_action(event_type: &EventType) -> &'static str {
         EventType::ShareRevokedFromUser => "share_revoked_from_user",
         EventType::BrainstormBoardModified => "brainstorm_board_modified",
         EventType::MeetingNoteModified => "meeting_note_modified",
+        EventType::MeetingActionModified => "meeting_action_modified",
         EventType::DecisionModified => "decision_modified",
         EventType::StandupModified => "standup_modified",
         EventType::KanbanModified => "kanban_modified",
@@ -502,6 +503,7 @@ fn aggregate_type_to_resource_type(
     match event_type {
         EventType::BrainstormBoardModified
         | EventType::MeetingNoteModified
+        | EventType::MeetingActionModified
         | EventType::DecisionModified
         | EventType::StandupModified
         | EventType::KanbanModified
@@ -555,6 +557,27 @@ fn extract_resource_name(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn meeting_action_activity_is_content_free_and_uses_meeting_authority() {
+        assert_eq!(
+            event_type_to_action(&EventType::MeetingActionModified),
+            "meeting_action_modified"
+        );
+        assert_eq!(
+            aggregate_type_to_resource_type(
+                &AggregateType::Folder,
+                &EventType::MeetingActionModified
+            ),
+            "application"
+        );
+        assert!(extract_resource_name(
+            &EventType::MeetingActionModified,
+            &AggregateType::Folder,
+            &serde_json::json!({"title":"not action content"})
+        )
+        .is_none());
+    }
 
     // Note: Full integration tests require database setup and axum_test.
     // These tests verify that the handler functions are correctly typed and compile.

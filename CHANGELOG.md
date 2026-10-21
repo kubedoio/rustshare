@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Record meeting action items with responsible people, date-only due dates, independently authorized Decision references, and completion/reopen history; recover them from past meetings without enabling Kanban or granting access through assignment.
 - Create recoverable Decisions from meetings or link existing Decisions, edit status/date in Decisions, and return to authorized meeting/event context without granting access through links.
 - Keep Decision file/metadata moves and deletes atomic, preserve legacy Decisions after moves, and prevent creation retries from resurrecting purged Decisions.
 - Link existing accessible Files and Notes to canonical meeting notes by reference, with per-resource authorization, safe unavailable entries, and idempotent removal.
