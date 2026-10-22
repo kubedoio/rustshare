@@ -73,6 +73,11 @@ async fn main() -> Result<()> {
         .install_default()
         .ok();
 
+    if std::env::args().nth(1).as_deref() == Some("--migrate") {
+        bootstrap::run_database_migrations(&std::env::var("DATABASE_URL")?).await?;
+        return Ok(());
+    }
+
     let state = bootstrap::init_app().await?;
 
     // Build router.

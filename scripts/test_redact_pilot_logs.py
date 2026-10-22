@@ -47,6 +47,12 @@ def workflow_run(name: str) -> str:
 
 
 class PilotLogRedactionTests(unittest.TestCase):
+    def test_runtime_probe_password_is_redacted_when_present(self) -> None:
+        secrets = secret_values({"PILOT_RUNTIME_DB_PASSWORD": "ephemeral-role-secret"})
+        redacted, found = redact_bytes(b"postgres://role:ephemeral-role-secret@host/db", secrets)
+        self.assertTrue(found)
+        self.assertNotIn(b"ephemeral-role-secret", redacted)
+
     def test_redacts_literal_metacharacters_and_overlapping_secrets(self) -> None:
         secrets = (b"token|with\\chars", b"token|with\\chars-extra")
         redacted, found = redact_bytes(
@@ -264,7 +270,9 @@ SMOKE_NOTE_TITLE=Pilot note
             "ui.env": f"""\
 UI_STATUS=passed
 UI_BROWSER_STATUS=passed
-UI_PLAYWRIGHT_EXPECTED=1
+UI_PLAYWRIGHT_EXPECTED=2
+UI_INSTITUTIONAL_JOURNEY=passed
+UI_IMAGE_ID={image_id}
 UI_PLAYWRIGHT_SKIPPED=0
 UI_PLAYWRIGHT_UNEXPECTED=0
 UI_PLAYWRIGHT_FLAKY=0
@@ -358,6 +366,25 @@ BETA_SMOKE_CONFIG_ID=upgrade-isolated
 BETA_SMOKE_PERSISTENCE_STATE_VERIFIED=passed
 """,
             "migration.env": "MIGRATION_STATUS=passed\nMIGRATION_DIAGNOSTIC_SECRET_SCAN=passed\n",
+            "runtime-db.env": f"""\
+RUNTIME_DB_STATUS=passed
+RUNTIME_DB_NEGATIVES=passed
+RUNTIME_DB_CLEANUP=passed
+RUN_MIGRATIONS=false
+SOURCE_SHA={source_sha}
+IMAGE_ID={image_id}
+CONFIG_ID={'b' * 64}
+DEPLOYMENT_ID={deployment_id}-runtime-role
+WORKFLOW_RUN_ID={run_id}
+WORKFLOW_RUN_ATTEMPT={run_attempt}
+""",
+            "runtime-db-smoke.env": f"""\
+BETA_SMOKE_STATUS=passed
+BETA_SMOKE_SOURCE_SHA={source_sha}
+BETA_SMOKE_BUILD_VERSION={image_version}
+BETA_SMOKE_CONFIG_ID={'b' * 64}
+BETA_SMOKE_DEPLOYMENT_ID={deployment_id}-runtime-role
+""",
             "migration-failure.env": f"""\
 MIGRATION_FAILURE_STATUS=passed
 MIGRATION_FAILURE_DIAGNOSTIC_STATUS=passed
@@ -431,6 +458,17 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
 
     def test_extracted_summary_gate_rejects_incomplete_or_invalid_evidence(self) -> None:
         mutations = (
+            ("missing runtime role evidence", "runtime-db.env", None),
+            (
+                "runtime image mismatch",
+                "runtime-db.env",
+                lambda value: value.replace("IMAGE_ID=sha256:" + "c" * 64, "IMAGE_ID=sha256:" + "e" * 64),
+            ),
+            (
+                "runtime cleanup failure",
+                "runtime-db.env",
+                lambda value: value.replace("RUNTIME_DB_CLEANUP=passed", "RUNTIME_DB_CLEANUP=failed"),
+            ),
             ("missing phase report", "persistence.env", None),
             (
                 "malformed phase timestamp",
@@ -709,7 +747,7 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
         e2e = (SCRIPT.parents[1] / "frontend/tests/pilot.e2e.ts").read_text(encoding="utf-8")
 
         self.assertIn("npx playwright install --with-deps chromium", ui_step)
-        self.assertIn("tests/pilot.e2e.ts --reporter=line,json", ui_step)
+        self.assertIn("tests/pilot.e2e.ts tests/institutional.e2e.ts --workers=1 --reporter=line,json", ui_step)
         self.assertIn(
             'ui_playwright_status="$(python3 ../scripts/verify_pilot_ui_results.py',
             ui_step,
@@ -739,7 +777,7 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
         )
         self.assertIn("E2E_BASE_URL: http://127.0.0.1", ui_step)
         self.assertIn("'UI_BROWSER_STATUS=passed'", summary_step)
-        self.assertIn("'UI_PLAYWRIGHT_EXPECTED=1'", summary_step)
+        self.assertIn("'UI_PLAYWRIGHT_EXPECTED=2'", summary_step)
         self.assertIn("'UI_PLAYWRIGHT_SKIPPED=0'", summary_step)
         self.assertIn("'UI_PLAYWRIGHT_UNEXPECTED=0'", summary_step)
         self.assertIn("'UI_PLAYWRIGHT_FLAKY=0'", summary_step)

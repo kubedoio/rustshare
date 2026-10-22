@@ -18,15 +18,6 @@ vi.mock('$lib/stores/auth', () => ({
 	}
 }));
 
-// Mock the registry
-vi.mock('$lib/applications/registry', async () => {
-	const actual = await vi.importActual<any>('$lib/applications/registry');
-	return {
-		...actual,
-		getApplicationByRouteSlug: vi.fn()
-	};
-});
-
 // MailApplicationView fires mail API queries on mount; stub them so the
 // renderer-routing test below exercises the real component.
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
@@ -123,6 +114,7 @@ describe('Application Page Dynamic Route', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		registry.applicationsStore.set([]);
 		(currentUser.subscribe as any).mockImplementation((run: any) => {
 			run(mockUser);
 			return () => {};
@@ -134,7 +126,7 @@ describe('Application Page Dynamic Route', () => {
 			run({ params: { key: 'unknown' } });
 			return () => {};
 		});
-		(registry.getApplicationByRouteSlug as any).mockReturnValue(undefined);
+		registry.applicationsStore.set([]);
 
 		render(Page);
 		expect(screen.getByText('Application Not Found')).toBeTruthy();
@@ -145,10 +137,21 @@ describe('Application Page Dynamic Route', () => {
 			run({ params: { key: 'test-mod' } });
 			return () => {};
 		});
-		(registry.getApplicationByRouteSlug as any).mockReturnValue({ ...mockModule, enabled: false });
+		registry.applicationsStore.set([{ ...mockModule, enabled: false }]);
 
 		render(Page);
 		expect(screen.getByText('Application Disabled')).toBeTruthy();
+	});
+
+	it('updates a direct route when the application registry arrives after mount', async () => {
+		(page.subscribe as any).mockImplementation((run: any) => {
+			run({ params: { key: 'test-mod' } });
+			return () => {};
+		});
+		render(Page);
+		expect(screen.getByText('Application Not Found')).toBeTruthy();
+		registry.applicationsStore.set([{ ...mockModule, enabled: false }]);
+		expect(await screen.findByText('Application Disabled')).toBeTruthy();
 	});
 
 	it('renders page disabled state when ui.page.enabled is false', () => {
@@ -156,10 +159,12 @@ describe('Application Page Dynamic Route', () => {
 			run({ params: { key: 'test-mod' } });
 			return () => {};
 		});
-		(registry.getApplicationByRouteSlug as any).mockReturnValue({
-			...mockModule,
-			ui: { ...mockModule.ui, page: { ...mockModule.ui.page, enabled: false } }
-		});
+		registry.applicationsStore.set([
+			{
+				...mockModule,
+				ui: { ...mockModule.ui, page: { ...mockModule.ui.page, enabled: false } }
+			}
+		]);
 
 		render(Page);
 		expect(screen.getByText('Application Page Disabled')).toBeTruthy();
@@ -170,7 +175,7 @@ describe('Application Page Dynamic Route', () => {
 			run({ params: { key: 'test-mod' } });
 			return () => {};
 		});
-		(registry.getApplicationByRouteSlug as any).mockReturnValue(mockModule);
+		registry.applicationsStore.set([mockModule]);
 
 		render(Page);
 		// GenericApplicationView renders inside ApplicationPageShell with module title
@@ -182,10 +187,12 @@ describe('Application Page Dynamic Route', () => {
 			run({ params: { key: 'test-mod' } });
 			return () => {};
 		});
-		(registry.getApplicationByRouteSlug as any).mockReturnValue({
-			...mockModule,
-			ui: { ...mockModule.ui, page: { ...mockModule.ui.page, renderer: 'unknown-renderer' } }
-		});
+		registry.applicationsStore.set([
+			{
+				...mockModule,
+				ui: { ...mockModule.ui, page: { ...mockModule.ui.page, renderer: 'unknown-renderer' } }
+			}
+		]);
 
 		render(Page);
 		// GenericApplicationView renders inside ApplicationPageShell with module title
@@ -197,11 +204,13 @@ describe('Application Page Dynamic Route', () => {
 			run({ params: { key: 'mail' } });
 			return () => {};
 		});
-		(registry.getApplicationByRouteSlug as any).mockReturnValue({
-			...mockModule,
-			key: 'mail',
-			ui: { ...mockModule.ui, page: { ...mockModule.ui.page, renderer: 'mail' } }
-		});
+		registry.applicationsStore.set([
+			{
+				...mockModule,
+				key: 'mail',
+				ui: { ...mockModule.ui, page: { ...mockModule.ui.page, renderer: 'mail' } }
+			}
+		]);
 
 		render(Page);
 		// MailApplicationView's zero-account banner — GenericApplicationView

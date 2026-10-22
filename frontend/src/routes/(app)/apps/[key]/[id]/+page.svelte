@@ -18,7 +18,7 @@
 	import { standupsApi } from '$lib/api/standups';
 	import { uploadFile, deleteFile } from '$lib/api/files';
 	import { getFolderContents } from '$lib/api/folders';
-	import { getApplicationByRouteSlug } from '$lib/applications/registry';
+	import { applicationsStore } from '$lib/applications/registry';
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { Folder, Share2, Pencil, AlertTriangle, X } from 'lucide-svelte';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
@@ -96,7 +96,7 @@
 
 	let key = $derived(($page.params.key || '') as string);
 	let id = $derived(($page.params.id || '') as string);
-	let module = $derived(getApplicationByRouteSlug(key));
+	let module = $derived($applicationsStore.find((application) => application.key === key));
 	let initialAttachmentsOpen = $derived(
 		$page.url.searchParams.get('attachments') === ATTACHMENTS_QUERY_PARAM
 	);

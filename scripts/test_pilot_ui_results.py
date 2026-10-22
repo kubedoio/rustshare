@@ -4,21 +4,22 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from verify_pilot_ui_results import verify_report
+from verify_pilot_ui_results import EXPECTED_TESTS, verify_report
 
 
 class PilotUiResultsTests(unittest.TestCase):
     def make_report(self, test: dict[str, object]) -> dict[str, object]:
         return {
-            "stats": {"expected": 1, "skipped": 0, "unexpected": 0, "flaky": 0},
+            "stats": {"expected": 2, "skipped": 0, "unexpected": 0, "flaky": 0},
             "suites": [
                 {
                     "specs": [
                         {
-                            "title": "pilot administrator uses Files and edits a Note name independently from its H1",
-                            "file": "tests/pilot.e2e.ts",
+                            "title": title,
+                            "file": path,
                             "tests": [test],
                         }
+                        for title, path in EXPECTED_TESTS.items()
                     ]
                 }
             ],
@@ -40,11 +41,11 @@ class PilotUiResultsTests(unittest.TestCase):
                 }
             )
         )
-        self.assertIn("UI_PLAYWRIGHT_EXPECTED=1", result)
+        self.assertIn("UI_PLAYWRIGHT_EXPECTED=2", result)
         self.assertIn("UI_PLAYWRIGHT_SKIPPED=0", result)
 
     def test_skipped_browser_test_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ValueError, "exactly one pass"):
+        with self.assertRaisesRegex(ValueError, "exactly two passes"):
             report = self.make_report(
                 {
                     "expectedStatus": "skipped",
@@ -54,7 +55,7 @@ class PilotUiResultsTests(unittest.TestCase):
             )
             report["stats"] = {
                 "expected": 0,
-                "skipped": 1,
+                "skipped": 2,
                 "unexpected": 0,
                 "flaky": 0,
             }
@@ -85,14 +86,32 @@ class PilotUiResultsTests(unittest.TestCase):
 
     def test_additional_or_flaky_test_is_rejected(self) -> None:
         for stats in (
-            {"expected": 2, "skipped": 0, "unexpected": 0, "flaky": 0},
+            {"expected": 3, "skipped": 0, "unexpected": 0, "flaky": 0},
             {"expected": 0, "skipped": 0, "unexpected": 1, "flaky": 0},
             {"expected": 1, "skipped": 0, "unexpected": 0, "flaky": 1},
         ):
             with self.subTest(stats=stats), self.assertRaisesRegex(
-                ValueError, "exactly one pass"
+                ValueError, "exactly two passes"
             ):
                 self.verify({"stats": stats})
+
+    def test_duplicate_canonical_test_cannot_replace_institutional_journey(self) -> None:
+        report = self.make_report({
+            "expectedStatus": "passed", "status": "expected",
+            "results": [{"status": "passed"}],
+        })
+        report["suites"][0]["specs"][1] = report["suites"][0]["specs"][0]
+        with self.assertRaisesRegex(ValueError, "canonical pilot browser tests"):
+            self.verify(report)
+
+    def test_global_setup_or_teardown_error_invalidates_passing_tests(self) -> None:
+        report = self.make_report({
+            "expectedStatus": "passed", "status": "expected",
+            "results": [{"status": "passed"}],
+        })
+        report["errors"] = [{"message": "cleanup failed"}]
+        with self.assertRaisesRegex(ValueError, "setup or teardown"):
+            self.verify(report)
 
     def test_missing_or_malformed_counters_are_rejected(self) -> None:
         for report in ({}, {"stats": {"expected": True, "skipped": 0}}):

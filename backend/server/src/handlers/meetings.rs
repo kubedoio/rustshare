@@ -320,7 +320,8 @@ pub async fn list_meeting_resources(
     state
         .meeting_service
         .get_meeting(meeting_id, auth.user_id, auth.tenant_id)
-        .await?;
+        .await
+        .map_err(meeting_read_error)?;
     let limit = query.limit();
     let (links, total) = state
         .meeting_service

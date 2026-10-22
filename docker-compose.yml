@@ -70,6 +70,7 @@ services:
     environment:
       # Must be set via env var or .env file — see .env.example
       DATABASE_URL: ${DATABASE_URL}
+      RUSTSHARE_RUN_MIGRATIONS: ${RUSTSHARE_RUN_MIGRATIONS:-true}
       RUST_LOG: info,rustshare=debug
       # Public origin the Calendar OAuth redirect URIs derive from. Defaults
       # to the loopback quickstart origin; set RUSTSHARE_PUBLIC_URL in .env to

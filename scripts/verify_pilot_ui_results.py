@@ -7,6 +7,10 @@ from pathlib import Path
 
 
 COUNTERS = ("expected", "skipped", "unexpected", "flaky")
+EXPECTED_TESTS = {
+    "pilot administrator uses Files and edits a Note name independently from its H1": "tests/pilot.e2e.ts",
+    "institutional Calendar journey preserves linked context and denies unavailable content": "tests/institutional.e2e.ts",
+}
 
 
 def _test_cases(suites: list[object]) -> list[tuple[object, object]]:
@@ -33,6 +37,8 @@ def verify_report(path: Path) -> str:
         raise ValueError("Playwright JSON report is missing or invalid") from error
 
     stats = report.get("stats") if isinstance(report, dict) else None
+    if isinstance(report, dict) and report.get("errors"):
+        raise ValueError("Playwright reported a setup or teardown error")
     if not isinstance(stats, dict) or any(
         type(stats.get(counter)) is not int or stats[counter] < 0
         for counter in COUNTERS
@@ -40,40 +46,43 @@ def verify_report(path: Path) -> str:
         raise ValueError("Playwright JSON report has invalid result counters")
 
     if (
-        stats["expected"] != 1
+        stats["expected"] != len(EXPECTED_TESTS)
         or stats["skipped"] != 0
         or stats["unexpected"] != 0
         or stats["flaky"] != 0
     ):
         raise ValueError(
-            "pilot browser journey requires exactly one pass and zero skipped, "
+            "pilot browser journeys require exactly two passes and zero skipped, "
             "unexpected, or flaky tests"
         )
 
     suites = report.get("suites")
     cases = _test_cases(suites) if isinstance(suites, list) else []
-    if len(cases) != 1:
-        raise ValueError("Playwright report must contain exactly one browser test")
-    spec, case = cases[0]
-    if (
-        not isinstance(spec, dict)
-        or spec.get("title")
-        != "pilot administrator uses Files and edits a Note name independently from its H1"
-        or not isinstance(spec.get("file"), str)
-        or not spec["file"].endswith("tests/pilot.e2e.ts")
-        or not isinstance(case, dict)
-    ):
-        raise ValueError("Playwright report does not identify the canonical pilot browser test")
-    results = case.get("results")
-    if (
-        case.get("expectedStatus") != "passed"
-        or case.get("status") != "expected"
-        or not isinstance(results, list)
-        or len(results) != 1
-        or not isinstance(results[0], dict)
-        or results[0].get("status") != "passed"
-    ):
-        raise ValueError("pilot browser test did not actually pass")
+    if len(cases) != len(EXPECTED_TESTS):
+        raise ValueError("Playwright report must contain exactly two browser tests")
+    seen = set()
+    for spec, case in cases:
+        title = spec.get("title")
+        if (
+            not isinstance(title, str)
+            or title not in EXPECTED_TESTS
+            or title in seen
+            or not isinstance(spec.get("file"), str)
+            or spec["file"].replace("\\", "/") != EXPECTED_TESTS[title]
+            or not isinstance(case, dict)
+        ):
+            raise ValueError("Playwright report does not identify the canonical pilot browser tests")
+        seen.add(title)
+        results = case.get("results")
+        if (
+            case.get("expectedStatus") != "passed"
+            or case.get("status") != "expected"
+            or not isinstance(results, list)
+            or len(results) != 1
+            or not isinstance(results[0], dict)
+            or results[0].get("status") != "passed"
+        ):
+            raise ValueError("pilot browser test did not actually pass")
 
     return "\n".join(
         f"UI_PLAYWRIGHT_{counter.upper()}={stats[counter]}" for counter in COUNTERS

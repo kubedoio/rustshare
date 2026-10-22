@@ -40,7 +40,7 @@ use rustshare_storage::{
     MemoryCatalogStore, MetadataStore, ObjectStore, OutboxStore,
 };
 use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
+use sqlx::{Connection, PgConnection, PgPool};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -108,7 +108,22 @@ fn init_tracing(log_format: &str) {
     }
 }
 
+/// Apply the embedded schema using a dedicated, short-lived operator connection.
+pub async fn run_database_migrations(database_url: &str) -> Result<()> {
+    let mut connection = PgConnection::connect(database_url).await?;
+    sqlx::migrate!("../migrations").run(&mut connection).await?;
+    connection.close().await?;
+    Ok(())
+}
+
 async fn init_database(config: &AppConfig) -> Result<PgPool> {
+    if config.run_migrations {
+        // Legacy automatic setup finishes before any request pool exists.
+        run_database_migrations(&config.database_url).await?;
+        info!("Database migrations applied on a dedicated startup connection");
+    } else {
+        info!("Automatic migrations disabled; schema provisioning is operator-managed");
+    }
     let max_connections = config.db_pool_max_connections;
     let min_connections = config.db_pool_min_connections;
     let acquire_timeout_secs = config.db_pool_acquire_timeout_secs;
@@ -147,8 +162,6 @@ async fn init_database(config: &AppConfig) -> Result<PgPool> {
         "Database connection pool configured"
     );
     info!("Connected to database");
-    sqlx::migrate!("../migrations").run(&db_pool).await?;
-    info!("Database migrations applied");
     Ok(db_pool)
 }
 
