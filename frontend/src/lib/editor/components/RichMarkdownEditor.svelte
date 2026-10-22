@@ -167,7 +167,7 @@
 	import { untrack } from 'svelte';
 
 	// React to external content changes (e.g. after save + refetch)
-	let lastExternalContent = $state(content);
+	let lastExternalContent = $state(untrack(() => content));
 	$effect(() => {
 		if (content !== lastExternalContent) {
 			const newContent = content;

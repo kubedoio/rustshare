@@ -14,15 +14,15 @@
 	let vaultId = $derived($page.params.vaultId);
 
 	const vaultQuery = createQuery<Vault>({
-		queryKey: ['vault', vaultId],
-		queryFn: () => getVault(vaultId!),
-		enabled: !!vaultId
+		queryKey: ['vault'],
+		queryFn: () => Promise.reject(new Error('No vault selected')),
+		enabled: false
 	});
 
 	const manifestQuery = createQuery<VaultManifest>({
-		queryKey: ['vault-manifest', vaultId],
-		queryFn: () => getManifest(vaultId!),
-		enabled: !!vaultId
+		queryKey: ['vault-manifest'],
+		queryFn: () => Promise.reject(new Error('No vault selected')),
+		enabled: false
 	});
 
 	$effect(() => {

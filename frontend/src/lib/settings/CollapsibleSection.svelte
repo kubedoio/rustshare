@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { ChevronDown } from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
 
@@ -14,7 +15,7 @@
 		children: Snippet;
 	} = $props();
 
-	let open = $state(defaultOpen);
+	let open = $state(untrack(() => defaultOpen));
 </script>
 
 <section class="border-b border-[var(--rs-border)] last:border-b-0">

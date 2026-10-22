@@ -104,15 +104,15 @@
 	let api = $derived(MODULE_API_MAP[key] ?? null);
 
 	const query = createQuery<unknown, Error, unknown, unknown, string[]>({
-		queryKey: ['module-item', key, id],
-		queryFn: () => api?.get(id),
-		enabled: !!api && !!id
+		queryKey: ['module-item'],
+		queryFn: () => Promise.resolve(undefined),
+		enabled: false
 	});
 
 	$effect(() => {
 		query.setOptions({
 			queryKey: ['module-item', key, id],
-			queryFn: () => api?.get(id),
+			queryFn: async () => ({ routeKey: key, routeId: id, item: await api?.get(id) }),
 			enabled: !!api && !!id
 		});
 	});
@@ -122,8 +122,11 @@
 	// TanStack keeps the previous query's data while a new key starts fetching.
 	// Never render that stale note under the new route id.
 	let item = $derived.by(() => {
-		const data = $query.data as ApplicationItem | undefined;
-		return data?.id === id ? data : undefined;
+		const result = $query.data as
+			{ routeKey: string; routeId: string; item: ApplicationItem | undefined } | undefined;
+		return result?.routeKey === key && result.routeId === id && result.item?.id === id
+			? result.item
+			: undefined;
 	});
 	let content = $derived(item?.content ?? '');
 	let title = $derived(item?.metadata?.title || item?.name || '');
@@ -147,6 +150,14 @@
 
 	let mode: EditorMode = $state('read');
 	let saveStatus: EditorSaveStatus = $state('saved');
+
+	$effect(() => {
+		void key;
+		void id;
+		untrack(() => {
+			saveStatus = 'saved';
+		});
+	});
 
 	$effect(() => {
 		// Initialize mode based on the Application route slug when it changes
@@ -262,14 +273,18 @@
 		}));
 	}
 
-	function getUpdateFunction(key: string, itemId: string) {
+	function getUpdateFunction(
+		key: string,
+		itemId: string,
+		noteAttachments?: ReturnType<typeof serializeNoteAttachments>
+	) {
 		return (data: { title: string; content: string; color?: string | null }) => {
 			switch (key) {
 				case 'notes':
 					return notesApi.update(itemId, {
 						content: data.content,
 						color: data.color,
-						attachments: serializeNoteAttachments()
+						attachments: noteAttachments ?? []
 					});
 				case 'decisions':
 					return decisionsApi.update(itemId, { title: data.title, content: data.content });
@@ -286,9 +301,17 @@
 	const saveMutation = createMutation<
 		unknown,
 		Error,
-		{ title: string; content: string; color?: string | null }
+		{
+			title: string;
+			content: string;
+			color?: string | null;
+			routeKey: string;
+			routeId: string;
+			noteAttachments?: ReturnType<typeof serializeNoteAttachments>;
+		}
 	>({
-		mutationFn: getUpdateFunction(key, id)
+		mutationFn: ({ routeKey, routeId, noteAttachments, ...request }) =>
+			getUpdateFunction(routeKey, routeId, noteAttachments)(request)
 	});
 
 	async function handleSave(
@@ -298,6 +321,9 @@
 			return;
 		}
 
+		const routeKey = key;
+		const routeId = id;
+		const noteAttachments = routeKey === 'notes' ? serializeNoteAttachments() : undefined;
 		saveStatus = 'saving';
 		const editorContent = event.detail.content;
 		// Postprocess: convert API URLs back to relative paths for folder-backed notes
@@ -309,40 +335,53 @@
 			const saved = await $saveMutation.mutateAsync({
 				title,
 				content: saveContent,
-				color: event.detail.color
+				color: event.detail.color,
+				routeKey,
+				routeId,
+				noteAttachments
 			});
-			saveStatus = 'saved';
-			documentPage?.markSaved(editorContent);
+			if (key === routeKey && id === routeId) {
+				saveStatus = 'saved';
+				documentPage?.markSaved(editorContent);
+			}
 			const modifiedAt =
 				(saved as { modified_at?: string })?.modified_at ?? new Date().toISOString();
-			const noteAttachments = key === 'notes' ? serializeNoteAttachments() : undefined;
 			const noteColor = event.detail.color;
 
 			queryClient.setQueryData(
-				['module-item', key, id],
-				(previous: ApplicationItemQueryData | undefined) => {
-					if (!previous) return previous;
+				['module-item', routeKey, routeId],
+				(
+					previous:
+						{ routeKey: string; routeId: string; item: ApplicationItemQueryData } | undefined
+				) => {
+					if (!previous?.item) return previous;
 					return {
 						...previous,
-						content: saveContent,
-						current_version:
-							(saved as { current_version?: number })?.current_version ?? previous.current_version,
-						modified_at: modifiedAt,
-						metadata: {
-							...previous.metadata,
-							...(noteAttachments ? { attachments: noteAttachments } : {}),
-							...(noteColor !== undefined ? { color: noteColor } : {}),
-							updated_at: modifiedAt
+						item: {
+							...previous.item,
+							content: saveContent,
+							current_version:
+								(saved as { current_version?: number })?.current_version ??
+								previous.item.current_version,
+							modified_at: modifiedAt,
+							metadata: {
+								...previous.item.metadata,
+								...(noteAttachments ? { attachments: noteAttachments } : {}),
+								...(noteColor !== undefined ? { color: noteColor } : {}),
+								updated_at: modifiedAt
+							}
 						}
 					};
 				}
 			);
 
 			// Also invalidate the list query so gallery views stay fresh
-			queryClient.invalidateQueries({ queryKey: [key] });
+			queryClient.invalidateQueries({ queryKey: [routeKey] });
 		} catch (error) {
-			saveStatus = 'error';
-			documentPage?.markSaveError(error instanceof Error ? error.message : 'Autosave failed');
+			if (key === routeKey && id === routeId) {
+				saveStatus = 'error';
+				documentPage?.markSaveError(error instanceof Error ? error.message : 'Autosave failed');
+			}
 		}
 	}
 

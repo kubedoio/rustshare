@@ -1,0 +1,72 @@
+# Elembra Product Maturity Campaign
+
+Audit baseline: protected `main` at `f388948a` (merge of PR #399). This plan uses current merged behavior and issue updates; it does not authorize deployment, institutional Gate A work, or retained-infrastructure changes.
+
+## Gap matrix
+
+| Issue | Current state | Evidence and remaining scope |
+| --- | --- | --- |
+| [#196](https://github.com/kubedoio/rustshare/issues/196) | Partially implemented; roadmap epic | The application boundary and bounded Buzz bridge are merged. Connector runtime, Memory completeness, remaining identity UX, and native Chat UX remain separate work. Keep this issue as the campaign tracker, not a rewrite. |
+| [#284](https://github.com/kubedoio/rustshare/issues/284) | Unimplemented; old warning count is stale | Frontend CI runs `npm run check` but has no warning budget. Current `main` reports 40 `state_referenced_locally` diagnostics among 76 total Svelte warnings. Fix stale route, application, and query state; add a zero-budget regression guard for this diagnostic. |
+| [#285](https://github.com/kubedoio/rustshare/issues/285) | Partially implemented | `rust-toolchain.toml` pins Rust 1.97.1 and Cargo declares MSRV 1.95.0, but workflows and release/build files still contain independent compiler choices. Define build-toolchain versus MSRV policy and add a drift check. |
+| [#286](https://github.com/kubedoio/rustshare/issues/286) | Unimplemented | Core still directly depends on infrastructure crates including SQLx, Reqwest, image, lettre, and mailparse. Extract only bounded adapters after a dependency guard establishes the target boundary. |
+| [#287](https://github.com/kubedoio/rustshare/issues/287) | Partially implemented | Repository/service layers exist, while handlers in device-auth, invites, and admin areas still issue SQL directly. Add a guard and migrate handler families incrementally with tenant context preserved. |
+| [#320](https://github.com/kubedoio/rustshare/issues/320) | Unimplemented | Upload queues support progress but expose no safe cancellation path. Define abort, server session cleanup, and terminal UI state for single and multi-file uploads. |
+| [#396](https://github.com/kubedoio/rustshare/issues/396) | Unimplemented | Calendar stores timezone-aware events, but has no rescheduling interaction. Add accessible pointer and keyboard controls that preserve wall time and duration through DST boundaries; imported/provider events stay read-only. |
+| [#397](https://github.com/kubedoio/rustshare/issues/397) | Unimplemented | Calendar has other resource relations, but no Mail message-to-event link. Add a reference-only link with independent Mail and Calendar authorization. |
+| [#119](https://github.com/kubedoio/rustshare/issues/119) | Partially implemented | Memory catalog, source projection, FTS/vector search, citations, and reauthorization already exist. Remaining work is complete projection reconciliation/rebuild and deletion/revocation coverage, non-LLM catalog/keyword search, and scoped retrieval/audit gaps. Reuse the existing catalog and authority. |
+| [#213](https://github.com/kubedoio/rustshare/issues/213) | Unimplemented runtime; contract exists | `connector-contract-v1alpha1.md` and ADR-0037 define a spec-only boundary. Add the common runtime and one local-text worker before broad provider rollout. |
+| [#99](https://github.com/kubedoio/rustshare/issues/99) | Unimplemented worker use case | The local-text worker is the first bounded Connector proof. It must use the common contract and cannot write private Files or Memory tables. |
+| [#215](https://github.com/kubedoio/rustshare/issues/215) | Partially implemented | Binding proof, client-side encrypted backup, rotation, and offboarding revocation/admin support exist. Remaining work includes pre-bind import, wrong-passphrase throttling, lost-device/list UX, and threat-model/negative-test closure. |
+| [#323](https://github.com/kubedoio/rustshare/issues/323) | Partially implemented/reframed | Managed Buzz and Ask/channel authorization exist, but a complete native channel/connections/composer workflow does not. Build on the bridge and preserve Buzz source authority. |
+| [#243](https://github.com/kubedoio/rustshare/issues/243) | Unimplemented follow-up | Deliver the thread composer after identity lifecycle and native Chat UX establish channel and principal behavior. |
+| [#309](https://github.com/kubedoio/rustshare/issues/309) | Deferred pending inventory | Inventory records and source ownership first; remove legacy code only after the data and compatibility impact is known. |
+| [#325](https://github.com/kubedoio/rustshare/issues/325) | Deferred/reframe required | Current Mail is a server-side Application and source. A plugin-owned authoritative copy would conflict with Memory/Connector authority. Revisit client-only/import mode without a second private mail store. |
+| [#355](https://github.com/kubedoio/rustshare/issues/355) | Partially implemented | Dark/light preference exists; tenant branding, logos, colors, and admin controls do not. Defer until a separate UX/config contract is approved. |
+
+## Dependency graph
+
+```mermaid
+flowchart TD
+  M11["M1.1 Svelte correctness and warning guard (#284)"] --> T285["Toolchain policy (#285)"]
+  T285 --> G286["Core dependency guard (#286)"]
+  T285 --> G287["Handler SQL guard (#287)"]
+  M11 --> U320["Safe upload cancellation (#320)"]
+  M11 --> C396["Accessible Calendar rescheduling (#396)"]
+  C396 --> C397["Mail-to-Calendar links (#397)"]
+  G286 --> MEM["Memory projection, rebuild, scope and retrieval (#119)"]
+  G287 --> MEM
+  MEM --> CON["Connector runtime and local-text worker (#213, #99)"]
+  ID215["Buzz identity lifecycle (#215)"] --> CHAT["Native Chat UX (#323)"]
+  CHAT --> COMP["Thread composer (#243)"]
+  INV["Legacy data inventory"] --> LEG["Legacy cleanup (#309)"]
+  CON -. "future sources after contract proof" .-> MEM
+```
+
+## Small PR sequence and acceptance criteria
+
+Each PR gets independent code/security review and human approval before merge. Security-sensitive PRs include a concise security note. Negative tests below are required alongside the positive acceptance criteria.
+
+| PR | Slice | Measurable acceptance criteria | Required negative tests |
+| --- | --- | --- | --- |
+| M1.1 | #284 Svelte state correctness | Zero `state_referenced_locally` warnings in frontend `svelte-check`; CI fails if one returns. Route key/id, application/module, and Mail search changes use current values. Login clears cached queries so data from a previous tenant cannot remain visible. Existing layouts and initial form behavior remain unchanged. | App-detail tests reject data from another route and keep a pending save on its starting route; Mail search tests verify current search arguments; auth-store tests verify login clears query data across identities. |
+| M1.2 | #285 Toolchain/build policy | Document pinned build compiler versus supported MSRV; make Docker, release, and CI choices derive from that policy; a CI check reports no contradictory compiler pins. | A deliberately mismatched workflow/build pin makes the policy check fail. |
+| M1.3 | #286 Core dependency inversion guard | Add a narrow architecture check and migrate one bounded infrastructure adapter at a time; `core` no longer imports the extracted adapter directly. No handler/Core rewrite. | A forbidden direct dependency/import is detected by the guard; adapter errors still propagate without changing API behavior. |
+| M1.4+ | #287 Handler SQL by family | Guard SQL in handler modules with a documented temporary allowlist; move one handler family per PR into tenant-scoped repositories/services. Preserve transaction and authorization behavior. | Cross-workspace identifiers cannot read or mutate another tenant's rows; guard catches a new direct handler query. |
+| M2.1 | #320 Upload cancellation | Single and multi-file uploads expose cancel; cancellation aborts active work, cleans up or explicitly reports retained server session state, and ends in a terminal canceled state without success toast. | Cancel before start, during transfer, and after completion; canceled work never reports success, and another upload remains unaffected. |
+| M2.2 | #396 Calendar rescheduling | Keyboard and pointer rescheduling works at narrow and wide viewports; event wall time and duration are preserved in its timezone across DST transitions; provider/imported events remain read-only. Contract/ADR and OpenAPI stay aligned. | Reject unauthorized edits, read-only event moves, invalid intervals, and DST gap/overlap cases without silently shifting the event. |
+| M2.3 | #397 Mail-to-Calendar | A Calendar event can hold a reference to a Mail message; both source endpoints authorize independently at link and open time; contracts and OpenAPI describe reference semantics. | Mail-only access cannot create/read a Calendar link; Calendar-only access cannot resolve the Mail source; revoked access invalidates later opens. |
+| M3.1+ | #119 Memory reliability, split by projection/search | Reconciliation/rebuild covers every supported source; deletion and revocation remove derived visibility; keyword/catalog search works without LLM availability; retrieval reauthorizes citations and enforces workspace/folder/current-note scope. Existing Memory catalog and source authorities remain singular. | Stale projection after source deletion/revocation is never returned; cross-workspace and out-of-scope chunks/citations are denied; offline LLM still permits catalog/keyword search. |
+| M4.1 | #215 Identity lifecycle | Complete pre-bind import, throttled wrong-passphrase handling, device listing/recovery, and offboarding revocation with explicit Buzz principal/key binding. Private keys remain client-held. Update identity contract/ADR. | Wrong principal/key, replayed binding proof, revoked/lost device, and repeated bad passphrases cannot bind or recover another principal. |
+| M4.2+ | #323 Native Chat UX | Deliver channel/connections UX through the managed bridge, with stable principal binding and Buzz as source authority. Split views/actions into separately reviewable PRs. | Unauthorized channel access, revoked membership, and unbound device cannot load or send messages. |
+| M4.3 | #213 Connector runtime + #99 local-text worker | Implement one worker through the common contract, with revocable auth, offline retry, idempotency, and provenance. Do not write directly to Files or Memory private tables. Defer broad cloud providers until this contract is tested. | Duplicate/replayed work is idempotent; revoked credentials and offline failures do not expose or lose source state. |
+| M4.4 | #243 Thread composer | Composer supports the approved channel/thread lifecycle after #323 and preserves client-side key custody. | Empty/oversized invalid payloads, unauthorized channel, and revoked device cannot send. |
+| M5 | #309 Legacy disposition | Inventory records, code paths, data ownership, and compatibility first; remove only after each retained record has a migration or disposition. | Unknown legacy records are retained/reported; cleanup cannot delete data without a defined disposition. |
+| Deferred | #325 Mail mode | Decide a reference/import contract that keeps Mail authoritative and avoids a second private mail database. | Imported references cannot bypass Mail authorization or retain readable content after revocation. |
+| Deferred | #355 Branding | Define tenant-scoped branding fields, rendering behavior, and admin permission contract before UX implementation. | One tenant's branding cannot affect another tenant or be changed by a non-admin. |
+
+## Campaign boundaries and validation
+
+Deployment, institutional Gate A execution, optional enforced RLS, independent workspace identity, full CalDAV, public plugin marketplace, and autonomous Agent execution are outside this campaign unless separately authorized. Broad cloud Connector providers wait until the common contract and local-text worker are tested.
+
+For each implementation PR, run the smallest relevant checks first, then the applicable full frontend/Rust baseline, PostgreSQL integration tests, Playwright, OpenAPI/contract validation, security checks, and CI. Only report checks actually executed. Changes affecting authorization, tenant visibility, storage, secrets, or source revocation require independent security review and human approval before merge.

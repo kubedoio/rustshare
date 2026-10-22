@@ -1,19 +1,37 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
-import { readable } from 'svelte/store';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/svelte';
+import { readable, writable } from 'svelte/store';
 import Page from './+page.svelte';
 
-const { markdownDocumentPageMock } = vi.hoisted(() => ({
-	markdownDocumentPageMock: vi.fn(() => null)
-}));
+const { markdownDocumentPageMock, mockPageStore, mockMutateAsync } = vi.hoisted(() => {
+	type PageValue = { params: { key: string; id: string }; url: URL };
+	let value: PageValue = {
+		params: { key: 'notes', id: 'note-1' },
+		url: new URL('http://localhost/apps/notes/note-1')
+	};
+	const subscribers = new Set<(value: PageValue) => void>();
+
+	return {
+		markdownDocumentPageMock: vi.fn((..._args: unknown[]) => null),
+		mockMutateAsync: vi.fn(),
+		mockPageStore: {
+			subscribe(run: (value: PageValue) => void) {
+				subscribers.add(run);
+				run(value);
+				return () => subscribers.delete(run);
+			},
+			set(next: PageValue) {
+				value = next;
+				for (const run of subscribers) run(value);
+			}
+		}
+	};
+});
 
 vi.mock('$app/environment', () => ({ browser: true }));
 
 vi.mock('$app/stores', () => ({
-	page: readable({
-		params: { key: 'notes', id: 'note-1' },
-		url: new URL('http://localhost/apps/notes/note-1')
-	})
+	page: mockPageStore
 }));
 
 vi.mock('$app/navigation', () => ({
@@ -28,18 +46,29 @@ vi.mock('$lib/query-client', () => ({
 	}
 }));
 
-function createMockQuery(data: unknown) {
-	const store = readable({
-		data,
+type MockQuery = ReturnType<typeof import('$lib/query-compat').createQuery> & {
+	setData: (data: unknown) => void;
+};
+
+function createMockQuery(data: unknown): MockQuery {
+	const store = writable<{
+		data: unknown;
+		isLoading: boolean;
+		isFetching: boolean;
+		error: null;
+		refetch: ReturnType<typeof vi.fn>;
+	}>({
+		data: { routeKey: 'notes', routeId: 'note-1', item: data },
 		isLoading: false,
 		isFetching: true,
 		error: null,
 		refetch: vi.fn()
 	});
 	return {
-		...store,
+		subscribe: store.subscribe,
+		setData: (nextData: unknown) => store.update((value) => ({ ...value, data: nextData })),
 		setOptions: vi.fn()
-	} as unknown as ReturnType<typeof import('$lib/query-compat').createQuery>;
+	} as unknown as MockQuery;
 }
 
 vi.mock('$lib/query-compat', () => ({
@@ -47,7 +76,7 @@ vi.mock('$lib/query-compat', () => ({
 	createMutation: vi.fn(() =>
 		readable({
 			mutate: vi.fn(),
-			mutateAsync: vi.fn(),
+			mutateAsync: mockMutateAsync,
 			isPending: false
 		})
 	)
@@ -122,7 +151,102 @@ vi.mock('lucide-svelte', () => ({
 	X: vi.fn(() => null)
 }));
 
+beforeEach(() => {
+	mockMutateAsync.mockResolvedValue({});
+	mockPageStore.set({
+		params: { key: 'notes', id: 'note-1' },
+		url: new URL('http://localhost/apps/notes/note-1')
+	});
+});
+
 describe('Note detail page conflict banner', () => {
+	it('updates the query and attachment state when the application route changes', async () => {
+		const { createQuery } = await import('$lib/query-compat');
+		const query = createMockQuery({ id: 'note-1', name: 'Note', content: 'Body', metadata: {} });
+		vi.mocked(createQuery).mockReturnValue(query);
+
+		render(Page);
+		await waitFor(() => {
+			expect(query.setOptions).toHaveBeenLastCalledWith(
+				expect.objectContaining({ queryKey: ['module-item', 'notes', 'note-1'] })
+			);
+		});
+
+		const callsBeforeRouteChange = markdownDocumentPageMock.mock.calls.length;
+		mockPageStore.set({
+			params: { key: 'meetings', id: 'note-1' },
+			url: new URL('http://localhost/apps/meetings/note-1?attachments=open')
+		});
+
+		await waitFor(() => {
+			expect(query.setOptions).toHaveBeenLastCalledWith(
+				expect.objectContaining({ queryKey: ['module-item', 'meetings', 'note-1'] })
+			);
+		});
+		expect(markdownDocumentPageMock).toHaveBeenCalledTimes(callsBeforeRouteChange);
+		query.setData({
+			routeKey: 'meetings',
+			routeId: 'note-1',
+			item: { id: 'note-1', name: 'Meeting', content: 'Body', metadata: {} }
+		});
+		await waitFor(() =>
+			expect(markdownDocumentPageMock).toHaveBeenCalledTimes(callsBeforeRouteChange + 1)
+		);
+		const props = (markdownDocumentPageMock.mock.calls.at(-1)?.[1] ??
+			markdownDocumentPageMock.mock.calls.at(-1)?.[0]) as unknown as {
+			initialAttachmentsOpen: boolean;
+		};
+		expect(props.initialAttachmentsOpen).toBe(true);
+	});
+
+	it('keeps a pending save attached to the route where it started', async () => {
+		const { createQuery } = await import('$lib/query-compat');
+		const query = createMockQuery({
+			id: 'note-1',
+			name: 'Note',
+			content: 'Old body',
+			metadata: {}
+		});
+		vi.mocked(createQuery).mockReturnValue(query);
+		let resolveSave: ((value: unknown) => void) | undefined;
+		mockMutateAsync.mockImplementation(() => new Promise((resolve) => (resolveSave = resolve)));
+
+		render(Page);
+		const editorCall = markdownDocumentPageMock.mock.calls.at(-1) ?? [];
+		const editorProps = (editorCall[1] ?? editorCall[0]) as unknown as {
+			$$events: { save: (event: CustomEvent<{ content: string }>) => Promise<void> };
+		};
+		const save = editorProps.$$events.save(
+			new CustomEvent('save', { detail: { content: 'Saved old body' } })
+		);
+
+		mockPageStore.set({
+			params: { key: 'meetings', id: 'note-1' },
+			url: new URL('http://localhost/apps/meetings/note-1')
+		});
+		await waitFor(() =>
+			expect(query.setOptions).toHaveBeenLastCalledWith(
+				expect.objectContaining({ queryKey: ['module-item', 'meetings', 'note-1'] })
+			)
+		);
+		const newEditorProps = (markdownDocumentPageMock.mock.calls.at(-1)?.[1] ?? {}) as unknown as {
+			saveStatus: string;
+		};
+		expect(newEditorProps.saveStatus).toBe('saved');
+		resolveSave?.({ modified_at: '2026-01-01T00:00:00Z' });
+		await save;
+
+		const { queryClient } = await import('$lib/query-client');
+		expect(queryClient.setQueryData).toHaveBeenCalledWith(
+			['module-item', 'notes', 'note-1'],
+			expect.any(Function)
+		);
+		expect(queryClient.setQueryData).not.toHaveBeenCalledWith(
+			['module-item', 'meetings', 'note-1'],
+			expect.any(Function)
+		);
+	});
+
 	it('passes the saved note name separately from its Markdown H1', async () => {
 		const { createQuery } = await import('$lib/query-compat');
 		vi.mocked(createQuery).mockReturnValue(

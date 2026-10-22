@@ -37,7 +37,7 @@
 	let editorComponent: RichMarkdownEditor;
 	let status: 'saved' | 'unsaved' | 'saving' | 'error' = $state('saved');
 	let autosaveTimer: ReturnType<typeof setTimeout> | null = $state(null);
-	let lastSavedMarkdown = $state(content);
+	let lastSavedMarkdown = $state(untrack(() => content));
 	let pendingMarkdown: string | null = $state(null);
 	let inFlightMarkdown: string | null = $state(null);
 	let lastError: string | null = $state(null);

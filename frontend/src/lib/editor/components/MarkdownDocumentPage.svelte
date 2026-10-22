@@ -111,13 +111,13 @@
 		flush?(): void;
 	}
 	let editorComponent: EditorComponent | undefined = $state();
-	let isAttachmentsOpen = $state(initialAttachmentsOpen);
+	let isAttachmentsOpen = $state(untrack(() => initialAttachmentsOpen));
 	let autosaveTimer: ReturnType<typeof setTimeout> | null = $state(null);
-	let lastDocId = $state(docId);
+	let lastDocId = $state(untrack(() => docId));
 	let previewAttachment = $state<RichMarkdownAttachment | null>(null);
 	let showRawMarkdown = $state(false);
-	let preservedFrontmatter = $state(splitFrontmatter(content).frontmatter);
-	let currentMarkdown: string = $state(splitFrontmatter(content).body);
+	let preservedFrontmatter = $state(untrack(() => splitFrontmatter(content).frontmatter));
+	let currentMarkdown: string = $state(untrack(() => splitFrontmatter(content).body));
 
 	let isTitleEditing = $state(false);
 	let titleDraft = $state('');

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
+import { queryClient } from '../query-client';
 
 // Mock dependencies before importing the store
 vi.mock('../api/auth', () => ({
@@ -39,11 +40,12 @@ import { generateSecretKey, publicKeyOf } from '../chat/nostr';
 import { authStore, currentUser } from './auth';
 
 describe('Auth Store Race Condition', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		vi.clearAllMocks();
 		// Reset store to initial state
 		authStore.setLoading(true);
-		authStore.logout();
+		await authStore.logout();
+		vi.clearAllMocks();
 	});
 
 	it('should ignore stale bootstrapSession results after a successful login', async () => {
@@ -269,5 +271,6 @@ describe('Auth Store Race Condition', () => {
 		await authStore.login('b@example.com', 'password');
 
 		expect(getSigningKey()).toBeNull();
+		expect(queryClient.clear).toHaveBeenCalledTimes(2);
 	});
 });

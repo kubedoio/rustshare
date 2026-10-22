@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import type { ComponentType } from 'svelte';
 
 	interface MenuItem {
@@ -29,8 +29,8 @@
 
 	let menuRef = $state<HTMLDivElement>();
 
-	let adjustedX = $state(x);
-	let adjustedY = $state(y);
+	let adjustedX = $state(untrack(() => x));
+	let adjustedY = $state(untrack(() => y));
 
 	$effect(() => {
 		if (menuRef && visible) {

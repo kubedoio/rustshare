@@ -24,9 +24,18 @@
 
 	let { module }: Props = $props();
 
-	const folderContentsQuery = createQuery({
-		queryKey: ['module-folder-contents', module.key],
-		queryFn: () => getApplicationRootContents(module.rootPath)
+	type RootContents = Awaited<ReturnType<typeof getApplicationRootContents>>;
+	const folderContentsQuery = createQuery<RootContents>({
+		queryKey: ['module-folder-contents'],
+		queryFn: () => Promise.resolve(undefined as unknown as RootContents),
+		enabled: false
+	});
+
+	$effect(() => {
+		folderContentsQuery.setOptions({
+			queryKey: ['module-folder-contents', module.key],
+			queryFn: () => getApplicationRootContents(module.rootPath)
+		});
 	});
 
 	let contents = $derived($folderContentsQuery.data);

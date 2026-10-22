@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { createMutation } from '$lib/query-compat';
 	import { goto } from '$app/navigation';
 	import {
@@ -18,13 +19,15 @@
 		onRefresh?: () => void;
 	} = $props();
 
-	let email = $state(user.email);
-	let display_name = $state(user.display_name);
-	let is_admin = $state(user.is_admin);
+	let email = $state(untrack(() => user.email));
+	let display_name = $state(untrack(() => user.display_name));
+	let is_admin = $state(untrack(() => user.is_admin));
 	let quota_gb = $state(
-		user.storage_quota_bytes > 0
-			? String(Math.round(user.storage_quota_bytes / (1024 * 1024 * 1024)))
-			: ''
+		untrack(() =>
+			user.storage_quota_bytes > 0
+				? String(Math.round(user.storage_quota_bytes / (1024 * 1024 * 1024)))
+				: ''
+		)
 	);
 	let password = $state('');
 	let confirm_password = $state('');

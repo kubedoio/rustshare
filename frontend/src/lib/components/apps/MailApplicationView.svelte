@@ -181,7 +181,7 @@
 		enabled: false
 	});
 	const accountMessagesQuery = createQuery<ListMailAccountMessagesResponse>({
-		queryKey: ['mail-account-messages', null, null, '', sortOrder],
+		queryKey: ['mail-account-messages', null, null, '', 'date_desc'],
 		queryFn: () => Promise.resolve({ uidvalidity: null, next_cursor: null, messages: [] }),
 		enabled: false
 	});
@@ -196,8 +196,9 @@
 		enabled: false
 	});
 	const importedMessagesQuery = createQuery<ListMailMessagesResponse>({
-		queryKey: ['mail-messages', '', sortOrder],
-		queryFn: () => mailApi.listMessagesPage('', null, null, sortOrder)
+		queryKey: ['mail-messages', '', 'date_desc'],
+		queryFn: () => mailApi.listMessagesPage('', null, null, 'date_desc'),
+		enabled: false
 	});
 	const archiveJobsQuery = createQuery<MailArchiveJob[]>({
 		queryKey: ['mail-archive-jobs', null],

@@ -122,6 +122,7 @@ function createAuthStore() {
 				clearLegacyWebSocketToken();
 
 				if (myGeneration !== sessionGeneration) return;
+				queryClient.clear();
 
 				set({
 					user,
@@ -129,7 +130,6 @@ function createAuthStore() {
 					isLoading: false
 				});
 
-				queryClient.invalidateQueries();
 				setChatUser(user.id);
 
 				try {

@@ -29,7 +29,7 @@
 	let searchTimeout: ReturnType<typeof setTimeout>;
 	let confirmDelete = $state<string | null>(null);
 
-	const totalPages = Math.ceil(total / perPage);
+	let totalPages = $derived(Math.ceil(total / perPage));
 
 	function handleSearchInput(e: Event) {
 		const val = (e.target as HTMLInputElement).value;
