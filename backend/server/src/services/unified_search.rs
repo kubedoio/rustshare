@@ -16,6 +16,8 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{ActionCapability, ApplicationId};
+use rustshare_core::services::is_hidden_file_for_path;
+#[cfg(test)]
 use rustshare_core::services::is_hidden_file_name;
 use rustshare_core::services::SemanticSearchResult;
 use rustshare_memory::MemoryCatalogRecord;
@@ -147,6 +149,15 @@ pub struct SearchProvenance {
     pub channel_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author_pubkey: Option<String>,
+    /// Meeting folder ID, included only after live meeting authorization.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meeting_id: Option<Uuid>,
+    /// Calendar event ID, included only after the Calendar owner authorizes it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calendar_event_id: Option<Uuid>,
+    /// Action identity for a live Meeting action candidate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_id: Option<Uuid>,
 }
 
 /// Source bytes that passed a second, RAG-specific authorization/materialization pass.
@@ -418,13 +429,27 @@ impl UnifiedSearchService {
                     continue;
                 }
             };
+            let location = if let Some(file_id) = candidate.file_id {
+                match self
+                    .metadata
+                    .find_file_by_id_for_tenant(file_id, ctx.tenant_id.0)
+                    .await
+                {
+                    Ok(Some(file)) if !is_hidden_file_for_path(&file.name, &file.path) => {
+                        Some(file.path)
+                    }
+                    _ => continue,
+                }
+            } else {
+                candidate.location
+            };
             results.push(UnifiedSearchResult {
                 source_application: candidate.source_application,
                 source_type: candidate.source_type,
                 resource_ref: reference.to_uri(),
                 title,
                 snippet,
-                location: candidate.location,
+                location,
                 occurred_at: candidate.occurred_at,
                 updated_at: resolved.updated_at.or(candidate.occurred_at),
                 score: candidate.score,
@@ -437,6 +462,9 @@ impl UnifiedSearchService {
                     channel_id: candidate.channel_id,
                     channel_kind: candidate.channel_kind,
                     author_pubkey: candidate.author_pubkey,
+                    meeting_id: None,
+                    calendar_event_id: None,
+                    action_id: None,
                 },
             });
         }
@@ -610,7 +638,7 @@ impl UnifiedSearchService {
             .into_iter()
             .filter_map(|file| {
                 // Hidden metadata files never surface as candidates.
-                if is_hidden_file_name(&file.name) {
+                if is_hidden_file_for_path(&file.name, &file.path) {
                     return None;
                 }
                 let score = name_path_score(&file.name, &file.path, query);

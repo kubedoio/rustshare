@@ -71,6 +71,7 @@
 
 	$effect(() => {
 		const eventId = $page.url.searchParams.get('event_id');
+		selectedEvent = null;
 		if (!eventId) return;
 		let cancelled = false;
 		void calendarApi
@@ -451,13 +452,11 @@
 		openingMeeting = true;
 		try {
 			const meeting = await calendarApi.openEventMeeting(event.id);
+			if (selectedEvent?.id !== event.id) return;
 			selectedEvent = null;
 			await goto(`/apps/meetings/${meeting.id}`);
-		} catch (error) {
-			toastStore.show(
-				`Could not open meeting note: ${error instanceof Error ? error.message : 'unknown error'}`,
-				'error'
-			);
+		} catch {
+			toastStore.show('Could not open meeting note. It may be unavailable.', 'error');
 		} finally {
 			openingMeeting = false;
 		}

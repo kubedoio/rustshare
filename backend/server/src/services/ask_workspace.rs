@@ -827,6 +827,9 @@ mod tests {
                 channel_id: None,
                 channel_kind: None,
                 author_pubkey: None,
+                meeting_id: None,
+                calendar_event_id: None,
+                action_id: None,
             },
             text: "authorized".into(),
         };
@@ -853,6 +856,9 @@ mod tests {
                 channel_id: None,
                 channel_kind: None,
                 author_pubkey: None,
+                meeting_id: None,
+                calendar_event_id: None,
+                action_id: None,
             },
             text: "authorized".into(),
         };

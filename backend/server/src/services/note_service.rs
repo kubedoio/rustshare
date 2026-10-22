@@ -303,6 +303,36 @@ impl NoteService {
         }
     }
 
+    /// Add a canonical Meeting `index.md` file to the existing permission-aware
+    /// note index after a meeting write. The index remains a candidate source;
+    /// unified search still reauthorizes and fetches through Files.
+    pub async fn index_meeting_search_content(
+        &self,
+        file_id: Uuid,
+        owner_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<(), NoteError> {
+        if self.index_sink.is_none() {
+            return Ok(());
+        }
+        let file = self.file_service.get_file(file_id, owner_id).await?;
+        if file.name != "index.md"
+            || rustshare_core::services::is_hidden_file_for_path(&file.name, &file.path)
+        {
+            return Ok(());
+        }
+        let bytes = self
+            .object_store
+            .get(&file.storage_key())
+            .await
+            .map_err(|e| NoteError::Storage(e.to_string()))?;
+        let content = String::from_utf8_lossy(&bytes);
+        let metadata = NoteMetadata::new(file.name.clone());
+        self.emit_index_note(&file, &metadata, &content, tenant_id)
+            .await;
+        Ok(())
+    }
+
     /// Record a group index-ACL refresh dispatch (metric-style counter).
     pub fn record_group_refresh_dispatch(&self, group_id: Uuid) {
         *self

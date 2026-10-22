@@ -26243,11 +26243,27 @@
         "type": "object",
         "description": "Per-source provenance context for citation (never authorization).",
         "properties": {
+          "action_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Action identity for a live Meeting action candidate."
+          },
           "author_pubkey": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "calendar_event_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Calendar event ID, included only after the Calendar owner authorizes it."
           },
           "channel_id": {
             "type": [
@@ -26273,6 +26289,14 @@
               "null"
             ],
             "format": "uuid"
+          },
+          "meeting_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Meeting folder ID, included only after live meeting authorization."
           },
           "message_id": {
             "type": [

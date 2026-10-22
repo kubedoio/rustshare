@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Search historical meeting titles, canonical meeting-note content and current action text through unified search; results reopen only live-authorized meeting contexts and Calendar links.
+- Hide Calendar event references from meeting and action responses unless the current caller can still open the source event.
 - Record meeting action items with responsible people, date-only due dates, independently authorized Decision references, and completion/reopen history; recover them from past meetings without enabling Kanban or granting access through assignment.
 - Create recoverable Decisions from meetings or link existing Decisions, edit status/date in Decisions, and return to authorized meeting/event context without granting access through links.
 - Keep Decision file/metadata moves and deletes atomic, preserve legacy Decisions after moves, and prevent creation retries from resurrecting purged Decisions.

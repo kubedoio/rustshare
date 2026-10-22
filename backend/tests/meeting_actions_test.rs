@@ -41,6 +41,7 @@ fn app(mut state: AppState) -> axum::Router<()> {
         .merge(rustshare_server::routes::calendar_routes())
         .merge(rustshare_server::routes::decision_routes())
         .merge(rustshare_server::routes::notification_routes())
+        .merge(rustshare_server::routes::search_routes())
         .with_state(state)
 }
 
@@ -196,6 +197,72 @@ async fn event_meeting_decision_action_completion_and_historical_restart_journey
         "date-only due date survives DST boundaries"
     );
     assert_eq!(action["created_by"], owner.id.to_string());
+    let (status, search) = request(
+        &api,
+        &token,
+        "POST",
+        "/api/v1/search",
+        Some(json!({"query":"Prepare the release","sources":["files"],"limit":10})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{search}");
+    assert!(search["results"]
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| {
+            item["provenance"]["meeting_id"] == meeting_id.to_string()
+                && item["provenance"]["action_id"] == action["id"]
+        })));
+    let denied_user = create_test_user(&state, "actions_search_denied", tenant).await;
+    let denied_token = create_auth_token(&state, denied_user.id, tenant);
+    let (status, denied_search) = request(
+        &api,
+        &denied_token,
+        "POST",
+        "/api/v1/search",
+        Some(json!({"query":"Prepare the release","sources":["files"],"limit":10})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{denied_search}");
+    assert_eq!(denied_search["total"], 0);
+    let direct = grant(
+        &state.db_pool,
+        meeting_id,
+        owner.id,
+        denied_user.id,
+        tenant,
+        "View",
+    )
+    .await;
+    let (status, granted_search) = request(
+        &api,
+        &denied_token,
+        "POST",
+        "/api/v1/search",
+        Some(json!({"query":"Prepare the release","sources":["files"],"limit":10})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{granted_search}");
+    assert!(granted_search["results"].as_array().is_some_and(|items| {
+        items.iter().any(|item| {
+            item["provenance"]["meeting_id"] == meeting_id.to_string()
+                && item["provenance"]["action_id"] == action["id"]
+        })
+    }));
+    sqlx::query("DELETE FROM shares WHERE id=$1")
+        .bind(direct)
+        .execute(&state.db_pool)
+        .await
+        .expect("revoke final search grant");
+    let (status, revoked_search) = request(
+        &api,
+        &denied_token,
+        "POST",
+        "/api/v1/search",
+        Some(json!({"query":"Prepare the release","sources":["files"],"limit":10})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{revoked_search}");
+    assert_eq!(revoked_search["total"], 0);
     let uri = format!(
         "/api/v1/meetings/{meeting_id}/actions/{}",
         action["id"].as_str().expect("action ID")

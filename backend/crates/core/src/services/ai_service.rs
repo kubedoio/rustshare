@@ -22,7 +22,8 @@ use crate::domain::{FileId, SharePermissions, UserId};
 use crate::services::permission_resolver::{PermissionResolver, PermissionResolverOps, Resource};
 
 use super::ai::indexing::{
-    is_hidden_file_name, ContentIndexer, IndexAclProjection, IndexedDocument, RetrievalPrincipal,
+    is_hidden_file_for_path, ContentIndexer, IndexAclProjection, IndexedDocument,
+    RetrievalPrincipal,
 };
 use super::ai::EmbeddingGenerator;
 
@@ -294,7 +295,7 @@ where
         // Filter out hidden metadata files
         let raw_results: Vec<_> = raw_results
             .into_iter()
-            .filter(|(doc, _)| !is_hidden_file_name(&doc.file_name))
+            .filter(|(doc, _)| !is_hidden_file_for_path(&doc.file_name, &doc.file_path))
             .collect();
 
         // Filter by permission and build results

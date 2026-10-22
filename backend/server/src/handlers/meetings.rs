@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use super::AuthenticatedUser;
 use crate::handlers::AppError;
-use crate::services::meeting_service::{MeetingNote, MeetingSummary};
+use crate::services::meeting_service::{MeetingMetadata, MeetingNote, MeetingSummary};
 use crate::AppState;
 use rustshare_core::events::{AggregateType, Event, EventType, MeetingNoteModifiedPayload};
 
@@ -247,6 +247,7 @@ pub async fn create_meeting(
             req.content,
         )
         .await?;
+    index_meeting_search_content(&state, meeting.id, auth.user_id, auth.tenant_id).await;
 
     let payload = MeetingNoteModifiedPayload {
         meeting_id: meeting.id.to_string(),
@@ -285,10 +286,11 @@ pub async fn get_meeting(
     auth: AuthenticatedUser,
     Path(meeting_id): Path<Uuid>,
 ) -> Result<Json<MeetingNote>, AppError> {
-    let meeting = state
+    let mut meeting = state
         .meeting_service
         .get_meeting(meeting_id, auth.user_id, auth.tenant_id)
         .await?;
+    hide_unavailable_meeting_references(&state, &auth, &mut meeting.metadata).await;
 
     Ok(Json(meeting))
 }
@@ -469,6 +471,7 @@ pub async fn update_meeting(
             req.attendees,
         )
         .await?;
+    index_meeting_search_content(&state, meeting_id, auth.user_id, auth.tenant_id).await;
 
     let payload = MeetingNoteModifiedPayload {
         meeting_id: meeting_id.to_string(),
@@ -551,12 +554,42 @@ pub async fn list_meetings(
     auth: AuthenticatedUser,
     Query(query): Query<crate::handlers::PaginationQuery>,
 ) -> Result<Json<Vec<MeetingSummary>>, AppError> {
-    let meetings = state
+    let mut meetings = state
         .meeting_service
         .list_meetings(auth.user_id, auth.tenant_id, query.limit(), query.offset())
         .await?;
+    for meeting in &mut meetings {
+        hide_unavailable_meeting_references(&state, &auth, &mut meeting.metadata).await;
+    }
 
     Ok(Json(meetings))
+}
+
+async fn hide_unavailable_meeting_references(
+    state: &AppState,
+    auth: &AuthenticatedUser,
+    metadata: &mut MeetingMetadata,
+) {
+    if let Some(event_id) = metadata.calendar_event_id {
+        if state
+            .calendar_service
+            .get_event(auth.tenant_id, auth.user_id, event_id)
+            .await
+            .is_err()
+        {
+            metadata.calendar_event_id = None;
+        }
+    }
+    if let Some(source_id) = metadata.copied_from_meeting_id {
+        if state
+            .meeting_service
+            .get_meeting(source_id, auth.user_id, auth.tenant_id)
+            .await
+            .is_err()
+        {
+            metadata.copied_from_meeting_id = None;
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -591,6 +624,7 @@ pub async fn move_meeting(
             req.target_folder_id,
         )
         .await?;
+    index_meeting_search_content(&state, meeting_id, auth.user_id, auth.tenant_id).await;
 
     let payload = MeetingNoteModifiedPayload {
         meeting_id: meeting_id.to_string(),
@@ -633,6 +667,7 @@ pub async fn duplicate_meeting(
         .meeting_service
         .duplicate_meeting(meeting_id, auth.user_id, auth.tenant_id)
         .await?;
+    index_meeting_search_content(&state, meeting.id, auth.user_id, auth.tenant_id).await;
 
     let payload = MeetingNoteModifiedPayload {
         meeting_id: meeting.id.to_string(),
@@ -653,6 +688,34 @@ pub async fn duplicate_meeting(
         .map_err(|e| AppError::internal(e.to_string()))?;
 
     Ok((StatusCode::CREATED, Json(meeting)))
+}
+
+pub(crate) async fn index_meeting_search_content(
+    state: &AppState,
+    meeting_id: Uuid,
+    owner_id: rustshare_core::domain::UserId,
+    tenant_id: Uuid,
+) {
+    let files = match state
+        .metadata_store
+        .list_files_by_parent(Some(meeting_id), tenant_id)
+        .await
+    {
+        Ok(files) => files,
+        Err(error) => {
+            tracing::warn!(%error, "Meeting search indexing skipped");
+            return;
+        }
+    };
+    if let Some(index) = files.into_iter().find(|file| file.name == "index.md") {
+        if let Err(error) = state
+            .note_service
+            .index_meeting_search_content(index.id, owner_id, tenant_id)
+            .await
+        {
+            tracing::warn!(%error, "Meeting search indexing skipped");
+        }
+    }
 }
 
 #[cfg(test)]
