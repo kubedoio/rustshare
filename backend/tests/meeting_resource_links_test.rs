@@ -211,13 +211,23 @@ async fn direct_links_are_idempotent_permission_aware_persistent_and_non_destruc
     assert_eq!(page["items"][0]["available"], true);
     assert_eq!(page["items"][0]["display_name"], "agenda.txt");
 
+    let note_parent = state
+        .folder_service
+        .create_folder(
+            "Custom meeting context".into(),
+            None,
+            attendee.id,
+            tenant_id,
+        )
+        .await
+        .expect("create custom note parent");
     let note = state
         .note_service
         .create_note(
             attendee.id,
             tenant_id,
             Some("Meeting note resource".into()),
-            None,
+            Some(note_parent.id),
             Some("Original note content".into()),
         )
         .await
@@ -330,6 +340,26 @@ async fn direct_links_are_idempotent_permission_aware_persistent_and_non_destruc
     let foreign_tenant = create_test_tenant(&state.db_pool).await;
     let foreign_owner =
         create_test_user(&state, "meeting_link_foreign_owner", foreign_tenant).await;
+    let foreign_token = create_auth_token(&state, foreign_owner.id, foreign_tenant);
+    let (status, concealed) = request_json(&api, &foreign_token, "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (missing_status, missing_body) = request_json(
+        &api,
+        &foreign_token,
+        "GET",
+        &format!("/api/v1/meetings/{}/resources", Uuid::new_v4()),
+        None,
+    )
+    .await;
+    assert_eq!(missing_status, status);
+    assert_eq!(missing_body, concealed);
+    for marker in [
+        "agenda.txt",
+        "Meeting note resource",
+        "Original note content",
+    ] {
+        assert!(!concealed.to_string().contains(marker));
+    }
     let foreign_file = create_file(&state, foreign_owner.id, foreign_tenant, "foreign.txt").await;
     for id in [foreign_file, Uuid::new_v4()] {
         let (status, _) = request_json(
@@ -342,6 +372,30 @@ async fn direct_links_are_idempotent_permission_aware_persistent_and_non_destruc
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
+    let (status, _) = request_json(
+        &api,
+        &token,
+        "DELETE",
+        &format!("/api/v1/notes/{}", note.id),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, stale_note_resources) = request_json(&api, &token, "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let stale_note = stale_note_resources["items"]
+        .as_array()
+        .expect("resource list")
+        .iter()
+        .find(|item| item["id"] == linked_note["id"])
+        .expect("stale note link remains attributable");
+    assert_eq!(stale_note["available"], false);
+    for field in ["display_name", "open_url", "resource_ref"] {
+        assert!(stale_note.get(field).is_none());
+    }
+    assert!(!stale_note_resources
+        .to_string()
+        .contains("Original note content"));
     let private_same_tenant = create_file(&state, owner.id, tenant_id, "unshared.txt").await;
     let (status, _) = request_json(
         &api,
@@ -629,12 +683,9 @@ async fn disabled_user_cannot_read_linked_meeting_resources() {
         .execute(&state.db_pool)
         .await
         .expect("disable user");
-    let (status, _) = request_json(&api, &token, "GET", &uri, None).await;
-    assert_ne!(
-        status,
-        StatusCode::OK,
-        "disabled accounts lose access immediately"
-    );
+    let (status, denied) = request_json(&api, &token, "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(!denied.to_string().contains("disabled-user.txt"));
     cleanup_tenant_with_versions(&state.db_pool, tenant_id).await;
 }
 

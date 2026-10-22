@@ -24,6 +24,7 @@ SECRET_ENV_VARS = (
     "AWS_SECRET_ACCESS_KEY",
 )
 REDACTED = b"[REDACTED]"
+OPTIONAL_SECRET_ENV_VARS = ("PILOT_RUNTIME_DB_PASSWORD",)
 SECRET_FOUND = 10
 SENSITIVE_PATTERNS = (
     re.compile(
@@ -39,7 +40,7 @@ def secret_values(environ: Mapping[str, str]) -> tuple[bytes, ...]:
         sorted(
             {
                 environ[name].encode("utf-8", errors="surrogateescape")
-                for name in SECRET_ENV_VARS
+                for name in SECRET_ENV_VARS + OPTIONAL_SECRET_ENV_VARS
                 if environ.get(name)
             },
             key=len,

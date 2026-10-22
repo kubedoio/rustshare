@@ -4,6 +4,12 @@ use std::time::Duration;
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
     pub database_url: String,
+    /// Disable after provisioning migrations with separate operator credentials.
+    #[serde(
+        default = "default_run_migrations",
+        rename = "rustshare_run_migrations"
+    )]
+    pub run_migrations: bool,
     pub jwt_secret: String,
     #[serde(default = "default_jwt_issuer")]
     pub jwt_issuer: String,
@@ -146,6 +152,10 @@ pub struct AppConfig {
 
 fn default_jwt_issuer() -> String {
     "rustshare".to_string()
+}
+
+fn default_run_migrations() -> bool {
+    true
 }
 
 fn default_jwt_audience() -> String {
@@ -902,6 +912,27 @@ mod tests {
         ] {
             std::env::remove_var(name);
         }
+    }
+
+    #[test]
+    fn automatic_migrations_are_defaulted_but_operator_mode_is_explicit() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        set_valid_base_env();
+        std::env::remove_var("RUSTSHARE_RUN_MIGRATIONS");
+        assert!(
+            AppConfig::from_env()
+                .expect("legacy default")
+                .run_migrations
+        );
+        std::env::set_var("RUSTSHARE_RUN_MIGRATIONS", "false");
+        assert!(
+            !AppConfig::from_env()
+                .expect("operator-managed schema")
+                .run_migrations
+        );
+        std::env::set_var("RUSTSHARE_RUN_MIGRATIONS", "invalid");
+        assert!(AppConfig::from_env().is_err());
+        std::env::remove_var("RUSTSHARE_RUN_MIGRATIONS");
     }
 
     #[test]

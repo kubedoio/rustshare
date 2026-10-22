@@ -146,7 +146,9 @@ async fn meeting_resource_view(
         state.note_service.workspace_name, state.note_service.folder_name
     );
     let legacy_notes = format!("/{}/", state.note_service.folder_name);
-    let is_note = file.path.starts_with(&workspace_notes) || file.path.starts_with(&legacy_notes);
+    let is_note = crate::services::note_service::NoteService::is_folder_backed_note(&file)
+        || file.path.starts_with(&workspace_notes)
+        || file.path.starts_with(&legacy_notes);
     let (display_name, open_url, resource_kind) = if is_note {
         // Keep listing read-only: NoteService::get_note reconciles external
         // edits and can mutate sidecar metadata or the bundle name.
@@ -320,7 +322,8 @@ pub async fn list_meeting_resources(
     state
         .meeting_service
         .get_meeting(meeting_id, auth.user_id, auth.tenant_id)
-        .await?;
+        .await
+        .map_err(meeting_read_error)?;
     let limit = query.limit();
     let (links, total) = state
         .meeting_service

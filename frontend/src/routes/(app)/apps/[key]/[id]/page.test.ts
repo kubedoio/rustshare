@@ -79,11 +79,13 @@ vi.mock('$lib/api/folders', () => ({
 }));
 
 vi.mock('$lib/applications/registry', () => ({
-	getApplicationByRouteSlug: vi.fn(() => ({
-		key: 'notes',
-		displayName: 'Notes',
-		rootPath: '/Notes'
-	}))
+	applicationsStore: readable([
+		{
+			key: 'notes',
+			displayName: 'Notes',
+			rootPath: '/Notes'
+		}
+	])
 }));
 
 vi.mock('$lib/stores/toast', () => ({

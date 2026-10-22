@@ -1383,7 +1383,7 @@ impl NoteService {
     }
 
     /// Check if a file represents a folder-backed note (note.md inside a bundle).
-    fn is_folder_backed_note(file: &rustshare_core::domain::File) -> bool {
+    pub(crate) fn is_folder_backed_note(file: &rustshare_core::domain::File) -> bool {
         file.name == "note.md"
     }
 

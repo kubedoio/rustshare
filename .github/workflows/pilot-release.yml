@@ -24,7 +24,9 @@ jobs:
       - name: Test pilot log redaction
         env:
           PYTHONDONTWRITEBYTECODE: "1"
-        run: python3 scripts/test_redact_pilot_logs.py
+        run: |
+          python3 scripts/test_redact_pilot_logs.py
+          python3 scripts/test_pilot_ui_results.py
 
       - name: Build pilot backend image
         run: |
@@ -373,6 +375,7 @@ jobs:
           ADMIN_EMAIL: admin@localhost
           ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
           PLAYWRIGHT_JSON_OUTPUT_NAME: /tmp/rustshare-pilot-evidence/ui-playwright-results.json
+          PILOT_ACCEPTANCE_MUTATIONS: authorized
         run: |
           set -euo pipefail
           ui_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -393,7 +396,7 @@ jobs:
             PILOT_NOTE_ID="${pilot_note_id}" \
             PILOT_NOTE_TITLE="${pilot_note_title}" \
             npm run test:e2e -- \
-            tests/pilot.e2e.ts --reporter=line,json
+            tests/pilot.e2e.ts tests/institutional.e2e.ts --workers=1 --reporter=line,json
           ui_playwright_status="$(python3 ../scripts/verify_pilot_ui_results.py \
             "${PLAYWRIGHT_JSON_OUTPUT_NAME}")"
           printf 'UI_STATUS=passed\nUI_STATIC_STATUS=passed\nUI_BROWSER_STATUS=passed\nUI_URL=http://127.0.0.1/\nUI_FILE_NAME=%s\nUI_NOTE_ID=%s\nUI_NOTE_TITLE=%s\nUI_NOTE_H1=Beta Smoke H1\nUI_SOURCE_SHA=%s\nUI_BUILD_VERSION=%s\nUI_DEPLOYMENT_ID=%s\nUI_CONFIG_ID=%s\nUI_WORKFLOW_RUN_ID=%s\nUI_WORKFLOW_RUN_ATTEMPT=%s\nUI_STARTED_AT=%s\nUI_FINISHED_AT=%s\n' \
@@ -404,6 +407,156 @@ jobs:
             > /tmp/rustshare-pilot-evidence/ui.env
           printf '%s\n' "${ui_playwright_status}" \
             >> /tmp/rustshare-pilot-evidence/ui.env
+          printf 'UI_IMAGE_ID=%s\nUI_INSTITUTIONAL_JOURNEY=passed\n' "${PILOT_IMAGE_ID}" \
+            >> /tmp/rustshare-pilot-evidence/ui.env
+
+      - name: Validate separately provisioned runtime database role
+        env:
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
+          POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
+          DATABASE_URL: postgres://rustshare:${{ steps.pilot-secrets.outputs.pg_password }}@postgres:5432/rustshare
+          JWT_SECRET: ${{ secrets.CI_JWT_SECRET != '' && secrets.CI_JWT_SECRET || steps.pilot-secrets.outputs.jwt_secret }}
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY != '' && secrets.CI_ENCRYPTION_KEY || steps.pilot-secrets.outputs.encryption_key }}
+          RUSTFS_ROOT_USER: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          AWS_ACCESS_KEY_ID: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
+          RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+          ADMIN_EMAIL: admin@localhost
+          ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          VIEWER_EMAIL: viewer@localhost
+          VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+        run: |
+          set -euo pipefail
+          compose=(docker compose -f docker-compose.yml -f docker-compose.pilot.yml)
+          # This job owns fresh volumes; never run this provisioning on retained deployments.
+          runtime_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          "${compose[@]}" run --rm --no-deps --entrypoint rustshare-server backend --migrate
+          runtime_password="$(openssl rand -hex 32)"
+          echo "::add-mask::${runtime_password}"
+          echo "PILOT_RUNTIME_DB_PASSWORD=${runtime_password}" >> "$GITHUB_ENV"
+          postgres_container="$("${compose[@]}" ps -q postgres)"
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare \
+            -v runtime_password="${runtime_password}" <<'SQL'
+          CREATE ROLE pilot_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD :'runtime_password';
+          GRANT CONNECT ON DATABASE rustshare TO pilot_runtime;
+          GRANT USAGE ON SCHEMA public TO pilot_runtime;
+          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO pilot_runtime;
+          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO pilot_runtime;
+          REVOKE ALL ON _sqlx_migrations FROM pilot_runtime;
+          SQL
+          audit_runtime_role() {
+            docker exec -i -e PGPASSWORD="${runtime_password}" "${postgres_container}" \
+              psql -X -h 127.0.0.1 -U pilot_runtime -d rustshare < scripts/check-runtime-db-role.sql
+          }
+          # Reject broad predefined privileges even when the role's own flags are safe.
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare \
+            -c 'GRANT pg_read_all_data TO pilot_runtime'
+          unexpectedly_allowed=false
+          if audit_runtime_role > /tmp/rustshare-pilot-evidence/runtime-db-negative.txt 2>&1; then
+            unexpectedly_allowed=true
+          fi
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare \
+            -c 'REVOKE pg_read_all_data FROM pilot_runtime'
+          [[ "${unexpectedly_allowed}" == false ]]
+          grep -Fq 'Runtime role has privileged attributes or role membership' \
+            /tmp/rustshare-pilot-evidence/runtime-db-negative.txt
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare <<'SQL'
+          CREATE FUNCTION public.pilot_runtime_probe() RETURNS integer LANGUAGE sql AS 'SELECT 1';
+          ALTER FUNCTION public.pilot_runtime_probe() OWNER TO pilot_runtime;
+          SQL
+          unexpectedly_allowed=false
+          if audit_runtime_role >> /tmp/rustshare-pilot-evidence/runtime-db-negative.txt 2>&1; then
+            unexpectedly_allowed=true
+          fi
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare \
+            -c 'DROP FUNCTION public.pilot_runtime_probe()'
+          [[ "${unexpectedly_allowed}" == false ]]
+          grep -Fq 'Runtime role owns application routines' \
+            /tmp/rustshare-pilot-evidence/runtime-db-negative.txt
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare <<'SQL'
+          CREATE DOMAIN public.pilot_runtime_domain_probe AS integer;
+          ALTER DOMAIN public.pilot_runtime_domain_probe OWNER TO pilot_runtime;
+          SQL
+          unexpectedly_allowed=false
+          if audit_runtime_role >> /tmp/rustshare-pilot-evidence/runtime-db-negative.txt 2>&1; then
+            unexpectedly_allowed=true
+          fi
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare \
+            -c 'DROP DOMAIN public.pilot_runtime_domain_probe'
+          [[ "${unexpectedly_allowed}" == false ]]
+          grep -Fq 'Runtime role owns application types' \
+            /tmp/rustshare-pilot-evidence/runtime-db-negative.txt
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare \
+            -c 'CREATE SCHEMA pgruntime_probe AUTHORIZATION pilot_runtime'
+          unexpectedly_allowed=false
+          if audit_runtime_role >> /tmp/rustshare-pilot-evidence/runtime-db-negative.txt 2>&1; then
+            unexpectedly_allowed=true
+          fi
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare \
+            -c 'DROP SCHEMA pgruntime_probe'
+          [[ "${unexpectedly_allowed}" == false ]]
+          grep -Fq 'Runtime role can create database schema objects' \
+            /tmp/rustshare-pilot-evidence/runtime-db-negative.txt
+          audit_runtime_role > /tmp/rustshare-pilot-evidence/runtime-db-posture.txt
+          runtime_url="postgres://pilot_runtime:${runtime_password}@postgres:5432/rustshare"
+          runtime_config="$(DATABASE_URL="${runtime_url}" RUSTSHARE_RUN_MIGRATIONS=false \
+            "${compose[@]}" config | sha256sum | cut -d' ' -f1)"
+          probe_name="${COMPOSE_PROJECT_NAME}-runtime-role"
+          cleanup_runtime_probe() {
+            result=$?
+            if ! docker rm -f "${probe_name}" >/dev/null; then exit 1; fi
+            # Remove probe ACLs before backup: the isolated restore has no such role.
+            if ! "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare <<'SQL'
+          REVOKE ALL ON ALL TABLES IN SCHEMA public FROM pilot_runtime;
+          REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM pilot_runtime;
+          REVOKE ALL ON SCHEMA public FROM pilot_runtime;
+          REVOKE ALL ON DATABASE rustshare FROM pilot_runtime;
+          DROP ROLE pilot_runtime;
+          SQL
+            then exit 1; fi
+            if [[ "${result}" == 0 ]]; then
+              echo 'RUNTIME_DB_CLEANUP=passed' >> /tmp/rustshare-pilot-evidence/runtime-db.env
+            fi
+            exit "${result}"
+          }
+          trap cleanup_runtime_probe EXIT
+          "${compose[@]}" run -d --no-deps --name "${probe_name}" \
+            --publish 127.0.0.1:18081:8080 \
+            --env DATABASE_URL="${runtime_url}" --env RUSTSHARE_RUN_MIGRATIONS=false backend
+          probe_image="$(docker inspect --format '{{.Image}}' "${probe_name}")"
+          [[ "${probe_image}" == "${PILOT_IMAGE_ID}" ]]
+          ready=false
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18081/health/ready \
+              > /tmp/rustshare-pilot-evidence/runtime-db-ready.json; then ready=true; break; fi
+            sleep 2
+          done
+          [[ "${ready}" == true ]]
+          BASE_URL=http://127.0.0.1:18081 API_BASE_URL=http://127.0.0.1:18081/api/v1 \
+            PILOT_PRESERVE_DATA=0 PILOT_EXERCISE_USER_LIFECYCLE=0 \
+            PILOT_SOURCE_SHA="${GITHUB_SHA}" PILOT_BUILD_VERSION="${PILOT_BUILD_VERSION}" \
+            PILOT_DEPLOYMENT_ID="${PILOT_DEPLOYMENT_ID}-runtime-role" PILOT_CONFIG_ID="${runtime_config}" \
+            REPORT_DIR=/tmp/rustshare-runtime-role-smoke \
+            PILOT_REPORT_PATH=/tmp/rustshare-pilot-evidence/runtime-db-smoke.env \
+            scripts/run-beta-smoke.sh
+          cat > /tmp/rustshare-pilot-evidence/runtime-db.env <<EOF
+          RUNTIME_DB_STATUS=passed
+          RUNTIME_DB_NEGATIVES=passed
+          RUN_MIGRATIONS=false
+          SOURCE_SHA=${GITHUB_SHA}
+          IMAGE_ID=${probe_image}
+          CONFIG_ID=${runtime_config}
+          DEPLOYMENT_ID=${PILOT_DEPLOYMENT_ID}-runtime-role
+          HTTP_BIND=127.0.0.1:18081
+          WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
+          WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
+          STARTED_AT=${runtime_started_at}
+          FINISHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
 
       - name: Restart application and verify readiness
         env:
@@ -1063,6 +1216,8 @@ jobs:
               clean-install.env \
               canonical-smoke.env \
               ui.env \
+              runtime-db.env \
+              runtime-db-smoke.env \
               failure-drills.env \
               persistence.env \
               backup.env \
@@ -1140,7 +1295,25 @@ jobs:
             require_line "${clean_install}" "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
             require_line "${evidence_dir}/ui.env" 'UI_STATUS=passed'
             require_line "${evidence_dir}/ui.env" 'UI_BROWSER_STATUS=passed'
-            require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_EXPECTED=1'
+            require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_EXPECTED=2'
+            require_line "${evidence_dir}/ui.env" 'UI_INSTITUTIONAL_JOURNEY=passed'
+            require_line "${evidence_dir}/ui.env" "UI_IMAGE_ID=${image_id}"
+            require_line "${evidence_dir}/runtime-db.env" 'RUNTIME_DB_STATUS=passed'
+            require_line "${evidence_dir}/runtime-db.env" 'RUNTIME_DB_NEGATIVES=passed'
+            require_line "${evidence_dir}/runtime-db.env" 'RUNTIME_DB_CLEANUP=passed'
+            require_line "${evidence_dir}/runtime-db.env" 'RUN_MIGRATIONS=false'
+            require_line "${evidence_dir}/runtime-db.env" "SOURCE_SHA=${GITHUB_SHA}"
+            require_line "${evidence_dir}/runtime-db.env" "IMAGE_ID=${image_id}"
+            require_line "${evidence_dir}/runtime-db.env" "DEPLOYMENT_ID=${deployment_id}-runtime-role"
+            require_line "${evidence_dir}/runtime-db.env" "WORKFLOW_RUN_ID=${GITHUB_RUN_ID}"
+            require_line "${evidence_dir}/runtime-db.env" "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
+            runtime_config="$(sed -n 's/^CONFIG_ID=//p' "${evidence_dir}/runtime-db.env")"
+            [[ "${runtime_config}" =~ ^[0-9a-f]{64}$ ]]
+            require_smoke_passed "${evidence_dir}/runtime-db-smoke.env"
+            require_line "${evidence_dir}/runtime-db-smoke.env" "BETA_SMOKE_SOURCE_SHA=${GITHUB_SHA}"
+            require_line "${evidence_dir}/runtime-db-smoke.env" "BETA_SMOKE_BUILD_VERSION=${image_version}"
+            require_line "${evidence_dir}/runtime-db-smoke.env" "BETA_SMOKE_CONFIG_ID=${runtime_config}"
+            require_line "${evidence_dir}/runtime-db-smoke.env" "BETA_SMOKE_DEPLOYMENT_ID=${deployment_id}-runtime-role"
             require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_SKIPPED=0'
             require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_UNEXPECTED=0'
             require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_FLAKY=0'
