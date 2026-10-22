@@ -65,7 +65,7 @@ outstanding. No real user data or retained deployment was changed.
 
 Executed HTTP suites: Calendar 28, Meeting/Action 13, resource links 6, unified
 search 18 (65 passed). Result-validator tests: 10 passed; workflow/redaction tests:
-37 passed. Final seeded Playwright run: **2 passed (29.5s)**, zero skips, retries,
+37 passed. Final seeded Playwright run with a custom-folder Note: **2 passed (40.3s)**, zero skips, retries,
 unexpected results or global errors; canonical JSON verifier passed. Earlier
 login/locator failures were investigated and are not counted as passes.
 Full-gate results are recorded in the PR. Unexecuted
