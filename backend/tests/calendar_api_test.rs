@@ -1118,6 +1118,7 @@ async fn single_event_export_requires_enabled_calendar_and_event_ownership() {
     let other = create_test_user(&state, "calendar_export_other", tenant_id).await;
     configure_calendar(&state, tenant_id, owner.id, true).await;
     configure_calendar(&state, tenant_id, other.id, true).await;
+    let owner_token = create_auth_token(&state, owner.id, tenant_id);
 
     let event = state
         .calendar_service
@@ -1149,10 +1150,7 @@ async fn single_event_export_requires_enabled_calendar_and_event_ownership() {
         .oneshot(
             Request::builder()
                 .uri(&uri)
-                .header(
-                    "Authorization",
-                    format!("Bearer {}", create_auth_token(&state, owner.id, tenant_id)),
-                )
+                .header("Authorization", format!("Bearer {owner_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1201,10 +1199,7 @@ async fn single_event_export_requires_enabled_calendar_and_event_ownership() {
         .oneshot(
             Request::builder()
                 .uri(&uri)
-                .header(
-                    "Authorization",
-                    format!("Bearer {}", create_auth_token(&state, owner.id, tenant_id)),
-                )
+                .header("Authorization", format!("Bearer {owner_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1226,10 +1221,7 @@ async fn single_event_export_requires_enabled_calendar_and_event_ownership() {
         .oneshot(
             Request::builder()
                 .uri(&uri)
-                .header(
-                    "Authorization",
-                    format!("Bearer {}", create_auth_token(&state, owner.id, tenant_id)),
-                )
+                .header("Authorization", format!("Bearer {owner_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )

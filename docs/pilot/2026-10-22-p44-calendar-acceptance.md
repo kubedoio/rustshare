@@ -11,7 +11,7 @@ This matrix records evidence gathered for #329 and the bounded historical-meetin
 | Acceptance criterion | Status | Evidence / bounded limitation |
 | --- | --- | --- |
 | Export one owned event as RFC 5545 iCalendar | **Tested** | `calendar_api_test` HTTP export checks ownership, headers, event fields, and an independent `ical` parser. |
-| Import and export supported event types; repeat imports do not duplicate | **Tested** | `calendar_import_test` passed 14 tests, including supported single-event cases, stable UID mapping, duplicate prevention, and independent parse of exported data. |
+| Import and export supported event types; repeat imports do not duplicate | **Tested** | `calendar_import_test` passed 15 tests, including supported single-event cases, stable UID mapping, duplicate prevention, and independent parse of exported data. |
 | Preserve timezone semantics and DST wall-clock interpretation | **Tested** | Added an HTTP import/export/re-import test for `Europe/Berlin` during the 2026 fall DST overlap. It verifies the UTC instant and stored timezone survive export via `X-WR-TIMEZONE`; independent `ical` parsing is used. Existing parser tests cover TZID/VTIMEZONE conversion. |
 | All-day events and supported recurrence round-trip | **Tested** | Existing import/export tests cover date-valued all-day events and UTC recurring masters. |
 | Non-UTC recurrence and detached recurrence overrides | **Explicitly deferred** | Contract supports UTC recurring masters; non-UTC recurring masters and detached overrides are not exported as lossy data (override export returns conflict). No broader recurrence contract is claimed. |
