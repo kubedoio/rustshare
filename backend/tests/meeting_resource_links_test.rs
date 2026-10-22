@@ -211,13 +211,23 @@ async fn direct_links_are_idempotent_permission_aware_persistent_and_non_destruc
     assert_eq!(page["items"][0]["available"], true);
     assert_eq!(page["items"][0]["display_name"], "agenda.txt");
 
+    let note_parent = state
+        .folder_service
+        .create_folder(
+            "Custom meeting context".into(),
+            None,
+            attendee.id,
+            tenant_id,
+        )
+        .await
+        .expect("create custom note parent");
     let note = state
         .note_service
         .create_note(
             attendee.id,
             tenant_id,
             Some("Meeting note resource".into()),
-            None,
+            Some(note_parent.id),
             Some("Original note content".into()),
         )
         .await

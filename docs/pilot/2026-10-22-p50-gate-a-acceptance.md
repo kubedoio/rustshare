@@ -51,9 +51,11 @@ smoke writes, and removes probe ACLs/role before backup. Negative probes must
 pass. This disposable CI probe does not prove institutional runtime posture.
 Image `.Id` is a configuration digest, not the registry manifest digest.
 
-Two acceptance failures exposed product defects: foreign meeting-resource listing
-returned a distinguishable denial, and cold Application routes did not react to
-registry arrival. Both are fixed with regression coverage. Linked content still
+Acceptance failures exposed three product defects: foreign meeting-resource listing
+returned a distinguishable denial, cold Application routes did not react to registry
+arrival, and canonical Notes in custom folders opened in Files preview. These are
+fixed with regression coverage; Note bundle recognition reuses NoteService after
+authoritative Files authorization. Linked content still
 uses authoritative Application permissions; no authorization shortcut was added.
 
 Local evidence uses disposable `rustshare_test_p50` PostgreSQL and
