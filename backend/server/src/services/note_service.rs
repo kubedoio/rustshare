@@ -921,8 +921,14 @@ impl NoteService {
         if file.tenant_id != tenant_id {
             return Err(NoteError::PermissionDenied);
         }
-        let Some(meta) = self.load_metadata(file_id, user_id, tenant_id).await? else {
-            return Ok(());
+        let meta = match self.load_metadata(file_id, user_id, tenant_id).await? {
+            Some(meta) => meta,
+            None if file.name == "index.md"
+                && !rustshare_core::services::is_hidden_file_for_path(&file.name, &file.path) =>
+            {
+                NoteMetadata::new(file.name.clone())
+            }
+            None => return Ok(()),
         };
         if meta.kind != "note" {
             return Ok(());

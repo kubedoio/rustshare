@@ -135,7 +135,13 @@
 				const files = filterUserVisibleEntries(
 					response.results
 						.filter((r) => r.resource_type === 'file')
-						.filter((r) => !/(?:^|\/)Meetings(?:\/|$)/i.test(r.path))
+						.filter(
+							(r) =>
+								!(
+									r.name === 'index.md' &&
+									/(?:^|\/)Meetings\/[^/]+\/\d{4}\/[^/]+\/index\.md$/i.test(r.path)
+								)
+						)
 						.map((r) => ({ id: r.id, name: r.name, path: r.path }))
 				);
 				const folderResults = response.results.filter((r) => r.resource_type === 'folder');
