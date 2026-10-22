@@ -1,5 +1,4 @@
-import type { SearchResultItem, UnifiedSearchResult } from '$lib/api/search';
-import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
+import type { UnifiedSearchResult } from '$lib/api/search';
 
 interface SearchItem {
 	id: string;
@@ -14,12 +13,10 @@ export interface SearchResults {
 	meetings: SearchItem[];
 }
 
-export function globalSearchResults(
-	resources: SearchResultItem[],
-	historical: UnifiedSearchResult[]
-): SearchResults {
+export function globalSearchResults(results: UnifiedSearchResult[]): SearchResults {
 	const meetingMap = new Map<string, SearchItem>();
-	for (const result of historical) {
+	const fileMap = new Map<string, SearchItem>();
+	for (const result of results) {
 		const id = result.provenance.meeting_id;
 		if (
 			id &&
@@ -29,15 +26,19 @@ export function globalSearchResults(
 		) {
 			meetingMap.set(id, { id, name: result.title, path: '', snippet: result.snippet });
 		}
+		const fileId = result.provenance.file_id ?? result.provenance.note_id;
+		if (fileId && result.source_type === 'file' && !fileMap.has(fileId)) {
+			fileMap.set(fileId, {
+				id: fileId,
+				name: result.title,
+				path: result.location ?? '',
+				snippet: result.snippet
+			});
+		}
 	}
-	const visible = filterUserVisibleEntries(resources);
 	return {
-		files: visible
-			.filter((result) => result.resource_type === 'file')
-			.map(({ id, name, path }) => ({ id, name, path })),
-		folders: visible
-			.filter((result) => result.resource_type === 'folder' && !meetingMap.has(result.id))
-			.map(({ id, name, path }) => ({ id, name, path })),
+		files: [...fileMap.values()],
+		folders: [],
 		meetings: [...meetingMap.values()]
 	};
 }

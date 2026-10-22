@@ -126,8 +126,12 @@ Calendar enabled and uses the same tenant/owner-scoped lookup as the event read
 route (`401` unauthenticated, `403` disabled, `404` foreign or missing event).
 The stable `UID` preserves a non-empty source `external_uid` for imported or
 provider-backed events; internal events use RustShare's event UUID;
-`DTSTAMP` uses `updated_at`. Timed values are UTC instants. All-day values use
-DATE properties and the stored exclusive UTC-midnight end date.
+`DTSTAMP` uses `updated_at`. Timed values are UTC instants; the stored IANA
+timezone is carried as `X-WR-TIMEZONE` metadata (the exporter does not emit a
+`VTIMEZONE`). Import preserves that hint for UTC-timed events without an
+explicit `TZID`, keeping the stored timezone on a RustShare export/import
+round trip without changing the UTC instant. All-day values use DATE properties
+and the stored exclusive UTC-midnight end date.
 
 Until the exporter can emit a complete timezone definition and preserve
 detached recurrence identity, it returns `409` for recurrence overrides and

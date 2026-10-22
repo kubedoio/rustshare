@@ -4,27 +4,14 @@ import { globalSearchResults } from './searchResults';
 describe('globalSearchResults', () => {
 	it('keeps attachments and ordinary folders separate from authorized meeting navigation', () => {
 		const folderPath = '/Workspace/Meetings/General/2026/Planning';
-		const resources = [
-			{ id: 'meeting', name: 'Planning folder', path: folderPath, resource_type: 'folder' },
-			{
-				id: 'ordinary',
-				name: 'Ordinary folder',
-				path: `${folderPath}-ordinary`,
-				resource_type: 'folder'
-			},
-			{
-				id: 'attachment',
-				name: 'Budget.txt',
-				path: `${folderPath}/Budget.txt`,
-				resource_type: 'file'
-			}
-		].map((result) => ({ ...result, owner_id: 'owner', permission: 'View' }));
-		const historical = [
+		const results = [
 			{
 				source_application: 'io.elembra.files',
 				source_type: 'file',
 				resource_ref: 'elembra://io.elembra.files/file/attachment',
 				title: 'Budget.txt',
+				location: `${folderPath}/Budget.txt`,
+				snippet: 'The budget is approved',
 				provenance: { file_id: 'attachment', meeting_id: 'meeting' }
 			},
 			{
@@ -37,10 +24,10 @@ describe('globalSearchResults', () => {
 			}
 		];
 
-		const result = globalSearchResults(resources, historical);
+		const result = globalSearchResults(results);
 
 		expect(result.files.map((file) => file.id)).toEqual(['attachment']);
-		expect(result.folders.map((folder) => folder.id)).toEqual(['ordinary']);
+		expect(result.folders).toEqual([]);
 		expect(result.meetings).toEqual([
 			{ id: 'meeting', name: 'Authorized planning title', path: '', snippet: 'Historical agenda' }
 		]);

@@ -782,9 +782,32 @@ fn parse_file(bytes: &[u8]) -> Result<ParsedFile, IcalImportError> {
                 }
             }
 
+            // Our single-event exporter uses UTC DATE-TIME properties and
+            // carries the stored display timezone on VCALENDAR.
+            let calendar_timezone = find_prop(root, "X-WR-TIMEZONE")
+                .map(|property| property.val.as_str().trim())
+                .filter(|timezone| timezone.parse::<chrono_tz::Tz>().is_ok())
+                .map(str::to_owned);
+
             for child in &children {
                 if child.name.as_str().eq_ignore_ascii_case("VEVENT") {
-                    events.push(map_vevent(child, &timezones));
+                    events.push(map_vevent(child, &timezones).map(|mut event| {
+                        let utc_start_without_tzid =
+                            find_prop(child, "DTSTART").is_some_and(|start| {
+                                find_param(start, "TZID").is_none()
+                                    && start.val.as_str().trim().ends_with('Z')
+                            });
+                        if !event.all_day
+                            && event.rrule.is_none()
+                            && event.timezone == "UTC"
+                            && utc_start_without_tzid
+                        {
+                            if let Some(timezone) = &calendar_timezone {
+                                event.timezone.clone_from(timezone);
+                            }
+                        }
+                        event
+                    }));
                 } else if is_counted_skip(child.name.as_str()) {
                     skipped_components += 1;
                 } else {

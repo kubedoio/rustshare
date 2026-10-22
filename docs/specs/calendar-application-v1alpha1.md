@@ -281,6 +281,11 @@ Rows are deleted on consume (single use); expired rows are ignored/swept.
   resolved — or the system IANA tz database; floating times are interpreted
   as UTC and marked `timezone = 'UTC'`. All-day `DATE` values become
   UTC-midnight spans with `all_day = true` and `original_date` preserved.
+- For UTC-timed VEVENTs without an explicit `TZID`, a valid IANA
+  `X-WR-TIMEZONE` on the containing VCALENDAR is retained as the event's
+  display-timezone hint; it does not change the UTC instant. This preserves
+  the timezone metadata emitted by the single-event exporter. Explicit `TZID`
+  properties and all-day dates take precedence.
 - Timezone limitation for recurrence: an event imported with a non-IANA
   `TZID` stores that raw TZID string, which the read-time expander cannot
   resolve, so a recurring master with such a timezone expands on UTC
