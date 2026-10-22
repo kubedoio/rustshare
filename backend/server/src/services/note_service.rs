@@ -316,6 +316,9 @@ impl NoteService {
             return Ok(());
         }
         let file = self.file_service.get_file(file_id, owner_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
         if file.name != "index.md"
             || rustshare_core::services::is_hidden_file_for_path(&file.name, &file.path)
         {

@@ -172,6 +172,24 @@ async fn search_reopens_a_standalone_historical_meeting() {
     let owner = create_test_user(&state, "standalone_meeting_search", tenant).await;
     let token = create_auth_token(&state, owner.id, tenant);
     let meeting_id = meeting(&state, owner.id, tenant).await;
+    let mut attachments = Vec::new();
+    for name in ["Historic agenda.txt", "Historic report.txt"] {
+        attachments.push(
+            state
+                .file_service
+                .upload_file(
+                    owner.id,
+                    name.to_string(),
+                    Some(meeting_id),
+                    bytes::Bytes::from_static(b"Authorized meeting attachment"),
+                    "text/plain".to_string(),
+                    tenant,
+                )
+                .await
+                .expect("upload meeting attachment")
+                .id,
+        );
+    }
     let candidates = state
         .metadata_store
         .search_files_by_name_path(tenant, "Historic", 10)
@@ -203,12 +221,25 @@ async fn search_reopens_a_standalone_historical_meeting() {
         search["results"].as_array().is_some_and(|items| {
             items.iter().any(|item| {
                 item["title"] == "Historic private planning"
+                    && item["source_type"] == "meeting"
                     && item["provenance"]["meeting_id"] == meeting_id.to_string()
                     && item["provenance"]["calendar_event_id"].is_null()
             })
         }),
         "{search}"
     );
+    for file_id in attachments {
+        assert!(
+            search["results"].as_array().is_some_and(|items| {
+                items.iter().any(|item| {
+                    item["source_type"] == "file"
+                        && item["provenance"]["file_id"] == file_id.to_string()
+                        && item["provenance"]["meeting_id"] == meeting_id.to_string()
+                })
+            }),
+            "meeting attachment was collapsed into a meeting result: {search}"
+        );
+    }
 
     cleanup(&state.db_pool, tenant).await;
 }

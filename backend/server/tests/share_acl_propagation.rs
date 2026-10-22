@@ -751,6 +751,14 @@ async fn test_meeting_index_acl_refresh_reconstructs_transient_note_metadata() {
         .into_iter()
         .find(|file| file.name == "index.md")
         .expect("meeting index file");
+    assert!(matches!(
+        state
+            .note_service
+            .index_meeting_search_content(meeting_index.id, owner_id, Uuid::new_v4())
+            .await,
+        Err(rustshare_server::services::note_service::NoteError::PermissionDenied)
+    ));
+    assert!(sink.take_indexed().is_empty());
     state
         .note_service
         .index_meeting_search_content(meeting_index.id, owner_id, tenant_id)

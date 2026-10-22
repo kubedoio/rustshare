@@ -13,7 +13,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { Bell } from 'lucide-svelte';
 	import { formatFileSize } from '$lib/utils/format';
-	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
+	import { globalSearchResults, type SearchResults } from './topbar/searchResults';
 	import GlobalSearch from './topbar/GlobalSearch.svelte';
 	import NewMenuDropdown from './topbar/NewMenuDropdown.svelte';
 	import UserMenuDropdown from './topbar/UserMenuDropdown.svelte';
@@ -83,19 +83,6 @@
 		usagePercent > 85 ? '#b63e3e' : usagePercent > 60 ? '#a56a12' : 'var(--brand-500, #c65a1e)'
 	);
 
-	interface SearchItem {
-		id: string;
-		name: string;
-		path: string;
-		snippet?: string;
-	}
-
-	interface SearchResults {
-		files: SearchItem[];
-		folders: SearchItem[];
-		meetings: SearchItem[];
-	}
-
 	const SEARCH_LIMIT = 50;
 	const DEBOUNCE_MS = 300;
 
@@ -132,48 +119,7 @@
 		])
 			.then(([response, historical]) => {
 				if (controller.signal.aborted || searchAbortController !== controller) return;
-				const files = filterUserVisibleEntries(
-					response.results
-						.filter((r) => r.resource_type === 'file')
-						.filter(
-							(r) =>
-								!(
-									r.name === 'index.md' &&
-									/(?:^|\/)Meetings\/[^/]+\/\d{4}\/[^/]+\/index\.md$/i.test(r.path)
-								)
-						)
-						.map((r) => ({ id: r.id, name: r.name, path: r.path }))
-				);
-				const folderResults = response.results.filter((r) => r.resource_type === 'folder');
-				const folderMeetings = folderResults
-					.filter((r) => /(?:^|\/)Meetings\/[^/]+\/\d{4}\/[^/]+$/i.test(r.path))
-					.map((r) => ({ id: r.id, name: r.name, path: r.path }));
-				const folders = filterUserVisibleEntries(
-					folderResults
-						.filter((r) => !/(?:^|\/)Meetings\/[^/]+\/\d{4}\/[^/]+$/i.test(r.path))
-						.map((r) => ({ id: r.id, name: r.name, path: r.path }))
-				);
-				const indexedMeetings = historical.results
-					.filter(
-						(result) =>
-							result.source_application === 'io.elembra.files' &&
-							(result.source_type === 'file' || result.source_type === 'meeting_action') &&
-							result.provenance.meeting_id
-					)
-					.map((result) => ({
-						id: result.provenance.meeting_id!,
-						name: result.title,
-						path: '',
-						snippet: result.snippet
-					}));
-				const meetingMap = new Map(folderMeetings.map((meeting) => [meeting.id, meeting]));
-				for (const meeting of indexedMeetings) {
-					const current = meetingMap.get(meeting.id);
-					meetingMap.set(meeting.id, current ? { ...current, snippet: meeting.snippet } : meeting);
-				}
-				const meetings = [...meetingMap.values()];
-				const results = { files, folders, meetings };
-				serverSearchResults = results;
+				serverSearchResults = globalSearchResults(response.results, historical.results);
 			})
 			.catch((err) => {
 				if (

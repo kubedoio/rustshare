@@ -142,6 +142,7 @@ pub async fn unified_search(
                     {
                         r.provenance.meeting_id = Some(folder_id);
                         if file.name == "index.md" {
+                            r.source_type = "meeting".to_string();
                             r.title = meeting.metadata.title;
                         }
                         let linked_event = sqlx::query_scalar::<_, Uuid>(
@@ -282,9 +283,9 @@ pub async fn unified_search(
     let mut seen = HashSet::new();
     results.retain(|result| {
         seen.insert(
-            result
-                .provenance
-                .meeting_id
+            matches!(result.source_type.as_str(), "meeting" | "meeting_action")
+                .then_some(result.provenance.meeting_id)
+                .flatten()
                 .map(|id| format!("meeting:{id}"))
                 .or_else(|| result.provenance.action_id.map(|id| format!("action:{id}")))
                 .unwrap_or_else(|| result.resource_ref.clone()),

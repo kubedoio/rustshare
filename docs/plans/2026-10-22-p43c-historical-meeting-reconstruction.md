@@ -19,6 +19,7 @@ P4.3c adds the smallest UI/search integration supported by these existing contra
 
 - Meeting action titles/descriptions remain in their existing action table and become candidates only through the current unified-search handler after live meeting-folder authorization.
 - A linked Calendar event is included in search navigation only after Calendar authorizes it for the current user.
+- Canonical meeting bodies use search `source_type: "meeting"`; actions use `"meeting_action"`. Attachments retain `"file"` and their own resource identity, even when authorized meeting provenance is attached. Only meeting bodies/actions deduplicate by meeting identity.
 - Historical provenance may point to an unavailable source; that state must not expose its title, path, content, or resource reference.
 - No new database table or object-storage format is planned.
 
