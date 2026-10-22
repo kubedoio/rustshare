@@ -111,6 +111,7 @@ fn init_tracing(log_format: &str) {
 /// Apply the embedded schema using a dedicated, short-lived operator connection.
 pub async fn run_database_migrations(database_url: &str) -> Result<()> {
     let mut connection = PgConnection::connect(database_url).await?;
+    info!("Connected to database for schema migrations");
     sqlx::migrate!("../migrations").run(&mut connection).await?;
     connection.close().await?;
     Ok(())
