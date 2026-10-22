@@ -354,6 +354,13 @@ pub async fn create_calendar_event_meeting(
             content,
         )
         .await?;
+    super::meetings::index_meeting_search_content(
+        &state,
+        opened.note.id,
+        auth.user_id,
+        auth.tenant_id,
+    )
+    .await;
     if opened.creation_event_pending {
         let payload = rustshare_core::events::MeetingNoteModifiedPayload {
             meeting_id: opened.note.id.to_string(),

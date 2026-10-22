@@ -510,6 +510,7 @@ async fn calendar_event_opens_persistent_meeting_and_denies_other_tenant() {
         2
     );
     let response = restarted_app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/v1/meetings?per_page=100")
@@ -526,6 +527,30 @@ async fn calendar_event_opens_persistent_meeting_and_denies_other_tenant() {
         .unwrap()
         .iter()
         .any(|item| item["id"] == meeting_id));
+
+    state
+        .calendar_service
+        .delete_event(tenant_id, owner.id, Uuid::parse_str(event_id).unwrap())
+        .await
+        .expect("delete linked calendar event");
+    let response = restarted_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/meetings/{meeting_id}"))
+                .method("PUT")
+                .header("Authorization", format!("Bearer {restarted_token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    json!({"content": "Edited after event deletion"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, updated_after_event_deletion) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(updated_after_event_deletion["metadata"]["calendar_event_id"].is_null());
 
     let response = app
         .clone()

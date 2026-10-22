@@ -1,26 +1,29 @@
 <script lang="ts">
-	import { Search, X, Folder, FileText } from 'lucide-svelte';
+	import { Search, X, Folder, FileText, CalendarDays } from 'lucide-svelte';
 
 	interface SearchItem {
 		id: string;
 		name: string;
 		path: string;
+		snippet?: string;
 	}
 
 	let {
 		value,
 		results = { files: [], folders: [] },
 		loading = false,
+		error = false,
 		onChange,
 		onClear,
 		onSelect
 	}: {
 		value: string;
-		results?: { files: SearchItem[]; folders: SearchItem[] };
+		results?: { files: SearchItem[]; folders: SearchItem[]; meetings?: SearchItem[] };
 		loading?: boolean;
+		error?: boolean;
 		onChange: (query: string) => void;
 		onClear: () => void;
-		onSelect: (type: 'file' | 'folder', id: string) => void;
+		onSelect: (type: 'file' | 'folder' | 'meeting', id: string) => void;
 	} = $props();
 
 	function handleInput(event: Event) {
@@ -71,9 +74,11 @@
 				<div class="py-6 text-center" role="status">
 					<p class="text-sm font-medium text-base-content/60">Searching...</p>
 				</div>
-			{:else if results.folders.length === 0 && results.files.length === 0}
+			{:else if results.folders.length === 0 && results.files.length === 0 && (results.meetings?.length ?? 0) === 0}
 				<div class="py-6 text-center" role="status">
-					<p class="text-sm font-medium text-base-content/60">No results found for "{value}"</p>
+					<p class="text-sm font-medium text-base-content/60">
+						{error ? 'Search is temporarily unavailable.' : `No results found for "${value}"`}
+					</p>
 				</div>
 			{:else}
 				{#if results.folders.length > 0}
@@ -120,6 +125,29 @@
 								<span class="truncate font-medium text-base-content">{file.name}</span>
 								<span class="mt-0.5 truncate text-2xs text-base-content/50">{file.path}</span>
 							</div>
+						</button>
+					{/each}
+				{/if}
+
+				{#if results.meetings?.length}
+					<div class="my-2 h-px w-full bg-base-200"></div>
+					<div
+						class="mb-1 px-2 py-1.5 text-xs font-bold tracking-wider text-base-content/50 uppercase"
+					>
+						Meetings
+					</div>
+					{#each results.meetings as meeting (meeting.id)}
+						<button
+							role="option"
+							aria-selected={false}
+							class="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left text-sm transition-colors hover:bg-base-200"
+							onclick={() => onSelect('meeting', meeting.id)}
+						>
+							<CalendarDays size={16} class="shrink-0 text-brand-500" />
+							<span class="min-w-0 truncate font-medium text-base-content">{meeting.name}</span>
+							{#if meeting.snippet}
+								<span class="min-w-0 truncate text-xs text-base-content/50">{meeting.snippet}</span>
+							{/if}
 						</button>
 					{/each}
 				{/if}

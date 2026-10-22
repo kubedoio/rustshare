@@ -191,10 +191,20 @@ async fn view(
     } else {
         None
     };
+    let calendar_event_id = if let Some(event_id) = row.calendar_event_id {
+        state
+            .calendar_service
+            .get_event(auth.tenant_id, auth.user_id, event_id)
+            .await
+            .ok()
+            .map(|_| event_id)
+    } else {
+        None
+    };
     Ok(MeetingActionView {
         id: row.id,
         meeting_id: row.meeting_id,
-        calendar_event_id: row.calendar_event_id,
+        calendar_event_id,
         title: row.title,
         description: row.description,
         assignee_id: row.assignee_id,

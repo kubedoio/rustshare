@@ -5,14 +5,31 @@
 //! come only from authorized content (see `services::unified_search`).
 
 use axum::{extract::State, Json};
-use rustshare_resource_auth::PrincipalContext;
+use rustshare_core::domain::ApplicationId;
+use rustshare_resource_auth::{PrincipalContext, Purpose, ResourceRef};
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::{AppError, AuthenticatedUser};
 use crate::services::unified_search::{
-    parse_source_filter, SearchProvenance, UnifiedSearchError, MAX_QUERY_CHARS,
+    parse_source_filter, SearchProvenance, SearchSource, UnifiedSearchError, MAX_QUERY_CHARS,
 };
 use crate::AppState;
+use std::collections::HashSet;
+use uuid::Uuid;
+
+#[derive(sqlx::FromRow)]
+struct MeetingActionCandidate {
+    action_id: Uuid,
+    meeting_id: Uuid,
+}
+
+#[derive(sqlx::FromRow)]
+struct MeetingActionSearchHit {
+    title: String,
+    description: Option<String>,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    calendar_event_id: Option<Uuid>,
+}
 
 /// Unified search request.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -109,10 +126,49 @@ pub async fn unified_search(
             UnifiedSearchError::InvalidQuery(message) => AppError::bad_request(message),
         })?;
 
-    let results: Vec<SearchResultItem> = response
-        .results
-        .into_iter()
-        .map(|r| SearchResultItem {
+    let mut results = Vec::with_capacity(response.results.len());
+    for mut r in response.results {
+        if let Some(file_id) = r.provenance.file_id {
+            if let Ok(Some(file)) = state
+                .metadata_store
+                .find_file_by_id_for_tenant(file_id, auth.tenant_id)
+                .await
+            {
+                if let Some(folder_id) = file.parent_folder_id {
+                    if let Ok(meeting) = state
+                        .meeting_service
+                        .get_meeting(folder_id, auth.user_id, auth.tenant_id)
+                        .await
+                    {
+                        r.provenance.meeting_id = Some(folder_id);
+                        if file.name == "index.md" {
+                            r.source_type = "meeting".to_string();
+                            r.title = meeting.metadata.title;
+                        }
+                        let linked_event = sqlx::query_scalar::<_, Uuid>(
+                            "SELECT event_id FROM calendar_event_meeting_links WHERE tenant_id=$1 AND meeting_folder_id=$2",
+                        )
+                        .bind(auth.tenant_id)
+                        .bind(folder_id)
+                        .fetch_optional(&state.db_pool)
+                        .await
+                        .ok()
+                        .flatten();
+                        if let Some(event_id) = linked_event {
+                            if state
+                                .calendar_service
+                                .get_event(auth.tenant_id, auth.user_id, event_id)
+                                .await
+                                .is_ok()
+                            {
+                                r.provenance.calendar_event_id = Some(event_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        results.push(SearchResultItem {
             source_application: r.source_application,
             source_type: r.source_type,
             resource_ref: r.resource_ref,
@@ -123,8 +179,119 @@ pub async fn unified_search(
             updated_at: r.updated_at,
             score: r.score,
             provenance: r.provenance,
-        })
-        .collect();
+        });
+    }
+
+    let action_candidates = if sources.is_empty() || sources.contains(&SearchSource::Files) {
+        sqlx::query_as::<_, MeetingActionCandidate>(
+            "SELECT id AS action_id, meeting_id FROM meeting_actions WHERE tenant_id=$1 AND to_tsvector('simple', title || ' ' || coalesce(description,'')) @@ plainto_tsquery('simple', $2) ORDER BY updated_at DESC, id ASC LIMIT $3",
+        )
+        .bind(auth.tenant_id)
+        .bind(query)
+        .bind(request.limit.clamp(1, 50) as i64 * 4)
+        .fetch_all(&state.db_pool)
+        .await
+        .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    for candidate in action_candidates {
+        let resource = ResourceRef::new(
+            ApplicationId::new("io.elembra.files"),
+            "folder",
+            candidate.meeting_id.to_string(),
+        );
+        let Ok(resolved) = state
+            .source_authorizer
+            .resolve(&ctx, &resource, Purpose::SearchPreview)
+            .await
+        else {
+            continue;
+        };
+        if !resolved.available {
+            continue;
+        }
+        let Ok(meeting) = state
+            .meeting_service
+            .get_meeting(candidate.meeting_id, auth.user_id, auth.tenant_id)
+            .await
+        else {
+            continue;
+        };
+        let Ok(Some(hit)) = sqlx::query_as::<_, MeetingActionSearchHit>(
+            "SELECT title, description, updated_at, calendar_event_id FROM meeting_actions WHERE id=$1 AND meeting_id=$2 AND tenant_id=$3 AND to_tsvector('simple', title || ' ' || coalesce(description,'')) @@ plainto_tsquery('simple', $4)",
+        )
+        .bind(candidate.action_id)
+        .bind(candidate.meeting_id)
+        .bind(auth.tenant_id)
+        .bind(query)
+        .fetch_optional(&state.db_pool)
+        .await
+        else {
+            continue;
+        };
+        let calendar_event_id = if let Some(event_id) = hit.calendar_event_id {
+            state
+                .calendar_service
+                .get_event(auth.tenant_id, auth.user_id, event_id)
+                .await
+                .ok()
+                .map(|_| event_id)
+        } else {
+            None
+        };
+        let snippet = hit
+            .description
+            .map(|description| description.chars().take(240).collect::<String>());
+        let score = if hit.title.to_lowercase().contains(&query.to_lowercase()) {
+            0.85
+        } else {
+            0.75
+        };
+        results.push(SearchResultItem {
+            source_application: "io.elembra.files".to_string(),
+            source_type: "meeting_action".to_string(),
+            resource_ref: resource.to_uri(),
+            title: hit.title,
+            snippet,
+            location: None,
+            occurred_at: None,
+            updated_at: Some(hit.updated_at),
+            score,
+            provenance: SearchProvenance {
+                file_id: None,
+                note_id: None,
+                mime_type: None,
+                message_id: None,
+                community_id: None,
+                channel_id: None,
+                channel_kind: None,
+                author_pubkey: None,
+                meeting_id: Some(meeting.id),
+                calendar_event_id,
+                action_id: Some(candidate.action_id),
+            },
+        });
+    }
+
+    results.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then_with(|| a.resource_ref.cmp(&b.resource_ref))
+            .then_with(|| a.provenance.action_id.cmp(&b.provenance.action_id))
+    });
+    let mut seen = HashSet::new();
+    results.retain(|result| {
+        seen.insert(
+            matches!(result.source_type.as_str(), "meeting" | "meeting_action")
+                .then_some(result.provenance.meeting_id)
+                .flatten()
+                .map(|id| format!("meeting:{id}"))
+                .or_else(|| result.provenance.action_id.map(|id| format!("action:{id}")))
+                .unwrap_or_else(|| result.resource_ref.clone()),
+        )
+    });
+    results.truncate(request.limit.clamp(1, 50));
 
     Ok(Json(SearchResponse {
         total: results.len(),

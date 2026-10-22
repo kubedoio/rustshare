@@ -216,6 +216,29 @@ pub fn is_hidden_file_name(name: &str) -> bool {
         || name.ends_with(".editor.json")
 }
 
+/// Meeting notes use the canonical `index.md` file as their body. Keep other
+/// internal index files hidden while allowing that text through existing
+/// permission-filtered note search.
+pub fn is_hidden_file_for_path(name: &str, path: &str) -> bool {
+    if name == "index.md" {
+        let parts: Vec<_> = path.split('/').filter(|part| !part.is_empty()).collect();
+        let (meeting_index, year_index) = match parts.as_slice() {
+            [workspace, meetings, _, _, _, file]
+                if workspace == &"Workspace" && meetings == &"Meetings" && file == &"index.md" =>
+            {
+                (1, 3)
+            }
+            [meetings, _, _, _, file] if meetings == &"Meetings" && file == &"index.md" => (0, 2),
+            _ => return true,
+        };
+        let canonical_meeting_note = parts[meeting_index] == "Meetings"
+            && parts[year_index].len() == 4
+            && parts[year_index].chars().all(|ch| ch.is_ascii_digit());
+        return !canonical_meeting_note;
+    }
+    is_hidden_file_name(name)
+}
+
 /// ACL payload stored on indexed note chunks.
 ///
 /// This is a filterable projection of the note's OKF access-control state.
@@ -705,6 +728,34 @@ mod tests {
     use super::super::embedding::SimpleEmbeddingGenerator;
     use super::super::vector_store::InMemoryVectorStore;
     use super::*;
+
+    #[test]
+    fn only_canonical_meeting_index_files_are_searchable() {
+        assert!(!is_hidden_file_for_path(
+            "index.md",
+            "/Workspace/Meetings/General/2026/Budget review/index.md"
+        ));
+        assert!(!is_hidden_file_for_path(
+            "index.md",
+            "/Meetings/General/2026/Budget review/index.md"
+        ));
+        assert!(is_hidden_file_for_path(
+            "index.md",
+            "/Workspace/Notes/index.md"
+        ));
+        assert!(is_hidden_file_for_path(
+            "index.md",
+            "/Workspace/Meetings/Private/index.md"
+        ));
+        assert!(is_hidden_file_for_path(
+            "index.md",
+            "/Workspace/Meetings/General/not-a-year/Budget review/index.md"
+        ));
+        assert!(is_hidden_file_for_path(
+            "index.md",
+            "/Workspace/Notes/Meetings/General/2026/Budget review/index.md"
+        ));
+    }
 
     #[tokio::test]
     async fn test_index_and_search() {

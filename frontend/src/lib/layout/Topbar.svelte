@@ -8,12 +8,12 @@
 	import { createQuery } from '$lib/query-compat';
 	import { getUnreadNotificationCount } from '$lib/api/notifications';
 	import { listAllFiles } from '$lib/api/files';
-	import { searchResources } from '$lib/api/search';
+	import { searchResources, unifiedSearch } from '$lib/api/search';
 	import { getFeatures } from '$lib/api/features';
 	import { onMount, onDestroy } from 'svelte';
 	import { Bell } from 'lucide-svelte';
 	import { formatFileSize } from '$lib/utils/format';
-	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
+	import { globalSearchResults, type SearchResults } from './topbar/searchResults';
 	import GlobalSearch from './topbar/GlobalSearch.svelte';
 	import NewMenuDropdown from './topbar/NewMenuDropdown.svelte';
 	import UserMenuDropdown from './topbar/UserMenuDropdown.svelte';
@@ -83,90 +83,57 @@
 		usagePercent > 85 ? '#b63e3e' : usagePercent > 60 ? '#a56a12' : 'var(--brand-500, #c65a1e)'
 	);
 
-	interface SearchItem {
-		id: string;
-		name: string;
-		path: string;
-	}
-
-	interface CachedSearch {
-		files: SearchItem[];
-		folders: SearchItem[];
-		expiresAt: number;
-	}
-
-	const searchCache = new Map<string, CachedSearch>();
-	const CACHE_TTL_MS = 30000;
 	const SEARCH_LIMIT = 50;
 	const DEBOUNCE_MS = 300;
 
 	let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let searchAbortController: AbortController | null = null;
 	let searchLoading = $state(false);
-	let serverSearchResults: { files: SearchItem[]; folders: SearchItem[] } = $state({
+	let searchFailed = $state(false);
+	let serverSearchResults: SearchResults = $state({
 		files: [],
-		folders: []
+		folders: [],
+		meetings: []
 	});
-
-	function getCachedSearch(query: string): { files: SearchItem[]; folders: SearchItem[] } | null {
-		const cached = searchCache.get(query);
-		if (cached && cached.expiresAt > Date.now()) {
-			return { files: cached.files, folders: cached.folders };
-		}
-		searchCache.delete(query);
-		return null;
-	}
-
-	function setCachedSearch(query: string, results: { files: SearchItem[]; folders: SearchItem[] }) {
-		searchCache.set(query, { ...results, expiresAt: Date.now() + CACHE_TTL_MS });
-	}
 
 	function performSearch(query: string) {
 		const q = query.trim().toLowerCase();
 		if (!q) {
-			serverSearchResults = { files: [], folders: [] };
-			searchLoading = false;
-			return;
-		}
-
-		const cached = getCachedSearch(q);
-		if (cached) {
-			serverSearchResults = cached;
+			serverSearchResults = { files: [], folders: [], meetings: [] };
 			searchLoading = false;
 			return;
 		}
 
 		searchLoading = true;
+		searchFailed = false;
 
 		if (searchAbortController) {
 			searchAbortController.abort();
 		}
 		searchAbortController = new AbortController();
+		const controller = searchAbortController;
 
-		searchResources(q, SEARCH_LIMIT, searchAbortController.signal)
-			.then((response) => {
-				const files = filterUserVisibleEntries(
-					response.results
-						.filter((r) => r.resource_type === 'file')
-						.map((r) => ({ id: r.id, name: r.name, path: r.path }))
-				);
-				const folders = filterUserVisibleEntries(
-					response.results
-						.filter((r) => r.resource_type === 'folder')
-						.map((r) => ({ id: r.id, name: r.name, path: r.path }))
-				);
-				const results = { files, folders };
-				serverSearchResults = results;
-				setCachedSearch(q, results);
+		Promise.all([
+			searchResources(q, SEARCH_LIMIT, controller.signal),
+			unifiedSearch(q, 20, controller.signal)
+		])
+			.then(([response, historical]) => {
+				if (controller.signal.aborted || searchAbortController !== controller) return;
+				serverSearchResults = globalSearchResults(response.results, historical.results);
 			})
 			.catch((err) => {
-				if (err.name !== 'AbortError') {
+				if (
+					err.name !== 'AbortError' &&
+					!controller.signal.aborted &&
+					searchAbortController === controller
+				) {
 					console.error('Search failed:', err);
-					serverSearchResults = { files: [], folders: [] };
+					searchFailed = true;
+					serverSearchResults = { files: [], folders: [], meetings: [] };
 				}
 			})
 			.finally(() => {
-				searchLoading = false;
+				if (searchAbortController === controller) searchLoading = false;
 			});
 	}
 
@@ -174,13 +141,19 @@
 		const q = $globalSearchQuery;
 		if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
 		if (!q.trim()) {
-			serverSearchResults = { files: [], folders: [] };
+			serverSearchResults = { files: [], folders: [], meetings: [] };
 			searchLoading = false;
+			searchFailed = false;
 			if (searchAbortController) {
 				searchAbortController.abort();
 				searchAbortController = null;
 			}
 		} else {
+			searchAbortController?.abort();
+			searchAbortController = null;
+			serverSearchResults = { files: [], folders: [], meetings: [] };
+			searchLoading = true;
+			searchFailed = false;
 			searchDebounceTimer = setTimeout(() => performSearch(q), DEBOUNCE_MS);
 		}
 	});
@@ -196,9 +169,11 @@
 		globalSearchQuery.set('');
 	}
 
-	function navigateToSearchResult(type: 'file' | 'folder', id: string) {
+	function navigateToSearchResult(type: 'file' | 'folder' | 'meeting', id: string) {
 		clearSearch();
-		if (type === 'file') {
+		if (type === 'meeting') {
+			goto(`/apps/meetings/${id}`);
+		} else if (type === 'file') {
 			goto(`/files?preview=${id}`);
 		} else {
 			goto(`/files?folder=${id}`);
@@ -300,6 +275,7 @@
 				value={$globalSearchQuery}
 				results={serverSearchResults}
 				loading={searchLoading}
+				error={searchFailed}
 				onChange={(q) => globalSearchQuery.set(q)}
 				onClear={clearSearch}
 				onSelect={navigateToSearchResult}

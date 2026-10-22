@@ -712,6 +712,97 @@ async fn test_folder_share_refreshes_descendant_note_acl() {
 
 #[tokio::test]
 #[ignore = "Requires PostgreSQL and S3-compatible object storage"]
+async fn test_meeting_index_acl_refresh_reconstructs_transient_note_metadata() {
+    let (state, sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let owner_id = Uuid::new_v4();
+    let recipient_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        owner_id,
+        "meeting-index-owner@example.com",
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        recipient_id,
+        "meeting-index-recipient@example.com",
+    )
+    .await;
+    let meeting = state
+        .meeting_service
+        .create_meeting(
+            owner_id,
+            tenant_id,
+            "Shared meeting index".into(),
+            "General".into(),
+            Utc::now(),
+            "Searchable historical minutes".into(),
+        )
+        .await
+        .expect("create meeting");
+    let meeting_index = state
+        .metadata_store
+        .list_files_by_parent(Some(meeting.id), tenant_id)
+        .await
+        .expect("list meeting files")
+        .into_iter()
+        .find(|file| file.name == "index.md")
+        .expect("meeting index file");
+    assert!(matches!(
+        state
+            .note_service
+            .index_meeting_search_content(meeting_index.id, owner_id, Uuid::new_v4())
+            .await,
+        Err(rustshare_server::services::note_service::NoteError::PermissionDenied)
+    ));
+    assert!(sink.take_indexed().is_empty());
+    state
+        .note_service
+        .index_meeting_search_content(meeting_index.id, owner_id, tenant_id)
+        .await
+        .expect("index meeting note");
+    let _ = sink.take_indexed();
+
+    sqlx::query(
+        r#"
+        INSERT INTO shares (id, folder_id, recipient_user_id, permissions, created_by, tenant_id, created_at)
+        VALUES ($1, $2, $3, 'View', $4, $5, NOW())
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(meeting.id)
+    .bind(recipient_id)
+    .bind(owner_id)
+    .bind(tenant_id)
+    .execute(&state.db_pool)
+    .await
+    .expect("share meeting folder");
+
+    state
+        .note_service
+        .refresh_index_acl_for_resource(
+            rustshare_core::services::Resource::Folder(meeting.id),
+            owner_id,
+            tenant_id,
+        )
+        .await;
+
+    let refreshed = sink.calls_for(meeting_index.id);
+    assert!(!refreshed.is_empty(), "meeting index was not reindexed");
+    assert!(
+        refreshed
+            .iter()
+            .any(|record| record.principals.contains(&format!("user:{recipient_id}"))),
+        "new meeting viewer missing from refreshed ACL: {}",
+        principal_list(&refreshed[0])
+    );
+}
+
+#[tokio::test]
+#[ignore = "Requires PostgreSQL and S3-compatible object storage"]
 async fn test_share_update_triggers_acl_refresh() {
     let (state, sink) = setup_with_recording_sink().await;
     let tenant_id = insert_test_tenant(&state.db_pool).await;

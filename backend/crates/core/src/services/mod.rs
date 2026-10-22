@@ -23,9 +23,9 @@ mod vault_service;
 mod vault_sync_service;
 
 pub use ai::{
-    can_access, is_hidden_file_name, validate_and_project, ContentIndexer, EmbeddingGenerator,
-    EmbeddingPolicy, InMemoryVectorStore, IndexAclProjection, IndexVisibility, IndexedDocument,
-    NoteAclPayload, RetrievalPrincipal, SimpleEmbeddingGenerator, VectorStore,
+    can_access, is_hidden_file_for_path, is_hidden_file_name, validate_and_project, ContentIndexer,
+    EmbeddingGenerator, EmbeddingPolicy, InMemoryVectorStore, IndexAclProjection, IndexVisibility,
+    IndexedDocument, NoteAclPayload, RetrievalPrincipal, SimpleEmbeddingGenerator, VectorStore,
 };
 pub use ai_service::{AiError, AiService, FileSummary, SemanticSearchResult, SourceCitation};
 pub use chat_integration::{
