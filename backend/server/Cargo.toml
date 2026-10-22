@@ -6,6 +6,10 @@ license.workspace = true
 autotests = false
 
 [[test]]
+name = "meeting_actions_test"
+path = "../tests/meeting_actions_test.rs"
+
+[[test]]
 name = "meeting_decisions_test"
 path = "../tests/meeting_decisions_test.rs"
 

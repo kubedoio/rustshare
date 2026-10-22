@@ -88,6 +88,61 @@ export interface CreateMeetingDecision {
 	content: string;
 }
 
+export interface MeetingActionPerson {
+	id: string;
+	display_name: string;
+}
+
+export interface MeetingAction {
+	id: string;
+	meeting_id: string;
+	calendar_event_id: string | null;
+	title: string;
+	description: string | null;
+	assignee_id: string | null;
+	assignee: MeetingActionPerson | null;
+	due_date: string | null;
+	state: 'open' | 'completed';
+	version: number;
+	created_at: string;
+	updated_at: string;
+	created_by: string;
+	updated_by: string;
+	completed_at: string | null;
+	completed_by: string | null;
+	related_decision_available: boolean;
+	related_decision: { id: string; title: string; open_url: string } | null;
+}
+
+export interface MeetingActionPage {
+	items: MeetingAction[];
+	total: number;
+	page: number;
+	per_page: number;
+}
+
+export interface MeetingActionAssigneePage {
+	items: MeetingActionPerson[];
+	total: number;
+	page: number;
+	per_page: number;
+}
+
+export interface CreateMeetingAction {
+	request_id: string;
+	title: string;
+	description: string | null;
+	assignee_id: string | null;
+	due_date: string | null;
+	related_decision_id: string | null;
+}
+
+export interface UpdateMeetingAction extends Omit<CreateMeetingAction, 'related_decision_id'> {
+	expected_version: number;
+	state: MeetingAction['state'];
+	related_decision_id?: string | null;
+}
+
 async function fetchAllMeetingPages(): Promise<MeetingSummary[]> {
 	const PAGE_SIZE = 100;
 	const meetings: MeetingSummary[] = [];
@@ -120,6 +175,26 @@ export const meetingsApi = {
 
 	get: async (id: string) => {
 		return apiClient.get<MeetingNote>(`/meetings/${id}`);
+	},
+
+	listActions: async (id: string, page = 1, perPage = 50) => {
+		return apiClient.get<MeetingActionPage>(
+			`/meetings/${id}/actions?page=${page}&per_page=${perPage}`
+		);
+	},
+
+	createAction: async (id: string, request: CreateMeetingAction) => {
+		return apiClient.post<MeetingAction>(`/meetings/${id}/actions`, request);
+	},
+
+	updateAction: async (id: string, actionId: string, request: UpdateMeetingAction) => {
+		return apiClient.put<MeetingAction>(`/meetings/${id}/actions/${actionId}`, request);
+	},
+
+	listActionAssignees: async (id: string, page = 1, perPage = 50) => {
+		return apiClient.get<MeetingActionAssigneePage>(
+			`/meetings/${id}/action-assignees?page=${page}&per_page=${perPage}`
+		);
 	},
 
 	listDecisions: async (id: string, page = 1, perPage = 50) => {

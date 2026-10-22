@@ -65,6 +65,8 @@ pub enum EventType {
     BrainstormBoardModified,
     /// Emitted for a meeting-note create, edit, move, duplicate, or delete; reads do not emit it.
     MeetingNoteModified,
+    /// A committed meeting action create/update/complete/reopen; reads and retries emit nothing.
+    MeetingActionModified,
     DecisionModified,
     StandupModified,
     KanbanModified,

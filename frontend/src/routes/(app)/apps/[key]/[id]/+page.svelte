@@ -24,6 +24,7 @@
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
 	import MeetingResourceLinks from '$lib/components/apps/MeetingResourceLinks.svelte';
 	import MeetingDecisions from '$lib/components/apps/MeetingDecisions.svelte';
+	import MeetingActions from '$lib/components/apps/MeetingActions.svelte';
 	import DecisionMeetingContext from '$lib/components/apps/DecisionMeetingContext.svelte';
 	import ShareModal from '$lib/components/modals/ShareModal.svelte';
 	import PromptModal from '$lib/components/common/PromptModal.svelte';
@@ -798,6 +799,7 @@
 		{#if key === 'meetings'}
 			<MeetingResourceLinks meetingId={id} />
 			<MeetingDecisions meetingId={id} />
+			<MeetingActions meetingId={id} />
 		{:else if key === 'decisions'}
 			<DecisionMeetingContext
 				decisionId={id}

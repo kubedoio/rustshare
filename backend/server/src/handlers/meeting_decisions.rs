@@ -95,7 +95,7 @@ fn resource_uri(id: Uuid) -> String {
     format!("elembra://io.elembra.files/file/{id}")
 }
 
-async fn authorize_decision(
+pub(crate) async fn authorize_decision(
     state: &AppState,
     auth: &AuthenticatedUser,
     id: Uuid,

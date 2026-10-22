@@ -696,6 +696,20 @@ pub fn meeting_routes() -> Router<AppState> {
         .route("/api/v1/meetings", post(crate::handlers::create_meeting))
         .route("/api/v1/meetings/{id}", get(crate::handlers::get_meeting))
         .route(
+            "/api/v1/meetings/{id}/actions",
+            get(crate::handlers::meeting_actions::list_meeting_actions)
+                .post(crate::handlers::meeting_actions::create_meeting_action),
+        )
+        .route(
+            "/api/v1/meetings/{id}/actions/{action_id}",
+            get(crate::handlers::meeting_actions::get_meeting_action)
+                .put(crate::handlers::meeting_actions::update_meeting_action),
+        )
+        .route(
+            "/api/v1/meetings/{id}/action-assignees",
+            get(crate::handlers::meeting_actions::action_assignees),
+        )
+        .route(
             "/api/v1/meetings/{id}/decisions",
             get(crate::handlers::meeting_decisions::list_meeting_decisions)
                 .post(crate::handlers::meeting_decisions::create_meeting_decision),
