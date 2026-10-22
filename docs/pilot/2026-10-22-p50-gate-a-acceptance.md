@@ -39,9 +39,9 @@ migrations remain the development default, on a dedicated connection before the
 request pool exists. Institutional deployment must explicitly disable them.
 
 The read-only `scripts/check-runtime-db-role.sql` rejects privileged attributes,
-all role memberships, schema/database CREATE, object/routine ownership and
+all role memberships, schema/database CREATE, object/routine/type ownership and
 migration-history mutation. Local checks passed for a standalone runtime login;
-operator, predefined read/write/program roles, owned view and owned routine were
+operator, predefined read/write/program roles, owned view, owned routine, owned domain and a user schema beginning with `pg` were
 rejected. This is application-level tenancy with constrained database credentials,
 not enforced RLS or a complete customer-specific grants audit.
 

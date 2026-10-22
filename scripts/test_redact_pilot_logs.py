@@ -380,6 +380,11 @@ WORKFLOW_RUN_ATTEMPT={run_attempt}
 """,
             "runtime-db-smoke.env": f"""\
 BETA_SMOKE_STATUS=passed
+BETA_SMOKE_FAILURE_PHASE=complete
+BETA_SMOKE_WORKFLOW_RUN_ID={run_id}
+BETA_SMOKE_WORKFLOW_RUN_ATTEMPT={run_attempt}
+BETA_SMOKE_STARTED_AT={started}
+BETA_SMOKE_FINISHED_AT={finished}
 BETA_SMOKE_SOURCE_SHA={source_sha}
 BETA_SMOKE_BUILD_VERSION={image_version}
 BETA_SMOKE_CONFIG_ID={'b' * 64}
@@ -459,6 +464,16 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
     def test_extracted_summary_gate_rejects_incomplete_or_invalid_evidence(self) -> None:
         mutations = (
             ("missing runtime role evidence", "runtime-db.env", None),
+            (
+                "runtime smoke from wrong workflow run",
+                "runtime-db-smoke.env",
+                lambda value: value.replace("BETA_SMOKE_WORKFLOW_RUN_ID=1234", "BETA_SMOKE_WORKFLOW_RUN_ID=9999"),
+            ),
+            (
+                "runtime smoke incomplete",
+                "runtime-db-smoke.env",
+                lambda value: value.replace("BETA_SMOKE_FAILURE_PHASE=complete", "BETA_SMOKE_FAILURE_PHASE=bootstrap"),
+            ),
             (
                 "runtime image mismatch",
                 "runtime-db.env",

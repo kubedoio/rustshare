@@ -18,14 +18,14 @@ BEGIN
     END IF;
     IF has_database_privilege(current_database(), 'CREATE') OR EXISTS (
         SELECT 1 FROM pg_namespace n
-        WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema'
+        WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
           AND has_schema_privilege(n.oid, 'CREATE')
     ) THEN
         RAISE EXCEPTION 'Runtime role can create database schema objects';
     END IF;
     IF EXISTS (
         SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema'
+        WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
           AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
           AND pg_has_role(current_user, c.relowner, 'MEMBER')
     ) THEN
@@ -33,10 +33,17 @@ BEGIN
     END IF;
     IF EXISTS (
         SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-        WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema'
+        WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
           AND pg_has_role(current_user, p.proowner, 'MEMBER')
     ) THEN
         RAISE EXCEPTION 'Runtime role owns application routines or can assume their owner';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+        WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
+          AND pg_has_role(current_user, t.typowner, 'MEMBER')
+    ) THEN
+        RAISE EXCEPTION 'Runtime role owns application types or can assume their owner';
     END IF;
     IF has_table_privilege('public._sqlx_migrations', 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') THEN
         RAISE EXCEPTION 'Runtime role can mutate migration history';

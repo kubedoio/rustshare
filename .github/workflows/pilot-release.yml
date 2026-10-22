@@ -462,6 +462,8 @@ jobs:
           "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare \
             -c 'REVOKE pg_read_all_data FROM pilot_runtime'
           [[ "${unexpectedly_allowed}" == false ]]
+          grep -Fq 'Runtime role has privileged attributes or role membership' \
+            /tmp/rustshare-pilot-evidence/runtime-db-negative.txt
           "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare <<'SQL'
           CREATE FUNCTION public.pilot_runtime_probe() RETURNS integer LANGUAGE sql AS 'SELECT 1';
           ALTER FUNCTION public.pilot_runtime_probe() OWNER TO pilot_runtime;
@@ -473,6 +475,32 @@ jobs:
           "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare \
             -c 'DROP FUNCTION public.pilot_runtime_probe()'
           [[ "${unexpectedly_allowed}" == false ]]
+          grep -Fq 'Runtime role owns application routines' \
+            /tmp/rustshare-pilot-evidence/runtime-db-negative.txt
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare <<'SQL'
+          CREATE DOMAIN public.pilot_runtime_domain_probe AS integer;
+          ALTER DOMAIN public.pilot_runtime_domain_probe OWNER TO pilot_runtime;
+          SQL
+          unexpectedly_allowed=false
+          if audit_runtime_role >> /tmp/rustshare-pilot-evidence/runtime-db-negative.txt 2>&1; then
+            unexpectedly_allowed=true
+          fi
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare \
+            -c 'DROP DOMAIN public.pilot_runtime_domain_probe'
+          [[ "${unexpectedly_allowed}" == false ]]
+          grep -Fq 'Runtime role owns application types' \
+            /tmp/rustshare-pilot-evidence/runtime-db-negative.txt
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare \
+            -c 'CREATE SCHEMA pgruntime_probe AUTHORIZATION pilot_runtime'
+          unexpectedly_allowed=false
+          if audit_runtime_role >> /tmp/rustshare-pilot-evidence/runtime-db-negative.txt 2>&1; then
+            unexpectedly_allowed=true
+          fi
+          "${compose[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U rustshare -d rustshare \
+            -c 'DROP SCHEMA pgruntime_probe'
+          [[ "${unexpectedly_allowed}" == false ]]
+          grep -Fq 'Runtime role can create database schema objects' \
+            /tmp/rustshare-pilot-evidence/runtime-db-negative.txt
           audit_runtime_role > /tmp/rustshare-pilot-evidence/runtime-db-posture.txt
           runtime_url="postgres://pilot_runtime:${runtime_password}@postgres:5432/rustshare"
           runtime_config="$(DATABASE_URL="${runtime_url}" RUSTSHARE_RUN_MIGRATIONS=false \
@@ -1281,7 +1309,7 @@ jobs:
             require_line "${evidence_dir}/runtime-db.env" "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
             runtime_config="$(sed -n 's/^CONFIG_ID=//p' "${evidence_dir}/runtime-db.env")"
             [[ "${runtime_config}" =~ ^[0-9a-f]{64}$ ]]
-            require_line "${evidence_dir}/runtime-db-smoke.env" 'BETA_SMOKE_STATUS=passed'
+            require_smoke_passed "${evidence_dir}/runtime-db-smoke.env"
             require_line "${evidence_dir}/runtime-db-smoke.env" "BETA_SMOKE_SOURCE_SHA=${GITHUB_SHA}"
             require_line "${evidence_dir}/runtime-db-smoke.env" "BETA_SMOKE_BUILD_VERSION=${image_version}"
             require_line "${evidence_dir}/runtime-db-smoke.env" "BETA_SMOKE_CONFIG_ID=${runtime_config}"
