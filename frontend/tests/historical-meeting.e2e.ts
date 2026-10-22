@@ -24,13 +24,15 @@ test('historical meeting search reopens its meeting and originating Calendar eve
 
 	const search = page.getByPlaceholder('Search files, folders, or activity...');
 	await search.fill(meetingQuery);
-	const meetingResult = page.getByRole('button', { name: new RegExp(meetingTitle) });
+	const meetingResult = page.getByRole('option', { name: new RegExp(meetingTitle) });
 	await expect(meetingResult).toBeVisible();
 	await meetingResult.click();
 
-	await expect(page.getByRole('heading', { name: meetingTitle })).toBeVisible();
-	const calendarLink = page.getByRole('link', { name: 'Calendar event' });
-	await expect(calendarLink).toBeVisible();
-	await calendarLink.click();
-	await expect(page.getByText(calendarTitle, { exact: true })).toBeVisible();
+	await expect(page.getByRole('heading', { name: meetingTitle, exact: true })).toBeVisible();
+	const calendarEvent = page.getByRole('button', { name: 'Calendar event' });
+	await expect(calendarEvent).toBeVisible();
+	await calendarEvent.click();
+	await expect(
+		page.getByRole('heading', { name: calendarTitle, exact: true }).first()
+	).toBeVisible();
 });

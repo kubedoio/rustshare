@@ -1197,6 +1197,7 @@ async fn single_event_export_requires_enabled_calendar_and_event_ownership() {
         .await
         .expect("disable Calendar");
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri(&uri)
@@ -1210,6 +1211,31 @@ async fn single_event_export_requires_enabled_calendar_and_event_ownership() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    state
+        .application_service
+        .enable_application("io.elembra.calendar", owner.id, tenant_id)
+        .await
+        .expect("re-enable Calendar for the account-level check");
+    sqlx::query("UPDATE users SET disabled_at = NOW() WHERE id = $1")
+        .bind(owner.id)
+        .execute(&state.db_pool)
+        .await
+        .expect("disable event owner");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(&uri)
+                .header(
+                    "Authorization",
+                    format!("Bearer {}", create_auth_token(&state, owner.id, tenant_id)),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }

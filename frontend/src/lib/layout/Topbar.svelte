@@ -8,7 +8,7 @@
 	import { createQuery } from '$lib/query-compat';
 	import { getUnreadNotificationCount } from '$lib/api/notifications';
 	import { listAllFiles } from '$lib/api/files';
-	import { searchResources, unifiedSearch } from '$lib/api/search';
+	import { unifiedSearch } from '$lib/api/search';
 	import { getFeatures } from '$lib/api/features';
 	import { onMount, onDestroy } from 'svelte';
 	import { Bell } from 'lucide-svelte';
@@ -83,7 +83,6 @@
 		usagePercent > 85 ? '#b63e3e' : usagePercent > 60 ? '#a56a12' : 'var(--brand-500, #c65a1e)'
 	);
 
-	const SEARCH_LIMIT = 50;
 	const DEBOUNCE_MS = 300;
 
 	let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -113,13 +112,10 @@
 		searchAbortController = new AbortController();
 		const controller = searchAbortController;
 
-		Promise.all([
-			searchResources(q, SEARCH_LIMIT, controller.signal),
-			unifiedSearch(q, 20, controller.signal)
-		])
-			.then(([response, historical]) => {
+		unifiedSearch(q, 20, controller.signal)
+			.then((response) => {
 				if (controller.signal.aborted || searchAbortController !== controller) return;
-				serverSearchResults = globalSearchResults(response.results, historical.results);
+				serverSearchResults = globalSearchResults(response.results);
 			})
 			.catch((err) => {
 				if (

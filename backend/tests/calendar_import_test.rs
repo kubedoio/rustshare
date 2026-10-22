@@ -419,6 +419,155 @@ END:VCALENDAR
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
+async fn stale_running_import_is_reclaimed_after_worker_restart() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env_without_calendar_outbox().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_worker_recovery", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let ics = "\
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:worker-recovery@example.test
+DTSTART:20261008T120000Z
+DTEND:20261008T130000Z
+SUMMARY:Recovered import
+END:VEVENT
+END:VCALENDAR
+";
+    let (status, body) = upload_ics(&app, &token, "worker-recovery.ics", ics).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let job_id = Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap();
+    sqlx::query(
+        "UPDATE calendar_import_jobs
+         SET status = 'running', started_at = NOW() - INTERVAL '10 minutes',
+             updated_at = NOW() - INTERVAL '10 minutes'
+         WHERE id = $1",
+    )
+    .bind(job_id)
+    .execute(&state.db_pool)
+    .await
+    .expect("simulate a worker that stopped while holding a stale running job");
+
+    // A newly spawned worker resets the expired heartbeat and completes it.
+    spawn_import_worker(&state).await;
+    let recovered = wait_for_job(&app, &token, job_id).await;
+    assert_eq!(recovered["status"], "completed");
+    assert_eq!(recovered["processed_events"], 1);
+    assert_eq!(count_imported_events(&state, tenant_id).await, 1);
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn exported_event_round_trip_preserves_timezone_and_utc_instants() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env_without_calendar_outbox().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_timezone_roundtrip", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    spawn_import_worker(&state).await;
+
+    let ics = "\
+BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:timezone-roundtrip@example.test
+DTSTART;TZID=Europe/Berlin:20261025T023000
+DTEND;TZID=Europe/Berlin:20261025T033000
+SUMMARY:Timezone round trip
+END:VEVENT
+END:VCALENDAR
+";
+    let (status, body) = upload_ics(&app, &token, "timezone-roundtrip.ics", ics).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let source_id = Uuid::parse_str(body["source_id"].as_str().unwrap()).unwrap();
+    let job_id = Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        wait_for_job(&app, &token, job_id).await["status"],
+        "completed"
+    );
+
+    let event_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM calendar_events WHERE source_id = $1 AND external_uid = $2",
+    )
+    .bind(source_id)
+    .bind("timezone-roundtrip@example.test")
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("imported event");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}/export"))
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let exported = String::from_utf8(
+        axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read exported calendar")
+            .to_vec(),
+    )
+    .expect("exported calendar is UTF-8");
+
+    let mut parser = ical::IcalParser::new(BufReader::new(exported.as_bytes()));
+    let calendar = parser
+        .next()
+        .expect("one exported VCALENDAR")
+        .expect("independent parser accepts exported VCALENDAR");
+    assert_eq!(calendar.events.len(), 1);
+    let find_event_property = |name: &str| {
+        calendar.events[0]
+            .properties
+            .iter()
+            .find(|property| property.name == name)
+            .and_then(|property| property.value.as_deref())
+            .unwrap_or_else(|| panic!("exported event is missing {name}"))
+    };
+    assert_eq!(find_event_property("DTSTART"), "20261025T003000Z");
+    assert_eq!(find_event_property("DTEND"), "20261025T023000Z");
+    assert!(calendar
+        .properties
+        .iter()
+        .any(|property| property.name == "X-WR-TIMEZONE"
+            && property.value.as_deref() == Some("Europe/Berlin")));
+
+    let (status, round_trip) = upload_ics(&app, &token, "timezone-roundtrip.ics", &exported).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let round_trip_job = Uuid::parse_str(round_trip["job_id"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        wait_for_job(&app, &token, round_trip_job).await["status"],
+        "completed"
+    );
+    let (timezone, starts_at): (String, chrono::DateTime<chrono::Utc>) = sqlx::query_as(
+        "SELECT timezone, starts_at FROM calendar_events WHERE source_id = $1 AND external_uid = $2",
+    )
+    .bind(source_id)
+    .bind("timezone-roundtrip@example.test")
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("re-imported event");
+    assert_eq!(timezone, "Europe/Berlin");
+    assert_eq!(starts_at.to_rfc3339(), "2026-10-25T00:30:00+00:00");
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
 async fn unsupported_ics_fields_are_reported_without_importing_or_disclosing_values() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env_without_calendar_outbox().await;
