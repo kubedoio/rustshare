@@ -236,7 +236,7 @@ pub async fn create_meeting(
     auth: AuthenticatedUser,
     Json(req): Json<CreateMeetingRequest>,
 ) -> Result<(StatusCode, Json<MeetingNote>), AppError> {
-    let meeting = state
+    let mut meeting = state
         .meeting_service
         .create_meeting(
             auth.user_id,
@@ -248,6 +248,7 @@ pub async fn create_meeting(
         )
         .await?;
     index_meeting_search_content(&state, meeting.id, auth.user_id, auth.tenant_id).await;
+    hide_unavailable_meeting_references(&state, &auth, &mut meeting.metadata).await;
 
     let payload = MeetingNoteModifiedPayload {
         meeting_id: meeting.id.to_string(),
@@ -460,7 +461,7 @@ pub async fn update_meeting(
     Path(meeting_id): Path<Uuid>,
     Json(req): Json<UpdateMeetingRequest>,
 ) -> Result<Json<MeetingNote>, AppError> {
-    let meeting = state
+    let mut meeting = state
         .meeting_service
         .update_meeting(
             meeting_id,
@@ -472,6 +473,7 @@ pub async fn update_meeting(
         )
         .await?;
     index_meeting_search_content(&state, meeting_id, auth.user_id, auth.tenant_id).await;
+    hide_unavailable_meeting_references(&state, &auth, &mut meeting.metadata).await;
 
     let payload = MeetingNoteModifiedPayload {
         meeting_id: meeting_id.to_string(),
@@ -615,7 +617,7 @@ pub async fn move_meeting(
     Path(meeting_id): Path<Uuid>,
     Json(req): Json<MoveMeetingRequest>,
 ) -> Result<Json<MeetingNote>, AppError> {
-    let meeting = state
+    let mut meeting = state
         .meeting_service
         .move_meeting(
             meeting_id,
@@ -625,6 +627,7 @@ pub async fn move_meeting(
         )
         .await?;
     index_meeting_search_content(&state, meeting_id, auth.user_id, auth.tenant_id).await;
+    hide_unavailable_meeting_references(&state, &auth, &mut meeting.metadata).await;
 
     let payload = MeetingNoteModifiedPayload {
         meeting_id: meeting_id.to_string(),
@@ -663,11 +666,12 @@ pub async fn duplicate_meeting(
     auth: AuthenticatedUser,
     Path(meeting_id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<MeetingNote>), AppError> {
-    let meeting = state
+    let mut meeting = state
         .meeting_service
         .duplicate_meeting(meeting_id, auth.user_id, auth.tenant_id)
         .await?;
     index_meeting_search_content(&state, meeting.id, auth.user_id, auth.tenant_id).await;
+    hide_unavailable_meeting_references(&state, &auth, &mut meeting.metadata).await;
 
     let payload = MeetingNoteModifiedPayload {
         meeting_id: meeting.id.to_string(),

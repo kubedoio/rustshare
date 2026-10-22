@@ -135,23 +135,25 @@ pub async fn unified_search(
                 .await
             {
                 if let Some(folder_id) = file.parent_folder_id {
-                    let linked_event = sqlx::query_scalar::<_, uuid::Uuid>(
-                        "SELECT event_id FROM calendar_event_meeting_links WHERE tenant_id=$1 AND meeting_folder_id=$2",
-                    )
-                    .bind(auth.tenant_id)
-                    .bind(folder_id)
-                    .fetch_optional(&state.db_pool)
-                    .await
-                    .ok()
-                    .flatten();
-                    if let Some(event_id) = linked_event {
-                        if state
-                            .meeting_service
-                            .get_meeting(folder_id, auth.user_id, auth.tenant_id)
-                            .await
-                            .is_ok()
-                        {
-                            r.provenance.meeting_id = Some(folder_id);
+                    if let Ok(meeting) = state
+                        .meeting_service
+                        .get_meeting(folder_id, auth.user_id, auth.tenant_id)
+                        .await
+                    {
+                        r.provenance.meeting_id = Some(folder_id);
+                        if file.name == "index.md" {
+                            r.title = meeting.metadata.title;
+                        }
+                        let linked_event = sqlx::query_scalar::<_, Uuid>(
+                            "SELECT event_id FROM calendar_event_meeting_links WHERE tenant_id=$1 AND meeting_folder_id=$2",
+                        )
+                        .bind(auth.tenant_id)
+                        .bind(folder_id)
+                        .fetch_optional(&state.db_pool)
+                        .await
+                        .ok()
+                        .flatten();
+                        if let Some(event_id) = linked_event {
                             if state
                                 .calendar_service
                                 .get_event(auth.tenant_id, auth.user_id, event_id)

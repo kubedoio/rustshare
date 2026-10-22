@@ -37,6 +37,14 @@ fn app(mut state: AppState) -> axum::Router<()> {
         )
         .expect("Files owner");
     state.source_authorizer = Arc::new(SourceAuthorizer::new(owners));
+    state.unified_search_service = Arc::new(
+        rustshare_server::services::unified_search::UnifiedSearchService::new(
+            state.source_authorizer.clone(),
+            state.metadata_store.clone(),
+            state.ai_service.clone(),
+            state.memory_catalog_store.clone(),
+        ),
+    );
     rustshare_server::routes::meeting_routes()
         .merge(rustshare_server::routes::calendar_routes())
         .merge(rustshare_server::routes::decision_routes())
@@ -153,6 +161,56 @@ async fn cleanup(pool: &PgPool, tenant: Uuid) {
             .expect("cleanup");
     }
     cleanup_tenant(pool, tenant).await;
+}
+
+#[tokio::test]
+#[ignore = "requires guarded disposable PostgreSQL and object storage"]
+async fn search_reopens_a_standalone_historical_meeting() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "standalone_meeting_search", tenant).await;
+    let token = create_auth_token(&state, owner.id, tenant);
+    let meeting_id = meeting(&state, owner.id, tenant).await;
+    let candidates = state
+        .metadata_store
+        .search_files_by_name_path(tenant, "Historic", 10)
+        .await
+        .expect("meeting file candidate lookup");
+    assert!(
+        !candidates.is_empty(),
+        "meeting file was not a search candidate"
+    );
+    assert!(
+        candidates
+            .iter()
+            .any(|file| !rustshare_core::services::is_hidden_file_for_path(&file.name, &file.path)),
+        "meeting file path was filtered: {:?}",
+        candidates.iter().map(|file| &file.path).collect::<Vec<_>>()
+    );
+    let api = app(state.clone());
+
+    let (status, search) = request(
+        &api,
+        &token,
+        "POST",
+        "/api/v1/search",
+        Some(json!({"query":"Historic","sources":["files"],"limit":10})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{search}");
+    assert!(
+        search["results"].as_array().is_some_and(|items| {
+            items.iter().any(|item| {
+                item["title"] == "Historic private planning"
+                    && item["provenance"]["meeting_id"] == meeting_id.to_string()
+                    && item["provenance"]["calendar_event_id"].is_null()
+            })
+        }),
+        "{search}"
+    );
+
+    cleanup(&state.db_pool, tenant).await;
 }
 
 #[tokio::test]

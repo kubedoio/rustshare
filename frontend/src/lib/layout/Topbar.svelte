@@ -191,11 +191,17 @@
 		if (!q.trim()) {
 			serverSearchResults = { files: [], folders: [], meetings: [] };
 			searchLoading = false;
+			searchFailed = false;
 			if (searchAbortController) {
 				searchAbortController.abort();
 				searchAbortController = null;
 			}
 		} else {
+			searchAbortController?.abort();
+			searchAbortController = null;
+			serverSearchResults = { files: [], folders: [], meetings: [] };
+			searchLoading = true;
+			searchFailed = false;
 			searchDebounceTimer = setTimeout(() => performSearch(q), DEBOUNCE_MS);
 		}
 	});

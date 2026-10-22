@@ -6,15 +6,13 @@ const meetingQuery = process.env.PILOT_MEETING_QUERY ?? '';
 const meetingTitle = process.env.PILOT_MEETING_TITLE ?? '';
 const calendarTitle = process.env.PILOT_CALENDAR_TITLE ?? '';
 
-if (!email || !password || !meetingQuery || !meetingTitle || !calendarTitle) {
-	throw new Error(
-		'ADMIN_EMAIL, ADMIN_PASSWORD, PILOT_MEETING_QUERY, PILOT_MEETING_TITLE, and PILOT_CALENDAR_TITLE are required for the historical meeting browser test'
-	);
-}
-
 test('historical meeting search reopens its meeting and originating Calendar event', async ({
 	page
 }) => {
+	test.skip(
+		!email || !password || !meetingQuery || !meetingTitle || !calendarTitle,
+		'Pilot credentials and historical meeting fixture are required'
+	);
 	test.setTimeout(60_000);
 	page.setDefaultTimeout(15_000);
 
