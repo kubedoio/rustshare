@@ -9,6 +9,25 @@ import tomllib
 from pathlib import Path
 
 
+def logical_lines(text: str):
+    """Join ordinary shell/Docker continuations, retaining the first source line."""
+    pending = ""
+    start = 1
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not pending:
+            start = number
+        pending += line
+        if pending.endswith("\\"):
+            pending = pending[:-1]
+            continue
+        yield start, pending
+        pending = ""
+    if pending:
+        yield start, pending
+
+
 def check(root: Path) -> list[str]:
     channel = tomllib.loads((root / "rust-toolchain.toml").read_text())["toolchain"][
         "channel"
@@ -30,8 +49,8 @@ def check(root: Path) -> list[str]:
     ).decode().split("\0")
     # shortcut: explicit selectors only, extend checks/fixtures for new build syntax.
     selectors = (
-        r"dtolnay/rust-toolchain@([^\s#]+)",
-        r"\btoolchain:\s*([^\s#]+)",
+        r"dtolnay/rust-toolchain@([^\s#\"'{}\[\],]+)",
+        r"\btoolchain[\"']?\s*:\s*[\"']?([^\s#\"'{}\[\],]+)",
         r"\b(?:cargo|cross|rustc|rustfmt|clippy-driver)\s+\+([^\s;\\]+)",
         r"\b(?:RUSTUP_TOOLCHAIN|RUST_TOOLCHAIN|RUST_VERSION)(?:[\"']?\s*[:=]\s*|\s+)([^\s;\\]+)",
         r"\brustup\s+(?:toolchain\s+(?:install|link)|default|override\s+set|run)\s+([^\s;\\]+)",
@@ -47,14 +66,19 @@ def check(root: Path) -> list[str]:
         build_script = path.suffix == ".sh" or (".cargo" in path.parts and (path.suffix == ".toml" or path.name == "config"))
         if not (workflow or dockerfile or build_script):
             continue
-        for number, line in enumerate((root / path).read_text().splitlines(), 1):
-            if line.lstrip().startswith("#"):
-                continue
+        continued_image = False
+        untagged_rust = r"(?:(?:docker.io|index.docker.io)/)?(?:library/)?rust(?=[\s\"'@},\]]|$)"
+        for number, line in logical_lines((root / path).read_text()):
+            if workflow and continued_image and re.match(r"\s*[\"']?" + untagged_rust, line, re.IGNORECASE):
+                errors.append(f"{name}:{number}: Rust base must select {channel}-bookworm explicitly")
+            continued_image = workflow and bool(re.search(r"\b(?:image|container)[\"']?\s*:\s*(?:[>|][+-]?)?\s*(?:#.*)?$", line))
+            if workflow and re.search(r"\btoolchain[\"']?\s*:\s*(?:#.*)?$", line):
+                errors.append(f"{name}:{number}: toolchain must use an explicit same-line compiler")
             if re.search(r"\b(?:CARGO_BUILD_)?(?:RUSTC|RUSTC_WRAPPER|RUSTC_WORKSPACE_WRAPPER)(?:[\"']?\s*[:=]|\s+)", line):
                 errors.append(f"{name}:{number}: custom compiler/wrapper requires policy review")
             if re.search(r"\b(?:rustc|rustc-wrapper|rustc-workspace-wrapper)[\"']?\s*=", line):
                 errors.append(f"{name}:{number}: Cargo compiler/wrapper override requires policy review")
-            if re.search(r"(?:uses:\s*|uses\s*=\s*)[^\s]*?(?:setup-rust|rust-toolchain)", line) and "dtolnay/rust-toolchain@" not in line:
+            if re.search(r"(?:uses[\"']?\s*:\s*|uses\s*=\s*)[^\s]*?(?:setup-rust|rust-toolchain)", line) and "dtolnay/rust-toolchain@" not in line:
                 errors.append(f"{name}:{number}: unsupported Rust installer requires policy review")
             for pattern in selectors:
                 for match in re.finditer(pattern, line):
@@ -62,15 +86,17 @@ def check(root: Path) -> list[str]:
                     if selected != channel:
                         errors.append(f"{name}:{number}: compiler selector {selected!r}; expected {channel}")
             if workflow or dockerfile:
-                if re.search(r"(?:\bFROM\s+(?:--platform=\S+\s+)?|\b(?:image|container):\s*[\"']?)(?:(?:docker.io|index.docker.io)/)?(?:library/)?rust(?:\s|[\"']?$|@)", line):
+                if re.search(r"(?:\bFROM\s+(?:--platform=\S+\s+)?|\b(?:image|container)[\"']?\s*:\s*[\"']?)" + untagged_rust, line, re.IGNORECASE):
                     errors.append(f"{name}:{number}: Rust base must select {channel}-bookworm explicitly")
-                for match in re.finditer(r"\brust:([^\s\"']+)", line):
+                for match in re.finditer(r"\brust:([^\s\"'{}\[\],]+)", line):
                     # Exact image pins keep the bootstrap compiler aligned too;
                     # Bookworm is independently required for release glibc 2.36.
                     if match[1] != f"{channel}-bookworm":
                         errors.append(f"{name}:{number}: Rust base {match[1]!r}; expected {channel}-bookworm")
 
-    dependabot = (root / ".github/dependabot.yml").read_text()
+    dependabot = re.sub(
+        r"(?m)(?:^\s*#.*$|[ \t]+#.*$)", "", (root / ".github/dependabot.yml").read_text()
+    )
     for ecosystem, dependency in (("github-actions", "dtolnay/rust-toolchain"), ("docker", "rust")):
         blocks = re.split(r"(?m)^  - package-ecosystem:", dependabot)[1:]
         matching = [block for block in blocks if block.lstrip().startswith(f'"{ecosystem}"')]
