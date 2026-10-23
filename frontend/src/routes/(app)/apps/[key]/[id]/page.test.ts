@@ -408,7 +408,7 @@ describe('Note detail page conflict banner', () => {
 	);
 
 	it.each(['upload', 'sketch'] as const)(
-		'does not add a completed %s to another note after navigation',
+		'does not attach or delete a completed stale %s after navigation',
 		async (kind) => {
 			const { createQuery } = await import('$lib/query-compat');
 			const { uploadFile, deleteFile } = await import('$lib/api/files');
@@ -448,7 +448,7 @@ describe('Note detail page conflict banner', () => {
 			await new Promise((resolve) => setTimeout(resolve, 0));
 			expect(editorProps().attachments.map((a) => a.id)).toEqual(['destination-file']);
 			expect(mockEditorMethods.insertAttachment).not.toHaveBeenCalled();
-			expect(deleteFile).toHaveBeenCalledWith('uploaded-file');
+			expect(deleteFile).not.toHaveBeenCalled();
 		}
 	);
 

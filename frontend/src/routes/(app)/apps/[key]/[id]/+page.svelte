@@ -497,14 +497,6 @@
 		return attachment;
 	}
 
-	async function discardStaleUpload(fileId: string) {
-		try {
-			await deleteFile(fileId);
-		} catch (err) {
-			console.error('Could not clean up upload after route change:', err);
-		}
-	}
-
 	function handleUpload(event: CustomEvent<{ files: File[] }>) {
 		void handleUploadAsync(event);
 	}
@@ -526,17 +518,8 @@
 		const results = await Promise.allSettled(
 			event.detail.files.map((file) => uploadSingleFile(file, folderId, folderBacked))
 		);
-		if (generation !== routeGeneration) {
-			await Promise.all(
-				results
-					.filter(
-						(result): result is PromiseFulfilledResult<RichMarkdownAttachment> =>
-							result.status === 'fulfilled'
-					)
-					.map((result) => discardStaleUpload(result.value.id))
-			);
-			return;
-		}
+		// Uploads upsert by path, so a stale result's ID may belong to an existing file.
+		if (generation !== routeGeneration) return;
 
 		results.forEach((result, i) => {
 			if (result.status === 'fulfilled') {
@@ -583,10 +566,7 @@
 					const uploadName = generateUniqueFilename(event.detail.filename, existingNames);
 					const sketchFile = new File([event.detail.blob], uploadName, { type: 'image/png' });
 					const uploaded = await uploadFile(drawingsFolder.id, sketchFile, undefined, uploadName);
-					if (generation !== routeGeneration) {
-						await discardStaleUpload(uploaded.id);
-						return;
-					}
+					if (generation !== routeGeneration) return;
 					const attachment: RichMarkdownAttachment = {
 						id: uploaded.id,
 						filename: uploaded.name,
