@@ -411,7 +411,7 @@ describe('Note detail page conflict banner', () => {
 		'does not add a completed %s to another note after navigation',
 		async (kind) => {
 			const { createQuery } = await import('$lib/query-compat');
-			const { uploadFile } = await import('$lib/api/files');
+			const { uploadFile, deleteFile } = await import('$lib/api/files');
 			const { getFolderContents } = await import('$lib/api/folders');
 			const query = createMockQuery(noteItem('note-1'));
 			vi.mocked(createQuery).mockReturnValue(query);
@@ -448,6 +448,7 @@ describe('Note detail page conflict banner', () => {
 			await new Promise((resolve) => setTimeout(resolve, 0));
 			expect(editorProps().attachments.map((a) => a.id)).toEqual(['destination-file']);
 			expect(mockEditorMethods.insertAttachment).not.toHaveBeenCalled();
+			expect(deleteFile).toHaveBeenCalledWith('uploaded-file');
 		}
 	);
 
