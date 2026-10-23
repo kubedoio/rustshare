@@ -60,6 +60,7 @@ class ToolchainPolicyTests(unittest.TestCase):
             "Cargo compiler config": (".cargo/config.toml", '[build]\nrustc = "/opt/rustc-1.98.0"\n'),
             "quoted compiler config": (".cargo/config.toml", '[build]\n"rustc" = "/opt/rustc-1.98.0"\n'),
             "legacy Cargo config": (".cargo/config", '[build]\nrustc-wrapper = "/opt/wrapper"\n'),
+            "nested Cargo config": ("apps/desktop/.cargo/config.toml", '[build]\nrustc = "/opt/rustc-1.98.0"\n'),
             "inline Cargo config": ("scripts/build.sh", "cargo --config build.rustc='\"/opt/rustc-1.98.0\"' build\n"),
             "cross override": ("scripts/build.sh", "cross +1.98.0 build --target aarch64-unknown-linux-gnu\n"),
             "alternate installer": (".github/workflows/new.yml", "uses: actions-rust-lang/setup-rust-toolchain@v1\n"),

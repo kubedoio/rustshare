@@ -28,6 +28,7 @@ def check(root: Path) -> list[str]:
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=root,
     ).decode().split("\0")
+    # shortcut: explicit selectors only, extend checks/fixtures for new build syntax.
     selectors = (
         r"dtolnay/rust-toolchain@([^\s#]+)",
         r"\btoolchain:\s*([^\s#]+)",
@@ -43,7 +44,7 @@ def check(root: Path) -> list[str]:
             errors.append(f"{name}: nested toolchain overrides the canonical compiler")
         workflow = name.startswith(".github/workflows/") and path.suffix in {".yml", ".yaml"}
         dockerfile = "Dockerfile" in path.name
-        build_script = path.suffix == ".sh" or (name.startswith(".cargo/") and (path.suffix == ".toml" or path.name == "config"))
+        build_script = path.suffix == ".sh" or (".cargo" in path.parts and (path.suffix == ".toml" or path.name == "config"))
         if not (workflow or dockerfile or build_script):
             continue
         for number, line in enumerate((root / path).read_text().splitlines(), 1):
