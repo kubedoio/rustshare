@@ -28,6 +28,11 @@ Before you begin, ensure you have the following tools installed:
 - **sqlx-cli** — install via `cargo install sqlx-cli --features postgres`. Used to run database migrations.
 - **cargo-outdated** and **cargo-audit** (optional) — useful for checking dependency health. Install with `cargo install cargo-outdated cargo-audit`.
 
+The supported build compiler is separate from the workspace's declared MSRV
+(`Cargo.toml` `workspace.package.rust-version`, currently 1.95.0). See the
+[toolchain and dependency policy](docs/DEPENDENCY_MANAGEMENT.md#rust-build-toolchain-and-msrv)
+before changing either value.
+
 ## Development Setup
 
 ### Backend

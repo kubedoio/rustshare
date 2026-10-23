@@ -55,15 +55,13 @@ updates:
       - "dependencies"
       - "javascript"
 
-  # GitHub Actions: ignore nonexistent fixed Rust toolchain action tags.
+  # Compiler changes require one coordinated rust-toolchain.toml update.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
     ignore:
       - dependency-name: "dtolnay/rust-toolchain"
-        versions:
-          - "1.*"
     groups:
       github-actions:
         patterns:
@@ -113,6 +111,8 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "09:00"
+    ignore:
+      - dependency-name: "rust"
     groups:
       docker-dependencies:
         patterns:

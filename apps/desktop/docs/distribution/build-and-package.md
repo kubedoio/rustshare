@@ -9,7 +9,7 @@ The current desktop login flow is pairing-first: `rustshare-desktop login` print
 ## 1. Prerequisites
 
 ### Common Dependencies
-- **Rust (Stable)**: Install via `rustup`.
+- **Rust**: Install via `rustup`; building from this checkout selects the compiler pinned in the root `rust-toolchain.toml` (currently 1.97.1).
 - **Cargo**: Standard Rust build tool.
 
 ### macOS Specific

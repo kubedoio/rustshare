@@ -1014,6 +1014,9 @@ jobs:
             echo "No isolated upgrade stack was created; cleanup not required."
           fi
 
+      - name: Install Rust toolchain for migration tooling
+        uses: dtolnay/rust-toolchain@1.97.1
+
       - name: Validate representative upgrade migrations
         env:
           POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}

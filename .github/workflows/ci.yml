@@ -24,6 +24,16 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  toolchain-policy:
+    name: Rust Toolchain Policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check compiler selections and negative fixtures
+        run: |
+          python3 scripts/check_rust_toolchain.py
+          python3 -m unittest discover -s scripts -p 'test_check_rust_toolchain.py'
+
   generate-secrets:
     name: Generate Secrets
     runs-on: ubuntu-latest
@@ -128,6 +138,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Test crypto without workspace feature unification
+        run: cargo test --locked -p rustshare-crypto --lib
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   # Fast PR-tier guard: the full Test job is skipped on pull_request (PR #295

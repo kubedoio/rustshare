@@ -145,11 +145,11 @@ jobs:
           - target: aarch64-unknown-linux-gnu
     runs-on: ubuntu-latest
     # Build inside the same base image the Dockerfile builder stage uses
-    # (rust:1.97-bookworm, glibc 2.36). Building on the ubuntu-latest host
+    # (rust:1.97.1-bookworm, glibc 2.36). Building on the ubuntu-latest host
     # (glibc 2.39) produced binaries that cannot load in the
-    # debian:bookworm-slim runtime image (GLIBC_2.38/2.39 not found).
+    # older runtime images (GLIBC_2.38/2.39 not found).
     container:
-      image: rust:1.97-bookworm
+      image: rust:1.97.1-bookworm
     # The container's default shell is /bin/sh (dash), which lacks the `[[`
     # builtin used by the stage step — the arm64 leg silently fell into the
     # x86_64 strip branch and failed. Force bash for every step of this job.
@@ -163,9 +163,8 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.97.1
         with:
-          toolchain: '1.97.1'
           targets: ${{ matrix.target }}
 
       - name: Cache Rust dependencies

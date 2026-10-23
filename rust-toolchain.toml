@@ -1,2 +1,4 @@
 [toolchain]
+# Canonical supported build compiler; workspace rust-version is the separate MSRV.
+# CI checks workflow, Docker and Dependabot selections against this value.
 channel = "1.97.1"

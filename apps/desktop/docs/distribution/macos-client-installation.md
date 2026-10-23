@@ -42,7 +42,7 @@ After following this guide, you will have:
 Install the following first:
 
 - Xcode Command Line Tools
-- Rust stable via `rustup`
+- Rust via `rustup` (the checkout's `rust-toolchain.toml` selects the build compiler)
 - access to a RustShare server
 - access to the RustShare web UI for that server
 - an authenticated browser session in that web UI when pairing the device
@@ -53,7 +53,6 @@ Commands:
 xcode-select --install
 curl https://sh.rustup.rs -sSf | sh
 source "$HOME/.cargo/env"
-rustup default stable
 rustc --version
 cargo --version
 ```
@@ -63,6 +62,7 @@ cargo --version
 From the repository root:
 
 ```bash
+rustup show # installs/selects the pinned build compiler, currently 1.97.1
 cargo build --release -p rustshare-desktop
 ```
 
