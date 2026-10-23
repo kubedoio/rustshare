@@ -4,6 +4,7 @@
   dialect), but with a compact email-appropriate toolbar.
 -->
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { Editor } from '@tiptap/core';
 	import { getEditorExtensions } from '$lib/editor/adapter/extensions';
@@ -51,7 +52,7 @@
 
 	// Sync externally replaced content (e.g. opening a different draft) without
 	// clobbering in-progress typing and without echoing back through onChange.
-	let lastExternalContent = $state(content);
+	let lastExternalContent = $state(untrack(() => content));
 	$effect(() => {
 		if (!editor || content === lastExternalContent) return;
 		lastExternalContent = content;

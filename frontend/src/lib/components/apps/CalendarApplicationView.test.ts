@@ -89,6 +89,14 @@ function dayFromToday(days: number): string {
 	return `${date.getFullYear()}-${month}-${day}`;
 }
 
+function dayInCurrentMonth(day: number): string {
+	const date = new Date();
+	date.setDate(day);
+	const month = String(date.getMonth() + 1).padStart(2, '0');
+	const dayOfMonth = String(date.getDate()).padStart(2, '0');
+	return `${date.getFullYear()}-${month}-${dayOfMonth}`;
+}
+
 function eventAt(date: string, overrides: Partial<CalendarEvent> = {}): CalendarEvent {
 	return {
 		id: `evt-${date}-${overrides.title ?? 'x'}`,
@@ -392,8 +400,9 @@ describe('CalendarApplicationView', () => {
 		// A weekly master: starts_at/ends_at stay the master's values and each
 		// expanded occurrence carries the master's id plus its own instant in
 		// instance_start.
-		const masterDay = dayFromToday(2);
-		const occurrenceDays = [dayFromToday(2), dayFromToday(9), dayFromToday(16)];
+		// Keep all instances inside the visible month.
+		const masterDay = dayInCurrentMonth(2);
+		const occurrenceDays = [masterDay, dayInCurrentMonth(9), dayInCurrentMonth(16)];
 		mocks.listEvents.mockResolvedValue(
 			occurrenceDays.map((day) =>
 				eventAt(masterDay, {

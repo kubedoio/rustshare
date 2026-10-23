@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { page } from '$app/stores';
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
@@ -104,15 +104,15 @@
 	let api = $derived(MODULE_API_MAP[key] ?? null);
 
 	const query = createQuery<unknown, Error, unknown, unknown, string[]>({
-		queryKey: ['module-item', key, id],
-		queryFn: () => api?.get(id),
-		enabled: !!api && !!id
+		queryKey: ['module-item'],
+		queryFn: () => Promise.resolve(undefined),
+		enabled: false
 	});
 
 	$effect(() => {
 		query.setOptions({
 			queryKey: ['module-item', key, id],
-			queryFn: () => api?.get(id),
+			queryFn: async () => ({ routeKey: key, routeId: id, item: await api?.get(id) }),
 			enabled: !!api && !!id
 		});
 	});
@@ -122,8 +122,11 @@
 	// TanStack keeps the previous query's data while a new key starts fetching.
 	// Never render that stale note under the new route id.
 	let item = $derived.by(() => {
-		const data = $query.data as ApplicationItem | undefined;
-		return data?.id === id ? data : undefined;
+		const result = $query.data as
+			{ routeKey: string; routeId: string; item: ApplicationItem | undefined } | undefined;
+		return result?.routeKey === key && result.routeId === id && result.item?.id === id
+			? result.item
+			: undefined;
 	});
 	let content = $derived(item?.content ?? '');
 	let title = $derived(item?.metadata?.title || item?.name || '');
@@ -147,12 +150,23 @@
 
 	let mode: EditorMode = $state('read');
 	let saveStatus: EditorSaveStatus = $state('saved');
+	let routeGeneration = 0;
+	onDestroy(() => {
+		routeGeneration += 1;
+	});
+
+	$effect(() => {
+		void key;
+		void id;
+		untrack(() => {
+			routeGeneration += 1;
+			saveStatus = 'saved';
+		});
+	});
 
 	$effect(() => {
 		// Initialize mode based on the Application route slug when it changes
-		untrack(() => {
-			mode = key === 'notes' ? 'edit' : 'read';
-		});
+		mode = key === 'notes' ? 'edit' : 'read';
 	});
 
 	$effect(() => {
@@ -175,6 +189,8 @@
 	let showCustomConflictTitle = $state(false);
 	let customConflictTitle = $state('');
 	let attachments = $state<RichMarkdownAttachment[]>([]);
+	let attachmentRouteKey = '';
+	let attachmentRouteId = '';
 	let documentPage = $state<MarkdownDocumentPage | undefined>(undefined);
 	let selectedNoteColor = $state<string | null>(null);
 
@@ -191,6 +207,9 @@
 	});
 
 	$effect(() => {
+		const sameRoute = attachmentRouteKey === key && attachmentRouteId === id;
+		attachmentRouteKey = key;
+		attachmentRouteId = id;
 		if (item?.metadata?.attachments) {
 			const serverAttachments = item.metadata.attachments.map((a: NoteAttachment) => {
 				const isImage = a.mime_type?.startsWith('image/');
@@ -214,7 +233,9 @@
 			// Preserve local-only attachments that haven't been saved yet
 			// (prevents background refetch from dropping unsaved uploads)
 			const serverIds = new Set(serverAttachments.map((a: RichMarkdownAttachment) => a.id));
-			const localOnly = untrack(() => attachments).filter((a) => !serverIds.has(a.id));
+			const localOnly = sameRoute
+				? untrack(() => attachments).filter((a) => !serverIds.has(a.id))
+				: [];
 			const newAttachments = [...serverAttachments, ...localOnly];
 
 			untrack(() => {
@@ -262,14 +283,18 @@
 		}));
 	}
 
-	function getUpdateFunction(key: string, itemId: string) {
+	function getUpdateFunction(
+		key: string,
+		itemId: string,
+		noteAttachments?: ReturnType<typeof serializeNoteAttachments>
+	) {
 		return (data: { title: string; content: string; color?: string | null }) => {
 			switch (key) {
 				case 'notes':
 					return notesApi.update(itemId, {
 						content: data.content,
 						color: data.color,
-						attachments: serializeNoteAttachments()
+						attachments: noteAttachments ?? []
 					});
 				case 'decisions':
 					return decisionsApi.update(itemId, { title: data.title, content: data.content });
@@ -286,9 +311,17 @@
 	const saveMutation = createMutation<
 		unknown,
 		Error,
-		{ title: string; content: string; color?: string | null }
+		{
+			title: string;
+			content: string;
+			color?: string | null;
+			routeKey: string;
+			routeId: string;
+			noteAttachments?: ReturnType<typeof serializeNoteAttachments>;
+		}
 	>({
-		mutationFn: getUpdateFunction(key, id)
+		mutationFn: ({ routeKey, routeId, noteAttachments, ...request }) =>
+			getUpdateFunction(routeKey, routeId, noteAttachments)(request)
 	});
 
 	async function handleSave(
@@ -298,6 +331,10 @@
 			return;
 		}
 
+		const routeKey = key;
+		const routeId = id;
+		const generation = routeGeneration;
+		const noteAttachments = routeKey === 'notes' ? serializeNoteAttachments() : undefined;
 		saveStatus = 'saving';
 		const editorContent = event.detail.content;
 		// Postprocess: convert API URLs back to relative paths for folder-backed notes
@@ -309,40 +346,62 @@
 			const saved = await $saveMutation.mutateAsync({
 				title,
 				content: saveContent,
-				color: event.detail.color
+				color: event.detail.color,
+				routeKey,
+				routeId,
+				noteAttachments
 			});
-			saveStatus = 'saved';
-			documentPage?.markSaved(editorContent);
+			if (generation === routeGeneration && key === routeKey && id === routeId) {
+				saveStatus = 'saved';
+				documentPage?.markSaved(editorContent);
+			}
 			const modifiedAt =
 				(saved as { modified_at?: string })?.modified_at ?? new Date().toISOString();
-			const noteAttachments = key === 'notes' ? serializeNoteAttachments() : undefined;
 			const noteColor = event.detail.color;
 
-			queryClient.setQueryData(
-				['module-item', key, id],
-				(previous: ApplicationItemQueryData | undefined) => {
-					if (!previous) return previous;
-					return {
-						...previous,
-						content: saveContent,
-						current_version:
-							(saved as { current_version?: number })?.current_version ?? previous.current_version,
-						modified_at: modifiedAt,
-						metadata: {
-							...previous.metadata,
-							...(noteAttachments ? { attachments: noteAttachments } : {}),
-							...(noteColor !== undefined ? { color: noteColor } : {}),
-							updated_at: modifiedAt
-						}
-					};
-				}
-			);
+			if (generation === routeGeneration && key === routeKey && id === routeId) {
+				queryClient.setQueryData(
+					['module-item', routeKey, routeId],
+					(
+						previous:
+							{ routeKey: string; routeId: string; item: ApplicationItemQueryData } | undefined
+					) => {
+						if (!previous?.item) return previous;
+						return {
+							...previous,
+							item: {
+								...previous.item,
+								content: saveContent,
+								current_version:
+									(saved as { current_version?: number })?.current_version ??
+									previous.item.current_version,
+								modified_at: modifiedAt,
+								metadata: {
+									...previous.item.metadata,
+									...(noteAttachments ? { attachments: noteAttachments } : {}),
+									...(noteColor !== undefined ? { color: noteColor } : {}),
+									updated_at: modifiedAt
+								}
+							}
+						};
+					}
+				);
+			} else {
+				// Mark the source stale without replacing edits in a later visit to it.
+				queryClient.invalidateQueries({
+					queryKey: ['module-item', routeKey, routeId],
+					exact: true,
+					refetchType: 'none'
+				});
+			}
 
 			// Also invalidate the list query so gallery views stay fresh
-			queryClient.invalidateQueries({ queryKey: [key] });
+			queryClient.invalidateQueries({ queryKey: [routeKey] });
 		} catch (error) {
-			saveStatus = 'error';
-			documentPage?.markSaveError(error instanceof Error ? error.message : 'Autosave failed');
+			if (generation === routeGeneration && key === routeKey && id === routeId) {
+				saveStatus = 'error';
+				documentPage?.markSaveError(error instanceof Error ? error.message : 'Autosave failed');
+			}
 		}
 	}
 
@@ -402,9 +461,13 @@
 		}
 	}
 
-	async function uploadSingleFile(file: File, folderId: string): Promise<RichMarkdownAttachment> {
+	async function uploadSingleFile(
+		file: File,
+		folderId: string,
+		folderBacked: boolean
+	): Promise<RichMarkdownAttachment> {
 		let uploadName: string | undefined;
-		if (isFolderBacked) {
+		if (folderBacked) {
 			try {
 				const folderContents = await getFolderContents(folderId);
 				const existingNames = folderContents.files?.map((f: ApiFile) => f.name) || [];
@@ -416,7 +479,7 @@
 
 		const uploaded = await uploadFile(folderId, file, undefined, uploadName);
 		const isImage = uploaded.mime_type?.startsWith('image/');
-		const relativePath = isFolderBacked ? `${ATTACHMENTS_FOLDER_NAME}/${uploaded.name}` : undefined;
+		const relativePath = folderBacked ? `${ATTACHMENTS_FOLDER_NAME}/${uploaded.name}` : undefined;
 		const apiUrl = isImage
 			? `/api/v1/files/${uploaded.id}/preview`
 			: `/api/v1/files/${uploaded.id}/content`;
@@ -431,11 +494,6 @@
 			createdBy: ''
 		};
 
-		// Auto-insert relative link into editor for folder-backed notes
-		if (isFolderBacked && documentPage) {
-			documentPage.insertAttachment(attachment);
-		}
-
 		return attachment;
 	}
 
@@ -449,18 +507,24 @@
 			return;
 		}
 
+		const generation = routeGeneration;
+		const folderBacked = isFolderBacked;
 		const folderId = await resolveAttachmentFolder(item);
+		if (generation !== routeGeneration) return;
 		if (!folderId) {
 			toastStore.show('Could not resolve attachment folder', 'error');
 			return;
 		}
 		const results = await Promise.allSettled(
-			event.detail.files.map((file) => uploadSingleFile(file, folderId))
+			event.detail.files.map((file) => uploadSingleFile(file, folderId, folderBacked))
 		);
+		// Uploads upsert by path, so a stale result's ID may belong to an existing file.
+		if (generation !== routeGeneration) return;
 
 		results.forEach((result, i) => {
 			if (result.status === 'fulfilled') {
 				attachments = [...attachments, result.value];
+				if (folderBacked) documentPage?.insertAttachment(result.value);
 			} else {
 				console.error('Failed to upload:', result.reason);
 				toastStore.show(`Failed to upload ${event.detail.files[i].name}`, 'error');
@@ -485,20 +549,24 @@
 
 	async function handleSketchAsync(event: CustomEvent<{ blob: Blob; filename: string }>) {
 		if (!item || !item.parent_folder_id) return;
+		const generation = routeGeneration;
 
 		if (isFolderBacked) {
 			// Upload sketch PNG to drawings/ subfolder
 			try {
 				const contents = await getFolderContents(item.parent_folder_id);
+				if (generation !== routeGeneration) return;
 				const drawingsFolder = contents.folders?.find(
 					(f: ApiFolder) => f.name === DRAWINGS_FOLDER_NAME
 				);
 				if (drawingsFolder) {
 					const folderContents = await getFolderContents(drawingsFolder.id);
+					if (generation !== routeGeneration) return;
 					const existingNames = folderContents.files?.map((f: ApiFile) => f.name) || [];
 					const uploadName = generateUniqueFilename(event.detail.filename, existingNames);
 					const sketchFile = new File([event.detail.blob], uploadName, { type: 'image/png' });
 					const uploaded = await uploadFile(drawingsFolder.id, sketchFile, undefined, uploadName);
+					if (generation !== routeGeneration) return;
 					const attachment: RichMarkdownAttachment = {
 						id: uploaded.id,
 						filename: uploaded.name,

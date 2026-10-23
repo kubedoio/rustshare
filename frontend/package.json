@@ -8,7 +8,7 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --compiler-warnings \"state_referenced_locally:error\"",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
@@ -87,6 +87,7 @@
 		"markdown-it": "^14.2.0",
 		"mermaid": "^11.15.0",
 		"nanoid": "^3.3.17",
+		"sass": "1.106.1",
 		"uuid": "^14.0.0",
 		"@excalidraw/excalidraw": {
 			"nanoid": "^3.3.17"

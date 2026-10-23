@@ -232,24 +232,32 @@
 	});
 
 	const sharedFolderTreesQuery = createQuery<FolderTreeType[]>({
-		queryKey: [
-			'shared-folder-trees',
-			($receivedSharesQuery.data || [])
-				.filter((share) => share.resource_type === 'folder')
-				.map((share) => share.resource_id)
-				.sort()
-				.join(',')
-		],
+		queryKey: ['shared-folder-trees'],
 		queryFn: async () => {
 			const folderShares = ($receivedSharesQuery.data || []).filter(
 				(share) => share.resource_type === 'folder'
 			);
 			return Promise.all(folderShares.map((share) => getSharedFolderTree(share.resource_id)));
 		},
-		enabled:
-			activeRoot === 'shared' &&
-			!!$receivedSharesQuery.data &&
-			$receivedSharesQuery.data.some((share) => share.resource_type === 'folder')
+		enabled: false
+	});
+
+	$effect(() => {
+		const folderShares = ($receivedSharesQuery.data || []).filter(
+			(share) => share.resource_type === 'folder'
+		);
+		sharedFolderTreesQuery.setOptions({
+			queryKey: [
+				'shared-folder-trees',
+				folderShares
+					.map((share) => share.resource_id)
+					.sort()
+					.join(',')
+			],
+			queryFn: () =>
+				Promise.all(folderShares.map((share) => getSharedFolderTree(share.resource_id))),
+			enabled: activeRoot === 'shared' && folderShares.length > 0
+		});
 	});
 
 	// Query for the active workspace view
@@ -319,8 +327,9 @@
 	}
 
 	const filesQuery = createQuery<ApiFolderContents>({
-		queryKey: ['file-workspace', workspaceMode, currentFolderId, activeRoot],
-		queryFn: fetchWorkspaceContents
+		queryKey: ['file-workspace'],
+		queryFn: () => Promise.resolve({ folders: [], files: [] }),
+		enabled: false
 	});
 
 	$effect(() => {

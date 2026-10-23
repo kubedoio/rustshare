@@ -49,7 +49,7 @@
 	const folderTreeQuery = createQuery<FolderTreeType>({
 		queryKey: ['folder-tree'],
 		queryFn: () => getFolderTree(),
-		enabled: variant === 'files',
+		enabled: false,
 		refetchOnWindowFocus: true,
 		staleTime: 0
 	});
@@ -58,7 +58,7 @@
 	const receivedSharesQuery = createQuery<ReceivedShare[]>({
 		queryKey: ['received-shares'],
 		queryFn: () => listReceivedShares(),
-		enabled: variant === 'files'
+		enabled: false
 	});
 
 	const sharedFolderTreesQuery = createQuery<FolderTreeType[]>({
@@ -69,7 +69,7 @@
 			);
 			return Promise.all(folderShares.map((share) => getSharedFolderTree(share.resource_id)));
 		},
-		enabled: variant === 'files'
+		enabled: false
 	});
 
 	const allFilesQuery = createQuery({

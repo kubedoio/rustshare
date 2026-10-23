@@ -14,9 +14,11 @@
 
 	let unreadOnly = $state(false);
 
-	const notificationsQuery = createQuery({
-		queryKey: ['notifications', unreadOnly],
-		queryFn: () => listNotifications({ unreadOnly, limit: 100 })
+	type NotificationList = Awaited<ReturnType<typeof listNotifications>>;
+	const notificationsQuery = createQuery<NotificationList>({
+		queryKey: ['notifications', false],
+		queryFn: () => Promise.resolve({ notifications: [], total: 0 }),
+		enabled: false
 	});
 
 	$effect(() => {

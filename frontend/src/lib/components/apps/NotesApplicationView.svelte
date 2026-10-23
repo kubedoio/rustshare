@@ -45,9 +45,18 @@
 
 	let { module }: Props = $props();
 
-	const notesQuery = createQuery({
-		queryKey: ['notes', module.key],
-		queryFn: () => listNotes()
+	type NoteList = Awaited<ReturnType<typeof listNotes>>;
+	const notesQuery = createQuery<NoteList>({
+		queryKey: ['notes'],
+		queryFn: () => Promise.resolve([] as NoteList),
+		enabled: false
+	});
+
+	$effect(() => {
+		notesQuery.setOptions({
+			queryKey: ['notes', module.key],
+			queryFn: () => listNotes()
+		});
 	});
 
 	let recentNotes = $derived($notesQuery.data ?? []);
@@ -57,9 +66,10 @@
 	let searchTerm = $state('');
 	let statusFilter = $state<'all' | 'public' | 'private'>('all');
 	let sortDirection = $state<'desc' | 'asc'>('desc');
-	let viewMode = $state<'list' | 'grid'>(
-		module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list'
-	);
+	let viewMode = $state<'list' | 'grid'>('list');
+	$effect(() => {
+		viewMode = module.ui.page.layout === 'gallery-grid' ? 'grid' : 'list';
+	});
 	let itemsPerPage = $state(20);
 
 	let activeNote = $state<any>(null);
