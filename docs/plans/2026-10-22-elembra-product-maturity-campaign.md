@@ -67,6 +67,11 @@ Each PR gets independent code/security review and human approval before merge. S
 
 ## Campaign boundaries and validation
 
+M1.2's compiler-resolution inventory, bounded PR #400 `OsRng` fix, and executed
+validation are recorded in the [toolchain evidence](../qa/2026-10-23-m1-2-toolchain.md).
+The recommended first M1.3 slice is the concrete `mailparse` adapter extraction
+into the existing infrastructure crate, retaining Core DTOs and errors.
+
 Deployment, institutional Gate A execution, optional enforced RLS, independent workspace identity, full CalDAV, public plugin marketplace, and autonomous Agent execution are outside this campaign unless separately authorized. Broad cloud Connector providers wait until the common contract and local-text worker are tested.
 
 For each implementation PR, run the smallest relevant checks first, then the applicable full frontend/Rust baseline, PostgreSQL integration tests, Playwright, OpenAPI/contract validation, security checks, and CI. Only report checks actually executed. Changes affecting authorization, tenant visibility, storage, secrets, or source revocation require independent security review and human approval before merge.
