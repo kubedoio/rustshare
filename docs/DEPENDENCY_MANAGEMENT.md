@@ -32,7 +32,9 @@ python3 scripts/check_rust_toolchain.py
 python3 -m unittest discover -s scripts -p 'test_check_rust_toolchain.py'
 ```
 
-The `Rust Toolchain Policy` CI job checks exact compiler action/input pins, Rust
+The existing required `Format` CI job runs the policy guard and negative fixtures
+before installing Rust, so a policy failure blocks protected-branch merges. It
+checks exact compiler action/input pins, Rust
 base images, common shell/Cargo overrides, nested toolchain files, and Dependabot
 compiler ignores. Its temporary Git fixtures deliberately introduce inconsistent
 workflow, container, and override selections and require a failing exit status.

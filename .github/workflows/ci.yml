@@ -24,16 +24,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  toolchain-policy:
-    name: Rust Toolchain Policy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Check compiler selections and negative fixtures
-        run: |
-          python3 scripts/check_rust_toolchain.py
-          python3 -m unittest discover -s scripts -p 'test_check_rust_toolchain.py'
-
   generate-secrets:
     name: Generate Secrets
     runs-on: ubuntu-latest
@@ -122,6 +112,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Check compiler selections and negative fixtures
+        run: |
+          python3 scripts/check_rust_toolchain.py
+          python3 -m unittest discover -s scripts -p 'test_check_rust_toolchain.py'
       - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt
