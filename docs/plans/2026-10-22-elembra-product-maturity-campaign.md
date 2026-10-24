@@ -73,8 +73,10 @@ client sends only new UTC `starts_at`/`ends_at` plus the unchanged event IANA
 timezone. The event zone resolves local date/time, elapsed duration is retained,
 DST gaps are rejected, and overlap wall times choose the earlier instant.
 Month/work-week drops translate the browser-calendar day delta to the event's
-local date, preserving the event's existing displayed-date offset when the
-two zones straddle midnight.
+local date by checking nearby event-zone dates at the preserved wall time and
+selecting the date that displays on the requested browser-calendar day. This
+also handles cases where the browser and event zones switch daylight time on
+different dates.
 
 | View / input | Supported interaction | Limits |
 | --- | --- | --- |
@@ -107,6 +109,15 @@ all 1,278 Vitest tests passed again. Review then added coverage for imported
 Outlook events whose embedded timezone IDs are not accepted by Intl; after
 that fix the frontend suite passed all 1,279 tests, check/lint and build passed.
 Refreshed protected CI and independent human review are tracked on PR #414.
+
+The PR review loop then found and fixed two additional cases: destination-day
+mapping when the browser and event zones enter daylight time on different dates,
+and stale move-dialog state after a dropped wall time falls in a DST gap. On the
+latest local validation, all 1,283 Vitest tests passed, `npm run check` reported
+0 errors (36 existing warnings), lint reported 0 errors (155 existing warnings),
+and the production build passed. The four focused Playwright cases were
+collected and skipped because local admin credentials are unavailable. Fresh
+protected CI and code/security reviews are running for the current PR head.
 
 ## Campaign boundaries and validation
 
