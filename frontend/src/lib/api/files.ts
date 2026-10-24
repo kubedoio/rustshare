@@ -58,12 +58,13 @@ export async function uploadFile(
 	folderId: string | null,
 	file: globalThis.File,
 	onProgress?: UploadProgressCallback,
-	name?: string
+	name?: string,
+	signal?: AbortSignal
 ): Promise<File> {
 	// Use chunked upload for files > 10MB to bypass most proxy/Cloudflare limits (usually 100MB, but let's be safe)
 	// Actually, let's use it for > 5MB to ensure we test it properly.
 	if (file.size > 5 * 1024 * 1024) {
-		return uploadFileChunked(folderId, file, onProgress, name);
+		return uploadFileChunked(folderId, file, onProgress, name, signal);
 	}
 
 	const formData = new FormData();
@@ -77,7 +78,11 @@ export async function uploadFile(
 
 	// standard upload
 	if (onProgress) onProgress(10);
-	const result = await apiClient.post<File>('/files/upload', formData);
+	const result = await apiClient.request<File>('/files/upload', {
+		method: 'POST',
+		body: formData,
+		signal
+	});
 	if (onProgress) onProgress(100);
 	return result;
 }
@@ -89,7 +94,8 @@ async function uploadFileChunked(
 	folderId: string | null,
 	file: globalThis.File,
 	onProgress?: UploadProgressCallback,
-	name?: string
+	name?: string,
+	signal?: AbortSignal
 ): Promise<File> {
 	const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
 	const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -109,33 +115,44 @@ async function uploadFileChunked(
 
 	const sessionId = session.session_id;
 
-	// 2. Upload chunks
-	for (let i = 0; i < totalChunks; i++) {
-		const start = i * CHUNK_SIZE;
-		const end = Math.min(start + CHUNK_SIZE, file.size);
-		const chunk = file.slice(start, end);
+	try {
+		// 2. Upload chunks
+		for (let i = 0; i < totalChunks; i++) {
+			signal?.throwIfAborted();
+			const start = i * CHUNK_SIZE;
+			const end = Math.min(start + CHUNK_SIZE, file.size);
+			const chunk = file.slice(start, end);
 
-		await apiClient.requestVoid(`/uploads/sessions/${sessionId}/chunks/${i}`, {
-			method: 'PUT',
-			body: chunk
-		});
+			await apiClient.requestVoid(`/uploads/sessions/${sessionId}/chunks/${i}`, {
+				method: 'PUT',
+				body: chunk,
+				signal
+			});
 
-		if (onProgress) {
-			const progress = Math.round(((i + 1) / totalChunks) * 90); // 0-90% for chunks, last 10% for complete
-			onProgress(progress);
+			if (onProgress) {
+				const progress = Math.round(((i + 1) / totalChunks) * 90); // 0-90% for chunks, last 10% for complete
+				onProgress(progress);
+			}
 		}
+
+		// 3. Complete upload
+		signal?.throwIfAborted();
+		if (onProgress) onProgress(95);
+		const result = await apiClient.request<{ file_id: string; file_name: string }>(
+			`/uploads/sessions/${sessionId}/complete`,
+			{ method: 'POST', body: JSON.stringify({}), signal }
+		);
+
+		// 4. Return the created file (we need to fetch it to match the expected return type)
+		if (onProgress) onProgress(100);
+		return getFile(result.file_id);
+	} catch (error) {
+		if (signal?.aborted) {
+			// The session may have been created before cancellation reached the client.
+			await apiClient.delete(`/uploads/sessions/${sessionId}`).catch(() => {});
+		}
+		throw error;
 	}
-
-	// 3. Complete upload
-	if (onProgress) onProgress(95);
-	const result = await apiClient.post<{ file_id: string; file_name: string }>(
-		`/uploads/sessions/${sessionId}/complete`,
-		{}
-	);
-
-	// 4. Return the created file (we need to fetch it to match the expected return type)
-	if (onProgress) onProgress(100);
-	return getFile(result.file_id);
 }
 
 export async function getFile(fileId: string): Promise<File> {
