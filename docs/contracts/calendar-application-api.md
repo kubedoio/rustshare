@@ -153,6 +153,22 @@ absent or `null` value leaves the stored value unchanged, while an empty
 string clears it (for `rrule`, this stops the recurrence). `title` cannot be
 cleared (empty is a `400`).
 
+Calendar UI rescheduling uses this same endpoint with `starts_at`, `ends_at`,
+and the unchanged event `timezone`; the API continues to accept UTC instants
+and does not perform local-time conversion. The UI currently offers movement
+only for internal, non-recurring timed events. It derives the new UTC start
+from the selected wall time in the event's IANA timezone, preserves elapsed
+duration, rejects nonexistent DST-gap times, and chooses the earlier instant
+for an ambiguous DST-overlap time. Dragging maps the selected browser-calendar
+day to the corresponding event-local day, preserving the event's original
+displayed-date offset when the two zones straddle midnight. Provider/imported events, recurring events
+and occurrences, and all-day events have no Move action. All-day movement stays
+unsupported because PATCH does not accept `original_date` independently of
+the UTC-midnight interval. Read-only imported events with embedded timezone
+identifiers unsupported by the browser use the browser timezone for detail
+labels, matching their existing calendar display; this does not change stored
+instants or permit rescheduling.
+
 ### `DELETE /api/v1/calendar/events/{id}`
 
 Soft-delete an internal event. `200 { "ok": true }`. Deletion is idempotent:

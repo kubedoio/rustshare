@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Accessible Calendar movement for internal, non-recurring timed events across Month, work-week, Day and Agenda views. Movement preserves event-zone wall time and duration; recurring, occurrence, all-day and read-only events remain unsupported.
 - Add effective-access source and permission explanations to shared folder
   contents and folder-tree responses, using the live resolver decision and
   restricting share identifiers to inspectable direct Admin grants.
