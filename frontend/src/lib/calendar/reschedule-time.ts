@@ -76,6 +76,11 @@ export function localDateTime(instant: string, timeZone: string): LocalDateTime 
 	return partsAt(new Date(instant).getTime(), timeZone);
 }
 
+function dateAtOffset(date: string, offset: number): string {
+	const [year, month, day] = date.split('-').map(Number);
+	return new Date(Date.UTC(year, month - 1, day + offset)).toISOString().slice(0, 10);
+}
+
 export function eventDateForCalendarDate(
 	instant: string,
 	eventTimeZone: string,
@@ -84,11 +89,36 @@ export function eventDateForCalendarDate(
 ): string {
 	const eventDate = localDateTime(instant, eventTimeZone).date;
 	const displayedDate = localDateTime(instant, calendarTimeZone).date;
-	const dayShift =
-		(Date.parse(`${calendarDate}T00:00:00Z`) - Date.parse(`${displayedDate}T00:00:00Z`)) / DAY_MS;
-	if (!Number.isInteger(dayShift)) throw new RangeError('Choose a valid calendar date.');
-	const eventMidnight = Date.parse(`${eventDate}T00:00:00Z`);
-	return new Date(eventMidnight + dayShift * DAY_MS).toISOString().slice(0, 10);
+	if (!Number.isFinite(Date.parse(`${calendarDate}T00:00:00Z`)))
+		throw new RangeError('Choose a valid calendar date.');
+	const preferredOffset =
+		(Date.parse(`${eventDate}T00:00:00Z`) - Date.parse(`${displayedDate}T00:00:00Z`)) / DAY_MS;
+	const candidates: string[] = [];
+	for (let offset = -2; offset <= 2; offset += 1) {
+		const candidate = dateAtOffset(calendarDate, offset);
+		try {
+			const moved = localInstant(
+				candidate,
+				localDateTime(instant, eventTimeZone).time,
+				eventTimeZone
+			);
+			if (partsAt(moved, calendarTimeZone).date === calendarDate) candidates.push(candidate);
+		} catch (error) {
+			if (!(error instanceof RangeError)) throw error;
+		}
+	}
+	if (candidates.length === 0)
+		throw new RangeError('That date cannot display the event at its original local time.');
+	return candidates.sort((left, right) => {
+		const leftOffset =
+			(Date.parse(`${left}T00:00:00Z`) - Date.parse(`${calendarDate}T00:00:00Z`)) / DAY_MS;
+		const rightOffset =
+			(Date.parse(`${right}T00:00:00Z`) - Date.parse(`${calendarDate}T00:00:00Z`)) / DAY_MS;
+		return (
+			Math.abs(leftOffset - preferredOffset) - Math.abs(rightOffset - preferredOffset) ||
+			left.localeCompare(right)
+		);
+	})[0];
 }
 
 export function rescheduleTimedEvent(

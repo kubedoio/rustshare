@@ -469,15 +469,22 @@
 
 	function beginMove(event: CalendarEvent, date?: Date, trigger?: HTMLElement) {
 		if (!canReschedule(event)) return;
-		const local = localDateTime(event.starts_at, event.timezone);
-		moveEvent = event;
-		moveDate = date
-			? eventDateForCalendarDate(event.starts_at, event.timezone, toLocalInputDate(date))
-			: local.date;
-		moveTime = local.time;
-		moveError = '';
-		moveTrigger = trigger ?? null;
-		void tick().then(() => moveDateInput?.focus());
+		try {
+			const local = localDateTime(event.starts_at, event.timezone);
+			moveEvent = event;
+			moveDate = date
+				? eventDateForCalendarDate(event.starts_at, event.timezone, toLocalInputDate(date))
+				: local.date;
+			moveTime = local.time;
+			moveError = '';
+			moveTrigger = trigger ?? null;
+			void tick().then(() => moveDateInput?.focus());
+		} catch (error) {
+			toastStore.show(
+				error instanceof Error ? error.message : 'Could not choose that calendar date.',
+				'error'
+			);
+		}
 	}
 
 	function closeMove() {

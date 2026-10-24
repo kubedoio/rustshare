@@ -92,6 +92,31 @@ describe('calendar event-local rescheduling', () => {
 		}
 	});
 
+	it('maps the displayed date across different daylight-saving transitions', () => {
+		vi.stubEnv('TZ', 'America/Los_Angeles');
+		try {
+			const starts_at = '2026-03-01T07:30:00Z';
+			const targetDate = '2026-03-14';
+			const eventDate = eventDateForCalendarDate(
+				starts_at,
+				'Europe/Berlin',
+				targetDate,
+				'America/Los_Angeles'
+			);
+			const moved = rescheduleTimedEvent(
+				event(starts_at, '2026-03-01T08:30:00Z'),
+				'Europe/Berlin',
+				eventDate
+			);
+
+			expect(eventDate).toBe(targetDate);
+			expect(moved.starts_at).toBe('2026-03-14T07:30:00.000Z');
+			expect(localDateTime(moved.starts_at, 'America/Los_Angeles').date).toBe(targetDate);
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
 	it('rejects all-day events and non-positive durations', () => {
 		expect(() =>
 			rescheduleTimedEvent(
