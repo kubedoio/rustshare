@@ -1,6 +1,6 @@
 # Elembra Product Maturity Campaign
 
-Audit baseline: protected `main` at `39fff1c16a089e46c7bf536708af721f43bf7742` (merge of PR #403). This plan uses current merged behavior and issue updates; it does not authorize deployment, institutional Gate A work, or retained-infrastructure changes.
+Audit baseline before M2.2: protected `main` at `1f1c37bb55067ef2e82fae9fab56206aff304e81` (merge of PR #411). This plan uses current merged behavior and issue updates; it does not authorize deployment, institutional Gate A work, or retained-infrastructure changes.
 
 ## Gap matrix
 
@@ -12,7 +12,7 @@ Audit baseline: protected `main` at `39fff1c16a089e46c7bf536708af721f43bf7742` (
 | [#286](https://github.com/kubedoio/rustshare/issues/286) | In progress (M1.3 first slice) | This PR moves the mailparse-backed EML parser into Infrastructure, leaves its DTOs/errors in Core, and guards against reintroducing mailparse in Core. Core still has other concrete infrastructure dependencies, including SQLx, Reqwest, image, and lettre; extract those only in separately reviewed slices. Server retains mailparse for its separate IMAP header parser. |
 | [#287](https://github.com/kubedoio/rustshare/issues/287) | Partially implemented | Repository/service layers exist, while handlers in device-auth, invites, and admin areas still issue SQL directly. Add a guard and migrate handler families incrementally with tenant context preserved. |
 | [#320](https://github.com/kubedoio/rustshare/issues/320) | Unimplemented | Upload queues support progress but expose no safe cancellation path. Define abort, server session cleanup, and terminal UI state for single and multi-file uploads. |
-| [#396](https://github.com/kubedoio/rustshare/issues/396) | Unimplemented | Calendar stores timezone-aware events, but has no rescheduling interaction. Add accessible pointer and keyboard controls that preserve wall time and duration through DST boundaries; imported/provider events stay read-only. |
+| [#396](https://github.com/kubedoio/rustshare/issues/396) | In progress (M2.2) | Add pointer and accessible date/time movement for internal non-recurring timed events in Month, work-week, Day, and Agenda. Preserve event-zone wall time and elapsed duration; provider/imported, recurring, occurrence, and all-day movement stays unsupported. |
 | [#397](https://github.com/kubedoio/rustshare/issues/397) | Unimplemented | Calendar has other resource relations, but no Mail message-to-event link. Add a reference-only link with independent Mail and Calendar authorization. |
 | [#119](https://github.com/kubedoio/rustshare/issues/119) | Partially implemented | Memory catalog, source projection, FTS/vector search, citations, and reauthorization already exist. Unified search already supports non-LLM Chat catalog keyword search (`UnifiedSearchService::chat_candidates`, `MemoryCatalogStore::search`) and Files name/path search; indexed note-body keyword candidates remain gated by optional AI configuration. Remaining work is complete projection reconciliation/rebuild and deletion/revocation coverage, non-LLM coverage gaps including that note-index dependency, and scoped retrieval/audit gaps. Reuse the existing catalog and authority. |
 | [#213](https://github.com/kubedoio/rustshare/issues/213) | Unimplemented runtime; contract exists | `connector-contract-v1alpha1.md` and ADR-0037 define a spec-only boundary. Add the common runtime and one local-text worker before broad provider rollout. |
@@ -64,6 +64,60 @@ Each PR gets independent code/security review and human approval before merge. S
 | M5 | #309 Legacy disposition | Inventory records, code paths, data ownership, and compatibility first; remove only after each retained record has a migration or disposition. | Unknown legacy records are retained/reported; cleanup cannot delete data without a defined disposition. |
 | Deferred | #325 Mail mode | Decide a reference/import contract that keeps Mail authoritative and avoids a second private mail database. | Imported references cannot bypass Mail authorization or retain readable content after revocation. |
 | Deferred | #355 Branding | Define tenant-scoped branding fields, rendering behavior, and admin permission contract before UX implementation. | One tenant's branding cannot affect another tenant or be changed by a non-admin. |
+
+## M2.2 Calendar rescheduling matrix
+
+The first implementation is limited to internal, writable, non-recurring timed
+events. Movement uses the existing owner- and tenant-scoped event PATCH; the
+client sends only new UTC `starts_at`/`ends_at` plus the unchanged event IANA
+timezone. The event zone resolves local date/time, elapsed duration is retained,
+DST gaps are rejected, and overlap wall times choose the earlier instant.
+Month/work-week drops translate the browser-calendar day delta to the event's
+local date by checking nearby event-zone dates at the preserved wall time and
+selecting the date that displays on the requested browser-calendar day. This
+also handles cases where the browser and event zones switch daylight time on
+different dates.
+
+| View / input | Supported interaction | Limits |
+| --- | --- | --- |
+| Month | Desktop pointer drag to a highlighted date, followed by confirmation; event details also offers Move. | Date changes preserve event-local start time and elapsed duration. |
+| Work week | Desktop pointer drag between weekday columns, followed by confirmation; event details also offers Move. | Monday–Friday columns only; date changes preserve local start time and duration. |
+| Day | Event details → Move, with date/time inputs and 15-minute adjustment buttons. | No drag handle over the scrollable hour grid. |
+| Agenda | Event details → Move, with date/time inputs and confirmation. | Keyboard and touch use the same controls. |
+| Provider/imported | View-only details with source attribution. | No Move action; backend PATCH continues to reject read-only mirrors. |
+| Recurring series/occurrence | Existing Edit Series workflow remains available. | Direct movement is disabled; expanded occurrence `instance_start` is never sent as the master's `starts_at`. |
+| All-day | Existing date display and exclusive end-date behavior remain. | Movement is disabled until PATCH can preserve `original_date` independently of UTC-midnight instants. |
+
+The API contract is unchanged: it still validates UTC instants and does not
+resolve local time. The frontend unit tests cover Europe/Berlin spring gaps and
+autumn overlaps, cross-midnight duration, year boundaries, all-day rejection,
+and event timezone handling independent of the browser timezone. Focused browser
+tests create and remove their own internal event and need no provider OAuth
+credentials.
+
+Validation on the M2.2 branch: frontend check (0 errors), lint, all 1,279
+Vitest tests, production build, Calendar Rust unit tests (34), PostgreSQL API
+tests (28), Calendar Clippy, and OpenAPI export tests (2) passed. The four
+focused Playwright cases were collected but skipped locally because admin test
+credentials were unavailable; run them in protected CI with the configured
+test account. After PR #412 merged, this branch was rebased onto its merge
+commit (`085430e36ed6d7b24465af945c09e86d30cabf56`); Rust formatting, Calendar
+unit tests (34), and Calendar Clippy passed again. After PR #413 merged, it was
+rebased onto latest protected main (`3bb60235bbfbeb5f2b5f50f0fff3cce73084af8f`);
+that PR changes only Files upload cancellation, and frontend check, lint, and
+all 1,278 Vitest tests passed again. Review then added coverage for imported
+Outlook events whose embedded timezone IDs are not accepted by Intl; after
+that fix the frontend suite passed all 1,279 tests, check/lint and build passed.
+Refreshed protected CI and independent human review are tracked on PR #414.
+
+The PR review loop then found and fixed two additional cases: destination-day
+mapping when the browser and event zones enter daylight time on different dates,
+and stale move-dialog state after a dropped wall time falls in a DST gap. On the
+latest local validation, all 1,283 Vitest tests passed, `npm run check` reported
+0 errors (36 existing warnings), lint reported 0 errors (155 existing warnings),
+and the production build passed. The four focused Playwright cases were
+collected and skipped because local admin credentials are unavailable. Fresh
+protected CI and code/security reviews are running for the current PR head.
 
 ## Campaign boundaries and validation
 

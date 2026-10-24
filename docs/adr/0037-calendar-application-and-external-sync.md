@@ -190,7 +190,12 @@ and [RFC 6764 (service discovery)](https://www.rfc-editor.org/rfc/rfc6764).
   with `frontend/src/lib/api/calendar.ts` and a settings panel following
   `MailSettingsPanel.svelte`. The Day view is a single-day hour grid with an
   all-day lane; the work week covers Monday–Friday only. No heavy third-party
-  calendar component library.
+  calendar component library. Rescheduling uses a native drag target in Month
+  and work-week views plus an accessible date/time confirmation action in all
+  views. The bounded first slice moves only internal, non-recurring timed
+  events; provider/imported, recurring, and all-day movement remains disabled.
+  The event's stored IANA timezone resolves wall times; DST gaps are rejected
+  and overlaps select the earlier instant.
 
 ## Consequences
 
