@@ -37,7 +37,7 @@ pub use chat_integration::{
 pub use email_service::{
     EmailError, EmailService, OutboundEmail, OutboundMailMessage, SmtpAttachment,
 };
-pub use eml_parser::{EmlParseError, EmlParser, ParsedAddress, ParsedAttachment, ParsedMail};
+pub use eml_parser::{EmlParseError, ParsedAddress, ParsedAttachment, ParsedMail};
 pub use errors::{FileError, FolderError, VaultSyncError};
 pub use file_service::{
     EventStoreOps as FileEventStoreOps, FileService, FileUploadActor, IntegrationEventActor,

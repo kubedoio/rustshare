@@ -8,6 +8,7 @@ use axum::{
 use chrono::{DateTime, NaiveDate, Utc};
 use rustshare_core::domain::{LinkTargetType, MailSortOrder, MailTlsMode};
 use rustshare_core::services::{EmailError, EmailService, OutboundEmail};
+use rustshare_infrastructure::eml_parser::EmlParser;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -1612,7 +1613,7 @@ fn parse_remote_rfc822(
     uid: u32,
     rfc822: &[u8],
 ) -> Result<rustshare_core::services::eml_parser::ParsedMail, AppError> {
-    rustshare_core::services::eml_parser::EmlParser::parse(rfc822)
+    EmlParser::parse(rfc822)
         .map_err(|e| AppError::internal(format!("Failed to parse remote message {uid}: {e}")))
 }
 
