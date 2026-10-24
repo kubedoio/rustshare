@@ -66,7 +66,7 @@ aws-sdk-s3 = { version = "1.17", default-features = false, features = ["sigv4a",
 aws-config = "1.1"
 # Pinned to avoid a breaking change in aws-smithy-types 1.5.0 that breaks
 # aws-runtime 1.7.4 compilation. Remove once AWS SDK releases a compatible set.
-aws-smithy-types = "=1.6.3"
+aws-smithy-types = "=1.9.0"
 time = "=0.3.55"
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "multipart", "stream", "rustls-tls"], default-features = false }
