@@ -5,7 +5,6 @@ use crate::{
     handlers::{AppError, AuthenticatedUser},
     state::DatabaseState,
 };
-use rustshare_infrastructure::repositories::WorkflowRepository;
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct FeaturesResponse {
@@ -25,7 +24,7 @@ pub async fn get_features(
     State(db): State<DatabaseState>,
     AuthenticatedUser { .. }: AuthenticatedUser,
 ) -> Result<Json<FeaturesResponse>, AppError> {
-    let active = WorkflowRepository::new(db.db_pool).invite_enabled().await?;
+    let active = db.workflow_repository.invite_enabled().await?;
 
     Ok(Json(FeaturesResponse {
         invite_enabled: active,

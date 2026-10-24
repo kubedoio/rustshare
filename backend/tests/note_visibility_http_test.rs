@@ -358,6 +358,100 @@ async fn features_endpoint_rejects_unauthenticated_requests() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
+#[tokio::test]
+async fn features_endpoint_returns_current_workflow_state() {
+    let admin_pool =
+        PgPool::connect(&std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
+        }))
+        .await
+        .expect("connect to PostgreSQL");
+    let schema = format!("feature_http_{}", Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin_pool)
+        .await
+        .expect("create isolated test schema");
+
+    let schema_for_connection = schema.clone();
+    let test_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .after_connect(move |connection, _| {
+            let search_path = format!("SET search_path TO {schema_for_connection}");
+            Box::pin(async move {
+                sqlx::query(&search_path).execute(connection).await?;
+                Ok(())
+            })
+        })
+        .connect(&std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
+        }))
+        .await
+        .expect("connect to isolated test schema");
+    sqlx::query(
+        "CREATE TABLE users (id UUID PRIMARY KEY, tenant_id UUID NOT NULL, disabled_at TIMESTAMPTZ, credentials_revoked_at TIMESTAMPTZ, credential_version BIGINT NOT NULL DEFAULT 0)",
+    )
+    .execute(&test_pool)
+    .await
+    .expect("create auth fixture table");
+    sqlx::query(
+        "CREATE TABLE workflows (tenant_id UUID NOT NULL, key TEXT NOT NULL, status TEXT NOT NULL)",
+    )
+    .execute(&test_pool)
+    .await
+    .expect("create workflow fixture table");
+
+    let user_id = Uuid::new_v4();
+    let tenant_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users (id, tenant_id) VALUES ($1, $2)")
+        .bind(user_id)
+        .bind(tenant_id)
+        .execute(&test_pool)
+        .await
+        .expect("create auth fixture user");
+    sqlx::query(
+        "INSERT INTO workflows (tenant_id, key, status) VALUES ($1, 'invite_email', 'draft')",
+    )
+    .bind(tenant_id)
+    .execute(&test_pool)
+    .await
+    .expect("create draft invitation workflow");
+
+    let mut state = setup_test_env().await;
+    state.db_pool = test_pool.clone();
+    let token = auth_token(&state, user_id, tenant_id);
+    let app = build_app(state);
+    for (expected, status) in [(false, "draft"), (true, "active"), (false, "draft")] {
+        sqlx::query("UPDATE workflows SET status = $1 WHERE tenant_id = $2")
+            .bind(status)
+            .bind(tenant_id)
+            .execute(&test_pool)
+            .await
+            .expect("change workflow state");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/features")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({"invite_enabled": expected})
+        );
+    }
+
+    test_pool.close().await;
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin_pool)
+        .await
+        .expect("drop isolated test schema");
+}
+
 async fn setup_test_tenant(pool: &PgPool) -> Uuid {
     let tenant_id = Uuid::new_v4();
     sqlx::query(

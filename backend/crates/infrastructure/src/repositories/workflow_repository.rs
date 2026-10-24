@@ -1,6 +1,7 @@
 use sqlx::PgPool;
 
 /// Persistence queries for workflow configuration.
+#[derive(Clone)]
 pub struct WorkflowRepository {
     pool: PgPool,
 }

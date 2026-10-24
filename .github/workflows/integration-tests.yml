@@ -136,6 +136,7 @@ jobs:
         run: |
           cargo test -p rustshare-server --test features_test -- --test-threads=1
           cargo test -p rustshare-server --test note_visibility_http_test features_endpoint_rejects_unauthenticated_requests -- --exact --test-threads=1
+          cargo test -p rustshare-server --test note_visibility_http_test features_endpoint_returns_current_workflow_state -- --exact --test-threads=1
 
       - name: Run all integration tests
         # `-j 1` serializes Cargo's test processes, while

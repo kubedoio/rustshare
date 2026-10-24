@@ -3173,6 +3173,9 @@ async fn database_state(pool: PgPool) -> DatabaseState {
     );
     DatabaseState {
         db_pool: pool.clone(),
+        workflow_repository: rustshare_infrastructure::repositories::WorkflowRepository::new(
+            pool.clone(),
+        ),
         metadata_store: Arc::new(MetadataStore::new(pool.clone())),
         event_store: Arc::new(EventStore::new(pool.clone())),
         object_store,
