@@ -149,4 +149,24 @@ describe('upload cancellation', () => {
 
 		expect(apiClient.delete).toHaveBeenCalledWith('/uploads/sessions/session-1');
 	});
+
+	it('reports when the server upload session cannot be cleaned up', async () => {
+		const controller = new AbortController();
+		vi.mocked(apiClient.post).mockResolvedValue({ session_id: 'session-1' });
+		vi.mocked(apiClient.requestVoid).mockImplementation(async () => {
+			controller.abort();
+			throw new DOMException('The operation was aborted', 'AbortError');
+		});
+		vi.mocked(apiClient.delete).mockRejectedValue(new Error('request failed'));
+
+		await expect(
+			uploadFile(
+				null,
+				new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'large.bin'),
+				undefined,
+				undefined,
+				controller.signal
+			)
+		).rejects.toMatchObject({ name: 'UploadCancellationCleanupError' });
+	});
 });

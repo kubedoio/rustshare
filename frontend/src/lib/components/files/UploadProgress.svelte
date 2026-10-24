@@ -47,6 +47,9 @@
 	let hasActiveTasks = $derived(
 		tasks.some((t) => t.status === 'uploading' || t.status === 'pending')
 	);
+	let hasCancelableTasks = $derived(
+		tasks.some((t) => t.status === 'pending' || (t.status === 'uploading' && t.progress < 95))
+	);
 	let allCompleted = $derived(
 		tasks.length > 0 && tasks.every((t) => ['success', 'error', 'cancelled'].includes(t.status))
 	);
@@ -65,7 +68,7 @@
 					Upload Finished
 				{/if}
 			</h3>
-			{#if hasActiveTasks}
+			{#if hasCancelableTasks}
 				<button class="btn btn-ghost btn-xs" onclick={onCancelAll}>Cancel all</button>
 			{/if}
 			<button
@@ -223,7 +226,7 @@
 								<p class="mt-1 text-xs text-base-content/60">Cancelled</p>
 							{/if}
 						</div>
-						{#if task.status === 'pending' || task.status === 'uploading'}
+						{#if task.status === 'pending' || (task.status === 'uploading' && task.progress < 95)}
 							<button
 								class="btn btn-ghost btn-xs"
 								aria-label="Cancel upload of {task.fileName}"

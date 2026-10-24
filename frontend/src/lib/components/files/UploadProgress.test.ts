@@ -3,6 +3,25 @@ import { describe, expect, it, vi } from 'vitest';
 import UploadProgress from './UploadProgress.svelte';
 
 describe('UploadProgress', () => {
+	it('does not offer cancellation while finalizing a completed upload', () => {
+		render(UploadProgress, {
+			props: {
+				tasks: [
+					{
+						id: 'finalizing-1',
+						fileName: 'large.zip',
+						size: 10,
+						status: 'uploading',
+						progress: 95
+					}
+				]
+			}
+		});
+
+		expect(screen.queryByRole('button', { name: 'Cancel all' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Cancel upload of large.zip' })).toBeNull();
+	});
+
 	it('allows the whole active queue to be cancelled', async () => {
 		const onCancelAll = vi.fn();
 		render(UploadProgress, {

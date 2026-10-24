@@ -993,18 +993,25 @@
 	}
 
 	function cancelUpload(taskId: string) {
+		const task = uploadTasks.find((item) => item.id === taskId);
+		if (
+			!task ||
+			task.status === 'success' ||
+			task.status === 'error' ||
+			(task.status === 'uploading' && task.progress >= 95)
+		)
+			return;
+
 		cancelledUploadIds.add(taskId);
 		uploadControllers.get(taskId)?.abort();
-		const task = uploadTasks.find((item) => item.id === taskId);
-		if (task && task.status !== 'success' && task.status !== 'error') {
-			task.status = 'cancelled';
-			uploadTasks = [...uploadTasks];
-		}
+		task.status = 'cancelled';
+		uploadTasks = [...uploadTasks];
 	}
 
 	function cancelAllUploads() {
 		for (const task of uploadTasks) {
-			if (task.status === 'pending' || task.status === 'uploading') cancelUpload(task.id);
+			if (task.status === 'pending' || (task.status === 'uploading' && task.progress < 95))
+				cancelUpload(task.id);
 		}
 	}
 
@@ -1056,7 +1063,10 @@
 				}
 				successCount++;
 			} catch (error) {
-				const wasCancelled = cancelledUploadIds.has(taskId) || controller.signal.aborted;
+				const cleanupFailed =
+					error instanceof Error && error.name === 'UploadCancellationCleanupError';
+				const wasCancelled =
+					!cleanupFailed && (cancelledUploadIds.has(taskId) || controller.signal.aborted);
 				const errorMessage = error instanceof Error ? error.message : 'Upload failed';
 				const errorTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
 				if (errorTaskIndex !== -1) {
@@ -1199,7 +1209,10 @@
 				}
 				successCount++;
 			} catch (error) {
-				const wasCancelled = cancelledUploadIds.has(taskId) || controller.signal.aborted;
+				const cleanupFailed =
+					error instanceof Error && error.name === 'UploadCancellationCleanupError';
+				const wasCancelled =
+					!cleanupFailed && (cancelledUploadIds.has(taskId) || controller.signal.aborted);
 				const errorMessage = error instanceof Error ? error.message : 'Upload failed';
 				const errorTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
 				if (errorTaskIndex !== -1) {
