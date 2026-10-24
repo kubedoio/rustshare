@@ -1,9 +1,10 @@
-use rustshare_core::services::eml_parser::EmlParser;
+use rustshare_core::services::eml_parser::EmlParseError;
+use rustshare_infrastructure::eml_parser::EmlParser;
 
 fn fixture(name: &str) -> String {
     std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/eml")
+            .join("../core/tests/fixtures/eml")
             .join(name),
     )
     .unwrap()
@@ -41,6 +42,9 @@ fn parses_html_email_and_addresses() {
         .unwrap()
         .contains("<p>This is an HTML email.</p>"));
     assert_eq!(parsed.from.as_ref().unwrap().name.as_deref(), Some("Alice"));
+    assert_eq!(parsed.to.len(), 1);
+    assert_eq!(parsed.to[0].name.as_deref(), Some("Bob"));
+    assert_eq!(parsed.to[0].address, "bob@example.com");
     assert_eq!(parsed.cc.len(), 1);
     assert_eq!(parsed.cc[0].name.as_deref(), Some("Carol"));
 }
@@ -55,6 +59,7 @@ fn parses_email_with_attachment() {
     let att = &parsed.attachments[0];
     assert_eq!(att.filename.as_deref(), Some("note.txt"));
     assert_eq!(att.mime_type, "text/plain");
+    assert_eq!(att.size_bytes, att.data.len());
     assert_eq!(String::from_utf8_lossy(&att.data), "attachment content");
 }
 
@@ -70,12 +75,11 @@ fn parses_unnamed_inline_content_id_part_as_attachment() {
     let parsed = EmlParser::parse(raw.as_bytes()).unwrap();
 
     assert_eq!(parsed.attachments[0].content_id.as_deref(), Some("logo"));
+    assert_eq!(parsed.attachments[0].data, b"image");
 }
 
 #[test]
 fn keeps_body_part_that_also_has_content_id() {
-    // multipart/related with a `start` Content-ID on the root body part: the
-    // body must not be misclassified as an attachment.
     let raw = concat!(
         "MIME-Version: 1.0\r\n",
         "Content-Type: multipart/related; boundary=parts; start=<root>\r\n\r\n",
@@ -91,4 +95,22 @@ fn keeps_body_part_that_also_has_content_id() {
     );
     assert_eq!(parsed.attachments.len(), 1);
     assert_eq!(parsed.attachments[0].content_id.as_deref(), Some("logo"));
+}
+
+#[test]
+fn malformed_mime_propagates_parse_error() {
+    let raw = b"Content-Type: text/plain\r\nContent-Transfer-Encoding: base64\r\n\r\n%%%";
+    assert!(matches!(
+        EmlParser::parse(raw),
+        Err(EmlParseError::ParseFailed(_))
+    ));
+}
+
+#[test]
+fn invalid_date_propagates_date_error() {
+    let raw = b"Date: Thu, 1 Jan 1970 00:00:00 +2147483647\r\n\r\nbody";
+    assert!(matches!(
+        EmlParser::parse(raw),
+        Err(EmlParseError::InvalidDate(_))
+    ));
 }

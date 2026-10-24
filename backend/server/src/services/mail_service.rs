@@ -15,11 +15,11 @@ use rustshare_core::events::{
     MailArchiveJobDeletedPayload, MailArchiveJobFailedPayload, MailArchiveJobStartedPayload,
     MailImportedPayload, MailLinkedPayload, MailUnlinkedPayload,
 };
-use rustshare_core::services::eml_parser::EmlParser;
 use rustshare_core::services::{
     EmailService, FileService, FolderService, OutboundMailMessage, PermissionResolver,
 };
 use rustshare_crypto::{encrypt_secret, SecretEncryptionKey};
+use rustshare_infrastructure::eml_parser::EmlParser;
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_storage::{is_missing_object_error, EventStore, MetadataStore, ObjectStore};
 use sha2::{Digest, Sha256};
@@ -4190,7 +4190,8 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use rustshare_core::domain::MailSourceMode;
-    use rustshare_core::services::eml_parser::{EmlParser, ParsedAddress};
+    use rustshare_core::services::eml_parser::ParsedAddress;
+    use rustshare_infrastructure::eml_parser::EmlParser;
     use serde_json::json;
 
     #[test]

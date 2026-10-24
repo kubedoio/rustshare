@@ -63,6 +63,10 @@ ignore = [
     # deployment operates. Re-evaluate when the AWS SDK default moves to hyper 1.x.
     # The 0.4 instance is updated to 0.4.19 in this same PR.
     { id = "RUSTSEC-2026-0258", reason = "h2 0.3.27 via AWS SDK hyper-0.14 path; no patched 0.3.x exists (see #281)" },
+    # crypto-bigint 0.5.5 is required by p256/p384 0.13 in openidconnect 4.0.1
+    # and by the AWS SigV4a path. The advisory fix is 0.7.6, which is semver-
+    # incompatible; remove this exception when all consumers support the fixed line.
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 required by OIDC and AWS SigV4a; fixed 0.7.6 is semver-incompatible" },
 ]
 
 [bans]
