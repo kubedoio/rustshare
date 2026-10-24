@@ -49,6 +49,13 @@ async function getPagedFolderContents(endpoint: string): Promise<FolderContents>
 
 export type UploadProgressCallback = (progress: number) => void;
 
+class UploadCancellationCleanupError extends Error {
+	constructor() {
+		super('Upload stopped locally, but server cleanup failed');
+		this.name = 'UploadCancellationCleanupError';
+	}
+}
+
 /**
  * Uploads a file to the server.
  * Uses resumable chunked upload for files larger than 5MB to bypass proxy limits
@@ -149,7 +156,11 @@ async function uploadFileChunked(
 	} catch (error) {
 		if (signal?.aborted) {
 			// The session may have been created before cancellation reached the client.
-			await apiClient.delete(`/uploads/sessions/${sessionId}`).catch(() => {});
+			try {
+				await apiClient.delete(`/uploads/sessions/${sessionId}`);
+			} catch {
+				throw new UploadCancellationCleanupError();
+			}
 		}
 		throw error;
 	}
