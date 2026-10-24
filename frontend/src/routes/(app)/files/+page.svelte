@@ -99,7 +99,7 @@
 		id: string;
 		fileName: string;
 		size: number;
-		status: 'pending' | 'uploading' | 'success' | 'error';
+		status: 'pending' | 'uploading' | 'success' | 'error' | 'cancelled';
 		progress: number;
 		error?: string;
 		previewUrl?: string;
@@ -108,6 +108,8 @@
 	type WorkspaceMode = 'all' | 'photos' | 'recent' | 'starred' | 'deleted' | 'week';
 
 	let uploadTasks = $state<UploadTask[]>([]);
+	const uploadControllers = new Map<string, AbortController>();
+	const cancelledUploadIds = new Set<string>();
 	let selectionMode = $state(false);
 
 	// Modal states
@@ -610,12 +612,21 @@
 		mutationFn: ({
 			file,
 			folderId,
-			onProgress
+			onProgress,
+			signal
 		}: {
 			file: globalThis.File;
 			folderId?: string | null;
 			onProgress?: (progress: number) => void;
-		}) => uploadFile(folderId === undefined ? currentFolderId : folderId, file, onProgress),
+			signal: AbortSignal;
+		}) =>
+			uploadFile(
+				folderId === undefined ? currentFolderId : folderId,
+				file,
+				onProgress,
+				undefined,
+				signal
+			),
 		onSuccess: (_, { file }) => {
 			queryClient.invalidateQueries({ queryKey: ['file-workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['all-files'] });
@@ -981,6 +992,22 @@
 		showToast = true;
 	}
 
+	function cancelUpload(taskId: string) {
+		cancelledUploadIds.add(taskId);
+		uploadControllers.get(taskId)?.abort();
+		const task = uploadTasks.find((item) => item.id === taskId);
+		if (task && task.status !== 'success' && task.status !== 'error') {
+			task.status = 'cancelled';
+			uploadTasks = [...uploadTasks];
+		}
+	}
+
+	function cancelAllUploads() {
+		for (const task of uploadTasks) {
+			if (task.status === 'pending' || task.status === 'uploading') cancelUpload(task.id);
+		}
+	}
+
 	async function handleFilesSelected(files: globalThis.File[]) {
 		if (!canUpload) return;
 		if (files.length === 0) return;
@@ -999,16 +1026,21 @@
 		let errorCount = 0;
 
 		for (let i = 0; i < files.length; i++) {
-			const taskIndex = uploadTasks.findIndex((t) => t.id === newTasks[i].id);
+			const taskId = newTasks[i].id;
+			if (cancelledUploadIds.has(taskId)) continue;
+			const taskIndex = uploadTasks.findIndex((t) => t.id === taskId);
 			if (taskIndex === -1) continue;
+			const controller = new AbortController();
+			uploadControllers.set(taskId, controller);
 
 			try {
 				await $uploadMutation.mutateAsync({
 					file: files[i],
 					folderId: uploadTargetFolderId ?? currentFolderId,
+					signal: controller.signal,
 					onProgress: (progress) => {
-						const currentTaskIndex = uploadTasks.findIndex((t) => t.id === newTasks[i].id);
-						if (currentTaskIndex !== -1) {
+						const currentTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
+						if (currentTaskIndex !== -1 && !cancelledUploadIds.has(taskId)) {
 							uploadTasks[currentTaskIndex].status = 'uploading';
 							uploadTasks[currentTaskIndex].progress = progress;
 							uploadTasks = [...uploadTasks];
@@ -1016,7 +1048,7 @@
 					}
 				});
 
-				const finalTaskIndex = uploadTasks.findIndex((t) => t.id === newTasks[i].id);
+				const finalTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
 				if (finalTaskIndex !== -1) {
 					uploadTasks[finalTaskIndex].status = 'success';
 					uploadTasks[finalTaskIndex].progress = 100;
@@ -1024,26 +1056,31 @@
 				}
 				successCount++;
 			} catch (error) {
+				const wasCancelled = cancelledUploadIds.has(taskId) || controller.signal.aborted;
 				const errorMessage = error instanceof Error ? error.message : 'Upload failed';
-				const errorTaskIndex = uploadTasks.findIndex((t) => t.id === newTasks[i].id);
+				const errorTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
 				if (errorTaskIndex !== -1) {
-					uploadTasks[errorTaskIndex].status = 'error';
-					uploadTasks[errorTaskIndex].error = errorMessage;
+					uploadTasks[errorTaskIndex].status = wasCancelled ? 'cancelled' : 'error';
+					if (!wasCancelled) uploadTasks[errorTaskIndex].error = errorMessage;
 					uploadTasks = [...uploadTasks];
 				}
-				errorCount++;
+				if (!wasCancelled) errorCount++;
+			} finally {
+				uploadControllers.delete(taskId);
 			}
 		}
 
-		if (errorCount === 0) {
+		if (errorCount === 0 && successCount > 0) {
 			if (successCount === 1) {
-				const uploadedFile = uploadTasks.find((t) => t.id === newTasks[0].id);
+				const uploadedFile = uploadTasks.find(
+					(t) => t.status === 'success' && newTasks.some((newTask) => newTask.id === t.id)
+				);
 				const filename = uploadedFile ? uploadedFile.fileName : '';
 				showNotification(`${truncateFilename(filename)} uploaded`, 'success');
 			} else {
 				showNotification(`${successCount} item(s) uploaded`, 'success');
 			}
-		} else if (successCount === 0) {
+		} else if (successCount === 0 && errorCount > 0) {
 			showNotification(`Failed to upload ${errorCount} file(s)`, 'error');
 		} else {
 			showNotification(`Uploaded ${successCount}, failed ${errorCount}`, 'info');
@@ -1133,16 +1170,20 @@
 		for (let i = 0; i < filesToUpload.length; i++) {
 			const { file, parentFolderId } = filesToUpload[i];
 			const taskId = newTasks[i].id;
+			if (cancelledUploadIds.has(taskId)) continue;
 			const taskIndex = uploadTasks.findIndex((t) => t.id === taskId);
 			if (taskIndex === -1) continue;
+			const controller = new AbortController();
+			uploadControllers.set(taskId, controller);
 
 			try {
 				await $uploadMutation.mutateAsync({
 					file,
 					folderId: parentFolderId,
+					signal: controller.signal,
 					onProgress: (progress) => {
 						const currentTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
-						if (currentTaskIndex !== -1) {
+						if (currentTaskIndex !== -1 && !cancelledUploadIds.has(taskId)) {
 							uploadTasks[currentTaskIndex].status = 'uploading';
 							uploadTasks[currentTaskIndex].progress = progress;
 							uploadTasks = [...uploadTasks];
@@ -1158,20 +1199,23 @@
 				}
 				successCount++;
 			} catch (error) {
+				const wasCancelled = cancelledUploadIds.has(taskId) || controller.signal.aborted;
 				const errorMessage = error instanceof Error ? error.message : 'Upload failed';
 				const errorTaskIndex = uploadTasks.findIndex((t) => t.id === taskId);
 				if (errorTaskIndex !== -1) {
-					uploadTasks[errorTaskIndex].status = 'error';
-					uploadTasks[errorTaskIndex].error = errorMessage;
+					uploadTasks[errorTaskIndex].status = wasCancelled ? 'cancelled' : 'error';
+					if (!wasCancelled) uploadTasks[errorTaskIndex].error = errorMessage;
 					uploadTasks = [...uploadTasks];
 				}
-				errorCount++;
+				if (!wasCancelled) errorCount++;
+			} finally {
+				uploadControllers.delete(taskId);
 			}
 		}
 
-		if (errorCount === 0) {
+		if (errorCount === 0 && successCount > 0) {
 			showNotification(`${successCount} item(s) uploaded`, 'success');
-		} else if (successCount === 0) {
+		} else if (successCount === 0 && errorCount > 0) {
 			showNotification(`Failed to upload ${errorCount} file(s)`, 'error');
 		} else {
 			showNotification(`Uploaded ${successCount}, failed ${errorCount}`, 'info');
@@ -1185,6 +1229,7 @@
 
 	function handleCloseProgress() {
 		uploadTasks = [];
+		cancelledUploadIds.clear();
 	}
 
 	function toggleSelectionMode() {
@@ -1917,7 +1962,12 @@
 </DropZone>
 
 <!-- Upload Progress -->
-<UploadProgress tasks={uploadTasks} onClose={handleCloseProgress} />
+<UploadProgress
+	tasks={uploadTasks}
+	onClose={handleCloseProgress}
+	onCancel={cancelUpload}
+	onCancelAll={cancelAllUploads}
+/>
 
 <FileModals
 	{currentFolderId}
