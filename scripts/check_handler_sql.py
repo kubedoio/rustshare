@@ -90,7 +90,7 @@ def imports(tokens):
             end = tokens.index(";", i)
             paths.extend(use_paths(tokens[i + 1 : end]))
             declarations.update(range(i, end + 1))
-        elif tokens[i : i + 3] == ["extern", "crate", "sqlx"]:
+        elif tokens[i : i + 2] == ["extern", "crate"] and i + 2 < len(tokens) and tokens[i + 2].removeprefix("r#") == "sqlx":
             alias = tokens[i + 4] if tokens[i + 3 : i + 4] == ["as"] else "sqlx"
             paths.append((("sqlx",), alias.removeprefix("r#")))
             declarations.update(range(i, tokens.index(";", i) + 1))

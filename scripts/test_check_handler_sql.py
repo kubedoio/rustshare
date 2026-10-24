@@ -23,11 +23,13 @@ class HandlerSqlGuardTests(unittest.TestCase):
             ('sqlx::query_file_as!(Row, "query.sql");', "query_file_as"),
             ('use ::sqlx::query as q; q("SELECT 1");', "query"),
             ('use sqlx::{query as q}; q("SELECT 1");', "query"),
+            ('use {sqlx::{query as q}, std::fmt}; q("SELECT 1");', "query"),
             ('use sqlx as db; db::query("SELECT 1");', "query"),
             ('use sqlx as r#db; r#db::r#query("SELECT 1");', "query"),
             ('use sqlx::{self as db}; db::query("SELECT 1");', "query"),
             ('use db::query as q; use sqlx as db; q("SELECT 1");', "query"),
             ('extern crate sqlx as db; db::query("SELECT 1");', "query"),
+            ('extern crate r#sqlx as db; db::query("SELECT 1");', "query"),
             ('use sqlx::*; query("SELECT 1");', "query"),
             ('sqlx::raw_sql("SELECT 1");', "raw_sql"),
             ('sqlx::QueryBuilder::<sqlx::Postgres>::new("SELECT 1");', "QueryBuilder::new"),
@@ -36,6 +38,7 @@ class HandlerSqlGuardTests(unittest.TestCase):
             ('let q = sqlx::query; q("SELECT 1");', "query.reference"),
             ('type B = sqlx::QueryBuilder<\'static, sqlx::Postgres>;', "QueryBuilder.reference"),
             ('pool.execute(sql).await;', "Executor.execute"),
+            ('pool.r#execute(sql).await;', "Executor.execute"),
             ('pool.fetch_one(sql).await;', "Executor.fetch_one"),
             ('pool.prepare(sql).await;', "Executor.prepare"),
             ('Executor::execute(pool, sql).await;', "Executor.execute"),
@@ -79,7 +82,10 @@ class HandlerSqlGuardTests(unittest.TestCase):
         original = guard.calls('sqlx::query("SELECT 1");')
         self.assertEqual(original, guard.calls('sqlx /* nested /* ok */ */ :: query ( "SELECT 1" );'))
         self.assertNotEqual(original, guard.calls('sqlx::query("SELECT 2");'))
-        self.assertNotEqual(guard.calls('sqlx::query!(r#"SELECT ")""#);'), [])
+        quoted = 'sqlx::query!(r#"SELECT ")" AS value"#);'
+        changed = 'sqlx::query!(r#"SELECT ")" AS other"#);'
+        self.assertEqual(len(guard.calls(quoted)), 1)
+        self.assertNotEqual(guard.calls(quoted), guard.calls(changed))
 
     def test_baseline_rejects_replacement_duplicate_and_removal(self):
         original = guard.calls('sqlx::query("SELECT 1");')
