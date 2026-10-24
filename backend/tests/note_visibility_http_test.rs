@@ -8,7 +8,8 @@
 //!
 //! Run with: cargo test --test note_visibility_http_test -- --ignored
 //!
-//! All tests are ignored because they require a live database and S3.
+//! All tests require a live database and S3. Note publication tests are ignored;
+//! feature-route regressions run explicitly in the integration workflow.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -334,10 +335,122 @@ async fn setup_test_env() -> AppState {
 fn build_app(state: AppState) -> axum::Router {
     routes::note_routes()
         .merge(routes::note_public_routes())
+        .merge(routes::feature_routes())
         .with_state(state)
         .layer(axum::middleware::from_fn(
             middleware::security_headers_middleware,
         ))
+}
+
+#[tokio::test]
+async fn features_endpoint_rejects_unauthenticated_requests() {
+    let response = build_app(setup_test_env().await)
+        .oneshot(
+            Request::get("/api/v1/features")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn features_endpoint_returns_current_workflow_state() {
+    let admin_pool =
+        PgPool::connect(&std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
+        }))
+        .await
+        .expect("connect to PostgreSQL");
+    let schema = format!("feature_http_{}", Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin_pool)
+        .await
+        .expect("create isolated test schema");
+
+    let schema_for_connection = schema.clone();
+    let test_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .after_connect(move |connection, _| {
+            let search_path = format!("SET search_path TO {schema_for_connection}");
+            Box::pin(async move {
+                sqlx::query(&search_path).execute(connection).await?;
+                Ok(())
+            })
+        })
+        .connect(&std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgres://rustshare:changeme@localhost:5432/rustshare".to_string()
+        }))
+        .await
+        .expect("connect to isolated test schema");
+    sqlx::query(
+        "CREATE TABLE users (id UUID PRIMARY KEY, tenant_id UUID NOT NULL, disabled_at TIMESTAMPTZ, credentials_revoked_at TIMESTAMPTZ, credential_version BIGINT NOT NULL DEFAULT 0)",
+    )
+    .execute(&test_pool)
+    .await
+    .expect("create auth fixture table");
+    sqlx::query(
+        "CREATE TABLE workflows (tenant_id UUID NOT NULL, key TEXT NOT NULL, status TEXT NOT NULL)",
+    )
+    .execute(&test_pool)
+    .await
+    .expect("create workflow fixture table");
+
+    let user_id = Uuid::new_v4();
+    let tenant_id = Uuid::new_v4();
+    let workflow_tenant_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO users (id, tenant_id) VALUES ($1, $2)")
+        .bind(user_id)
+        .bind(tenant_id)
+        .execute(&test_pool)
+        .await
+        .expect("create auth fixture user");
+    sqlx::query(
+        "INSERT INTO workflows (tenant_id, key, status) VALUES ($1, 'invite_email', 'draft')",
+    )
+    .bind(workflow_tenant_id)
+    .execute(&test_pool)
+    .await
+    .expect("create draft invitation workflow");
+
+    let mut state = setup_test_env().await;
+    state.db_pool = test_pool.clone();
+    let token = auth_token(&state, user_id, tenant_id);
+    let app = build_app(state);
+    for (expected, status) in [(false, "draft"), (true, "active"), (false, "draft")] {
+        sqlx::query("UPDATE workflows SET status = $1 WHERE tenant_id = $2")
+            .bind(status)
+            .bind(workflow_tenant_id)
+            .execute(&test_pool)
+            .await
+            .expect("change workflow state");
+
+        let response = app.clone().oneshot(features_request(&token)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response_json(response).await,
+            serde_json::json!({"invite_enabled": expected})
+        );
+    }
+
+    sqlx::query("DROP TABLE workflows")
+        .execute(&test_pool)
+        .await
+        .expect("inject workflow database failure");
+    let response = app.oneshot(features_request(&token)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        response_json(response).await,
+        serde_json::json!({"error": "Internal server error"})
+    );
+
+    test_pool.close().await;
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin_pool)
+        .await
+        .expect("drop isolated test schema");
 }
 
 async fn setup_test_tenant(pool: &PgPool) -> Uuid {
@@ -384,6 +497,13 @@ fn auth_token(state: &AppState, user_id: Uuid, tenant_id: Uuid) -> String {
     state
         .jwt_manager
         .generate(user_id, "test@example.com", tenant_id)
+        .unwrap()
+}
+
+fn features_request(token: &str) -> Request<Body> {
+    Request::get("/api/v1/features")
+        .header("Authorization", format!("Bearer {token}"))
+        .body(Body::empty())
         .unwrap()
 }
 

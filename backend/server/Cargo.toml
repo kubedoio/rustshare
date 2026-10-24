@@ -156,6 +156,10 @@ name = "admin_workflows_test"
 path = "../tests/admin_workflows_test.rs"
 
 [[test]]
+name = "features_test"
+path = "../tests/features_test.rs"
+
+[[test]]
 name = "invites_test"
 path = "../tests/invites_test.rs"
 

@@ -58,6 +58,7 @@ pub type AppUploadService = rustshare_core::services::UploadService<
 #[derive(Clone)]
 pub struct DatabaseState {
     pub db_pool: PgPool,
+    pub workflow_repository: rustshare_infrastructure::repositories::WorkflowRepository,
     pub metadata_store: Arc<MetadataStore>,
     pub event_store: Arc<EventStore>,
     pub object_store: Arc<ObjectStore>,
@@ -272,6 +273,9 @@ impl FromRef<AppState> for DatabaseState {
     fn from_ref(state: &AppState) -> DatabaseState {
         DatabaseState {
             db_pool: state.db_pool.clone(),
+            workflow_repository: rustshare_infrastructure::repositories::WorkflowRepository::new(
+                state.db_pool.clone(),
+            ),
             metadata_store: state.metadata_store.clone(),
             event_store: state.event_store.clone(),
             object_store: state.object_store.clone(),
