@@ -2,6 +2,57 @@
 
 This document explains how to manage and update dependencies in RustShare.
 
+## Rust build toolchain and MSRV
+
+[`rust-toolchain.toml`](../rust-toolchain.toml) is the canonical supported build
+compiler, **1.97.1**. Run Cargo from the checkout through rustup, without a
+`+stable`, environment override, or custom compiler. `rustup show` and `rustc -Vv`
+report the actual selection; a container's base tag alone does not determine it.
+
+The workspace declares a separate **1.95.0 MSRV** in
+[`Cargo.toml`](../Cargo.toml). That is the minimum supported compiler declaration,
+not the compiler used to produce supported builds. It can be checked separately:
+
+```bash
+SQLX_OFFLINE=true cargo +1.95.0 check --locked --workspace --all-features
+```
+
+The default CI gate uses the build compiler; it does not prove the MSRV. A
+dependency's declared `rust-version` is also only a compatibility precheck;
+compilation is required, including for dependencies without that declaration.
+
+Compiler updates require one reviewed change to the canonical file and all
+mechanically checked workflow and Docker pins. Retain Debian Bookworm builders
+(glibc 2.36), GNU x86_64/aarch64 release targets, and the existing runtime image
+unless a separate compatibility review approves a change. Desktop macOS and
+Windows source builds continue to use the checkout's canonical toolchain.
+
+```bash
+python3 scripts/check_rust_toolchain.py
+python3 -m unittest discover -s scripts -p 'test_check_rust_toolchain.py'
+```
+
+The existing required `Format` CI job runs the policy guard and negative fixtures
+before installing Rust, so a policy failure blocks protected-branch merges. It
+checks exact compiler action/input pins, Rust
+base images, common shell/Cargo overrides, nested toolchain files, and Dependabot
+compiler ignores. Its temporary Git fixtures deliberately introduce inconsistent
+workflow, container, and override selections and require a failing exit status.
+This is a lexical guard for checked-in build selectors, not a shell interpreter:
+generated commands, third-party installer internals, and historical tags still
+need review. New selector forms must extend the guard and its negative fixtures.
+
+Dependabot must ignore all independent `dtolnay/rust-toolchain` and Docker `rust`
+updates. Existing Cargo/npm groups separate routine minor/patch updates from
+majors, with `rand` reviewed separately. Recreate stale mixed updates under this
+policy rather than reviving them. Exact compatibility pins, including
+`aws-smithy-types = "=1.6.3"` and `time = "=0.3.55"`, remain intentional; removing
+one requires its own compatibility evidence. This toolchain change does not
+refresh dependencies or the lockfile.
+
+See the [M1.2 inventory and validation record](qa/2026-10-23-m1-2-toolchain.md)
+for the baseline compiler resolution, executed checks, and remaining limits.
+
 ## Automated Dependency Management
 
 ### 1. Dependabot (GitHub)

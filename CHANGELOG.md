@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Align Rust CI and Bookworm builders with the canonical 1.97.1 toolchain, reject compiler drift in CI, and restore standalone crypto builds' OS randomness feature.
 - Refresh application editor mode on route changes and keep attachments and asynchronous save/upload results scoped to their originating document.
 - Add a migration-only `--migrate` command and `RUSTSHARE_RUN_MIGRATIONS=false` for separately provisioned, least-privilege runtime database credentials; automatic setup uses a dedicated startup connection.
 - Refresh direct Application routes when the registry loads, open linked Notes in custom folders through Notes, and conceal unavailable meeting resource lists consistently.
