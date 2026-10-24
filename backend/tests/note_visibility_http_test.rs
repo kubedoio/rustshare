@@ -8,7 +8,8 @@
 //!
 //! Run with: cargo test --test note_visibility_http_test -- --ignored
 //!
-//! All tests are ignored because they require a live database and S3.
+//! All tests require a live database and S3. Note publication tests are ignored;
+//! feature-route regressions run explicitly in the integration workflow.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -334,10 +335,7 @@ async fn setup_test_env() -> AppState {
 fn build_app(state: AppState) -> axum::Router {
     routes::note_routes()
         .merge(routes::note_public_routes())
-        .route(
-            "/api/v1/features",
-            axum::routing::get(rustshare_server::handlers::get_features),
-        )
+        .merge(routes::feature_routes())
         .with_state(state)
         .layer(axum::middleware::from_fn(
             middleware::security_headers_middleware,
@@ -402,6 +400,7 @@ async fn features_endpoint_returns_current_workflow_state() {
 
     let user_id = Uuid::new_v4();
     let tenant_id = Uuid::new_v4();
+    let workflow_tenant_id = Uuid::new_v4();
     sqlx::query("INSERT INTO users (id, tenant_id) VALUES ($1, $2)")
         .bind(user_id)
         .bind(tenant_id)
@@ -411,7 +410,7 @@ async fn features_endpoint_returns_current_workflow_state() {
     sqlx::query(
         "INSERT INTO workflows (tenant_id, key, status) VALUES ($1, 'invite_email', 'draft')",
     )
-    .bind(tenant_id)
+    .bind(workflow_tenant_id)
     .execute(&test_pool)
     .await
     .expect("create draft invitation workflow");
@@ -423,27 +422,29 @@ async fn features_endpoint_returns_current_workflow_state() {
     for (expected, status) in [(false, "draft"), (true, "active"), (false, "draft")] {
         sqlx::query("UPDATE workflows SET status = $1 WHERE tenant_id = $2")
             .bind(status)
-            .bind(tenant_id)
+            .bind(workflow_tenant_id)
             .execute(&test_pool)
             .await
             .expect("change workflow state");
 
-        let response = app
-            .clone()
-            .oneshot(
-                Request::get("/api/v1/features")
-                    .header("Authorization", format!("Bearer {token}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = app.clone().oneshot(features_request(&token)).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response_json(response).await,
             serde_json::json!({"invite_enabled": expected})
         );
     }
+
+    sqlx::query("DROP TABLE workflows")
+        .execute(&test_pool)
+        .await
+        .expect("inject workflow database failure");
+    let response = app.oneshot(features_request(&token)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        response_json(response).await,
+        serde_json::json!({"error": "Internal server error"})
+    );
 
     test_pool.close().await;
     sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
@@ -496,6 +497,13 @@ fn auth_token(state: &AppState, user_id: Uuid, tenant_id: Uuid) -> String {
     state
         .jwt_manager
         .generate(user_id, "test@example.com", tenant_id)
+        .unwrap()
+}
+
+fn features_request(token: &str) -> Request<Body> {
+    Request::get("/api/v1/features")
+        .header("Authorization", format!("Bearer {token}"))
+        .body(Body::empty())
         .unwrap()
 }
 
