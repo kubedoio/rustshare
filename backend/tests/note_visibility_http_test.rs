@@ -334,10 +334,28 @@ async fn setup_test_env() -> AppState {
 fn build_app(state: AppState) -> axum::Router {
     routes::note_routes()
         .merge(routes::note_public_routes())
+        .route(
+            "/api/v1/features",
+            axum::routing::get(rustshare_server::handlers::get_features),
+        )
         .with_state(state)
         .layer(axum::middleware::from_fn(
             middleware::security_headers_middleware,
         ))
+}
+
+#[tokio::test]
+async fn features_endpoint_rejects_unauthenticated_requests() {
+    let response = build_app(setup_test_env().await)
+        .oneshot(
+            Request::get("/api/v1/features")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 async fn setup_test_tenant(pool: &PgPool) -> Uuid {

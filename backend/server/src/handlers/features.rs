@@ -5,6 +5,7 @@ use crate::{
     handlers::{AppError, AuthenticatedUser},
     state::DatabaseState,
 };
+use rustshare_infrastructure::repositories::WorkflowRepository;
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct FeaturesResponse {
@@ -24,16 +25,25 @@ pub async fn get_features(
     State(db): State<DatabaseState>,
     AuthenticatedUser { .. }: AuthenticatedUser,
 ) -> Result<Json<FeaturesResponse>, AppError> {
-    let active: bool = sqlx::query_scalar(
-        "SELECT EXISTS(
-            SELECT 1 FROM workflows
-            WHERE key = 'invite_email' AND status = 'active'
-        )",
-    )
-    .fetch_one(&db.db_pool)
-    .await?;
+    let active = WorkflowRepository::new(db.db_pool).invite_enabled().await?;
 
     Ok(Json(FeaturesResponse {
         invite_enabled: active,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FeaturesResponse;
+
+    #[test]
+    fn response_keeps_the_public_json_shape() {
+        assert_eq!(
+            serde_json::to_value(FeaturesResponse {
+                invite_enabled: true,
+            })
+            .unwrap(),
+            serde_json::json!({ "invite_enabled": true })
+        );
+    }
 }

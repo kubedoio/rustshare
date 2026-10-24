@@ -132,6 +132,11 @@ jobs:
       - name: Run migrations
         run: sqlx migrate run --source backend/migrations
 
+      - name: Test feature workflow repository and authentication
+        run: |
+          cargo test -p rustshare-server --test features_test -- --test-threads=1
+          cargo test -p rustshare-server --test note_visibility_http_test features_endpoint_rejects_unauthenticated_requests -- --exact --test-threads=1
+
       - name: Run all integration tests
         # `-j 1` serializes Cargo's test processes, while
         # `--test-threads=1` serializes tests inside each binary. The ignored
