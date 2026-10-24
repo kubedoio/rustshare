@@ -471,10 +471,11 @@
 		if (!canReschedule(event)) return;
 		try {
 			const local = localDateTime(event.starts_at, event.timezone);
-			moveEvent = event;
-			moveDate = date
+			const targetDate = date
 				? eventDateForCalendarDate(event.starts_at, event.timezone, toLocalInputDate(date))
 				: local.date;
+			moveEvent = event;
+			moveDate = targetDate;
 			moveTime = local.time;
 			moveError = '';
 			moveTrigger = trigger ?? null;

@@ -282,6 +282,41 @@ describe('CalendarApplicationView', () => {
 		}
 	});
 
+	it('does not retain stale move values when the dropped wall time is in a DST gap', async () => {
+		vi.stubEnv('TZ', 'Europe/Berlin');
+		try {
+			mocks.listEvents.mockResolvedValue([
+				eventAt('2026-03-28', {
+					starts_at: '2026-03-28T01:30:00Z',
+					ends_at: '2026-03-28T02:30:00Z',
+					timezone: 'Europe/Berlin'
+				})
+			]);
+			render(CalendarApplicationView, { module: testModule });
+			await goToMonth(2026, 2);
+
+			const eventCard = await screen.findByText(/Sprint review/);
+			await fireEvent.click(eventCard);
+			await fireEvent.click(await screen.findByRole('button', { name: /Move \/ reschedule/ }));
+			await fireEvent.input(screen.getByLabelText('New date'), { target: { value: '2026-03-30' } });
+			await fireEvent.input(screen.getByLabelText('New start time'), {
+				target: { value: '11:15' }
+			});
+			await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+			await fireEvent.click(screen.getByRole('button', { name: 'Close event details' }));
+
+			await fireEvent.dragStart(eventCard, {
+				dataTransfer: { setData: vi.fn(), effectAllowed: 'none' }
+			});
+			await fireEvent.drop(document.querySelector('[data-calendar-date="2026-03-29"]')!);
+
+			expect(screen.queryByRole('dialog', { name: 'Move event' })).toBeNull();
+			expect(mocks.updateEvent).not.toHaveBeenCalled();
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
 	it('moves a work-week event to another weekday without changing its time', async () => {
 		const monday = new Date();
 		monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
