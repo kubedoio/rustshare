@@ -389,6 +389,51 @@ Nginx, and the external TLS load balancer. See the proposed Issue #329
 assessment in [ADR-0037](../adr/0037-calendar-application-and-external-sync.md).
 Use the authenticated single-event export route above for now.
 
+## Mail message relationships (M2.3)
+
+These routes require both Mail and Calendar Applications to be enabled for the
+authenticated tenant. Calendar event IDs are tenant/owner scoped, and Mail
+message references are reauthorized through Mail's existing owner-scoped
+service on every operation. A reference never grants access.
+
+### `POST /api/v1/calendar/mail-links`
+
+Create or return the active association for one owned event:
+
+```json
+{
+  "event_id": "uuid",
+  "mail_message_ref": "elembra://io.elembra.mail/message/{uuid}"
+}
+```
+
+Returns `201` with `{ "id": "uuid", "event_id": "uuid",
+"mail_message_id": "uuid" }`. A retry for the same event/message returns the
+same association. An event already associated with a different message returns
+`409`.
+
+### `GET /api/v1/calendar/mail-links?message_id={uuid}`
+
+List currently readable associated events, returning only event ID, title, and
+start/end timestamps. A deleted or inaccessible message resolves as `404`.
+Soft-deleted events are omitted.
+
+### `GET /api/v1/calendar/events/{id}/mail-link`
+
+Resolve an event's related message and return its ID only. The caller must still
+open the Mail resource through its authenticated route. Missing, deleted, or
+inaccessible resources return an existence-hiding `404`.
+
+### `DELETE /api/v1/calendar/mail-links/{id}`
+
+Soft-unlink the relation after reauthorizing both resources. Returns `204`.
+The audit row retains its creation actor and timestamp; a later relink creates
+a new active row.
+
+Remote IMAP UIDs are not accepted as message identities. Only a persisted
+message UUID, including a remote summary's `imported_message_id`, can be linked.
+No body, recipient, attachment, or credential data is copied to Calendar.
+
 ## Status and error summary
 
 | Code | Meaning |

@@ -1181,6 +1181,15 @@
 									)}><Trash2 size={15} /></button
 							>
 						</div>
+						{#if !selectedMessage.imported_message_id}
+							<p
+								class="border-b border-base-300 bg-base-200/50 px-4 py-2 text-xs text-base-content/70"
+								role="status"
+							>
+								Save this remote message to RustShare before creating a Calendar event. Remote-only
+								messages do not have a stable link identity.
+							</p>
+						{/if}
 						{#if $remoteBodyQuery.isLoading}<div class="flex justify-center p-10">
 								<Loader2 class="animate-spin" />
 							</div>

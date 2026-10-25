@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { createMutation, createQuery } from '$lib/query-compat';
+	import { queryClient } from '$lib/query-client';
 	import {
 		mailApi,
 		type MailAttachment,
@@ -11,6 +12,7 @@
 		type MailSmtpSettings,
 		type SaveDraftRequest
 	} from '$lib/api/mail';
+	import { calendarApi, type CalendarMailEvent } from '$lib/api/calendar';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ApplicationPageSkeleton from '$lib/components/common/ApplicationPageSkeleton.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
@@ -26,6 +28,7 @@
 	import {
 		ArrowLeft,
 		Download,
+		CalendarDays,
 		Paperclip,
 		Link2,
 		Trash2,
@@ -37,6 +40,53 @@
 
 	let messageId = $derived($page.params.messageId);
 	let mailEnabled = $derived(getApplicationByRouteSlug('mail')?.enabled !== false);
+	let calendarEnabled = $derived(getApplicationByRouteSlug('calendar')?.enabled === true);
+	let relatedEvents = $state<CalendarMailEvent[]>([]);
+	let lastCalendarMessageId: string | null = null;
+	let calendarCreateOpen = $state(false);
+	let calendarDialog = $state<HTMLDialogElement | null>(null);
+	let calendarTitle = $state('');
+	let calendarStart = $state('');
+	let calendarEnd = $state('');
+	let calendarLocation = $state('');
+	let calendarDescription = $state('');
+	let calendarError = $state('');
+	let createdCalendarEvent = $state<{ id: string } | null>(null);
+	let pendingCalendarLinkEventId = $state<string | null>(null);
+	let calendarLinkCreated = $state(false);
+	let calendarSaving = $state(false);
+	let calendarTimezone = $state('UTC');
+
+	$effect(() => {
+		if (calendarCreateOpen && calendarDialog && !calendarDialog.open) calendarDialog.showModal();
+		else if (!calendarCreateOpen && calendarDialog?.open) calendarDialog.close();
+	});
+
+	$effect(() => {
+		const id = messageId ?? null;
+		if (id !== lastCalendarMessageId) {
+			lastCalendarMessageId = id;
+			createdCalendarEvent = null;
+			pendingCalendarLinkEventId = null;
+			calendarLinkCreated = false;
+			calendarError = '';
+			calendarCreateOpen = false;
+		}
+		relatedEvents = [];
+		if (!id || !calendarEnabled || !mailEnabled) return;
+		let cancelled = false;
+		void calendarApi
+			.listMailEvents(id)
+			.then((events) => {
+				if (!cancelled) relatedEvents = events;
+			})
+			.catch(() => {
+				if (!cancelled) relatedEvents = [];
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	const messageQuery = createQuery<MailMessage>({
 		queryKey: ['mail-message', null],
@@ -64,6 +114,7 @@
 
 	$effect(() => {
 		const id = messageId ?? null;
+		if (id) queryClient.removeQueries({ queryKey: ['mail-message', id], exact: true });
 		messageQuery.setOptions({
 			queryKey: ['mail-message', id],
 			queryFn: () => mailApi.getMessage(messageId!),
@@ -145,6 +196,84 @@
 	let composeDraftId = $state<string | null>(null);
 	let composeSaveError = $state('');
 	let smtpSettings = $state<MailSmtpSettings | null>(null);
+
+	function localDateTime(date: Date): string {
+		const offset = date.getTimezoneOffset() * 60_000;
+		return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+	}
+
+	function openCalendarCreate(message: MailMessage) {
+		calendarTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+		const start = new Date();
+		start.setMinutes(Math.ceil(start.getMinutes() / 30) * 30, 0, 0);
+		const end = new Date(start.getTime() + 60 * 60_000);
+		calendarTitle = message.subject || '';
+		calendarStart = localDateTime(start);
+		calendarEnd = localDateTime(end);
+		calendarLocation = '';
+		calendarDescription = '';
+		calendarError = '';
+		createdCalendarEvent = null;
+		pendingCalendarLinkEventId = null;
+		calendarLinkCreated = false;
+		calendarCreateOpen = true;
+	}
+
+	async function openRelatedCalendarEvent(eventId: string) {
+		const sourceMessageId = messageId;
+		if (!sourceMessageId) return;
+		try {
+			const events = await calendarApi.listMailEvents(sourceMessageId);
+			if (messageId !== sourceMessageId) return;
+			relatedEvents = events;
+			if (!events.some((event) => event.event_id === eventId)) {
+				relatedEvents = [];
+				throw new Error('Related Calendar event unavailable');
+			}
+			await goto(`/apps/calendar?event_id=${encodeURIComponent(eventId)}`);
+		} catch {
+			if (messageId !== sourceMessageId) return;
+			relatedEvents = [];
+			toastStore.show('Related Calendar event unavailable', 'info');
+		}
+	}
+
+	async function createCalendarEventFromMail() {
+		const sourceMessageId = messageId;
+		if (!sourceMessageId) return;
+		calendarSaving = true;
+		calendarError = '';
+		try {
+			if (!createdCalendarEvent) {
+				const event = await calendarApi.createEvent({
+					title: calendarTitle,
+					starts_at: new Date(calendarStart).toISOString(),
+					ends_at: new Date(calendarEnd).toISOString(),
+					timezone: calendarTimezone,
+					location: calendarLocation || null,
+					description: calendarDescription || null
+				});
+				if (messageId !== sourceMessageId) return;
+				createdCalendarEvent = { id: event.id };
+				pendingCalendarLinkEventId = event.id;
+			}
+			await calendarApi.createMailLink(createdCalendarEvent.id, sourceMessageId);
+			if (messageId !== sourceMessageId) return;
+			pendingCalendarLinkEventId = null;
+			calendarLinkCreated = true;
+			calendarCreateOpen = false;
+			toastStore.show('Calendar event created', 'success');
+			relatedEvents = await calendarApi.listMailEvents(sourceMessageId);
+		} catch (error) {
+			calendarError = createdCalendarEvent
+				? 'The event was created, but its Mail link did not finish. Retry linking it below.'
+				: error instanceof Error
+					? error.message
+					: 'Calendar event could not be created.';
+		} finally {
+			calendarSaving = false;
+		}
+	}
 
 	const accountsQuery = createQuery({
 		queryKey: ['mail-accounts'],
@@ -360,6 +489,12 @@
 		subtitle={message.from_name || message.from_address || 'Unknown sender'}
 	>
 		<div slot="secondaryActions">
+			{#if calendarEnabled}
+				<button class="btn gap-2 btn-outline btn-sm" onclick={() => openCalendarCreate(message)}>
+					<CalendarDays size={14} />
+					<span>Create Calendar Event</span>
+				</button>
+			{/if}
 			<button class="btn gap-2 btn-outline btn-sm" onclick={() => openReply(message)}>
 				<Reply size={14} />
 				<span>Reply</span>
@@ -405,6 +540,65 @@
 					</div>
 				</div>
 			</div>
+			{#if calendarEnabled && relatedEvents.length}
+				<section
+					class="rounded-xl border border-base-300/70 bg-base-100 p-4 shadow-sm"
+					aria-labelledby="related-calendar-events"
+				>
+					<h2 id="related-calendar-events" class="text-sm font-semibold">
+						Related Calendar events
+					</h2>
+					<ul class="mt-2 flex flex-col gap-2">
+						{#each relatedEvents as event (event.event_id)}
+							<li class="flex flex-wrap items-center justify-between gap-2">
+								<span class="text-sm"
+									>{event.title} · {formatAbsoluteDateTime(event.starts_at)}</span
+								>
+								<button
+									type="button"
+									class="btn btn-outline btn-xs"
+									onclick={() => openRelatedCalendarEvent(event.event_id)}
+								>
+									Open Calendar Event
+								</button>
+							</li>
+						{/each}
+					</ul>
+				</section>
+			{/if}
+			{#if calendarEnabled && createdCalendarEvent}
+				<div
+					class="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 {calendarLinkCreated
+						? 'border-success/30 bg-success/5'
+						: 'border-warning/30 bg-warning/5'}"
+					role="status"
+				>
+					<span class="text-sm"
+						>{calendarLinkCreated
+							? 'Calendar event created and linked.'
+							: 'Calendar event created; Mail link unavailable.'}</span
+					>
+					{#if !calendarLinkCreated}
+						<button
+							type="button"
+							class="btn btn-outline btn-xs"
+							onclick={() => {
+								createdCalendarEvent = { id: pendingCalendarLinkEventId! };
+								calendarError = '';
+								calendarCreateOpen = true;
+							}}>Retry Mail link</button
+						>
+					{/if}
+					<button
+						type="button"
+						class="btn btn-outline btn-xs"
+						onclick={() =>
+							goto(`/apps/calendar?event_id=${encodeURIComponent(createdCalendarEvent!.id)}`)}
+					>
+						Open Calendar Event
+					</button>
+				</div>
+			{/if}
 
 			<div class="rounded-xl border border-base-300/70 bg-base-100 p-4 shadow-sm">
 				{#await bodyContent}
@@ -569,6 +763,122 @@
 			</div>
 		</div>
 	</ApplicationPageShell>
+
+	<dialog
+		bind:this={calendarDialog}
+		class="fixed inset-0 z-30 m-0 h-full max-h-none w-full max-w-none border-0 bg-transparent p-4 text-base-content backdrop:bg-black/40 open:flex open:items-center open:justify-center"
+		aria-labelledby="mail-calendar-title"
+		onclick={(event) => {
+			if (event.target === event.currentTarget && !calendarSaving) calendarCreateOpen = false;
+		}}
+		oncancel={(event) => {
+			if (calendarSaving) event.preventDefault();
+			else calendarCreateOpen = false;
+		}}
+	>
+		<form
+			class="flex max-h-full w-full max-w-xl flex-col gap-3 overflow-y-auto rounded-xl border border-[var(--rs-border)] bg-[var(--rs-surface-raised)] p-4"
+			aria-label="Create Calendar event from Mail"
+			onsubmit={(event) => {
+				event.preventDefault();
+				void createCalendarEventFromMail();
+			}}
+		>
+			<h2 id="mail-calendar-title" class="text-lg font-semibold">
+				{createdCalendarEvent ? 'Finish linking event' : 'Create Calendar Event'}
+			</h2>
+			{#if !createdCalendarEvent}
+				<label class="form-control gap-1 text-sm" for="mail-calendar-event-title">
+					<span class="font-medium">Title</span>
+					<input
+						id="mail-calendar-event-title"
+						class="input-bordered input input-sm"
+						bind:value={calendarTitle}
+						maxlength="512"
+						required
+					/>
+				</label>
+				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+					<label class="form-control gap-1 text-sm" for="mail-calendar-event-start">
+						<span class="font-medium">Start date and time</span>
+						<input
+							id="mail-calendar-event-start"
+							type="datetime-local"
+							class="input-bordered input input-sm"
+							bind:value={calendarStart}
+							required
+						/>
+					</label>
+					<label class="form-control gap-1 text-sm" for="mail-calendar-event-end">
+						<span class="font-medium">End date and time</span>
+						<input
+							id="mail-calendar-event-end"
+							type="datetime-local"
+							class="input-bordered input input-sm"
+							bind:value={calendarEnd}
+							required
+						/>
+					</label>
+				</div>
+				<label class="form-control gap-1 text-sm" for="mail-calendar-event-timezone">
+					<span class="font-medium">Event time zone</span>
+					<input
+						id="mail-calendar-event-timezone"
+						class="input-bordered input input-sm"
+						bind:value={calendarTimezone}
+						readonly
+						required
+					/>
+				</label>
+				<label class="form-control gap-1 text-sm" for="mail-calendar-event-location">
+					<span class="font-medium">Location (optional)</span>
+					<input
+						id="mail-calendar-event-location"
+						class="input-bordered input input-sm"
+						bind:value={calendarLocation}
+					/>
+				</label>
+				<label class="form-control gap-1 text-sm" for="mail-calendar-event-description">
+					<span class="font-medium">Description (optional)</span>
+					<textarea
+						id="mail-calendar-event-description"
+						class="textarea-bordered textarea min-h-20"
+						bind:value={calendarDescription}></textarea>
+				</label>
+				<p class="text-xs text-base-content/60">
+					The Mail subject is only a title suggestion. Message text, recipients, and attachments are
+					not copied.
+				</p>
+			{:else}
+				<p class="text-sm text-base-content/70">
+					The event was created. Retry the relationship with this event, or close and open it in
+					Calendar.
+				</p>
+			{/if}
+			{#if calendarError}<p class="text-sm text-error" role="alert">{calendarError}</p>{/if}
+			<div class="flex flex-wrap justify-end gap-2">
+				{#if createdCalendarEvent}
+					<button
+						type="button"
+						class="btn btn-outline btn-sm"
+						onclick={() =>
+							goto(`/apps/calendar?event_id=${encodeURIComponent(createdCalendarEvent!.id)}`)}
+					>
+						Open Calendar Event
+					</button>
+				{/if}
+				<button
+					type="button"
+					class="btn btn-outline btn-sm"
+					disabled={calendarSaving}
+					onclick={() => (calendarCreateOpen = false)}>Cancel</button
+				>
+				<button type="submit" class="btn btn-primary btn-sm" disabled={calendarSaving}>
+					{calendarSaving ? 'Saving…' : createdCalendarEvent ? 'Retry Mail link' : 'Create event'}
+				</button>
+			</div>
+		</form>
+	</dialog>
 
 	<FilePreviewModal
 		open={previewAttachment !== null}

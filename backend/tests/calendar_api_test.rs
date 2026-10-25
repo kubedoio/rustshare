@@ -23,6 +23,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::get;
 use chrono::{DateTime, Utc};
+use rustshare_core::domain::{MailMessage, MailSourceMode};
 use rustshare_server::services::calendar_service::CalendarError;
 use rustshare_server::services::google_calendar::{
     CalendarSyncConfig, GoogleCalendarClient, SyncOutcome,
@@ -108,6 +109,290 @@ async fn create_accepts_the_minimal_ui_payload() {
     assert!(body["location"].is_null());
 
     cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn mail_calendar_link_reauthorizes_and_is_idempotent() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let foreign_tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_mail_link", tenant_id).await;
+    let other = create_test_user(&state, "calendar_mail_link_other", tenant_id).await;
+    let foreign_user =
+        create_test_user(&state, "calendar_mail_link_foreign", foreign_tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    state
+        .application_service
+        .enable_application("io.elembra.mail", user.id, tenant_id)
+        .await
+        .expect("enable Mail");
+    configure_calendar(&state, tenant_id, other.id, true).await;
+    configure_calendar(&state, foreign_tenant_id, foreign_user.id, true).await;
+    state
+        .application_service
+        .enable_application("io.elembra.mail", foreign_user.id, foreign_tenant_id)
+        .await
+        .expect("enable foreign Mail");
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let other_token = create_auth_token(&state, other.id, tenant_id);
+    let mut message = MailMessage::new(tenant_id, user.id, user.id, MailSourceMode::EmlUpload);
+    message.subject = Some("Private subject".to_string());
+    state
+        .metadata_store
+        .create_mail_message(&message)
+        .await
+        .expect("insert saved message");
+    let mut foreign_message = MailMessage::new(
+        foreign_tenant_id,
+        foreign_user.id,
+        foreign_user.id,
+        MailSourceMode::EmlUpload,
+    );
+    foreign_message.subject = Some("Foreign private subject".to_string());
+    state
+        .metadata_store
+        .create_mail_message(&foreign_message)
+        .await
+        .expect("insert foreign saved message");
+    let app = build_app(state.clone());
+
+    let event_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(minimal_ui_event_body().to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, event) = response_json(event_response).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let event_id = event["id"].as_str().unwrap();
+    let mail_ref = format!("elembra://io.elembra.mail/message/{}", message.id);
+
+    for (reference, expected_status, hidden_text) in [
+        (
+            "elembra://io.elembra.mail/message/not-a-uuid".to_string(),
+            StatusCode::BAD_REQUEST,
+            "Private subject",
+        ),
+        (
+            format!("elembra://io.elembra.mail/message/{}", foreign_message.id),
+            StatusCode::NOT_FOUND,
+            "Foreign private subject",
+        ),
+    ] {
+        let (status, body) = response_json(
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/calendar/mail-links")
+                        .method("POST")
+                        .header("Authorization", format!("Bearer {token}"))
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(
+                            json!({ "event_id": event_id, "mail_message_ref": reference })
+                                .to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, expected_status);
+        assert!(!body.to_string().contains(hidden_text));
+    }
+
+    let foreign_event_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events")
+                .method("POST")
+                .header("Authorization", format!("Bearer {other_token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(create_event_body().to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, foreign_event) = response_json(foreign_event_response).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let foreign_event_id = foreign_event["id"].as_str().unwrap();
+    let (status, hidden_event) = response_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/calendar/mail-links")
+                    .method("POST")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        json!({ "event_id": foreign_event_id, "mail_message_ref": mail_ref })
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!hidden_event.to_string().contains("Sprint review"));
+
+    let create_link = || {
+        Request::builder()
+            .uri("/api/v1/calendar/mail-links")
+            .method("POST")
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({ "event_id": event_id, "mail_message_ref": mail_ref }).to_string(),
+            ))
+            .unwrap()
+    };
+    let (status, first) = response_json(app.clone().oneshot(create_link()).await.unwrap()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, second) = response_json(app.clone().oneshot(create_link()).await.unwrap()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(first["id"], second["id"]);
+    let (concurrent_a, concurrent_b) = tokio::join!(
+        app.clone().oneshot(create_link()),
+        app.clone().oneshot(create_link())
+    );
+    let (status, concurrent_a) = response_json(concurrent_a.unwrap()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, concurrent_b) = response_json(concurrent_b.unwrap()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(concurrent_a["id"], concurrent_b["id"]);
+
+    let (status, resolved) = response_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/calendar/events/{event_id}/mail-link"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(resolved["mail_message_id"], message.id.to_string());
+    assert!(resolved.get("subject").is_none());
+
+    let (status, denied) = response_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/calendar/events/{event_id}/mail-link"))
+                    .header("Authorization", format!("Bearer {other_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!denied.to_string().contains("Private subject"));
+
+    state
+        .application_service
+        .disable_application("io.elembra.mail", user.id, tenant_id)
+        .await
+        .expect("disable Mail");
+    let (status, _) = response_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/calendar/events/{event_id}/mail-link"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    state
+        .application_service
+        .enable_application("io.elembra.mail", user.id, tenant_id)
+        .await
+        .expect("reenable Mail");
+    state
+        .application_service
+        .disable_application("io.elembra.calendar", user.id, tenant_id)
+        .await
+        .expect("disable Calendar");
+    let (status, _) = response_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/calendar/events/{event_id}/mail-link"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    state
+        .application_service
+        .enable_application("io.elembra.calendar", user.id, tenant_id)
+        .await
+        .expect("reenable Calendar");
+    state
+        .metadata_store
+        .delete_mail_message(message.id, user.id)
+        .await
+        .expect("delete source message");
+    let (status, _) = response_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/calendar/events/{event_id}/mail-link"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    state
+        .calendar_service
+        .delete_event(tenant_id, user.id, Uuid::parse_str(event_id).unwrap())
+        .await
+        .expect("delete event");
+    state
+        .calendar_service
+        .delete_event(
+            tenant_id,
+            other.id,
+            Uuid::parse_str(foreign_event_id).unwrap(),
+        )
+        .await
+        .expect("delete foreign user's event");
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+    cleanup_tenant(&state.db_pool, foreign_tenant_id).await;
 }
 
 #[tokio::test]

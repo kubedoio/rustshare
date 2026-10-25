@@ -7,8 +7,9 @@ use axum::{
 use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
-    CalendarEvent, CalendarImportJob, CalendarSource, CalendarSourceKind,
+    ApplicationId, CalendarEvent, CalendarImportJob, CalendarSource, CalendarSourceKind,
 };
+use rustshare_resource_auth::resource_ref::ResourceRef;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -20,6 +21,7 @@ use crate::services::calendar_service::{
 use crate::state::AppState;
 
 const CALENDAR_APPLICATION_ID: &str = "io.elembra.calendar";
+const MAIL_APPLICATION_ID: &str = "io.elembra.mail";
 /// Calendar .ics uploads are capped at 10 MB (spec §Import semantics).
 const MAX_CALENDAR_IMPORT_SIZE_BYTES: usize = 10 * 1024 * 1024;
 /// Hard byte cap for the multipart `source_id` text field. A UUID is 36 bytes;
@@ -67,6 +69,205 @@ async fn require_calendar_enabled(state: &AppState, tenant_id: Uuid) -> Result<(
     }
 
     Ok(())
+}
+
+async fn require_mail_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
+    let module = state
+        .application_service
+        .get_application(MAIL_APPLICATION_ID, tenant_id)
+        .await;
+    let module = match module {
+        Ok(module) => module,
+        Err(ApplicationError::NotFound(_)) => {
+            return Err(AppError::forbidden("Mail module is disabled"));
+        }
+        Err(err) => return Err(AppError::internal(err.to_string())),
+    };
+    if !module.enabled {
+        return Err(AppError::forbidden("Mail module is disabled"));
+    }
+    Ok(())
+}
+
+async fn require_mail_message(
+    state: &AppState,
+    tenant_id: Uuid,
+    owner_id: Uuid,
+    message_id: Uuid,
+) -> Result<(), AppError> {
+    use crate::services::mail_service::MailError;
+    match state
+        .mail_service
+        .get_message(tenant_id, owner_id, message_id)
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(MailError::NotFound(_) | MailError::PermissionDenied) => {
+            Err(AppError::NotFound("Resource not found".into()))
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn parse_mail_message_ref(value: &str) -> Result<Uuid, AppError> {
+    let reference = ResourceRef::from_uri(value)
+        .map_err(|_| AppError::bad_request("Invalid Mail message reference"))?;
+    if reference.application != ApplicationId::new(MAIL_APPLICATION_ID)
+        || reference.resource_type != "message"
+        || reference.version.is_some()
+    {
+        return Err(AppError::bad_request("Invalid Mail message reference"));
+    }
+    let id = Uuid::parse_str(&reference.resource_id)
+        .map_err(|_| AppError::bad_request("Invalid Mail message reference"))?;
+    if reference.to_uri() != value || id.to_string() != reference.resource_id {
+        return Err(AppError::bad_request("Invalid Mail message reference"));
+    }
+    Ok(id)
+}
+
+#[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
+pub struct CreateCalendarMailLinkRequest {
+    pub event_id: Uuid,
+    #[validate(length(min = 1, max = 512))]
+    pub mail_message_ref: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarMailLinkResponse {
+    pub id: Uuid,
+    pub event_id: Uuid,
+    pub mail_message_id: Uuid,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarMailEventResponse {
+    pub event_id: Uuid,
+    pub title: String,
+    pub starts_at: DateTime<Utc>,
+    pub ends_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams, utoipa::ToSchema)]
+pub struct ListCalendarMailLinksQuery {
+    pub message_id: Uuid,
+}
+
+#[utoipa::path(post, path = "/api/v1/calendar/mail-links", request_body = CreateCalendarMailLinkRequest, responses((status = 201, body = CalendarMailLinkResponse)), security(("bearer_auth" = [])))]
+pub async fn create_calendar_mail_link(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    ValidatedJson(req): ValidatedJson<CreateCalendarMailLinkRequest>,
+) -> Result<(StatusCode, Json<CalendarMailLinkResponse>), AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let message_id = parse_mail_message_ref(&req.mail_message_ref)?;
+    require_mail_message(&state, auth.tenant_id, auth.user_id, message_id).await?;
+    state
+        .calendar_service
+        .get_event(auth.tenant_id, auth.user_id, req.event_id)
+        .await?;
+    let link = state
+        .calendar_service
+        .create_mail_link(auth.tenant_id, auth.user_id, req.event_id, message_id)
+        .await?;
+    let linked_message_id = parse_mail_message_ref(&link.mail_message_ref)?;
+    if linked_message_id != message_id {
+        return Err(AppError::conflict("Calendar event is already linked"));
+    }
+    Ok((
+        StatusCode::CREATED,
+        Json(CalendarMailLinkResponse {
+            id: link.id,
+            event_id: link.event_id,
+            mail_message_id: linked_message_id,
+        }),
+    ))
+}
+
+#[utoipa::path(get, path = "/api/v1/calendar/mail-links", params(ListCalendarMailLinksQuery), responses((status = 200, body = [CalendarMailEventResponse])), security(("bearer_auth" = [])))]
+pub async fn list_calendar_mail_links(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Query(query): Query<ListCalendarMailLinksQuery>,
+) -> Result<Json<Vec<CalendarMailEventResponse>>, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    require_mail_message(&state, auth.tenant_id, auth.user_id, query.message_id).await?;
+    let links = state
+        .calendar_service
+        .list_mail_links(auth.tenant_id, auth.user_id, query.message_id)
+        .await?;
+    let mut events = Vec::with_capacity(links.len());
+    for link in links {
+        match state
+            .calendar_service
+            .get_event(auth.tenant_id, auth.user_id, link.event_id)
+            .await
+        {
+            Ok(event) => events.push(CalendarMailEventResponse {
+                event_id: event.id,
+                title: event.title,
+                starts_at: event.starts_at,
+                ends_at: event.ends_at,
+            }),
+            Err(CalendarError::NotFound(_)) => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
+    Ok(Json(events))
+}
+
+#[utoipa::path(get, path = "/api/v1/calendar/events/{id}/mail-link", params(("id" = Uuid, Path)), responses((status = 200, body = CalendarMailLinkResponse)), security(("bearer_auth" = [])))]
+pub async fn get_calendar_event_mail_link(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(event_id): Path<Uuid>,
+) -> Result<Json<CalendarMailLinkResponse>, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    state
+        .calendar_service
+        .get_event(auth.tenant_id, auth.user_id, event_id)
+        .await?;
+    let link = state
+        .calendar_service
+        .get_mail_link(auth.tenant_id, auth.user_id, event_id)
+        .await?;
+    let message_id = parse_mail_message_ref(&link.mail_message_ref)
+        .map_err(|_| AppError::NotFound("Resource not found".into()))?;
+    require_mail_message(&state, auth.tenant_id, auth.user_id, message_id).await?;
+    Ok(Json(CalendarMailLinkResponse {
+        id: link.id,
+        event_id,
+        mail_message_id: message_id,
+    }))
+}
+
+#[utoipa::path(delete, path = "/api/v1/calendar/mail-links/{id}", params(("id" = Uuid, Path)), responses((status = 204, description = "Mail link removed")), security(("bearer_auth" = [])))]
+pub async fn delete_calendar_mail_link(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(link_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    require_mail_enabled(&state, auth.tenant_id).await?;
+    let link = state
+        .calendar_service
+        .get_mail_link_by_id(auth.tenant_id, auth.user_id, link_id)
+        .await?;
+    state
+        .calendar_service
+        .get_event(auth.tenant_id, auth.user_id, link.event_id)
+        .await?;
+    let message_id = parse_mail_message_ref(&link.mail_message_ref)
+        .map_err(|_| AppError::NotFound("Resource not found".into()))?;
+    require_mail_message(&state, auth.tenant_id, auth.user_id, message_id).await?;
+    state
+        .calendar_service
+        .unlink_mail_link(auth.tenant_id, auth.user_id, link_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug, Deserialize, validator::Validate, utoipa::ToSchema)]
@@ -1397,5 +1598,27 @@ impl From<CalendarError> for AppError {
                 AppError::Internal("Internal server error".to_string())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod mail_link_ref_tests {
+    use super::parse_mail_message_ref;
+    use uuid::Uuid;
+
+    #[test]
+    fn accepts_only_canonical_saved_mail_message_refs() {
+        let message_id = Uuid::new_v4();
+        let reference = format!("elembra://io.elembra.mail/message/{message_id}");
+        assert_eq!(parse_mail_message_ref(&reference).unwrap(), message_id);
+        let versioned = format!("{reference}?version=sha256%3A{}", "a".repeat(64));
+        assert!(parse_mail_message_ref(&versioned).is_err());
+        assert!(parse_mail_message_ref("elembra://io.elembra.mail/message/42").is_err());
+        assert!(parse_mail_message_ref("elembra://io.elembra.files/file/42").is_err());
+        assert!(
+            parse_mail_message_ref("elembra://io.elembra.mail/message/not-a-uuid?version=x")
+                .is_err()
+        );
+        assert!(parse_mail_message_ref("message/123").is_err());
     }
 }
