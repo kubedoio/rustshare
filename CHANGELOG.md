@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Add an opt-in, resumable Files-backed Memory reconciliation worker with tenant-scoped status and retry.
+
 - Cancel active or queued file explorer uploads individually or as a queue; chunked uploads also abort their server-side upload session.
 - Align Rust CI and Bookworm builders with the canonical 1.97.1 toolchain, reject compiler drift in CI, and restore standalone crypto builds' OS randomness feature.
 - Refresh application editor mode on route changes and keep attachments and asynchronous save/upload results scoped to their originating document.

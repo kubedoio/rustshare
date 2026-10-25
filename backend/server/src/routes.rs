@@ -892,6 +892,14 @@ pub fn chat_integration_routes() -> Router<AppState> {
             post(crate::handlers::memory_reconcile::reconcile_files_memory),
         )
         .route(
+            "/api/v1/admin/applications/memory/files/reconcile/status",
+            get(crate::memory_files_reconcile_worker::get_status),
+        )
+        .route(
+            "/api/v1/admin/applications/memory/files/reconcile/retry",
+            post(crate::memory_files_reconcile_worker::retry),
+        )
+        .route(
             "/api/v1/integrations/chat/unfurl",
             post(crate::handlers::chat_integration::unfurl_link),
         )

@@ -195,6 +195,14 @@ This is an important sovereignty and operational property.
 
 ## Failure/rebuild model
 
+Files-backed OKF Note projections may be repaired by an optional,
+tenant-fair PostgreSQL checkpoint worker. The worker is disabled until
+configured, checkpoints only after a bounded page succeeds, and uses expiring
+leases with generation fencing. Full sweeps restart from the beginning.
+Reconciliation reads current Files and NoteService policy; it does not make
+the Memory index an authorization authority. Soft-delete tombstones are
+reconciled, while hard-deleted Files rows are outside the source scan.
+
 - Source Applications continue working when Memory is down.
 - Publication events remain in outbox/retry queues.
 - Indexes can be rebuilt from catalog + source APIs.

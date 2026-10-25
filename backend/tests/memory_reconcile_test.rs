@@ -448,6 +448,197 @@ async fn keyword_only_notes_recover_without_ai_and_reject_an_unavailable_index()
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
 
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn files_reconcile_worker_leases_fence_checkpoints_and_resume_cursors() {
+    use rustshare_resource_auth::ResourceRef;
+    use rustshare_server::{
+        handlers::memory_reconcile::FilesReconcileResponse,
+        memory_files_reconcile_worker::{claim, fail_page, finish_page},
+    };
+    use std::time::Duration;
+    use support::calendar_harness::{cleanup_tenant, create_test_tenant};
+
+    let _guard = SERIAL.lock().await;
+    let db = pool().await;
+    let tenant = create_test_tenant(&db).await;
+    let metadata = MetadataStore::new(db.clone());
+    let initial = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO memory_files_reconcile_jobs (tenant_id, cursor_file_id) VALUES ($1, $2)",
+    )
+    .bind(tenant)
+    .bind(initial)
+    .execute(&db)
+    .await
+    .unwrap();
+
+    let worker_one = Uuid::new_v4();
+    let worker_two = Uuid::new_v4();
+    let (one, two) = tokio::join!(
+        claim(&metadata, worker_one, Duration::from_secs(30)),
+        claim(&metadata, worker_two, Duration::from_secs(30)),
+    );
+    let (first, first_owner, successor) = match (one.unwrap(), two.unwrap()) {
+        (Some(lease), None) => (lease, worker_one, worker_two),
+        (None, Some(lease)) => (lease, worker_two, worker_one),
+        _ => panic!("exactly one worker must own the tenant lease"),
+    };
+    assert_eq!(first.cursor, Some(initial));
+    assert!(claim(&metadata, successor, Duration::from_secs(30))
+        .await
+        .unwrap()
+        .is_none());
+
+    sqlx::query("UPDATE memory_files_reconcile_jobs SET lease_until=NOW()-INTERVAL '1 second' WHERE tenant_id=$1")
+        .bind(tenant).execute(&db).await.unwrap();
+    let current = claim(&metadata, successor, Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(current.generation > first.generation);
+    let ref_for = |id: Uuid| {
+        ResourceRef::new(
+            rustshare_core::domain::ApplicationId::new("io.elembra.files"),
+            "file",
+            id.to_string(),
+        )
+        .to_uri()
+    };
+
+    assert!(finish_page(
+        &metadata,
+        &first,
+        first_owner,
+        FilesReconcileResponse {
+            processed: 1,
+            indexed: 1,
+            removed: 0,
+            unavailable: 0,
+            next_cursor: Some(ref_for(Uuid::new_v4())),
+        },
+        Duration::from_secs(3600)
+    )
+    .await
+    .is_err());
+    let saved: Option<Uuid> = sqlx::query_scalar(
+        "SELECT cursor_file_id FROM memory_files_reconcile_jobs WHERE tenant_id=$1",
+    )
+    .bind(tenant)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(saved, Some(initial));
+
+    fail_page(&metadata, &current, successor).await.unwrap();
+    let retries: i32 = sqlx::query_scalar(
+        "SELECT retry_count FROM memory_files_reconcile_jobs WHERE tenant_id=$1",
+    )
+    .bind(tenant)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(retries, 1);
+    sqlx::query("UPDATE memory_files_reconcile_jobs SET next_run_at=NOW() WHERE tenant_id=$1")
+        .bind(tenant)
+        .execute(&db)
+        .await
+        .unwrap();
+    let replay_owner = Uuid::new_v4();
+    let replay = claim(&metadata, replay_owner, Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(replay.cursor, Some(initial));
+
+    let second_cursor = Uuid::new_v4();
+    finish_page(
+        &metadata,
+        &replay,
+        replay_owner,
+        FilesReconcileResponse {
+            processed: 100,
+            indexed: 98,
+            removed: 2,
+            unavailable: 0,
+            next_cursor: Some(ref_for(second_cursor)),
+        },
+        Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE memory_files_reconcile_jobs SET next_run_at=NOW(), lease_until=NOW()-INTERVAL '1 second' WHERE tenant_id=$1")
+        .bind(tenant).execute(&db).await.unwrap();
+    let restarted_owner = Uuid::new_v4();
+    let restarted = claim(&metadata, restarted_owner, Duration::from_secs(30))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(restarted.cursor, Some(second_cursor));
+    finish_page(
+        &metadata,
+        &restarted,
+        restarted_owner,
+        FilesReconcileResponse {
+            processed: 1,
+            indexed: 1,
+            removed: 0,
+            unavailable: 0,
+            next_cursor: None,
+        },
+        Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+    let row = sqlx::query("SELECT cursor_file_id, processed, last_success_at FROM memory_files_reconcile_jobs WHERE tenant_id=$1")
+        .bind(tenant).fetch_one(&db).await.unwrap();
+    assert_eq!(row.get::<Option<Uuid>, _>("cursor_file_id"), None);
+    assert_eq!(row.get::<i64, _>("processed"), 101);
+    assert!(row
+        .get::<Option<chrono::DateTime<Utc>>, _>("last_success_at")
+        .is_some());
+
+    cleanup_tenant(&db, tenant).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL, object storage, and migrations applied"]
+async fn memory_reconcile_status_is_scoped_to_admin_tenant() {
+    use axum::{body::Body, http::Request, routing::get, Router};
+    use rustshare_server::memory_files_reconcile_worker::get_status;
+    use support::calendar_harness::{
+        cleanup_tenant, create_auth_token, create_test_tenant, create_test_user, setup_test_env,
+    };
+    use tower::ServiceExt;
+
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant = create_test_tenant(&state.db_pool).await;
+    let other_tenant = create_test_tenant(&state.db_pool).await;
+    let admin = create_test_user(&state, "memory_reconcile_status", tenant).await;
+    sqlx::query("UPDATE users SET is_admin = true WHERE id = $1")
+        .bind(admin.id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    let token = create_auth_token(&state, admin.id, other_tenant);
+    let response = Router::new()
+        .route("/status", get(get_status))
+        .with_state(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/status")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+    cleanup_tenant(&state.db_pool, tenant).await;
+    cleanup_tenant(&state.db_pool, other_tenant).await;
+}
+
 const COMMUNITY_ID: &str = "community-reconcile";
 const CHANNEL_ID: &str = "channel-1";
 

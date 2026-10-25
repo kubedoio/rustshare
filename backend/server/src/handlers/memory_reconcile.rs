@@ -164,22 +164,41 @@ pub async fn reconcile_files_memory(
                 )),
             )
         })?;
-    if !state.note_service.content_index_available() {
+    let result = reconcile_files_memory_page(
+        &state.metadata_store,
+        &state.note_service,
+        body.tenant_id,
+        after_file_id,
+        limit,
+    )
+    .await?;
+    Ok(Json(result))
+}
+
+/// Process one bounded Files-backed Notes page. The worker uses this same
+/// source-authoritative path as the existing administrative endpoint.
+pub async fn reconcile_files_memory_page(
+    metadata_store: &rustshare_storage::MetadataStore,
+    note_service: &crate::services::note_service::NoteService,
+    tenant_id: Uuid,
+    after_file_id: Option<Uuid>,
+    limit: u32,
+) -> Result<FilesReconcileResponse, (StatusCode, Json<ErrorResponse>)> {
+    if !note_service.content_index_available() {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ErrorResponse::new("Memory index is unavailable")),
         ));
     }
-    let mut page = state
-        .metadata_store
+    let mut page = metadata_store
         .list_files_for_memory_reconciliation(
-            body.tenant_id,
+            tenant_id,
             after_file_id,
             i64::from(limit) + 1,
         )
         .await
         .map_err(|error| {
-            tracing::error!(tenant = %body.tenant_id, %error, "memory files reconcile: source page failed");
+                tracing::error!(tenant = %tenant_id, %error, "memory files reconcile: source page failed");
             internal_error()
         })?;
     let has_more = page.len() > limit as usize;
@@ -194,21 +213,19 @@ pub async fn reconcile_files_memory(
     };
     for entry in &page {
         let file = &entry.file;
-        let Some((source_lock, is_active)) = state
-            .metadata_store
-            .lock_file_for_memory_reconciliation(body.tenant_id, file.id)
+        let Some((source_lock, is_active)) = metadata_store
+            .lock_file_for_memory_reconciliation(tenant_id, file.id)
             .await
             .map_err(|error| {
-                tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: source lock failed");
+                tracing::error!(tenant = %tenant_id, file_id = %file.id, %error, "memory files reconcile: source lock failed");
                 internal_error()
             })?
         else {
-            let removed = state
-                .note_service
-                .remove_source_file_from_index(file.id, body.tenant_id)
+            let removed = note_service
+                .remove_source_file_from_index(file.id, tenant_id)
                 .await
                 .map_err(|error| {
-                    tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: index removal failed");
+                    tracing::error!(tenant = %tenant_id, file_id = %file.id, %error, "memory files reconcile: index removal failed");
                     internal_error()
                 })?;
             response.removed += u64::from(removed > 0);
@@ -216,32 +233,30 @@ pub async fn reconcile_files_memory(
             continue;
         };
         if !is_active || !entry.owner_available {
-            let removed = state
-                .note_service
-                .remove_source_file_from_index(file.id, body.tenant_id)
+            let removed = note_service
+                .remove_source_file_from_index(file.id, tenant_id)
                 .await
                 .map_err(|error| {
-                    tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: index removal failed");
+                    tracing::error!(tenant = %tenant_id, file_id = %file.id, %error, "memory files reconcile: index removal failed");
                     internal_error()
                 })?;
             response.removed += u64::from(removed > 0);
             response.unavailable += u64::from(is_active && !entry.owner_available);
         } else {
-            match state
-                .note_service
-                .reconcile_index_file(file.id, file.owner_id, body.tenant_id)
+            match note_service
+                .reconcile_index_file(file.id, file.owner_id, tenant_id)
                 .await
             {
                 Ok(true) => response.indexed += 1,
                 Ok(false) => response.removed += 1,
                 Err(error) => {
-                    tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: source refresh failed");
+                    tracing::error!(tenant = %tenant_id, file_id = %file.id, %error, "memory files reconcile: source refresh failed");
                     return Err(internal_error());
                 }
             }
         }
         source_lock.commit().await.map_err(|error| {
-            tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: source lock commit failed");
+            tracing::error!(tenant = %tenant_id, file_id = %file.id, %error, "memory files reconcile: source lock commit failed");
             internal_error()
         })?;
         response.processed += 1;
@@ -258,7 +273,7 @@ pub async fn reconcile_files_memory(
             );
         }
     }
-    Ok(Json(response))
+    Ok(response)
 }
 
 fn parse_files_cursor(raw: &str) -> Result<Uuid, ()> {

@@ -1,0 +1,1 @@
+DROP TABLE memory_files_reconcile_jobs;
