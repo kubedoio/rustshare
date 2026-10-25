@@ -5,12 +5,17 @@ import {
 	getStarredContents,
 	listAllFiles,
 	downloadFile,
-	previewFile
+	previewFile,
+	uploadFile
 } from '$lib/api/files';
 
 vi.mock('$lib/api/client', () => ({
 	apiClient: {
 		get: vi.fn(),
+		post: vi.fn(),
+		request: vi.fn(),
+		requestVoid: vi.fn(),
+		delete: vi.fn(),
 		requestText: vi.fn(),
 		getBaseURL: vi.fn().mockReturnValue('https://api.example.com/api/v1')
 	}
@@ -102,5 +107,66 @@ describe('file URL construction', () => {
 		await expect(previewFile('file-123')).resolves.toEqual({
 			url: 'https://api.example.com/api/v1/files/file-123/preview'
 		});
+	});
+});
+
+describe('upload cancellation', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('passes cancellation to a regular upload request', async () => {
+		const signal = new AbortController().signal;
+		vi.mocked(apiClient.request).mockResolvedValue({ id: 'file-1' });
+
+		await uploadFile(null, new File(['small file'], 'small.txt'), undefined, undefined, signal);
+
+		expect(apiClient.request).toHaveBeenCalledWith(
+			'/files/upload',
+			expect.objectContaining({ method: 'POST', signal })
+		);
+	});
+
+	it('aborts chunk requests and deletes the server session', async () => {
+		const controller = new AbortController();
+		vi.mocked(apiClient.post).mockResolvedValue({ session_id: 'session-1' });
+		vi.mocked(apiClient.requestVoid).mockImplementation(async (_endpoint, options) => {
+			expect(options?.signal).toBe(controller.signal);
+			controller.abort();
+			throw new DOMException('The operation was aborted', 'AbortError');
+		});
+		vi.mocked(apiClient.delete).mockResolvedValue(undefined);
+
+		await expect(
+			uploadFile(
+				null,
+				new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'large.bin'),
+				undefined,
+				undefined,
+				controller.signal
+			)
+		).rejects.toMatchObject({ name: 'AbortError' });
+
+		expect(apiClient.delete).toHaveBeenCalledWith('/uploads/sessions/session-1');
+	});
+
+	it('reports when the server upload session cannot be cleaned up', async () => {
+		const controller = new AbortController();
+		vi.mocked(apiClient.post).mockResolvedValue({ session_id: 'session-1' });
+		vi.mocked(apiClient.requestVoid).mockImplementation(async () => {
+			controller.abort();
+			throw new DOMException('The operation was aborted', 'AbortError');
+		});
+		vi.mocked(apiClient.delete).mockRejectedValue(new Error('request failed'));
+
+		await expect(
+			uploadFile(
+				null,
+				new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'large.bin'),
+				undefined,
+				undefined,
+				controller.signal
+			)
+		).rejects.toMatchObject({ name: 'UploadCancellationCleanupError' });
 	});
 });

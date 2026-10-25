@@ -6,8 +6,8 @@ use rand::Rng as _;
 
 use chrono::{DateTime, Duration, Timelike, Utc};
 use rustshare_core::domain::{
-    CalendarEvent, CalendarEventStatus, CalendarSource, CalendarSourceKind, PrincipalId, TenantId,
-    UserId, WorkspaceId,
+    ApplicationId, CalendarEvent, CalendarEventStatus, CalendarSource, CalendarSourceKind,
+    PrincipalId, TenantId, UserId, WorkspaceId,
 };
 use rustshare_crypto::SecretEncryptionKey;
 use rustshare_integration_events::event::{ActorRef, IntegrationEvent};
@@ -101,6 +101,15 @@ pub struct CalendarService {
     /// `configure_public_url` is called; the configured clients carry their
     /// own copy of the derived redirect URL.
     public_url: String,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct CalendarMailLink {
+    pub id: Uuid,
+    pub event_id: Uuid,
+    pub mail_message_ref: String,
+    pub created_by: Uuid,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Read-only view of one external calendar provider for
@@ -973,6 +982,137 @@ impl CalendarService {
                 .map_err(db_error)?;
         }
         Ok(event)
+    }
+
+    pub async fn create_mail_link(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        event_id: Uuid,
+        message_id: Uuid,
+    ) -> Result<CalendarMailLink, CalendarError> {
+        let mail_message_ref = ResourceRef::new(
+            ApplicationId::new("io.elembra.mail"),
+            "message",
+            message_id.to_string(),
+        )
+        .to_uri();
+        let row = sqlx::query_as::<_, CalendarMailLink>(
+            "INSERT INTO calendar_mail_links (tenant_id, owner_id, event_id, mail_message_ref, created_by) \
+             VALUES ($1, $2, $3, $4, $2) \
+             ON CONFLICT (tenant_id, owner_id, event_id) WHERE deleted_at IS NULL DO NOTHING \
+             RETURNING id, event_id, mail_message_ref, created_by, created_at",
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(event_id)
+        .bind(&mail_message_ref)
+        .fetch_optional(self.metadata_store.pool())
+        .await
+        .map_err(|e| CalendarError::Database(e.to_string()))?;
+        if let Some(row) = row {
+            return Ok(row);
+        }
+        sqlx::query_as::<_, CalendarMailLink>(
+            "SELECT id, event_id, mail_message_ref, created_by, created_at \
+             FROM calendar_mail_links \
+             WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3 AND deleted_at IS NULL",
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(event_id)
+        .fetch_one(self.metadata_store.pool())
+        .await
+        .map_err(|e| CalendarError::Database(e.to_string()))
+    }
+
+    pub async fn list_mail_links(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        message_id: Uuid,
+    ) -> Result<Vec<CalendarMailLink>, CalendarError> {
+        let mail_message_ref = ResourceRef::new(
+            ApplicationId::new("io.elembra.mail"),
+            "message",
+            message_id.to_string(),
+        )
+        .to_uri();
+        sqlx::query_as::<_, CalendarMailLink>(
+            "SELECT id, event_id, mail_message_ref, created_by, created_at \
+             FROM calendar_mail_links \
+             WHERE tenant_id = $1 AND owner_id = $2 AND mail_message_ref = $3 AND deleted_at IS NULL \
+             ORDER BY created_at",
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(mail_message_ref)
+        .fetch_all(self.metadata_store.pool())
+        .await
+        .map_err(|e| CalendarError::Database(e.to_string()))
+    }
+
+    pub async fn get_mail_link(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        event_id: Uuid,
+    ) -> Result<CalendarMailLink, CalendarError> {
+        sqlx::query_as::<_, CalendarMailLink>(
+            "SELECT id, event_id, mail_message_ref, created_by, created_at \
+             FROM calendar_mail_links \
+             WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3 AND deleted_at IS NULL",
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(event_id)
+        .fetch_optional(self.metadata_store.pool())
+        .await
+        .map_err(|e| CalendarError::Database(e.to_string()))?
+        .ok_or(CalendarError::NotFound(event_id))
+    }
+
+    pub async fn get_mail_link_by_id(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        link_id: Uuid,
+    ) -> Result<CalendarMailLink, CalendarError> {
+        sqlx::query_as::<_, CalendarMailLink>(
+            "SELECT id, event_id, mail_message_ref, created_by, created_at \
+             FROM calendar_mail_links \
+             WHERE tenant_id = $1 AND owner_id = $2 AND id = $3 AND deleted_at IS NULL",
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(link_id)
+        .fetch_optional(self.metadata_store.pool())
+        .await
+        .map_err(|e| CalendarError::Database(e.to_string()))?
+        .ok_or(CalendarError::NotFound(link_id))
+    }
+
+    pub async fn unlink_mail_link(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        link_id: Uuid,
+    ) -> Result<(), CalendarError> {
+        let changed = sqlx::query(
+            "UPDATE calendar_mail_links SET deleted_at = now() \
+             WHERE tenant_id = $1 AND owner_id = $2 AND id = $3 AND deleted_at IS NULL",
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(link_id)
+        .execute(self.metadata_store.pool())
+        .await
+        .map_err(|e| CalendarError::Database(e.to_string()))?
+        .rows_affected();
+        if changed == 0 {
+            return Err(CalendarError::NotFound(link_id));
+        }
+        Ok(())
     }
 
     pub async fn get_event(

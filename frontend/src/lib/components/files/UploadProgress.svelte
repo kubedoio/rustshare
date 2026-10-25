@@ -3,7 +3,7 @@
 		id: string;
 		fileName: string;
 		size: number;
-		status: 'pending' | 'uploading' | 'success' | 'error';
+		status: 'pending' | 'uploading' | 'success' | 'error' | 'cancelled';
 		progress: number;
 		error?: string;
 		previewUrl?: string;
@@ -11,10 +11,14 @@
 
 	let {
 		tasks = [],
-		onClose = () => {}
+		onClose = () => {},
+		onCancel = () => {},
+		onCancelAll = () => {}
 	}: {
 		tasks?: UploadTask[];
 		onClose?: () => void;
+		onCancel?: (taskId: string) => void;
+		onCancelAll?: () => void;
 	} = $props();
 
 	function formatSize(bytes: number): string {
@@ -33,6 +37,8 @@
 				return 'success';
 			case 'error':
 				return 'error';
+			case 'cancelled':
+				return 'cancelled';
 			default:
 				return 'pending';
 		}
@@ -41,8 +47,11 @@
 	let hasActiveTasks = $derived(
 		tasks.some((t) => t.status === 'uploading' || t.status === 'pending')
 	);
+	let hasCancelableTasks = $derived(
+		tasks.some((t) => t.status === 'pending' || (t.status === 'uploading' && t.progress < 95))
+	);
 	let allCompleted = $derived(
-		tasks.length > 0 && tasks.every((t) => t.status === 'success' || t.status === 'error')
+		tasks.length > 0 && tasks.every((t) => ['success', 'error', 'cancelled'].includes(t.status))
 	);
 </script>
 
@@ -56,9 +65,12 @@
 				{#if hasActiveTasks}
 					Uploading {tasks.filter((t) => t.status === 'uploading' || t.status === 'pending').length} file(s)
 				{:else if allCompleted}
-					Upload Complete
+					Upload Finished
 				{/if}
 			</h3>
+			{#if hasCancelableTasks}
+				<button class="btn btn-ghost btn-xs" onclick={onCancelAll}>Cancel all</button>
+			{/if}
 			<button
 				class="btn btn-circle btn-ghost btn-sm"
 				aria-label="Close upload progress"
@@ -113,15 +125,22 @@
 												/>
 											</svg>
 										</div>
-									{:else if task.status === 'error'}
-										<div class="absolute inset-0 flex items-center justify-center bg-error/20">
+									{:else if task.status === 'error' || task.status === 'cancelled'}
+										<div
+											class="absolute inset-0 flex items-center justify-center {task.status ===
+											'error'
+												? 'bg-error/20'
+												: 'bg-base-200/60'}"
+										>
 											<svg
 												xmlns="http://www.w3.org/2000/svg"
 												fill="none"
 												viewBox="0 0 24 24"
 												stroke-width="2"
 												stroke="currentColor"
-												class="h-6 w-6 text-error"
+												class="h-6 w-6 {task.status === 'error'
+													? 'text-error'
+													: 'text-base-content/40'}"
 											>
 												<path
 													stroke-linecap="round"
@@ -151,14 +170,16 @@
 												d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
 											/>
 										</svg>
-									{:else if task.status === 'error'}
+									{:else if task.status === 'error' || task.status === 'cancelled'}
 										<svg
 											xmlns="http://www.w3.org/2000/svg"
 											fill="none"
 											viewBox="0 0 24 24"
 											stroke-width="1.5"
 											stroke="currentColor"
-											class="h-5 w-5 text-error"
+											class="h-5 w-5 {task.status === 'error'
+												? 'text-error'
+												: 'text-base-content/40'}"
 										>
 											<path
 												stroke-linecap="round"
@@ -201,8 +222,17 @@
 								></progress>
 							{:else if task.status === 'error' && task.error}
 								<p class="mt-1 text-xs text-error">{task.error}</p>
+							{:else if task.status === 'cancelled'}
+								<p class="mt-1 text-xs text-base-content/60">Cancelled</p>
 							{/if}
 						</div>
+						{#if task.status === 'pending' || (task.status === 'uploading' && task.progress < 95)}
+							<button
+								class="btn btn-ghost btn-xs"
+								aria-label="Cancel upload of {task.fileName}"
+								onclick={() => onCancel(task.id)}>Cancel</button
+							>
+						{/if}
 					</div>
 				</div>
 			{/each}

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryClient } from '$lib/query-client';
 import { toastStore } from '$lib/stores/toast';
+import { ApiError } from '$lib/api/types';
 import type { ApplicationDefinition } from '$lib/applications/registry';
 import type { CalendarEvent, CalendarSource } from '$lib/api/calendar';
 import CalendarApplicationView from './CalendarApplicationView.svelte';
@@ -9,6 +10,7 @@ import CalendarApplicationView from './CalendarApplicationView.svelte';
 const mocks = vi.hoisted(() => ({
 	listEvents: vi.fn(),
 	getEvent: vi.fn(),
+	getEventMailLink: vi.fn(),
 	openEventMeeting: vi.fn(),
 	goto: vi.fn(),
 	createEvent: vi.fn(),
@@ -132,6 +134,7 @@ describe('CalendarApplicationView', () => {
 		mocks.listSources.mockResolvedValue([internalSource, googleSource]);
 		mocks.listEvents.mockResolvedValue([]);
 		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(1)));
+		mocks.getEventMailLink.mockRejectedValue(new Error('Related Mail unavailable'));
 		mocks.openEventMeeting.mockResolvedValue({ id: 'meeting-1' });
 		mocks.createEvent.mockResolvedValue(eventAt(dayFromToday(1)));
 		mocks.updateEvent.mockResolvedValue(eventAt(dayFromToday(1)));
@@ -186,12 +189,288 @@ describe('CalendarApplicationView', () => {
 		expect(screen.queryByRole('button', { name: /Edit event/ })).toBeNull();
 	});
 
+	it('keeps imported Outlook events with non-IANA zones readable', async () => {
+		mocks.listEvents.mockResolvedValue([
+			eventAt(dayFromToday(1), {
+				id: 'evt-outlook-windows-zone',
+				title: 'Outlook event',
+				source_id: 'src-outlook',
+				source_kind: 'outlook',
+				read_only: true,
+				timezone: 'W. Europe Standard Time'
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Outlook event/));
+
+		expect(await screen.findByRole('dialog', { name: 'Event details' })).toBeTruthy();
+		expect(screen.queryByRole('button', { name: /Move \/ reschedule/ })).toBeNull();
+	});
+
 	it('offers editing for internal events', async () => {
 		mocks.listEvents.mockResolvedValue([eventAt(dayFromToday(1))]);
 		render(CalendarApplicationView, { module: testModule });
 
 		await fireEvent.click(await screen.findByText(/Sprint review/));
 		expect(await screen.findByRole('button', { name: /Edit event/ })).toBeTruthy();
+	});
+
+	it('moves a month event by pointer and preserves event-local time and duration', async () => {
+		mocks.listEvents.mockResolvedValue([
+			eventAt('2026-10-14', {
+				starts_at: '2026-10-14T08:00:00Z',
+				ends_at: '2026-10-14T09:30:00Z',
+				timezone: 'Europe/Berlin'
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+		await goToMonth(2026, 9);
+
+		const eventCard = await screen.findByText(/Sprint review/);
+		await fireEvent.dragStart(eventCard, {
+			dataTransfer: { setData: vi.fn(), effectAllowed: 'none' }
+		});
+		const target = document.querySelector('[data-calendar-date="2026-10-15"]')!;
+		await fireEvent.dragOver(target);
+		expect(target.textContent).toContain('Preview: Sprint review');
+		await fireEvent.drop(target);
+		expect(await screen.findByRole('dialog', { name: 'Move event' })).toBeTruthy();
+		expect((screen.getByLabelText('New start time') as HTMLInputElement).value).toBe('10:00');
+		await fireEvent.submit(screen.getByRole('form', { name: 'Move event' }));
+
+		await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledOnce());
+		expect(mocks.updateEvent).toHaveBeenCalledWith(
+			expect.any(String),
+			expect.objectContaining({
+				starts_at: '2026-10-15T08:00:00.000Z',
+				ends_at: '2026-10-15T09:30:00.000Z',
+				timezone: 'Europe/Berlin'
+			})
+		);
+		await waitFor(() => expect(document.activeElement).toBe(target));
+	});
+
+	it('drops on the selected browser day when the event-local date is different', async () => {
+		vi.stubEnv('TZ', 'America/Los_Angeles');
+		try {
+			mocks.listEvents.mockResolvedValue([
+				eventAt('2026-10-24', {
+					starts_at: '2026-10-24T22:30:00Z',
+					ends_at: '2026-10-24T23:30:00Z',
+					timezone: 'Europe/Berlin'
+				})
+			]);
+			render(CalendarApplicationView, { module: testModule });
+			await goToMonth(2026, 9);
+
+			await fireEvent.dragStart(await screen.findByText(/Sprint review/), {
+				dataTransfer: { setData: vi.fn(), effectAllowed: 'none' }
+			});
+			const target = document.querySelector('[data-calendar-date="2026-10-25"]')!;
+			await fireEvent.drop(target);
+			expect(((await screen.findByLabelText('New date')) as HTMLInputElement).value).toBe(
+				'2026-10-26'
+			);
+			await fireEvent.submit(screen.getByRole('form', { name: 'Move event' }));
+
+			await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledOnce());
+			expect(mocks.updateEvent.mock.calls[0][1]).toMatchObject({
+				starts_at: '2026-10-25T23:30:00.000Z',
+				ends_at: '2026-10-26T00:30:00.000Z',
+				timezone: 'Europe/Berlin'
+			});
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
+	it('does not retain stale move values when the dropped wall time is in a DST gap', async () => {
+		vi.stubEnv('TZ', 'Europe/Berlin');
+		try {
+			mocks.listEvents.mockResolvedValue([
+				eventAt('2026-03-28', {
+					starts_at: '2026-03-28T01:30:00Z',
+					ends_at: '2026-03-28T02:30:00Z',
+					timezone: 'Europe/Berlin'
+				})
+			]);
+			render(CalendarApplicationView, { module: testModule });
+			await goToMonth(2026, 2);
+
+			const eventCard = await screen.findByText(/Sprint review/);
+			await fireEvent.click(eventCard);
+			await fireEvent.click(await screen.findByRole('button', { name: /Move \/ reschedule/ }));
+			await fireEvent.input(screen.getByLabelText('New date'), { target: { value: '2026-03-30' } });
+			await fireEvent.input(screen.getByLabelText('New start time'), {
+				target: { value: '11:15' }
+			});
+			await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+			await fireEvent.click(screen.getByRole('button', { name: 'Close event details' }));
+
+			await fireEvent.dragStart(eventCard, {
+				dataTransfer: { setData: vi.fn(), effectAllowed: 'none' }
+			});
+			await fireEvent.drop(document.querySelector('[data-calendar-date="2026-03-29"]')!);
+
+			expect(screen.queryByRole('dialog', { name: 'Move event' })).toBeNull();
+			expect(mocks.updateEvent).not.toHaveBeenCalled();
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
+
+	it('moves a work-week event to another weekday without changing its time', async () => {
+		const monday = new Date();
+		monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+		const date = (offset: number) => {
+			const day = new Date(monday);
+			day.setDate(day.getDate() + offset);
+			return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+		};
+		const startDate = date(1);
+		mocks.listEvents.mockResolvedValue([
+			eventAt(startDate, {
+				starts_at: `${startDate}T14:00:00Z`,
+				ends_at: `${startDate}T15:00:00Z`,
+				timezone: 'UTC'
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Work week' }));
+
+		await fireEvent.dragStart(await screen.findByText(/Sprint review/), {
+			dataTransfer: { setData: vi.fn(), effectAllowed: 'none' }
+		});
+		await fireEvent.drop(document.querySelector(`[data-calendar-date="${date(2)}"]`)!);
+		await fireEvent.submit(await screen.findByRole('form', { name: 'Move event' }));
+
+		await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledOnce());
+		expect(mocks.updateEvent.mock.calls[0][1]).toMatchObject({
+			starts_at: `${date(2)}T14:00:00.000Z`,
+			ends_at: `${date(2)}T15:00:00.000Z`
+		});
+	});
+
+	it('offers a keyboard-usable Move action and cancels without sending a request', async () => {
+		mocks.listEvents.mockResolvedValue([eventAt(dayFromToday(1))]);
+		render(CalendarApplicationView, { module: testModule });
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+		const move = await screen.findByRole('button', { name: /Move \/ reschedule/ });
+		move.focus();
+		expect(document.activeElement).toBe(move);
+		await fireEvent.click(move);
+		await screen.findByRole('dialog', { name: 'Move event' });
+		await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+		expect(screen.queryByRole('dialog', { name: 'Move event' })).toBeNull();
+		expect(mocks.updateEvent).not.toHaveBeenCalled();
+	});
+
+	it('Escape closes only the Move dialog and restores focus to its trigger', async () => {
+		mocks.listEvents.mockResolvedValue([eventAt(dayFromToday(1))]);
+		render(CalendarApplicationView, { module: testModule });
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+		const move = await screen.findByRole('button', { name: /Move \/ reschedule/ });
+		await fireEvent.click(move);
+		await screen.findByRole('dialog', { name: 'Move event' });
+
+		const dialog = screen.getByRole('dialog', { name: 'Move event' });
+		await fireEvent.keyDown(dialog, { key: 'Escape' });
+		expect(screen.getByRole('dialog', { name: 'Move event' })).toBeTruthy();
+		const cancelEvent = new Event('cancel', { cancelable: true });
+		dialog.dispatchEvent(cancelEvent);
+		expect(cancelEvent.defaultPrevented).toBe(true);
+
+		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Move event' })).toBeNull());
+		expect(screen.getByRole('dialog', { name: 'Event details' })).toBeTruthy();
+		await waitFor(() => expect(document.activeElement).toBe(move));
+	});
+
+	it('shows the Move action in Day view and shifts by a 15-minute increment', async () => {
+		const day = dayFromToday(0);
+		mocks.listEvents.mockResolvedValue([
+			eventAt(day, {
+				starts_at: new Date(`${day}T14:00:00`).toISOString(),
+				ends_at: new Date(`${day}T15:00:00`).toISOString(),
+				timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+		await fireEvent.click(await screen.findByRole('button', { name: 'Day' }));
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+		await fireEvent.click(await screen.findByRole('button', { name: /Move \/ reschedule/ }));
+		await fireEvent.click(await screen.findByRole('button', { name: '15 minutes later' }));
+		expect((screen.getByLabelText('New start time') as HTMLInputElement).value).toBe('14:15');
+		await fireEvent.submit(screen.getByRole('form', { name: 'Move event' }));
+		await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledOnce());
+		expect(screen.getByRole('dialog', { name: 'Event details' })).toBeTruthy();
+		await waitFor(() =>
+			expect(document.activeElement).toBe(
+				screen.getByRole('button', { name: /Move \/ reschedule/ })
+			)
+		);
+	});
+
+	it('keeps the event visible and the move form open after an API failure', async () => {
+		mocks.listEvents.mockResolvedValue([eventAt(dayFromToday(1))]);
+		mocks.updateEvent.mockRejectedValueOnce(new Error('offline'));
+		render(CalendarApplicationView, { module: testModule });
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+		await fireEvent.click(await screen.findByRole('button', { name: /Move \/ reschedule/ }));
+		await fireEvent.submit(screen.getByRole('form', { name: 'Move event' }));
+
+		expect((await screen.findByRole('alert')).textContent).toContain('offline');
+		expect(screen.getAllByText(/Sprint review/).length).toBeGreaterThan(0);
+		expect(screen.getByRole('dialog', { name: 'Move event' })).toBeTruthy();
+	});
+
+	it('ignores duplicate move confirmations while the request is pending', async () => {
+		let finishRequest!: (event: CalendarEvent) => void;
+		const request = new Promise<CalendarEvent>((resolve) => (finishRequest = resolve));
+		mocks.listEvents.mockResolvedValue([eventAt(dayFromToday(1))]);
+		mocks.updateEvent.mockReturnValueOnce(request);
+		render(CalendarApplicationView, { module: testModule });
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+		await fireEvent.click(await screen.findByRole('button', { name: /Move \/ reschedule/ }));
+		const form = screen.getByRole('form', { name: 'Move event' });
+		await fireEvent.submit(form);
+		await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledOnce());
+		const dialog = screen.getByRole('dialog', { name: 'Move event' });
+		await fireEvent.keyDown(dialog, { key: 'Escape' });
+		const cancelEvent = new Event('cancel', { cancelable: true });
+		dialog.dispatchEvent(cancelEvent);
+		expect(cancelEvent.defaultPrevented).toBe(true);
+		expect(screen.getByRole('dialog', { name: 'Move event' })).toBeTruthy();
+		expect(screen.getByRole('dialog', { name: 'Event details' })).toBeTruthy();
+		await fireEvent.submit(form);
+		expect(mocks.updateEvent).toHaveBeenCalledOnce();
+		finishRequest(eventAt(dayFromToday(1)));
+		await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Move event' })).toBeNull());
+	});
+
+	it('does not offer movement for read-only, recurring, or all-day events', async () => {
+		mocks.listEvents.mockResolvedValue([
+			eventAt(dayFromToday(1), {
+				id: 'provider',
+				title: 'Provider event',
+				read_only: true,
+				source_kind: 'google'
+			}),
+			eventAt(dayFromToday(2), {
+				id: 'series',
+				title: 'Recurring event',
+				rrule: 'FREQ=DAILY',
+				instance_start: '2026-10-25T14:00:00Z'
+			}),
+			eventAt(dayFromToday(3), { id: 'all-day', title: 'All-day event', all_day: true })
+		]);
+		render(CalendarApplicationView, { module: testModule });
+		for (const title of ['Provider event', 'Recurring event', 'All-day event']) {
+			await fireEvent.click(await screen.findByText(new RegExp(title)));
+			expect(screen.queryByRole('button', { name: /Move \/ reschedule/ })).toBeNull();
+			await fireEvent.click(screen.getByRole('button', { name: 'Close event details' }));
+		}
+		expect(mocks.updateEvent).not.toHaveBeenCalled();
 	});
 
 	it('opens the event meeting note from its details', async () => {
@@ -212,6 +491,41 @@ describe('CalendarApplicationView', () => {
 
 		expect(await screen.findByRole('dialog', { name: 'Event details' })).toBeTruthy();
 		expect(mocks.getEvent).toHaveBeenCalledWith('old-event');
+	});
+
+	it('hides the unavailable state for unlinked events', async () => {
+		mocks.pageUrl = 'http://localhost/apps/calendar?event_id=unlinked';
+		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(1), { id: 'unlinked' }));
+		mocks.getEventMailLink.mockRejectedValue(new ApiError(404, 'Resource not found'));
+		render(CalendarApplicationView, { module: testModule });
+
+		await screen.findByRole('dialog', { name: 'Event details' });
+		await waitFor(() => expect(mocks.getEventMailLink).toHaveBeenCalledWith('unlinked'));
+		expect(screen.queryByText('Related Mail unavailable')).toBeNull();
+	});
+
+	it('shows a generic unavailable state when the Mail Application is disabled', async () => {
+		mocks.pageUrl = 'http://localhost/apps/calendar?event_id=mail-disabled';
+		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(1), { id: 'mail-disabled' }));
+		mocks.getEventMailLink.mockRejectedValue(new ApiError(403, 'Application disabled'));
+		render(CalendarApplicationView, { module: testModule });
+
+		expect(await screen.findByText('Related Mail unavailable')).toBeTruthy();
+	});
+
+	it('reauthorizes Related Mail when activated and hides a revoked message', async () => {
+		mocks.pageUrl = 'http://localhost/apps/calendar?event_id=revoked';
+		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(1), { id: 'revoked' }));
+		mocks.getEventMailLink
+			.mockResolvedValueOnce({ mail_message_id: 'private-message-id' })
+			.mockRejectedValueOnce(new ApiError(404, 'Resource not found'));
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Related Mail' }));
+		await waitFor(() => expect(mocks.getEventMailLink).toHaveBeenCalledTimes(2));
+		expect(mocks.goto).not.toHaveBeenCalled();
+		expect(screen.queryByText('private-message-id')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Related Mail' })).toBeNull();
 	});
 
 	it('refetches with the source filter when a source chip is toggled', async () => {

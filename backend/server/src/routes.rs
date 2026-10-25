@@ -461,6 +461,7 @@ pub fn mail_routes() -> Router<AppState> {
 }
 
 pub fn calendar_routes() -> Router<AppState> {
+    use axum::routing::delete;
     // Bound the whole multipart request as well as the import handler's
     // per-file limit, so ignored fields cannot consume the server-wide 2 GiB.
     const MAX_CALENDAR_IMPORT_REQUEST_BYTES: usize = 11 * 1024 * 1024;
@@ -485,6 +486,19 @@ pub fn calendar_routes() -> Router<AppState> {
         .route(
             "/api/v1/calendar/events/{id}/meeting",
             post(crate::handlers::calendar::create_calendar_event_meeting),
+        )
+        .route(
+            "/api/v1/calendar/events/{id}/mail-link",
+            get(crate::handlers::calendar::get_calendar_event_mail_link),
+        )
+        .route(
+            "/api/v1/calendar/mail-links",
+            get(crate::handlers::calendar::list_calendar_mail_links)
+                .post(crate::handlers::calendar::create_calendar_mail_link),
+        )
+        .route(
+            "/api/v1/calendar/mail-links/{id}",
+            delete(crate::handlers::calendar::delete_calendar_mail_link),
         )
         .route(
             "/api/v1/calendar/sources",

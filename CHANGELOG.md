@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Cancel active or queued file explorer uploads individually or as a queue; chunked uploads also abort their server-side upload session.
 - Align Rust CI and Bookworm builders with the canonical 1.97.1 toolchain, reject compiler drift in CI, and restore standalone crypto builds' OS randomness feature.
 - Refresh application editor mode on route changes and keep attachments and asynchronous save/upload results scoped to their originating document.
 - Add a migration-only `--migrate` command and `RUSTSHARE_RUN_MIGRATIONS=false` for separately provisioned, least-privilege runtime database credentials; automatic setup uses a dedicated startup connection.
@@ -40,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Create Calendar events from saved Mail messages and link them by reference with live authorization in both Applications.
+- Accessible Calendar movement for internal, non-recurring timed events across Month, work-week, Day and Agenda views. Movement preserves event-zone wall time and duration; recurring, occurrence, all-day and read-only events remain unsupported.
 - Add effective-access source and permission explanations to shared folder
   contents and folder-tree responses, using the live resolver decision and
   restricting share identifiers to inspectable direct Admin grants.

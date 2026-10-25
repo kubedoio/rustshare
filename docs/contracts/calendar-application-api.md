@@ -153,6 +153,22 @@ absent or `null` value leaves the stored value unchanged, while an empty
 string clears it (for `rrule`, this stops the recurrence). `title` cannot be
 cleared (empty is a `400`).
 
+Calendar UI rescheduling uses this same endpoint with `starts_at`, `ends_at`,
+and the unchanged event `timezone`; the API continues to accept UTC instants
+and does not perform local-time conversion. The UI currently offers movement
+only for internal, non-recurring timed events. It derives the new UTC start
+from the selected wall time in the event's IANA timezone, preserves elapsed
+duration, rejects nonexistent DST-gap times, and chooses the earlier instant
+for an ambiguous DST-overlap time. Dragging maps the selected browser-calendar
+day to the corresponding event-local day, preserving the event's original
+displayed-date offset when the two zones straddle midnight. Provider/imported events, recurring events
+and occurrences, and all-day events have no Move action. All-day movement stays
+unsupported because PATCH does not accept `original_date` independently of
+the UTC-midnight interval. Read-only imported events with embedded timezone
+identifiers unsupported by the browser use the browser timezone for detail
+labels, matching their existing calendar display; this does not change stored
+instants or permit rescheduling.
+
 ### `DELETE /api/v1/calendar/events/{id}`
 
 Soft-delete an internal event. `200 { "ok": true }`. Deletion is idempotent:
@@ -372,6 +388,51 @@ until request-path secrets are redacted across application tracing, bundled
 Nginx, and the external TLS load balancer. See the proposed Issue #329
 assessment in [ADR-0037](../adr/0037-calendar-application-and-external-sync.md).
 Use the authenticated single-event export route above for now.
+
+## Mail message relationships (M2.3)
+
+These routes require both Mail and Calendar Applications to be enabled for the
+authenticated tenant. Calendar event IDs are tenant/owner scoped, and Mail
+message references are reauthorized through Mail's existing owner-scoped
+service on every operation. A reference never grants access.
+
+### `POST /api/v1/calendar/mail-links`
+
+Create or return the active association for one owned event:
+
+```json
+{
+  "event_id": "uuid",
+  "mail_message_ref": "elembra://io.elembra.mail/message/{uuid}"
+}
+```
+
+Returns `201` with `{ "id": "uuid", "event_id": "uuid",
+"mail_message_id": "uuid" }`. A retry for the same event/message returns the
+same association. An event already associated with a different message returns
+`409`.
+
+### `GET /api/v1/calendar/mail-links?message_id={uuid}`
+
+List currently readable associated events, returning only event ID, title, and
+start/end timestamps. A deleted or inaccessible message resolves as `404`.
+Soft-deleted events are omitted.
+
+### `GET /api/v1/calendar/events/{id}/mail-link`
+
+Resolve an event's related message and return its ID only. The caller must still
+open the Mail resource through its authenticated route. Missing, deleted, or
+inaccessible resources return an existence-hiding `404`.
+
+### `DELETE /api/v1/calendar/mail-links/{id}`
+
+Soft-unlink the relation after reauthorizing both resources. Returns `204`.
+The audit row retains its creation actor and timestamp; a later relink creates
+a new active row.
+
+Remote IMAP UIDs are not accepted as message identities. Only a persisted
+message UUID, including a remote summary's `imported_message_id`, can be linked.
+No body, recipient, attachment, or credential data is copied to Calendar.
 
 ## Status and error summary
 

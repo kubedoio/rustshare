@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { createMutation, createQuery } from '$lib/query-compat';
@@ -9,11 +10,20 @@
 		type CalendarSourceKind
 	} from '$lib/api/calendar';
 	import { queryClient } from '$lib/query-client';
+	import { ApiError } from '$lib/api/types';
 	import ApplicationPageShell from '$lib/components/layout/ApplicationPageShell.svelte';
 	import ApplicationPageSkeleton from '$lib/components/common/ApplicationPageSkeleton.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { CalendarDays, ChevronLeft, ChevronRight, Pencil, Plus, X } from 'lucide-svelte';
+	import {
+		CalendarDays,
+		ChevronLeft,
+		ChevronRight,
+		MoveRight,
+		Pencil,
+		Plus,
+		X
+	} from 'lucide-svelte';
 	import type { ApplicationDefinition } from '$lib/applications/registry';
 	import {
 		addDays,
@@ -23,6 +33,11 @@
 		windowRange,
 		type CalendarView
 	} from '$lib/calendar/view-range';
+	import {
+		eventDateForCalendarDate,
+		localDateTime,
+		rescheduleTimedEvent
+	} from '$lib/calendar/reschedule-time';
 
 	let { module }: { module: ApplicationDefinition } = $props();
 
@@ -33,6 +48,8 @@
 	let now = $state(new Date());
 	let activeSourceId = $state<string | null>(null);
 	let selectedEvent = $state<CalendarEvent | null>(null);
+	let relatedMailMessageId = $state<string | null>(null);
+	let relatedMailUnavailable = $state(false);
 	let openingMeeting = $state(false);
 	let editorOpen = $state(false);
 	let editingEvent = $state<CalendarEvent | null>(null);
@@ -42,6 +59,15 @@
 	let formEndTime = $state('10:00');
 	let formLocation = $state('');
 	let formDescription = $state('');
+	let moveEvent = $state<CalendarEvent | null>(null);
+	let moveDate = $state('');
+	let moveTime = $state('');
+	let moveError = $state('');
+	let moveDateInput = $state<HTMLInputElement | null>(null);
+	let moveTrigger = $state<HTMLElement | null>(null);
+	let moveDialog = $state<HTMLDialogElement | null>(null);
+	let draggedEvent = $state<CalendarEvent | null>(null);
+	let dragTargetDate = $state('');
 
 	// Create requires a concrete IANA zone. The browser normally reports one,
 	// but a non-string/empty value falls back to UTC rather than sending null
@@ -70,6 +96,11 @@
 	const eventsQuery = createQuery<CalendarEvent[]>(buildEventQueryOptions());
 
 	$effect(() => {
+		if (moveEvent && moveDialog && !moveDialog.open) moveDialog.showModal();
+		else if (!moveEvent && moveDialog?.open) moveDialog.close();
+	});
+
+	$effect(() => {
 		const eventId = $page.url.searchParams.get('event_id');
 		selectedEvent = null;
 		if (!eventId) return;
@@ -86,6 +117,45 @@
 			cancelled = true;
 		};
 	});
+
+	$effect(() => {
+		const eventId = selectedEvent?.id;
+		relatedMailMessageId = null;
+		relatedMailUnavailable = false;
+		if (!eventId) return;
+		let cancelled = false;
+		void calendarApi
+			.getEventMailLink(eventId)
+			.then((link) => {
+				if (!cancelled) relatedMailMessageId = link.mail_message_id;
+			})
+			.catch((error) => {
+				if (!cancelled)
+					relatedMailUnavailable = !(error instanceof ApiError && error.status === 404);
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	async function openRelatedMail() {
+		const eventId = selectedEvent?.id;
+		if (!eventId) return;
+		try {
+			const link = await calendarApi.getEventMailLink(eventId);
+			if (selectedEvent?.id !== eventId) return;
+			relatedMailMessageId = link.mail_message_id;
+			queryClient.removeQueries({
+				queryKey: ['mail-message', link.mail_message_id],
+				exact: true
+			});
+			await goto(`/apps/mail/messages/${encodeURIComponent(link.mail_message_id)}`);
+		} catch (error) {
+			if (selectedEvent?.id !== eventId) return;
+			relatedMailMessageId = null;
+			relatedMailUnavailable = !(error instanceof ApiError && error.status === 404);
+		}
+	}
 
 	$effect(() => {
 		eventsQuery.setOptions(buildEventQueryOptions());
@@ -175,6 +245,31 @@
 				`Failed to delete event: ${error instanceof Error ? error.message : 'unknown error'}`,
 				'error'
 			);
+		}
+	});
+
+	const moveMutation = createMutation({
+		mutationFn: async ({
+			event,
+			starts_at,
+			ends_at
+		}: {
+			event: CalendarEvent;
+			starts_at: string;
+			ends_at: string;
+		}) => {
+			return calendarApi.updateEvent(event.id, { starts_at, ends_at, timezone: event.timezone });
+		},
+		onSuccess: async (_updated, { event, starts_at, ends_at }) => {
+			if (selectedEvent?.id === event.id) selectedEvent = { ...selectedEvent, starts_at, ends_at };
+			else selectedEvent = null;
+			closeMove();
+			toastStore.show('Event moved', 'success');
+			await queryClient.invalidateQueries({ queryKey: ['calendar-events'] });
+		},
+		onError: (error) => {
+			moveError = error instanceof Error ? error.message : 'Could not move this event.';
+			toastStore.show(`Failed to move event: ${moveError}`, 'error');
 		}
 	});
 
@@ -341,6 +436,25 @@
 		return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 	}
 
+	function formatEventTime(iso: string, event: CalendarEvent): string {
+		const timeZone = supportedEventTimeZone(event);
+		return new Date(iso).toLocaleTimeString(undefined, {
+			...(timeZone ? { timeZone } : {}),
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+	}
+
+	function supportedEventTimeZone(event: CalendarEvent): string | undefined {
+		try {
+			new Intl.DateTimeFormat(undefined, { timeZone: event.timezone });
+			return event.timezone;
+		} catch {
+			// Imported VTIMEZONE identifiers can be valid calendar zones but unsupported by Intl.
+			return undefined;
+		}
+	}
+
 	// Range responses carry the occurrence instant only in `instance_start`;
 	// `starts_at`/`ends_at` remain the recurring master's values. All-day
 	// occurrences carry instance_start as well, so the all-day branch of
@@ -363,9 +477,14 @@
 	function eventDetailDateLabel(event: CalendarEvent): string {
 		if (event.all_day) {
 			const key = (event.instance_start ?? event.original_date ?? event.starts_at).slice(0, 10);
-			return new Date(`${key}T00:00:00`).toLocaleDateString();
+			return new Date(`${key}T12:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC' });
 		}
-		return occurrenceStart(event).toLocaleDateString();
+		const start = occurrenceStart(event);
+		const timeZone = supportedEventTimeZone(event);
+		const key = timeZone
+			? localDateTime(start.toISOString(), timeZone).date
+			: toLocalInputDate(start);
+		return new Date(`${key}T12:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC' });
 	}
 
 	function eventTimeLabel(event: CalendarEvent): string {
@@ -373,6 +492,97 @@
 		return `${formatTime(occurrenceStart(event).toISOString())} – ${formatTime(
 			occurrenceEnd(event).toISOString()
 		)}`;
+	}
+
+	function canReschedule(event: CalendarEvent): boolean {
+		return (
+			event.source_kind === 'internal' &&
+			!event.read_only &&
+			!event.all_day &&
+			!event.rrule &&
+			!event.recurrence_id &&
+			!event.instance_start
+		);
+	}
+
+	function dragClass(event: CalendarEvent): string {
+		return canReschedule(event) ? 'cursor-grab active:cursor-grabbing' : '';
+	}
+
+	function beginMove(event: CalendarEvent, date?: Date, trigger?: HTMLElement) {
+		if (!canReschedule(event)) return;
+		try {
+			const local = localDateTime(event.starts_at, event.timezone);
+			const targetDate = date
+				? eventDateForCalendarDate(event.starts_at, event.timezone, toLocalInputDate(date))
+				: local.date;
+			moveEvent = event;
+			moveDate = targetDate;
+			moveTime = local.time;
+			moveError = '';
+			moveTrigger = trigger ?? null;
+			void tick().then(() => moveDateInput?.focus());
+		} catch (error) {
+			toastStore.show(
+				error instanceof Error ? error.message : 'Could not choose that calendar date.',
+				'error'
+			);
+		}
+	}
+
+	function closeMove() {
+		moveEvent = null;
+		moveError = '';
+		const trigger = moveTrigger;
+		moveTrigger = null;
+		void tick().then(() => trigger?.focus());
+	}
+
+	function cancelMove(event: Event) {
+		event.preventDefault();
+		if (!$moveMutation.isPending) closeMove();
+	}
+
+	async function commitMove() {
+		if (!moveEvent || $moveMutation.isPending) return;
+		moveError = '';
+		try {
+			// Gaps are rejected and overlaps use the earlier instant before any request is sent.
+			const moved = rescheduleTimedEvent(moveEvent, moveEvent.timezone, moveDate, moveTime);
+			await moveMutation.mutateAsync({ event: moveEvent, ...moved });
+		} catch (error) {
+			if (!moveError)
+				moveError = error instanceof Error ? error.message : 'Could not move this event.';
+		}
+	}
+
+	function adjustMoveTime(minutes: number) {
+		if (!moveDate || !moveTime) return;
+		const target = new Date(`${moveDate}T${moveTime}:00Z`);
+		target.setUTCMinutes(target.getUTCMinutes() + minutes);
+		moveDate = target.toISOString().slice(0, 10);
+		moveTime = target.toISOString().slice(11, 16);
+	}
+
+	function startDrag(drag: DragEvent, event: CalendarEvent) {
+		if (!canReschedule(event)) return;
+		draggedEvent = event;
+		drag.dataTransfer?.setData('text/plain', event.id);
+		if (drag.dataTransfer) drag.dataTransfer.effectAllowed = 'move';
+	}
+
+	function dragOver(drag: DragEvent, date: Date) {
+		if (!draggedEvent) return;
+		drag.preventDefault();
+		dragTargetDate = toLocalInputDate(date);
+		if (drag.dataTransfer) drag.dataTransfer.dropEffect = 'move';
+	}
+
+	function dropOnDate(drag: DragEvent, date: Date) {
+		drag.preventDefault();
+		if (draggedEvent) beginMove(draggedEvent, date, drag.currentTarget as HTMLElement);
+		draggedEvent = null;
+		dragTargetDate = '';
 	}
 
 	function sourceAttribution(event: CalendarEvent): string {
@@ -464,7 +674,10 @@
 
 	function handleKeydown(event: KeyboardEvent) {
 		if (event.key !== 'Escape') return;
-		if (editorOpen) editorOpen = false;
+		if (moveEvent) {
+			if (event.target instanceof Node && moveDialog?.contains(event.target)) return;
+			if (!$moveMutation.isPending) closeMove();
+		} else if (editorOpen) editorOpen = false;
 		else if (selectedEvent) selectedEvent = null;
 	}
 
@@ -575,7 +788,16 @@
 					<div class="grid grid-cols-7">
 						{#each monthCells as cell}
 							<div
-								class="min-h-24 border-r border-b border-[var(--rs-border)] p-1 {cell.inMonth
+								role="group"
+								tabindex="-1"
+								data-calendar-date={toLocalInputDate(cell.date)}
+								aria-label="Calendar day {cell.date.toLocaleDateString()}"
+								ondragover={(event) => dragOver(event, cell.date)}
+								ondrop={(event) => dropOnDate(event, cell.date)}
+								class="min-h-24 border-r border-b border-[var(--rs-border)] p-1 {dragTargetDate ===
+								toLocalInputDate(cell.date)
+									? 'ring-2 ring-brand-500 ring-inset'
+									: ''} {cell.inMonth
 									? 'bg-[var(--rs-surface-raised)]'
 									: 'bg-base-200/40'} {(cell.date.getDay() + 1) % 7 === 0 ? 'border-r-0' : ''}"
 							>
@@ -600,12 +822,29 @@
 									</button>
 								</div>
 								<div class="mt-0.5 flex flex-col gap-0.5">
+									{#if draggedEvent && dragTargetDate === toLocalInputDate(cell.date)}
+										<div
+											class="rounded border border-dashed border-brand-500 px-1 py-0.5 text-2xs"
+											aria-live="polite"
+										>
+											Preview: {draggedEvent.title}
+										</div>
+									{/if}
 									{#each cell.events as event (eventKey(event))}
 										<button
 											type="button"
-											class="truncate rounded px-1 py-0.5 text-left text-2xs text-white {eventColor(
+											draggable={canReschedule(event)}
+											ondragstart={(drag) => startDrag(drag, event)}
+											ondragend={() => {
+												draggedEvent = null;
+												dragTargetDate = '';
+											}}
+											title={canReschedule(event)
+												? 'Drag to another date or open details to move'
+												: undefined}
+											class="truncate rounded px-1 py-0.5 text-left text-2xs text-white {dragClass(
 												event
-											)}"
+											)} {eventColor(event)}"
 											onclick={() => openDetail(event)}
 										>
 											{#if !event.all_day}{formatTime(occurrenceStart(event).toISOString())}{/if}
@@ -633,7 +872,18 @@
 					</div>
 					<div class="grid grid-cols-5">
 						{#each weekCells as cell}
-							<div class="group min-h-32 border-r border-[var(--rs-border)] p-1 last:border-r-0">
+							<div
+								role="group"
+								tabindex="-1"
+								data-calendar-date={toLocalInputDate(cell.date)}
+								aria-label="Calendar day {cell.date.toLocaleDateString()}"
+								ondragover={(event) => dragOver(event, cell.date)}
+								ondrop={(event) => dropOnDate(event, cell.date)}
+								class="group min-h-32 border-r border-[var(--rs-border)] p-1 last:border-r-0 {dragTargetDate ===
+								toLocalInputDate(cell.date)
+									? 'ring-2 ring-brand-500 ring-inset'
+									: ''}"
+							>
 								<div class="flex justify-end">
 									<button
 										type="button"
@@ -645,12 +895,29 @@
 									</button>
 								</div>
 								<div class="flex flex-col gap-0.5">
+									{#if draggedEvent && dragTargetDate === toLocalInputDate(cell.date)}
+										<div
+											class="rounded border border-dashed border-brand-500 px-1 py-0.5 text-2xs"
+											aria-live="polite"
+										>
+											Preview: {draggedEvent.title}
+										</div>
+									{/if}
 									{#each cell.events as event (eventKey(event))}
 										<button
 											type="button"
-											class="truncate rounded px-1 py-0.5 text-left text-2xs text-white {eventColor(
+											draggable={canReschedule(event)}
+											ondragstart={(drag) => startDrag(drag, event)}
+											ondragend={() => {
+												draggedEvent = null;
+												dragTargetDate = '';
+											}}
+											title={canReschedule(event)
+												? 'Drag to another date or open details to move'
+												: undefined}
+											class="truncate rounded px-1 py-0.5 text-left text-2xs text-white {dragClass(
 												event
-											)}"
+											)} {eventColor(event)}"
 											onclick={() => openDetail(event)}
 										>
 											{#if !event.all_day}{formatTime(occurrenceStart(event).toISOString())}{/if}
@@ -841,8 +1108,9 @@
 				{#if selectedEvent.all_day}
 					· All day
 				{:else}
-					· {formatTime(occurrenceStart(selectedEvent).toISOString())} – {formatTime(
-						occurrenceEnd(selectedEvent).toISOString()
+					· {formatEventTime(occurrenceStart(selectedEvent).toISOString(), selectedEvent)} – {formatEventTime(
+						occurrenceEnd(selectedEvent).toISOString(),
+						selectedEvent
 					)}
 				{/if}
 			</p>
@@ -858,6 +1126,13 @@
 				<p class="mt-3 text-xs text-base-content/50">{sourceAttribution(selectedEvent)}</p>
 			{/if}
 			<div class="mt-4 flex flex-wrap items-center justify-end gap-2">
+				{#if relatedMailMessageId}
+					<button type="button" class="btn btn-outline btn-sm" onclick={openRelatedMail}>
+						Related Mail
+					</button>
+				{:else if relatedMailUnavailable}
+					<span class="text-xs text-base-content/60" role="status">Related Mail unavailable</span>
+				{/if}
 				<button
 					type="button"
 					class="btn btn-outline btn-sm"
@@ -901,6 +1176,15 @@
 						>
 							Delete
 						</button>
+						{#if canReschedule(selectedEvent)}
+							<button
+								type="button"
+								class="btn btn-outline btn-sm"
+								onclick={(event) => beginMove(selectedEvent!, undefined, event.currentTarget)}
+							>
+								<MoveRight size={13} /> Move / reschedule
+							</button>
+						{/if}
 						{#if selectedEvent.all_day}
 							<p class="w-full text-right text-xs text-base-content/60">
 								All-day events cannot be edited here yet. Delete and recreate it to change its
@@ -920,6 +1204,89 @@
 			</div>
 		</div>
 	</div>
+{/if}
+
+{#if moveEvent}
+	<dialog
+		bind:this={moveDialog}
+		class="fixed inset-0 z-30 m-0 h-full max-h-none w-full max-w-none border-0 bg-transparent p-4 text-base-content backdrop:bg-black/40 open:flex open:items-center open:justify-center"
+		aria-label="Move event"
+		onclick={(event) => {
+			if (event.target === event.currentTarget && !$moveMutation.isPending) closeMove();
+		}}
+		oncancel={cancelMove}
+	>
+		<form
+			class="flex w-full max-w-md flex-col gap-3 rounded-xl border border-[var(--rs-border)] bg-[var(--rs-surface-raised)] p-4"
+			aria-label="Move event"
+			onsubmit={(event) => {
+				event.preventDefault();
+				commitMove();
+			}}
+		>
+			<h3 id="cal-move-title" class="text-base font-semibold text-base-content">
+				Move {moveEvent.title}
+			</h3>
+			<p class="text-xs text-base-content/70">Event time zone: {moveEvent.timezone}</p>
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+				<div class="form-control">
+					<label class="label py-1 text-xs font-semibold" for="cal-move-date">New date</label>
+					<input
+						id="cal-move-date"
+						bind:this={moveDateInput}
+						type="date"
+						class="input-bordered input input-sm"
+						bind:value={moveDate}
+						disabled={$moveMutation.isPending}
+						required
+					/>
+				</div>
+				<div class="form-control">
+					<label class="label py-1 text-xs font-semibold" for="cal-move-time">New start time</label>
+					<input
+						id="cal-move-time"
+						type="time"
+						step="60"
+						class="input-bordered input input-sm"
+						bind:value={moveTime}
+						disabled={$moveMutation.isPending}
+						required
+					/>
+				</div>
+			</div>
+			<div class="flex items-center justify-end gap-2">
+				<button type="button" class="btn btn-outline btn-xs" onclick={() => adjustMoveTime(-15)}>
+					15 minutes earlier
+				</button>
+				<button type="button" class="btn btn-outline btn-xs" onclick={() => adjustMoveTime(15)}>
+					15 minutes later
+				</button>
+			</div>
+			<p class="text-xs text-base-content/70" aria-live="polite">
+				Preview: {moveDate} at {moveTime}; event duration stays the same. Nonexistent
+				daylight-saving times are rejected; repeated times use the earlier occurrence.
+			</p>
+			{#if moveError}<p class="text-sm text-error" role="alert">{moveError}</p>{/if}
+			<div class="flex justify-end gap-2">
+				<button
+					type="button"
+					class="btn btn-outline btn-sm"
+					disabled={$moveMutation.isPending}
+					onclick={closeMove}
+				>
+					Cancel
+				</button>
+				<button
+					type="submit"
+					class="btn btn-primary btn-sm"
+					disabled={$moveMutation.isPending || !moveDate || !moveTime}
+				>
+					{#if $moveMutation.isPending}<span class="loading loading-xs loading-spinner"></span>{/if}
+					Confirm move
+				</button>
+			</div>
+		</form>
+	</dialog>
 {/if}
 
 <!-- Create / edit modal -->
