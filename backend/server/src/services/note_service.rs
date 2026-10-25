@@ -10,8 +10,8 @@ use chrono::{DateTime, Utc};
 use rustshare_core::{
     domain::{Folder, SharePermissions, UserId},
     okf::frontmatter::{
-        default_note_frontmatter, merge_required_okf_keys, parse_frontmatter, to_document,
-        OkfNoteFrontmatter, RustshareFrontmatter,
+        default_note_frontmatter, merge_required_okf_keys, parse_frontmatter, split_frontmatter,
+        to_document, OkfNoteFrontmatter, RustshareFrontmatter,
     },
     services::ai::indexing::IndexPrincipal,
     services::{
@@ -818,18 +818,38 @@ impl NoteService {
     /// Returns an error if any resolved read principal cannot be parsed. Parsed
     /// principals come from the authoritative permission resolver, so a parse
     /// failure indicates corrupt metadata and must fail closed.
+    /// Either source-frontmatter or sidecar restrictions block content indexing.
     pub fn build_acl_payload(
         file: &rustshare_core::domain::File,
         meta: &NoteMetadata,
+        content: &str,
         tenant_id: Uuid,
         read_acl: Vec<String>,
     ) -> Result<IndexAclProjection, NoteError> {
-        let embedding_policy = meta
+        let mut embedding_policy = meta
             .embedding_policy
             .as_deref()
             .unwrap_or("allowed")
             .parse()
             .unwrap_or(EmbeddingPolicy::Denied);
+
+        // A current source restriction must survive a stale sidecar projection.
+        let source_allows_indexing = match split_frontmatter(content) {
+            Some((yaml, _)) => serde_yaml::from_str::<OkfNoteFrontmatter>(&yaml).is_ok_and(|fm| {
+                fm.rustshare
+                    .and_then(|rs| rs.embedding_policy)
+                    .is_none_or(|policy| {
+                        matches!(
+                            policy.parse::<EmbeddingPolicy>(),
+                            Ok(EmbeddingPolicy::Allowed)
+                        )
+                    })
+            }),
+            None => !content.starts_with("---\n") && !content.starts_with("---\r\n"),
+        };
+        if !source_allows_indexing {
+            embedding_policy = EmbeddingPolicy::Denied;
+        }
 
         let mut read_principals = Vec::with_capacity(read_acl.len());
         for principal in read_acl {
@@ -872,7 +892,7 @@ impl NoteService {
                     tracing::warn!(tenant_id = %tenant_id, file_id = %file.id, %error, "Failed to resolve ACL principals for note index");
                     error
                 })?;
-            let mut acl = Self::build_acl_payload(file, meta, tenant_id, read_acl).map_err(
+            let mut acl = Self::build_acl_payload(file, meta, content, tenant_id, read_acl).map_err(
                 |error| {
                     tracing::warn!(tenant_id = %tenant_id, file_id = %file.id, %error, "Failed to build ACL projection for note index");
                     error
@@ -3540,6 +3560,7 @@ mod tests {
         let acl = NoteService::build_acl_payload(
             &file,
             &meta,
+            "",
             tenant_id,
             vec![format!("owner:{owner_id}")],
         )
@@ -3580,17 +3601,41 @@ mod tests {
 
         let mut meta = NoteMetadata::new("Test Note");
         meta.okf_id = Some(okf_id);
-        meta.embedding_policy = Some("invalid-value".to_string());
-
-        let acl = NoteService::build_acl_payload(
-            &file,
-            &meta,
-            tenant_id,
-            vec![format!("owner:{owner_id}")],
-        )
-        .unwrap();
-
-        assert_eq!(acl.embedding_policy, EmbeddingPolicy::Denied);
+        for (sidecar_policy, source) in [
+            ("invalid-value", ""),
+            (
+                "denied",
+                "---\nrustshare:\n  embedding_policy: allowed\n---\nbody",
+            ),
+            (
+                "allowed",
+                "---\nrustshare:\n  embedding_policy: denied\n---\nbody",
+            ),
+            (
+                "allowed",
+                "---\nrustshare:\n  embedding_policy: invalid-value\n---\nbody",
+            ),
+            ("allowed", "---\nrustshare: [broken YAML\n---\nbody"),
+            (
+                "allowed",
+                "---\nrustshare:\n  embedding_policy: denied\nbody",
+            ),
+            (
+                "allowed",
+                "---\r\nrustshare:\r\n  embedding_policy: denied\r\n---\r\nbody",
+            ),
+        ] {
+            meta.embedding_policy = Some(sidecar_policy.to_string());
+            let acl = NoteService::build_acl_payload(
+                &file,
+                &meta,
+                source,
+                tenant_id,
+                vec![format!("owner:{owner_id}")],
+            )
+            .unwrap();
+            assert_eq!(acl.embedding_policy, EmbeddingPolicy::Denied);
+        }
     }
 
     #[test]
@@ -3621,6 +3666,7 @@ mod tests {
         let acl = NoteService::build_acl_payload(
             &file,
             &meta,
+            "",
             tenant_id,
             vec![format!("owner:{owner_id}"), format!("user:{user_id}")],
         )
