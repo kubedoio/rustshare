@@ -621,7 +621,15 @@ async fn memory_reconcile_status_is_scoped_to_admin_tenant() {
         .execute(&state.db_pool)
         .await
         .unwrap();
-    let token = create_auth_token(&state, admin.id, other_tenant);
+    sqlx::query(
+        "INSERT INTO memory_files_reconcile_jobs (tenant_id, processed) VALUES ($1, 11), ($2, 99)",
+    )
+    .bind(tenant)
+    .bind(other_tenant)
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
+    let token = create_auth_token(&state, admin.id, tenant);
     let response = Router::new()
         .route("/status", get(get_status))
         .with_state(state.clone())
@@ -634,7 +642,14 @@ async fn memory_reconcile_status_is_scoped_to_admin_tenant() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let status: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(status["processed"], 11);
     cleanup_tenant(&state.db_pool, tenant).await;
     cleanup_tenant(&state.db_pool, other_tenant).await;
 }
