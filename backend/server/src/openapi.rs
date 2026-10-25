@@ -98,6 +98,8 @@ use utoipa::OpenApi;
         crate::handlers::ask_workspace::ask_workspace,
         crate::handlers::ask_workspace::open_citation,
         crate::handlers::memory_reconcile::reconcile_files_memory,
+        crate::memory_files_reconcile_worker::get_status,
+        crate::memory_files_reconcile_worker::retry,
         crate::handlers::auth::login,
         crate::handlers::auth::logout,
         crate::handlers::calendar::create_calendar_event_meeting,

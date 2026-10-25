@@ -189,6 +189,54 @@
         }
       }
     },
+    "/api/v1/admin/applications/memory/files/reconcile/retry": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "operationId": "retry",
+        "responses": {
+          "202": {
+            "description": "Reconciliation scheduled"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Tenant scope mismatch"
+          },
+          "409": {
+            "description": "Reconciliation already running"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/applications/memory/files/reconcile/status": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "operationId": "get_status",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryFilesReconcileStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Tenant scope mismatch"
+          }
+        }
+      }
+    },
     "/api/v1/admin/applications/{key}": {
       "get": {
         "tags": [
@@ -24364,6 +24412,72 @@
           "user_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "MemoryFilesReconcileStatus": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "status",
+          "processed",
+          "indexed",
+          "removed",
+          "unavailable",
+          "retry_count"
+        ],
+        "properties": {
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "indexed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_success_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "next_run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "processed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "removed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "retry_count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "status": {
+            "type": "string"
+          },
+          "unavailable": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },

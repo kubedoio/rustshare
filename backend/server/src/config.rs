@@ -138,6 +138,28 @@ pub struct AppConfig {
         rename = "rustshare_calendar_sync_worker_stale_secs"
     )]
     pub calendar_sync_worker_stale_secs: i64,
+    #[serde(default, rename = "rustshare_memory_files_reconcile_enabled")]
+    pub memory_files_reconcile_enabled: bool,
+    #[serde(
+        default = "default_memory_files_reconcile_interval_secs",
+        rename = "rustshare_memory_files_reconcile_interval_secs"
+    )]
+    pub memory_files_reconcile_interval_secs: u64,
+    #[serde(
+        default = "default_memory_files_reconcile_poll_secs",
+        rename = "rustshare_memory_files_reconcile_poll_secs"
+    )]
+    pub memory_files_reconcile_poll_secs: u64,
+    #[serde(
+        default = "default_memory_files_reconcile_max_concurrent",
+        rename = "rustshare_memory_files_reconcile_max_concurrent"
+    )]
+    pub memory_files_reconcile_max_concurrent: usize,
+    #[serde(
+        default = "default_memory_files_reconcile_lease_secs",
+        rename = "rustshare_memory_files_reconcile_lease_secs"
+    )]
+    pub memory_files_reconcile_lease_secs: u64,
     #[serde(
         default = "default_calendar_sync_past_days",
         rename = "rustshare_calendar_sync_past_days"
@@ -376,6 +398,19 @@ fn default_calendar_sync_worker_max_concurrent() -> usize {
 
 fn default_calendar_sync_worker_stale_secs() -> i64 {
     300
+}
+
+fn default_memory_files_reconcile_interval_secs() -> u64 {
+    3600
+}
+fn default_memory_files_reconcile_poll_secs() -> u64 {
+    5
+}
+fn default_memory_files_reconcile_max_concurrent() -> usize {
+    1
+}
+fn default_memory_files_reconcile_lease_secs() -> u64 {
+    120
 }
 
 fn default_calendar_sync_past_days() -> i64 {

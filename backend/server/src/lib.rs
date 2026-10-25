@@ -14,6 +14,7 @@ pub mod config;
 mod dotenv_isolation;
 pub mod handlers;
 pub mod mail_import_worker;
+pub mod memory_files_reconcile_worker;
 pub mod memory_projection;
 pub mod metrics;
 pub mod middleware;
