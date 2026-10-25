@@ -1,8 +1,7 @@
-//! Integration tests for the Memory chat reconciliation repair path
-//! ([`rustshare_server::handlers::memory_reconcile::reconcile_chat_memory_for_tenant`]):
-//! the admin reconcile endpoint re-projects the tenant's `memory_catalog`
-//! from the signature-verified observation index (`chat_observed_events`) —
-//! no outbox replay, no private Buzz database access, no receipts.
+//! Integration tests for Memory Chat reconciliation and Files-backed Notes
+//! index recovery. Chat repair re-projects the tenant's `memory_catalog` from
+//! verified `chat_observed_events`; Files recovery rebuilds the existing note
+//! vector index from current source rows and OKF content.
 //!
 //! DB-backed and `#[ignore]`d; run against the dev database (migrations
 //! applied, including `20260810000004`) with `--test-threads=1`:
@@ -19,15 +18,218 @@ use rustshare_core::domain::{PrincipalId, TenantId};
 use rustshare_memory::event::ObservedEventType;
 use rustshare_server::handlers::memory_reconcile::reconcile_chat_memory_for_tenant;
 use rustshare_storage::{
-    ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, ReconcileCounts,
+    ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, MetadataStore, ReconcileCounts,
 };
 use sqlx::{PgPool, Row};
 use std::sync::LazyLock;
 use uuid::Uuid;
 
+mod support;
+
 /// Serializes the tests within this binary (same convention as the outbox and
 /// chat-observation suites).
 static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn files_memory_reconciliation_pages_authoritative_rows_and_tombstones() {
+    use support::calendar_harness::{
+        cleanup_tenant, create_test_tenant, create_test_user, setup_test_env,
+    };
+
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let foreign_tenant_id = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "memory_reconcile_files", tenant_id).await;
+    let unavailable_owner =
+        create_test_user(&state, "memory_reconcile_files_unavailable", tenant_id).await;
+    let foreign_owner =
+        create_test_user(&state, "memory_reconcile_files_foreign", foreign_tenant_id).await;
+    let metadata = MetadataStore::new(state.db_pool.clone());
+    let base = Uuid::new_v4().as_u128() & !0xff;
+    let mut ids = Vec::new();
+    for (index, (user_id, target_tenant)) in [
+        (owner.id, tenant_id),
+        (owner.id, tenant_id),
+        (unavailable_owner.id, tenant_id),
+        (foreign_owner.id, foreign_tenant_id),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = Uuid::from_u128(base + index as u128 + 1);
+        let path = format!("/memory-reconcile-{id}.md");
+        let mut file = rustshare_core::domain::File::new(
+            format!("memory-reconcile-{id}.md"),
+            path,
+            format!("hash-{id}"),
+            1,
+            "text/markdown".to_string(),
+            None,
+            user_id,
+            target_tenant,
+        );
+        file.id = id;
+        metadata.create_file(&file).await.unwrap();
+        ids.push(id);
+    }
+    metadata.delete_file(ids[1], owner.id).await.unwrap();
+    sqlx::query("UPDATE users SET disabled_at = NOW() WHERE id = $1")
+        .bind(unavailable_owner.id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+
+    let first = metadata
+        .list_files_for_memory_reconciliation(tenant_id, None, 2)
+        .await
+        .unwrap();
+    let retried_first = metadata
+        .list_files_for_memory_reconciliation(tenant_id, None, 2)
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 2);
+    assert_eq!(
+        first.iter().map(|entry| entry.file.id).collect::<Vec<_>>(),
+        retried_first
+            .iter()
+            .map(|entry| entry.file.id)
+            .collect::<Vec<_>>()
+    );
+    assert!(first.iter().all(|entry| entry.file.tenant_id == tenant_id));
+    assert!(first.iter().all(|entry| entry.owner_available));
+    let second = metadata
+        .list_files_for_memory_reconciliation(tenant_id, Some(first[1].file.id), 2)
+        .await
+        .unwrap();
+    assert_eq!(second.len(), 1);
+    assert!(second.iter().all(|entry| entry.file.tenant_id == tenant_id));
+    assert!(first
+        .iter()
+        .chain(second.iter())
+        .any(|entry| entry.file.deleted_at.is_some()));
+    let (tombstone_lock, tombstone_is_active) = metadata
+        .lock_file_for_memory_reconciliation(tenant_id, ids[1])
+        .await
+        .unwrap()
+        .expect("deleted source row should remain lockable for index cleanup");
+    assert!(!tombstone_is_active);
+    tombstone_lock.commit().await.unwrap();
+    assert_eq!(
+        first
+            .iter()
+            .chain(second.iter())
+            .filter(|entry| !entry.owner_available)
+            .count(),
+        1
+    );
+
+    let foreign = metadata
+        .list_files_for_memory_reconciliation(foreign_tenant_id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(foreign.len(), 1);
+    assert_eq!(foreign[0].file.owner_id, foreign_owner.id);
+
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+    cleanup_tenant(&state.db_pool, foreign_tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL, object storage, and migrations applied"]
+async fn files_memory_reconciliation_repairs_a_missed_index_and_deleted_source() {
+    use bytes::Bytes;
+    use rustshare_core::services::ai::{
+        ContentIndexer, InMemoryVectorStore, SimpleEmbeddingGenerator, VectorStore,
+    };
+    use rustshare_server::services::{
+        note_index_sink::ContentIndexerNoteSink, note_service::NoteService,
+    };
+    use std::sync::Arc;
+    use support::calendar_harness::{
+        cleanup_tenant, create_test_tenant, create_test_user, setup_test_env,
+    };
+
+    let _guard = SERIAL.lock().await;
+    let mut state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "memory_reconcile_rebuild", tenant_id).await;
+    let vector_store: Arc<dyn VectorStore> = Arc::new(InMemoryVectorStore::new());
+    let indexer = Arc::new(ContentIndexer::new(
+        Arc::new(SimpleEmbeddingGenerator::new()),
+        vector_store,
+    ));
+    let sink = Arc::new(ContentIndexerNoteSink::new(indexer.clone()));
+    state.note_service = Arc::new(
+        NoteService::new(
+            state.file_service.clone(),
+            state.folder_service.clone(),
+            state.metadata_store.clone(),
+            state.object_store.clone(),
+            state.permission_resolver.clone(),
+            state.db_pool.clone(),
+        )
+        .with_index_sink(Some(sink)),
+    );
+
+    let body = b"# Recovery source\nThis source missed its indexing callback.";
+    let file_id = Uuid::new_v4();
+    let mut file = rustshare_core::domain::File::new(
+        "index.md".to_string(),
+        format!("/Workspace/Meetings/General/2026/2026-10-25-recovery-{file_id}/index.md"),
+        format!("memory-reconcile-{file_id}"),
+        body.len() as i64,
+        "text/markdown".to_string(),
+        None,
+        owner.id,
+        tenant_id,
+    );
+    file.id = file_id;
+    state
+        .object_store
+        .put(&file.storage_key(), Bytes::from_static(body))
+        .await
+        .unwrap();
+    state.metadata_store.create_file(&file).await.unwrap();
+
+    assert!(state
+        .note_service
+        .reconcile_index_file(file.id, owner.id, tenant_id)
+        .await
+        .unwrap());
+    assert!(state
+        .note_service
+        .reconcile_index_file(file.id, owner.id, tenant_id)
+        .await
+        .unwrap());
+    assert_eq!(indexer.document_count(tenant_id).await, 1);
+
+    state
+        .metadata_store
+        .delete_file(file.id, owner.id)
+        .await
+        .unwrap();
+    let tombstone = state
+        .metadata_store
+        .list_files_for_memory_reconciliation(tenant_id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(tombstone.len(), 1);
+    assert!(tombstone[0].file.deleted_at.is_some());
+    indexer
+        .remove_source_file_chunks(tenant_id, file.id)
+        .await
+        .unwrap();
+    assert_eq!(indexer.document_count(tenant_id).await, 0);
+
+    state
+        .object_store
+        .delete(&file.storage_key())
+        .await
+        .unwrap();
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
 
 const COMMUNITY_ID: &str = "community-reconcile";
 const CHANNEL_ID: &str = "channel-1";

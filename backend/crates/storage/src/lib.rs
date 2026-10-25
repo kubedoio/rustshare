@@ -22,9 +22,9 @@ pub use chat_observation::{ChatObservationStore, UpsertOutcome};
 pub use event_store::EventStore;
 pub use memory_catalog::{content_match_terms, MemoryCatalogStore, ReconcileCounts};
 pub use metadata::{
-    BlobReferenceSummary, MetadataStore, ObjectGcCandidate, PublicShareAccessLogEntry,
-    ReplicationAttemptRecord, SecurityConfig, ShareAccessLogEntry, UserSecurityEvent,
-    UserSecurityEventRecord,
+    BlobReferenceSummary, MemoryReconcileFile, MetadataStore, ObjectGcCandidate,
+    PublicShareAccessLogEntry, ReplicationAttemptRecord, SecurityConfig, ShareAccessLogEntry,
+    UserSecurityEvent, UserSecurityEventRecord,
 };
 pub use object_store::{
     is_missing_object_error, BucketVersioningState, ObjectStore, ObjectStoreOptions,

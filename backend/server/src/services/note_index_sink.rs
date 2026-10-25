@@ -28,7 +28,7 @@ pub trait NoteIndexSink: Send + Sync {
         mime_type: String,
         owner_id: UserId,
         acl: IndexAclProjection,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
 
     /// Update the ACL projection for every chunk of a note.
     fn update_acl(
@@ -44,6 +44,20 @@ pub trait NoteIndexSink: Send + Sync {
         tenant_id: Uuid,
         note_id: Uuid,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+
+    /// Remove every indexed chunk from the underlying Files resource. The
+    /// default preserves compatibility for sinks whose note ID is the file ID.
+    fn remove_source_file(
+        &self,
+        tenant_id: Uuid,
+        file_id: Uuid,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
+        let remove = self.remove_note(tenant_id, file_id);
+        Box::pin(async move {
+            remove.await;
+            Ok(())
+        })
+    }
 }
 
 /// No-op sink used when AI indexing is disabled.
@@ -60,9 +74,10 @@ impl NoteIndexSink for NoOpNoteIndexSink {
         _mime_type: String,
         _owner_id: UserId,
         _acl: IndexAclProjection,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
         Box::pin(async move {
             tracing::debug!("NoOpNoteIndexSink: index_note ignored");
+            Ok(())
         })
     }
 
@@ -110,7 +125,7 @@ impl<EG: EmbeddingGenerator + Send + Sync + 'static> NoteIndexSink for ContentIn
         mime_type: String,
         owner_id: UserId,
         acl: IndexAclProjection,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
         let indexer = self.indexer.clone();
         Box::pin(async move {
             if let Err(e) = indexer
@@ -120,7 +135,9 @@ impl<EG: EmbeddingGenerator + Send + Sync + 'static> NoteIndexSink for ContentIn
                 .await
             {
                 tracing::warn!("Failed to index note {}: {}", file_id, e);
+                return Err(e.to_string());
             }
+            Ok(())
         })
     }
 
@@ -167,6 +184,21 @@ impl<EG: EmbeddingGenerator + Send + Sync + 'static> NoteIndexSink for ContentIn
                     );
                 }
             }
+        })
+    }
+
+    fn remove_source_file(
+        &self,
+        tenant_id: Uuid,
+        file_id: Uuid,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
+        let indexer = self.indexer.clone();
+        Box::pin(async move {
+            indexer
+                .remove_source_file_chunks(tenant_id, file_id)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
         })
     }
 }

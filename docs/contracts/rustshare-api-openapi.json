@@ -117,6 +117,78 @@
         }
       }
     },
+    "/api/v1/admin/applications/memory/files/reconcile": {
+      "post": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "POST /api/v1/admin/applications/memory/files/reconcile — admin-only.",
+        "description": "The caller can resume with the returned ResourceRef cursor. A failed page\nreturns no cursor; replaying its input cursor is safe because projection\nwrites and removals are idempotent.",
+        "operationId": "reconcile_files_memory",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FilesReconcileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Reconciled one bounded Files page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FilesReconcileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid cursor or page size",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Tenant scope mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Memory index unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/applications/{key}": {
       "get": {
         "tags": [
@@ -20688,6 +20760,73 @@
               "null"
             ],
             "format": "date-time"
+          }
+        }
+      },
+      "FilesReconcileRequest": {
+        "type": "object",
+        "description": "Request one bounded page of the Files-backed Notes index reconciliation.",
+        "required": [
+          "tenant_id"
+        ],
+        "properties": {
+          "after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Canonical ResourceRef returned as `next_cursor` by the previous page."
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Number of source rows to process, from 1 through 100 (default 100).",
+            "minimum": 0
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "FilesReconcileResponse": {
+        "type": "object",
+        "description": "Results from one Files-backed Notes reconciliation page.",
+        "required": [
+          "processed",
+          "indexed",
+          "removed",
+          "unavailable"
+        ],
+        "properties": {
+          "indexed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "processed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "removed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "unavailable": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },

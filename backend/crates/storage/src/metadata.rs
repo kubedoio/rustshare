@@ -35,6 +35,14 @@ pub struct MetadataStore {
     pool: PgPool,
 }
 
+/// Authoritative Files row and whether its owner can currently be used for
+/// source-side Note reconciliation.
+#[derive(Debug, Clone)]
+pub struct MemoryReconcileFile {
+    pub file: File,
+    pub owner_available: bool,
+}
+
 /// Identity of a stored recurring-event override: the `source_id` the mirrored
 /// row belongs to, the `external_uid` of the recurring master (or the row's own
 /// id), and the `recurrence_id` of the overridden occurrence. The source is
@@ -3012,6 +3020,84 @@ impl MetadataStore {
         .fetch_all(&self.pool)
         .await?;
         Ok(files)
+    }
+
+    /// Page all tenant Files rows, including soft-deleted rows, for Memory
+    /// reconciliation. Deleted rows are the source tombstones used to clear
+    /// stale note-index chunks.
+    pub async fn list_files_for_memory_reconciliation(
+        &self,
+        tenant_id: Uuid,
+        after_file_id: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<MemoryReconcileFile>> {
+        let rows = sqlx::query(
+            r#"SELECT f.id, f.name, f.path, f.content_hash, f.size, f.mime_type,
+                      f.parent_folder_id, f.owner_id, f.current_version, f.created_at,
+                      f.modified_at, f.starred_at, f.deleted_at, f.tenant_id,
+                      EXISTS (
+                          SELECT 1 FROM users u
+                          WHERE u.id = f.owner_id AND u.tenant_id = f.tenant_id
+                            AND u.disabled_at IS NULL
+                      ) AS owner_available
+               FROM files f
+               WHERE f.tenant_id = $1 AND ($2::uuid IS NULL OR f.id > $2)
+               ORDER BY f.id
+               LIMIT $3"#,
+        )
+        .bind(tenant_id)
+        .bind(after_file_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.iter()
+            .map(|row| {
+                Ok(MemoryReconcileFile {
+                    file: File {
+                        id: row.try_get("id")?,
+                        name: row.try_get("name")?,
+                        path: row.try_get("path")?,
+                        content_hash: row.try_get("content_hash")?,
+                        size: row.try_get("size")?,
+                        mime_type: row.try_get("mime_type")?,
+                        parent_folder_id: row.try_get("parent_folder_id")?,
+                        owner_id: row.try_get("owner_id")?,
+                        current_version: row.try_get("current_version")?,
+                        created_at: row.try_get("created_at")?,
+                        modified_at: row.try_get("modified_at")?,
+                        starred_at: row.try_get("starred_at")?,
+                        deleted_at: row.try_get("deleted_at")?,
+                        tenant_id: row.try_get("tenant_id")?,
+                    },
+                    owner_available: row.try_get("owner_available")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Lock a source row while its derived index is repaired or removed.
+    /// The caller uses the returned active flag to distinguish a live source
+    /// from a tombstone after waiting for any concurrent restore or delete.
+    pub async fn lock_file_for_memory_reconciliation(
+        &self,
+        tenant_id: Uuid,
+        file_id: Uuid,
+    ) -> Result<Option<(sqlx::Transaction<'static, sqlx::Postgres>, bool)>> {
+        let mut tx = self.pool.begin().await?;
+        let is_active = sqlx::query_scalar::<_, bool>(
+            "SELECT deleted_at IS NULL FROM files WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(is_active) = is_active {
+            Ok(Some((tx, is_active)))
+        } else {
+            tx.rollback().await?;
+            Ok(None)
+        }
     }
 
     /// List files by parent folder regardless of owner.

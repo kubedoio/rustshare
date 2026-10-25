@@ -343,7 +343,7 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     ) -> anyhow::Result<()> {
         if acl.embedding_policy == EmbeddingPolicy::Denied {
             self.store
-                .remove_note_chunks(acl.tenant_id, acl.object_id)
+                .remove_source_file_chunks(acl.tenant_id, file_id)
                 .await?;
             return Ok(());
         }
@@ -393,7 +393,7 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
     ) -> anyhow::Result<()> {
         if acl.embedding_policy == EmbeddingPolicy::Denied {
             self.store
-                .remove_note_chunks(acl.tenant_id, acl.object_id)
+                .remove_source_file_chunks(acl.tenant_id, file_id)
                 .await?;
             return Ok(());
         }
@@ -518,6 +518,18 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         note_id: Uuid,
     ) -> anyhow::Result<usize> {
         self.store.remove_note_chunks(tenant_id, note_id).await
+    }
+
+    /// Remove index data for the authoritative Files resource, even when its
+    /// stable OKF note ID differs from the backing file ID.
+    pub async fn remove_source_file_chunks(
+        &self,
+        tenant_id: Uuid,
+        source_file_id: Uuid,
+    ) -> anyhow::Result<usize> {
+        self.store
+            .remove_source_file_chunks(tenant_id, source_file_id)
+            .await
     }
 
     /// Remove a file from the index.

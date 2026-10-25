@@ -49,6 +49,14 @@ pub trait VectorStore: Send + Sync {
     /// Remove every chunk for a note.
     async fn remove_note_chunks(&self, tenant_id: Uuid, note_id: Uuid) -> anyhow::Result<usize>;
 
+    /// Remove every chunk sourced from a Files resource, regardless of its OKF
+    /// note identity.
+    async fn remove_source_file_chunks(
+        &self,
+        tenant_id: Uuid,
+        source_file_id: Uuid,
+    ) -> anyhow::Result<usize>;
+
     /// Remove a single chunk by id.
     async fn remove_chunk(&self, tenant_id: Uuid, chunk_id: Uuid) -> anyhow::Result<()>;
 
@@ -342,6 +350,25 @@ impl VectorStore for InMemoryVectorStore {
         if let Some(tenant) = docs.get_mut(&tenant_id) {
             tenant.retain(|_, doc| {
                 let keep = doc.acl.as_ref().is_none_or(|acl| acl.note_id != note_id);
+                if !keep {
+                    removed += 1;
+                }
+                keep
+            });
+        }
+        Ok(removed)
+    }
+
+    async fn remove_source_file_chunks(
+        &self,
+        tenant_id: Uuid,
+        source_file_id: Uuid,
+    ) -> anyhow::Result<usize> {
+        let mut docs = self.documents.lock().unwrap();
+        let mut removed = 0;
+        if let Some(tenant) = docs.get_mut(&tenant_id) {
+            tenant.retain(|_, doc| {
+                let keep = doc.file_id != source_file_id;
                 if !keep {
                     removed += 1;
                 }
@@ -683,6 +710,49 @@ mod tests {
 
         let removed = store.remove_note_chunks(tenant_id, file_id).await.unwrap();
         assert_eq!(removed, 1);
+        assert_eq!(store.document_count(tenant_id).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn in_memory_remove_source_file_chunks_ignores_okf_identity() {
+        let store = InMemoryVectorStore::new();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let acl = make_acl(
+            tenant_id,
+            Uuid::new_v4(),
+            file_id,
+            owner_id,
+            "private",
+            "allowed",
+            1,
+        );
+        let doc = make_doc(file_id, tenant_id, owner_id, "content", Some(acl.clone())).await;
+        store
+            .upsert_chunk(tenant_id, file_id, &doc, &acl)
+            .await
+            .unwrap();
+        store
+            .upsert_chunk(tenant_id, file_id, &doc, &acl)
+            .await
+            .unwrap();
+        assert_eq!(store.document_count(tenant_id).await.unwrap(), 1);
+
+        assert_eq!(
+            store
+                .remove_source_file_chunks(tenant_id, file_id)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .remove_source_file_chunks(tenant_id, file_id)
+                .await
+                .unwrap(),
+            0
+        );
         assert_eq!(store.document_count(tenant_id).await.unwrap(), 0);
     }
 

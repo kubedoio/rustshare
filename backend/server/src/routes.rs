@@ -888,6 +888,10 @@ pub fn chat_integration_routes() -> Router<AppState> {
             post(crate::handlers::memory_reconcile::reconcile_chat_memory),
         )
         .route(
+            "/api/v1/admin/applications/memory/files/reconcile",
+            post(crate::handlers::memory_reconcile::reconcile_files_memory),
+        )
+        .route(
             "/api/v1/integrations/chat/unfurl",
             post(crate::handlers::chat_integration::unfurl_link),
         )
