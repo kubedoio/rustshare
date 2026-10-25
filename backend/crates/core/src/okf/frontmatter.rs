@@ -129,27 +129,28 @@ fn is_valid_uuid(id: Uuid) -> bool {
 
 /// Detect and split a YAML frontmatter block from a Markdown document.
 ///
-/// A frontmatter block must start with `---\n` at the very beginning of the
-/// document and end with a `---` marker on its own line. The first such block
+/// A frontmatter block must start with `---` and an LF or CRLF at the beginning
+/// of the document and end with a `---` marker on its own line. The first such block
 /// is considered the frontmatter; any later `---` blocks are left in the body.
 ///
 /// On success returns `Some((yaml_string, markdown_body))`. If the document
 /// does not start with frontmatter, returns `None`.
 pub fn split_frontmatter(doc: &str) -> Option<(String, String)> {
-    let without_prefix = doc.strip_prefix("---\n")?;
+    let without_prefix = doc
+        .strip_prefix("---\n")
+        .or_else(|| doc.strip_prefix("---\r\n"))?;
     let end = without_prefix.find("\n---")?;
     let after_marker = &without_prefix[end + 4..];
 
-    // The closing marker must be followed by a newline or the end of input.
-    if !after_marker.is_empty() && !after_marker.starts_with('\n') {
-        return None;
-    }
-
     let yaml = without_prefix[..end].to_string();
+    // The closing marker must be followed by a newline or the end of input.
     let body = if after_marker.is_empty() {
         String::new()
     } else {
-        after_marker[1..].to_string()
+        after_marker
+            .strip_prefix("\r\n")
+            .or_else(|| after_marker.strip_prefix('\n'))?
+            .to_string()
     };
 
     Some((yaml, body))
@@ -335,6 +336,17 @@ mod tests {
         assert_eq!(fm.title, None);
         assert!(fm.rustshare.is_none());
         assert_eq!(body, "# Hello\n\nBody text.");
+    }
+
+    #[test]
+    fn crlf_frontmatter_preserves_the_body_and_indexing_policy() {
+        let doc = "---\r\nrustshare:\r\n  embedding_policy: denied\r\n---\r\nBody\r\ntext\r\n";
+        let (fm, body) = parse_frontmatter(doc).unwrap();
+        assert_eq!(
+            fm.rustshare.unwrap().embedding_policy.as_deref(),
+            Some("denied")
+        );
+        assert_eq!(body, "Body\r\ntext\r\n");
     }
 
     #[test]

@@ -48,6 +48,12 @@ removes existing chunks. Existing NoteService behavior treats an absent policy
 as `allowed`; M3.2 preserves that default. No independent keyword permission
 is introduced or inferred.
 
+NoteService combines the sidecar's policy with the current source frontmatter
+before either keyword or embedding indexing. A denial or malformed policy in
+either source blocks indexing and removes prior rows; malformed frontmatter
+also fails closed. A raw Files edit cannot use a stale, allowed sidecar to
+override a new source restriction. This does not rewrite either source.
+
 Keyword rows remain candidates only. The Files owner remains the sole source
 of truth for existence, ownership, visibility, and current permission. The
 index's tenant/ACL fields are coarse pre-filters; every returned result and

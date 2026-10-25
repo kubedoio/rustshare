@@ -302,6 +302,47 @@ async fn keyword_only_notes_recover_without_ai_and_reject_an_unavailable_index()
     assert!(content.contains("papaya"));
     assert!(no_embedding);
 
+    // Raw Files edits leave the sidecar stale; source policy must still win.
+    let mut version = note.current_version;
+    for (policy, crlf) in [
+        ("denied", false),
+        ("invalid-value", false),
+        ("denied", true),
+    ] {
+        let (mut fm, body) =
+            rustshare_core::okf::frontmatter::parse_frontmatter(&note.content).unwrap();
+        fm.rustshare.as_mut().unwrap().embedding_policy = Some(policy.into());
+        let source = rustshare_core::okf::frontmatter::to_document(&fm, &body).unwrap();
+        let source = if crlf {
+            source.replace('\n', "\r\n")
+        } else {
+            source
+        };
+        let updated = state
+            .file_service
+            .update_file(note.id, owner.id, version, bytes::Bytes::from(source))
+            .await
+            .unwrap();
+        version = updated.current_version;
+        assert!(!state
+            .note_service
+            .reconcile_index_file(note.id, owner.id, tenant_id)
+            .await
+            .unwrap());
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM note_index_chunks WHERE tenant_id = $1 AND source_file_id = $2",
+        )
+        .bind(tenant_id)
+        .bind(note.id)
+        .fetch_one(&state.db_pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            count, 0,
+            "source policy must block indexing despite an allowed sidecar"
+        );
+    }
+
     // A failed derived-index write must not roll back authoritative Notes writes.
     let failed_pool = sqlx::postgres::PgPoolOptions::new()
         .connect_lazy(&database_url())
