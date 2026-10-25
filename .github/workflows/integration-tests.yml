@@ -138,6 +138,11 @@ jobs:
           cargo test -p rustshare-server --test note_visibility_http_test features_endpoint_rejects_unauthenticated_requests -- --exact --test-threads=1
           cargo test -p rustshare-server --test note_visibility_http_test features_endpoint_returns_current_workflow_state -- --exact --test-threads=1
 
+      - name: Notes keyword search without AI (PostgreSQL)
+        run: >-
+          cargo test -p rustshare-server --test unified_search_test
+          keyword_search_works_without_embeddings -- --ignored --exact --test-threads=1
+
       - name: Run all integration tests
         # `-j 1` serializes Cargo's test processes, while
         # `--test-threads=1` serializes tests inside each binary. The ignored
@@ -149,11 +154,6 @@ jobs:
         run: |
           RUSTSHARE_SCIM_BEARER_TOKEN="$(openssl rand -hex 32)" \
             cargo test --workspace --all-features -j 1 -- --ignored --test-threads=1
-
-      - name: Notes keyword search without AI (PostgreSQL)
-        run: >-
-          cargo test -p rustshare-server --test unified_search_test
-          keyword_search_works_without_embeddings -- --ignored --exact --test-threads=1
 
       - name: Ask Workspace security matrix (repeated)
         # Keep this explicit: the recording-provider matrix is the security
