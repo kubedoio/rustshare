@@ -3076,24 +3076,24 @@ impl MetadataStore {
             .collect()
     }
 
-    /// Lock an active source row while its derived index is rebuilt. File
-    /// deletion and content updates take row locks too, so they cannot commit
-    /// a tombstone and then be overwritten by a late reconciliation upsert.
-    pub async fn lock_active_file_for_memory_reconciliation(
+    /// Lock a source row while its derived index is repaired or removed.
+    /// The caller uses the returned active flag to distinguish a live source
+    /// from a tombstone after waiting for any concurrent restore or delete.
+    pub async fn lock_file_for_memory_reconciliation(
         &self,
         tenant_id: Uuid,
         file_id: Uuid,
-    ) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>> {
+    ) -> Result<Option<(sqlx::Transaction<'static, sqlx::Postgres>, bool)>> {
         let mut tx = self.pool.begin().await?;
-        let found = sqlx::query_scalar::<_, Uuid>(
-            "SELECT id FROM files WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL FOR UPDATE",
+        let is_active = sqlx::query_scalar::<_, bool>(
+            "SELECT deleted_at IS NULL FROM files WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
         )
         .bind(tenant_id)
         .bind(file_id)
         .fetch_optional(&mut *tx)
         .await?;
-        if found.is_some() {
-            Ok(Some(tx))
+        if let Some(is_active) = is_active {
+            Ok(Some((tx, is_active)))
         } else {
             tx.rollback().await?;
             Ok(None)

@@ -109,6 +109,13 @@ async fn files_memory_reconciliation_pages_authoritative_rows_and_tombstones() {
         .iter()
         .chain(second.iter())
         .any(|entry| entry.file.deleted_at.is_some()));
+    let (tombstone_lock, tombstone_is_active) = metadata
+        .lock_file_for_memory_reconciliation(tenant_id, ids[1])
+        .await
+        .unwrap()
+        .expect("deleted source row should remain lockable for index cleanup");
+    assert!(!tombstone_is_active);
+    tombstone_lock.commit().await.unwrap();
     assert_eq!(
         first
             .iter()

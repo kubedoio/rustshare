@@ -23,10 +23,10 @@ indexable source files have their chunks removed by `source_file_id`. The
 projection never decides access: retrieval continues to authorize through
 Files before returning content or citations.
 
-While refreshing an active source, reconciliation holds a row lock on its
-authoritative Files record. A concurrent edit or deletion therefore runs
-after the index write and its normal index update/removal, preventing a late
-rebuild from recreating chunks after a committed deletion.
+While refreshing or removing chunks, reconciliation holds a row lock on the
+authoritative Files record. A concurrent edit, deletion, or restore therefore
+runs after the repair or cleanup and its normal index update/removal, preventing
+a late reconciliation write from undoing that lifecycle change.
 
 The sweep is stateless and resumable. It processes at most 100 source rows per
 request and returns the last processed ResourceRef only when another page is

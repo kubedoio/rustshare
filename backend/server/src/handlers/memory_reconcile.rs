@@ -195,7 +195,15 @@ pub async fn reconcile_files_memory(
     };
     for entry in &page {
         let file = &entry.file;
-        if file.deleted_at.is_some() || !entry.owner_available {
+        let Some((source_lock, is_active)) = state
+            .metadata_store
+            .lock_file_for_memory_reconciliation(body.tenant_id, file.id)
+            .await
+            .map_err(|error| {
+                tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: source lock failed");
+                internal_error()
+            })?
+        else {
             let removed = ai_service
                 .remove_source_file_chunks(body.tenant_id, file.id)
                 .await
@@ -204,28 +212,20 @@ pub async fn reconcile_files_memory(
                     internal_error()
                 })?;
             response.removed += u64::from(removed > 0);
-            response.unavailable += u64::from(!entry.owner_available && file.deleted_at.is_none());
-        } else {
-            let Some(source_lock) = state
-                .metadata_store
-                .lock_active_file_for_memory_reconciliation(body.tenant_id, file.id)
+            response.processed += 1;
+            continue;
+        };
+        if !is_active || !entry.owner_available {
+            let removed = ai_service
+                .remove_source_file_chunks(body.tenant_id, file.id)
                 .await
                 .map_err(|error| {
-                    tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: source lock failed");
+                    tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: index removal failed");
                     internal_error()
-                })?
-            else {
-                let removed = ai_service
-                    .remove_source_file_chunks(body.tenant_id, file.id)
-                    .await
-                    .map_err(|error| {
-                        tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: deleted source cleanup failed");
-                        internal_error()
-                    })?;
-                response.removed += u64::from(removed > 0);
-                response.processed += 1;
-                continue;
-            };
+                })?;
+            response.removed += u64::from(removed > 0);
+            response.unavailable += u64::from(is_active && !entry.owner_available);
+        } else {
             match state
                 .note_service
                 .reconcile_index_file(file.id, file.owner_id, body.tenant_id)
@@ -238,11 +238,11 @@ pub async fn reconcile_files_memory(
                     return Err(internal_error());
                 }
             }
-            source_lock.commit().await.map_err(|error| {
-                tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: source lock commit failed");
-                internal_error()
-            })?;
         }
+        source_lock.commit().await.map_err(|error| {
+            tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: source lock commit failed");
+            internal_error()
+        })?;
         response.processed += 1;
     }
     if has_more {
