@@ -164,6 +164,12 @@ pub async fn reconcile_files_memory(
                 )),
             )
         })?;
+    if !state.note_service.content_index_available() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse::new("Memory index is unavailable")),
+        ));
+    }
     let mut page = state
         .metadata_store
         .list_files_for_memory_reconciliation(
