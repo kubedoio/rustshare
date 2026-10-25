@@ -1,7 +1,7 @@
 //! Integration tests for Memory Chat reconciliation and Files-backed Notes
 //! index recovery. Chat repair re-projects the tenant's `memory_catalog` from
 //! verified `chat_observed_events`; Files recovery rebuilds the existing note
-//! vector index from current source rows and OKF content.
+//! content index from current source rows and OKF content, with or without AI.
 //!
 //! DB-backed and `#[ignore]`d; run against the dev database (migrations
 //! applied, including `20260810000004`) with `--test-threads=1`:
@@ -226,6 +226,182 @@ async fn files_memory_reconciliation_repairs_a_missed_index_and_deleted_source()
     state
         .object_store
         .delete(&file.storage_key())
+        .await
+        .unwrap();
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL, object storage, and migrations applied"]
+async fn keyword_only_notes_recover_without_ai_and_reject_an_unavailable_index() {
+    use axum::{body::Body, http::Request, routing::post, Router};
+    use rustshare_core::services::KeywordIndexer;
+    use rustshare_infrastructure::PgVectorStore;
+    use rustshare_server::{
+        handlers::memory_reconcile::reconcile_files_memory,
+        services::note_index_sink::{KeywordIndexerNoteSink, NoteIndexSink},
+    };
+    use std::sync::Arc;
+    use support::calendar_harness::{
+        cleanup_tenant, create_auth_token, create_test_tenant, create_test_user, database_url,
+        setup_test_env,
+    };
+    use tower::ServiceExt;
+
+    let _guard = SERIAL.lock().await;
+    let mut state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "keyword_recovery", tenant_id).await;
+    sqlx::query("UPDATE users SET is_admin = true WHERE id = $1")
+        .bind(owner.id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    let token = create_auth_token(&state, owner.id, tenant_id);
+    let request = || {
+        Request::builder()
+            .method("POST")
+            .uri("/reconcile")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({ "tenant_id": tenant_id }).to_string(),
+            ))
+            .unwrap()
+    };
+    let unavailable = Router::new()
+        .route("/reconcile", post(reconcile_files_memory))
+        .with_state(state.clone())
+        .oneshot(request())
+        .await
+        .unwrap();
+    assert_eq!(
+        unavailable.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+
+    let sink: Arc<dyn NoteIndexSink> = Arc::new(KeywordIndexerNoteSink::new(Arc::new(
+        KeywordIndexer::new(Arc::new(PgVectorStore::new(state.db_pool.clone()))),
+    )));
+    state.note_service = Arc::new((*state.note_service).clone().with_index_sink(Some(sink)));
+    assert!(state.ai_service.is_none());
+    let note = state
+        .note_service
+        .create_note(
+            owner.id,
+            tenant_id,
+            Some("Recovery source".into()),
+            None,
+            Some("A papaya keyword body written without AI.".into()),
+        )
+        .await
+        .unwrap();
+    let (content, no_embedding): (String, bool) = sqlx::query_as(
+        "SELECT content, embedding IS NULL FROM note_index_chunks WHERE tenant_id = $1 AND source_file_id = $2",
+    ).bind(tenant_id).bind(note.id).fetch_one(&state.db_pool).await.unwrap();
+    assert!(content.contains("papaya"));
+    assert!(no_embedding);
+
+    // A failed derived-index write must not roll back authoritative Notes writes.
+    let failed_pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy(&database_url())
+        .unwrap();
+    failed_pool.close().await;
+    let failing_sink = Arc::new(KeywordIndexerNoteSink::new(Arc::new(KeywordIndexer::new(
+        Arc::new(PgVectorStore::new(failed_pool)),
+    ))));
+    let failing_notes = (*state.note_service)
+        .clone()
+        .with_index_sink(Some(failing_sink));
+    let unindexed = failing_notes
+        .create_note(
+            owner.id,
+            tenant_id,
+            Some("Interrupted index".into()),
+            None,
+            Some("Original body".into()),
+        )
+        .await
+        .expect("index failure must not fail Note creation");
+    let saved = failing_notes
+        .save_note(
+            unindexed.id,
+            owner.id,
+            tenant_id,
+            "Updated authoritative body".into(),
+            None,
+            None,
+        )
+        .await
+        .expect("index failure must not fail Note updates");
+    assert!(saved.content.contains("Updated authoritative body"));
+    let missing: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM note_index_chunks WHERE tenant_id = $1 AND source_file_id = $2",
+    )
+    .bind(tenant_id)
+    .bind(unindexed.id)
+    .fetch_one(&state.db_pool)
+    .await
+    .unwrap();
+    assert_eq!(missing, 0);
+
+    let app = Router::new()
+        .route("/reconcile", post(reconcile_files_memory))
+        .with_state(state.clone());
+    for _ in 0..2 {
+        let response = app.clone().oneshot(request()).await.unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM note_index_chunks WHERE tenant_id = $1 AND source_file_id = $2 AND embedding IS NULL AND content LIKE '%Updated authoritative body%'",
+        ).bind(tenant_id).bind(unindexed.id).fetch_one(&state.db_pool).await.unwrap();
+        assert_eq!(
+            count, 1,
+            "recovery is idempotent and uses current source content"
+        );
+    }
+
+    // Leave a stale projection behind to exercise the endpoint's tombstone repair.
+    state
+        .file_service
+        .delete_file(unindexed.id, owner.id)
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            app.clone().oneshot(request()).await.unwrap().status(),
+            axum::http::StatusCode::OK
+        );
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM note_index_chunks WHERE tenant_id = $1 AND source_file_id = $2",
+        )
+        .bind(tenant_id)
+        .bind(unindexed.id)
+        .fetch_one(&state.db_pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 0, "deleted Notes must not reappear during recovery");
+    }
+
+    for entry in state
+        .metadata_store
+        .list_files_for_memory_reconciliation(tenant_id, None, 100)
+        .await
+        .unwrap()
+    {
+        state
+            .object_store
+            .delete(&entry.file.storage_key())
+            .await
+            .unwrap();
+    }
+    sqlx::query("DELETE FROM note_index_chunks WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM file_versions WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&state.db_pool)
         .await
         .unwrap();
     cleanup_tenant(&state.db_pool, tenant_id).await;

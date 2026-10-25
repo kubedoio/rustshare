@@ -375,6 +375,11 @@ impl NoteService {
         self
     }
 
+    /// Whether a Notes content-index sink is configured.
+    pub fn content_index_available(&self) -> bool {
+        self.index_sink.is_some()
+    }
+
     /// Customize the workspace and folder names.
     pub fn with_custom_paths(mut self, workspace_name: String, folder_name: String) -> Self {
         self.workspace_name = workspace_name;

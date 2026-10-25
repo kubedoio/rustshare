@@ -139,9 +139,9 @@ jobs:
           cargo test -p rustshare-server --test note_visibility_http_test features_endpoint_returns_current_workflow_state -- --exact --test-threads=1
 
       - name: Notes keyword search without AI (PostgreSQL)
-        run: >-
-          cargo test -p rustshare-server --test unified_search_test
-          keyword_search_works_without_embeddings -- --ignored --exact --test-threads=1
+        run: |
+          cargo test -p rustshare-server --test unified_search_test keyword_search_works_without_embeddings -- --ignored --exact --test-threads=1
+          cargo test -p rustshare-server --test memory_reconcile_test keyword_only_notes_recover_without_ai_and_reject_an_unavailable_index -- --ignored --exact --test-threads=1
 
       - name: Run all integration tests
         # `-j 1` serializes Cargo's test processes, while

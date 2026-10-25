@@ -55,6 +55,12 @@ every RAG source is reauthorized against Files. Reconciliation reads current
 Files rows and content and can repair/remove keyword-only rows through the
 same writer.
 
+The Files reconciliation endpoint returns `503` when no Notes index sink is
+configured. It must not report a completed page or advance a cursor without
+an index writer. AI being disabled does not trigger this state when the
+keyword-only sink is configured. Index write failures remain best-effort for
+authoritative Note creation and saves; reconciliation retries repair them.
+
 ## Out of scope
 
 No second Notes index, new authorization mechanism, content parser, embedding
