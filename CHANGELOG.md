@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add resumable, bounded Memory reconciliation for Files-backed Notes, rebuilding from current source content and ACLs and removing chunks for deleted or unavailable sources.
 - Create Calendar events from saved Mail messages and link them by reference with live authorization in both Applications.
 - Accessible Calendar movement for internal, non-recurring timed events across Month, work-week, Day and Agenda views. Movement preserves event-zone wall time and duration; recurring, occurrence, all-day and read-only events remain unsupported.
 - Add effective-access source and permission explanations to shared folder

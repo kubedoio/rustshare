@@ -331,7 +331,8 @@ impl NoteService {
             .map_err(|e| NoteError::Storage(e.to_string()))?;
         let content = String::from_utf8_lossy(&bytes);
         let metadata = NoteMetadata::new(file.name.clone());
-        self.emit_index_note(&file, &metadata, &content, tenant_id)
+        let _ = self
+            .emit_index_note(&file, &metadata, &content, tenant_id)
             .await;
         Ok(())
     }
@@ -857,32 +858,21 @@ impl NoteService {
         meta: &NoteMetadata,
         content: &str,
         tenant_id: Uuid,
-    ) {
+    ) -> Result<bool, NoteError> {
         if let Some(sink) = &self.index_sink {
-            let read_acl = match self.resolve_note_read_principals(file, tenant_id).await {
-                Ok(acl) => acl,
-                Err(e) => {
-                    tracing::warn!(
-                        tenant_id = %tenant_id,
-                        file_id = %file.id,
-                        error = %e,
-                        "Failed to resolve ACL principals for note index"
-                    );
-                    return;
-                }
-            };
-            let mut acl = match Self::build_acl_payload(file, meta, tenant_id, read_acl) {
-                Ok(acl) => acl,
-                Err(e) => {
-                    tracing::warn!(
-                        tenant_id = %tenant_id,
-                        file_id = %file.id,
-                        error = %e,
-                        "Failed to build ACL projection for note index"
-                    );
-                    return;
-                }
-            };
+            let read_acl = self
+                .resolve_note_read_principals(file, tenant_id)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(tenant_id = %tenant_id, file_id = %file.id, %error, "Failed to resolve ACL principals for note index");
+                    error
+                })?;
+            let mut acl = Self::build_acl_payload(file, meta, tenant_id, read_acl).map_err(
+                |error| {
+                    tracing::warn!(tenant_id = %tenant_id, file_id = %file.id, %error, "Failed to build ACL projection for note index");
+                    error
+                },
+            )?;
 
             // Compute a deterministic ACL hash and bump the version when the
             // effective ACL state changes. This keeps indexed chunks in sync
@@ -893,6 +883,8 @@ impl NoteService {
             }
             acl.acl_hash = computed_hash;
 
+            let allowed =
+                acl.embedding_policy == rustshare_core::services::EmbeddingPolicy::Allowed;
             sink.index_note(
                 file.id,
                 file.name.clone(),
@@ -902,9 +894,15 @@ impl NoteService {
                 file.owner_id,
                 acl,
             )
-            .await;
+            .await
+            .map_err(|error| {
+                tracing::warn!(tenant_id = %tenant_id, file_id = %file.id, %error, "Failed to persist note index");
+                NoteError::Storage(format!("Failed to persist note index: {error}"))
+            })?;
+            Ok(allowed)
         } else {
             tracing::debug!("No note index sink configured; skipping indexing");
+            Ok(false)
         }
     }
 
@@ -920,6 +918,21 @@ impl NoteService {
         user_id: UserId,
         tenant_id: Uuid,
     ) -> Result<(), NoteError> {
+        self.reconcile_index_file(file_id, user_id, tenant_id)
+            .await
+            .map(|_| ())
+    }
+
+    /// Rebuild the current note index from its authoritative Files row and
+    /// object-store content. Returns `true` when an eligible note was indexed.
+    /// Non-note or disabled-embedding resources have their chunks removed by
+    /// source file identity; deleted rows are removed by the page reconciler.
+    pub async fn reconcile_index_file(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<bool, NoteError> {
         let file = self.file_service.get_file(file_id, user_id).await?;
         if file.tenant_id != tenant_id {
             return Err(NoteError::PermissionDenied);
@@ -931,10 +944,28 @@ impl NoteService {
             {
                 NoteMetadata::new(file.name.clone())
             }
-            None => return Ok(()),
+            None => {
+                if let Some(sink) = &self.index_sink {
+                    sink.remove_source_file(tenant_id, file_id)
+                        .await
+                        .map_err(|error| {
+                            NoteError::Storage(format!(
+                                "Failed to remove stale note index: {error}"
+                            ))
+                        })?;
+                }
+                return Ok(false);
+            }
         };
         if meta.kind != "note" {
-            return Ok(());
+            if let Some(sink) = &self.index_sink {
+                sink.remove_source_file(tenant_id, file_id)
+                    .await
+                    .map_err(|error| {
+                        NoteError::Storage(format!("Failed to remove stale note index: {error}"))
+                    })?;
+            }
+            return Ok(false);
         }
         let content = match self.object_store.get(&file.storage_key()).await {
             Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
@@ -948,8 +979,7 @@ impl NoteService {
             }
         };
         self.emit_index_note(&file, &meta, &content, tenant_id)
-            .await;
-        Ok(())
+            .await
     }
 
     /// Remove a single note from the AI index.
@@ -1598,7 +1628,8 @@ impl NoteService {
         self.save_metadata(file.id, owner_id, tenant_id, &meta)
             .await?;
 
-        self.emit_index_note(&file, &meta, &document, tenant_id)
+        let _ = self
+            .emit_index_note(&file, &meta, &document, tenant_id)
             .await;
 
         Ok(Note {
@@ -2268,7 +2299,8 @@ impl NoteService {
         self.save_metadata(file_id, user_id, file.tenant_id, &meta)
             .await?;
 
-        self.emit_index_note(&updated_file, &meta, &document, tenant_id)
+        let _ = self
+            .emit_index_note(&updated_file, &meta, &document, tenant_id)
             .await;
 
         Ok(Note {
@@ -2382,7 +2414,8 @@ impl NoteService {
             Err(_) => String::new(),
         };
 
-        self.emit_index_note(&file, &meta, &content, tenant_id)
+        let _ = self
+            .emit_index_note(&file, &meta, &content, tenant_id)
             .await;
 
         Ok(Note {
@@ -2519,7 +2552,8 @@ impl NoteService {
             Err(_) => String::new(),
         };
 
-        self.emit_index_note(&moved_file, &meta, &content, tenant_id)
+        let _ = self
+            .emit_index_note(&moved_file, &meta, &content, tenant_id)
             .await;
 
         Ok(Note {
@@ -2675,7 +2709,8 @@ impl NoteService {
                 .await
                 .ok();
 
-            self.emit_index_note(&new_file, &meta, &duplicated_content, tenant_id)
+            let _ = self
+                .emit_index_note(&new_file, &meta, &duplicated_content, tenant_id)
                 .await;
 
             return Ok(Note {
@@ -2720,7 +2755,8 @@ impl NoteService {
         self.save_metadata(new_file.id, user_id, tenant_id, &meta)
             .await?;
 
-        self.emit_index_note(&new_file, &meta, &original.content, tenant_id)
+        let _ = self
+            .emit_index_note(&new_file, &meta, &original.content, tenant_id)
             .await;
 
         Ok(Note {
@@ -3038,7 +3074,8 @@ impl NoteService {
             Err(_) => String::new(),
         };
 
-        self.emit_index_note(&file, &meta, &content, tenant_id)
+        let _ = self
+            .emit_index_note(&file, &meta, &content, tenant_id)
             .await;
 
         Ok(Note {

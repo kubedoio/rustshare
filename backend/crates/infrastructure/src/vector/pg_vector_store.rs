@@ -394,6 +394,22 @@ impl VectorStore for PgVectorStore {
         Ok(result.rows_affected() as usize)
     }
 
+    async fn remove_source_file_chunks(
+        &self,
+        tenant_id: Uuid,
+        source_file_id: Uuid,
+    ) -> Result<usize> {
+        let result = sqlx::query(
+            "DELETE FROM note_index_chunks WHERE tenant_id = $1 AND source_file_id = $2",
+        )
+        .bind(tenant_id)
+        .bind(source_file_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() as usize)
+    }
+
     async fn remove_chunk(&self, tenant_id: Uuid, chunk_id: Uuid) -> Result<()> {
         sqlx::query("DELETE FROM note_index_chunks WHERE tenant_id = $1 AND id = $2")
             .bind(tenant_id)

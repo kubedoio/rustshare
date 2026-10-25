@@ -20,6 +20,7 @@ use rustshare_core::domain::{TenantId, WorkspaceId};
 use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_memory::project::rebuild_records;
 use rustshare_resource_auth::BuzzChannelKind;
+use rustshare_resource_auth::ResourceRef;
 use rustshare_storage::{
     ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, ReconcileCounts,
 };
@@ -69,6 +70,237 @@ pub struct ReconcileResponse {
     pub processed: u64,
     pub created: u64,
     pub updated: u64,
+}
+
+const FILES_APPLICATION_ID: &str = "io.elembra.files";
+const FILES_RESOURCE_TYPE: &str = "file";
+const MAX_FILES_RECONCILE_BATCH: u32 = 100;
+
+/// Request one bounded page of the Files-backed Notes index reconciliation.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct FilesReconcileRequest {
+    pub tenant_id: Uuid,
+    /// Canonical ResourceRef returned as `next_cursor` by the previous page.
+    pub after: Option<String>,
+    /// Number of source rows to process, from 1 through 100 (default 100).
+    pub limit: Option<u32>,
+}
+
+/// Results from one Files-backed Notes reconciliation page.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct FilesReconcileResponse {
+    pub processed: u64,
+    pub indexed: u64,
+    pub removed: u64,
+    pub unavailable: u64,
+    pub next_cursor: Option<String>,
+}
+
+/// POST /api/v1/admin/applications/memory/files/reconcile — admin-only.
+///
+/// The caller can resume with the returned ResourceRef cursor. A failed page
+/// returns no cursor; replaying its input cursor is safe because projection
+/// writes and removals are idempotent.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/applications/memory/files/reconcile",
+    tag = "Memory",
+    request_body = FilesReconcileRequest,
+    responses(
+        (status = 200, description = "Reconciled one bounded Files page", body = FilesReconcileResponse),
+        (status = 400, description = "Invalid cursor or page size", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 403, description = "Tenant scope mismatch", body = ErrorResponse),
+        (status = 503, description = "Memory index unavailable", body = ErrorResponse),
+    ),
+)]
+pub async fn reconcile_files_memory(
+    AdminUser { user_id: admin_id }: AdminUser,
+    auth: AuthenticatedUser,
+    State(state): State<AppState>,
+    Json(body): Json<FilesReconcileRequest>,
+) -> Result<Json<FilesReconcileResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let admin = state
+        .user_repository
+        .get_by_id(admin_id)
+        .await
+        .map_err(|error| {
+        tracing::error!(admin = %admin_id, %error, "memory files reconcile: admin lookup failed");
+        internal_error()
+    })?
+    .filter(|admin| admin.disabled_at.is_none())
+    .ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse::new("Unauthorized")),
+        )
+    })?;
+    let admin_tenant = admin.tenant_id;
+    if admin_tenant != auth.tenant_id || admin_tenant != body.tenant_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse::new(
+                "reconcile target is outside the admin's tenant scope",
+            )),
+        ));
+    }
+    let limit = body.limit.unwrap_or(MAX_FILES_RECONCILE_BATCH);
+    if !(1..=MAX_FILES_RECONCILE_BATCH).contains(&limit) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::new("limit must be between 1 and 100")),
+        ));
+    }
+    let after_file_id = body
+        .after
+        .as_deref()
+        .map(parse_files_cursor)
+        .transpose()
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse::new(
+                    "after must be a canonical Files file ResourceRef",
+                )),
+            )
+        })?;
+    let Some(ai_service) = state.ai_service.as_ref() else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse::new("Memory index is unavailable")),
+        ));
+    };
+
+    let mut page = state
+        .metadata_store
+        .list_files_for_memory_reconciliation(
+            body.tenant_id,
+            after_file_id,
+            i64::from(limit) + 1,
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!(tenant = %body.tenant_id, %error, "memory files reconcile: source page failed");
+            internal_error()
+        })?;
+    let has_more = page.len() > limit as usize;
+    page.truncate(limit as usize);
+
+    let mut response = FilesReconcileResponse {
+        processed: 0,
+        indexed: 0,
+        removed: 0,
+        unavailable: 0,
+        next_cursor: None,
+    };
+    for entry in &page {
+        let file = &entry.file;
+        if file.deleted_at.is_some() || !entry.owner_available {
+            let removed = ai_service
+                .remove_source_file_chunks(body.tenant_id, file.id)
+                .await
+                .map_err(|error| {
+                    tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: index removal failed");
+                    internal_error()
+                })?;
+            response.removed += u64::from(removed > 0);
+            response.unavailable += u64::from(!entry.owner_available && file.deleted_at.is_none());
+        } else {
+            let Some(source_lock) = state
+                .metadata_store
+                .lock_active_file_for_memory_reconciliation(body.tenant_id, file.id)
+                .await
+                .map_err(|error| {
+                    tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: source lock failed");
+                    internal_error()
+                })?
+            else {
+                let removed = ai_service
+                    .remove_source_file_chunks(body.tenant_id, file.id)
+                    .await
+                    .map_err(|error| {
+                        tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: deleted source cleanup failed");
+                        internal_error()
+                    })?;
+                response.removed += u64::from(removed > 0);
+                response.processed += 1;
+                continue;
+            };
+            match state
+                .note_service
+                .reconcile_index_file(file.id, file.owner_id, body.tenant_id)
+                .await
+            {
+                Ok(true) => response.indexed += 1,
+                Ok(false) => response.removed += 1,
+                Err(error) => {
+                    tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: source refresh failed");
+                    return Err(internal_error());
+                }
+            }
+            source_lock.commit().await.map_err(|error| {
+                tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: source lock commit failed");
+                internal_error()
+            })?;
+        }
+        response.processed += 1;
+    }
+    if has_more {
+        if let Some(last) = page.last() {
+            response.next_cursor = Some(
+                ResourceRef::new(
+                    rustshare_core::domain::ApplicationId::new(FILES_APPLICATION_ID),
+                    FILES_RESOURCE_TYPE,
+                    last.file.id.to_string(),
+                )
+                .to_uri(),
+            );
+        }
+    }
+    Ok(Json(response))
+}
+
+fn parse_files_cursor(raw: &str) -> Result<Uuid, ()> {
+    let reference = ResourceRef::from_uri(raw).map_err(|_| ())?;
+    if reference.application.0 != FILES_APPLICATION_ID
+        || reference.resource_type != FILES_RESOURCE_TYPE
+        || reference.version.is_some()
+    {
+        return Err(());
+    }
+    let file_id = Uuid::parse_str(&reference.resource_id).map_err(|_| ())?;
+    let canonical = ResourceRef::new(
+        rustshare_core::domain::ApplicationId::new(FILES_APPLICATION_ID),
+        FILES_RESOURCE_TYPE,
+        file_id.to_string(),
+    );
+    (canonical.to_uri() == raw).then_some(file_id).ok_or(())
+}
+
+#[cfg(test)]
+mod files_reconcile_tests {
+    use super::*;
+
+    #[test]
+    fn files_reconcile_cursor_requires_canonical_file_resource_ref() {
+        let file_id = Uuid::new_v4();
+        let canonical = ResourceRef::new(
+            rustshare_core::domain::ApplicationId::new(FILES_APPLICATION_ID),
+            FILES_RESOURCE_TYPE,
+            file_id.to_string(),
+        )
+        .to_uri();
+        assert_eq!(parse_files_cursor(&canonical), Ok(file_id));
+        assert!(parse_files_cursor("elembra://io.elembra.files/file/not-a-uuid").is_err());
+        assert!(parse_files_cursor(
+            "elembra://io.elembra.mail/message/00000000-0000-0000-0000-000000000001"
+        )
+        .is_err());
+        assert!(
+            parse_files_cursor(&format!("{canonical}?version=sha256%3A{}", "a".repeat(64)))
+                .is_err()
+        );
+    }
 }
 
 /// POST /api/v1/admin/applications/memory/chat/reconcile — admin-only.

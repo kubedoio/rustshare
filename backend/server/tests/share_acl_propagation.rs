@@ -107,7 +107,7 @@ impl NoteIndexSink for RecordingSink {
         _mime_type: String,
         owner_id: rustshare_core::domain::UserId,
         acl: rustshare_core::services::IndexAclProjection,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
         let sink = self.clone();
         Box::pin(async move {
             let mut principals: Vec<String> =
@@ -121,6 +121,7 @@ impl NoteIndexSink for RecordingSink {
                 acl_hash: acl.acl_hash.clone(),
                 acl_version: acl.acl_version,
             });
+            Ok(())
         })
     }
 

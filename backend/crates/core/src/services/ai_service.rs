@@ -502,6 +502,17 @@ where
     ) -> anyhow::Result<usize> {
         self.indexer.remove_note_chunks(tenant_id, note_id).await
     }
+
+    /// Remove index chunks by their authoritative Files resource identity.
+    pub async fn remove_source_file_chunks(
+        &self,
+        tenant_id: Uuid,
+        source_file_id: Uuid,
+    ) -> anyhow::Result<usize> {
+        self.indexer
+            .remove_source_file_chunks(tenant_id, source_file_id)
+            .await
+    }
 }
 
 /// Sanitize a text snippet for display.
