@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryClient } from '$lib/query-client';
 import { toastStore } from '$lib/stores/toast';
+import { ApiError } from '$lib/api/types';
 import type { ApplicationDefinition } from '$lib/applications/registry';
 import type { CalendarEvent, CalendarSource } from '$lib/api/calendar';
 import CalendarApplicationView from './CalendarApplicationView.svelte';
@@ -9,6 +10,7 @@ import CalendarApplicationView from './CalendarApplicationView.svelte';
 const mocks = vi.hoisted(() => ({
 	listEvents: vi.fn(),
 	getEvent: vi.fn(),
+	getEventMailLink: vi.fn(),
 	openEventMeeting: vi.fn(),
 	goto: vi.fn(),
 	createEvent: vi.fn(),
@@ -132,6 +134,7 @@ describe('CalendarApplicationView', () => {
 		mocks.listSources.mockResolvedValue([internalSource, googleSource]);
 		mocks.listEvents.mockResolvedValue([]);
 		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(1)));
+		mocks.getEventMailLink.mockRejectedValue(new Error('Related Mail unavailable'));
 		mocks.openEventMeeting.mockResolvedValue({ id: 'meeting-1' });
 		mocks.createEvent.mockResolvedValue(eventAt(dayFromToday(1)));
 		mocks.updateEvent.mockResolvedValue(eventAt(dayFromToday(1)));
@@ -488,6 +491,41 @@ describe('CalendarApplicationView', () => {
 
 		expect(await screen.findByRole('dialog', { name: 'Event details' })).toBeTruthy();
 		expect(mocks.getEvent).toHaveBeenCalledWith('old-event');
+	});
+
+	it('hides the unavailable state for unlinked events', async () => {
+		mocks.pageUrl = 'http://localhost/apps/calendar?event_id=unlinked';
+		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(1), { id: 'unlinked' }));
+		mocks.getEventMailLink.mockRejectedValue(new ApiError(404, 'Resource not found'));
+		render(CalendarApplicationView, { module: testModule });
+
+		await screen.findByRole('dialog', { name: 'Event details' });
+		await waitFor(() => expect(mocks.getEventMailLink).toHaveBeenCalledWith('unlinked'));
+		expect(screen.queryByText('Related Mail unavailable')).toBeNull();
+	});
+
+	it('shows a generic unavailable state when the Mail Application is disabled', async () => {
+		mocks.pageUrl = 'http://localhost/apps/calendar?event_id=mail-disabled';
+		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(1), { id: 'mail-disabled' }));
+		mocks.getEventMailLink.mockRejectedValue(new ApiError(403, 'Application disabled'));
+		render(CalendarApplicationView, { module: testModule });
+
+		expect(await screen.findByText('Related Mail unavailable')).toBeTruthy();
+	});
+
+	it('reauthorizes Related Mail when activated and hides a revoked message', async () => {
+		mocks.pageUrl = 'http://localhost/apps/calendar?event_id=revoked';
+		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(1), { id: 'revoked' }));
+		mocks.getEventMailLink
+			.mockResolvedValueOnce({ mail_message_id: 'private-message-id' })
+			.mockRejectedValueOnce(new ApiError(404, 'Resource not found'));
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Related Mail' }));
+		await waitFor(() => expect(mocks.getEventMailLink).toHaveBeenCalledTimes(2));
+		expect(mocks.goto).not.toHaveBeenCalled();
+		expect(screen.queryByText('private-message-id')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Related Mail' })).toBeNull();
 	});
 
 	it('refetches with the source filter when a source chip is toggled', async () => {

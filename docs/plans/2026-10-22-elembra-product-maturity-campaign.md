@@ -1,6 +1,6 @@
 # Elembra Product Maturity Campaign
 
-Audit baseline before M2.2: protected `main` at `1f1c37bb55067ef2e82fae9fab56206aff304e81` (merge of PR #411). This plan uses current merged behavior and issue updates; it does not authorize deployment, institutional Gate A work, or retained-infrastructure changes.
+Audit baseline before M2.3: protected `main` at `d1356743dcf20d3776861c4c1527ede5b37362e6` (M2.2 merge of PR #414). This plan uses current merged behavior and issue updates; it does not authorize deployment, institutional Gate A work, or retained-infrastructure changes.
 
 ## Gap matrix
 
@@ -13,7 +13,7 @@ Audit baseline before M2.2: protected `main` at `1f1c37bb55067ef2e82fae9fab56206
 | [#287](https://github.com/kubedoio/rustshare/issues/287) | Partially implemented | Repository/service layers exist, while handlers in device-auth, invites, and admin areas still issue SQL directly. Add a guard and migrate handler families incrementally with tenant context preserved. |
 | [#320](https://github.com/kubedoio/rustshare/issues/320) | Unimplemented | Upload queues support progress but expose no safe cancellation path. Define abort, server session cleanup, and terminal UI state for single and multi-file uploads. |
 | [#396](https://github.com/kubedoio/rustshare/issues/396) | In progress (M2.2) | Add pointer and accessible date/time movement for internal non-recurring timed events in Month, work-week, Day, and Agenda. Preserve event-zone wall time and elapsed duration; provider/imported, recurring, occurrence, and all-day movement stays unsupported. |
-| [#397](https://github.com/kubedoio/rustshare/issues/397) | Unimplemented | Calendar has other resource relations, but no Mail message-to-event link. Add a reference-only link with independent Mail and Calendar authorization. |
+| [#397](https://github.com/kubedoio/rustshare/issues/397) | M2.3 implementation in review | Calendar owns a durable reference-only Mail message relation. Both Applications are required and each source is reauthorized on every resolution; event creation is user-confirmed and stores no Mail content. See [the integration contract](../contracts/mail-calendar-integration.md). |
 | [#119](https://github.com/kubedoio/rustshare/issues/119) | Partially implemented | Memory catalog, source projection, FTS/vector search, citations, and reauthorization already exist. Unified search already supports non-LLM Chat catalog keyword search (`UnifiedSearchService::chat_candidates`, `MemoryCatalogStore::search`) and Files name/path search; indexed note-body keyword candidates remain gated by optional AI configuration. Remaining work is complete projection reconciliation/rebuild and deletion/revocation coverage, non-LLM coverage gaps including that note-index dependency, and scoped retrieval/audit gaps. Reuse the existing catalog and authority. |
 | [#213](https://github.com/kubedoio/rustshare/issues/213) | Unimplemented runtime; contract exists | `connector-contract-v1alpha1.md` and ADR-0037 define a spec-only boundary. Add the common runtime and one local-text worker before broad provider rollout. |
 | [#99](https://github.com/kubedoio/rustshare/issues/99) | Unimplemented worker use case | The local-text worker is the first bounded Connector proof. It must use the common contract and cannot write private Files or Memory tables. |

@@ -75,6 +75,13 @@ export interface CreateCalendarEventRequest {
 	rrule?: string | null;
 }
 
+export interface CalendarMailEvent {
+	event_id: string;
+	title: string;
+	starts_at: string;
+	ends_at: string;
+}
+
 export type UpdateCalendarEventRequest = Partial<CreateCalendarEventRequest>;
 
 export interface ListCalendarEventsParams {
@@ -104,6 +111,27 @@ export interface CalendarProvidersResponse {
 }
 
 export const calendarApi = {
+	createMailLink: async (eventId: string, messageId: string): Promise<{ id: string }> => {
+		return apiClient.post('/calendar/mail-links', {
+			event_id: eventId,
+			mail_message_ref: `elembra://io.elembra.mail/message/${messageId}`
+		});
+	},
+
+	listMailEvents: async (messageId: string): Promise<CalendarMailEvent[]> => {
+		return apiClient.get<CalendarMailEvent[]>(`/calendar/mail-links?message_id=${messageId}`);
+	},
+
+	getEventMailLink: async (
+		eventId: string
+	): Promise<{ id: string; event_id: string; mail_message_id: string }> => {
+		return apiClient.get(`/calendar/events/${eventId}/mail-link`);
+	},
+
+	deleteMailLink: async (linkId: string): Promise<void> => {
+		await apiClient.delete(`/calendar/mail-links/${linkId}`);
+	},
+
 	getEvent: async (eventId: string): Promise<CalendarEvent> => {
 		return apiClient.get<CalendarEvent>(`/calendar/events/${eventId}`);
 	},

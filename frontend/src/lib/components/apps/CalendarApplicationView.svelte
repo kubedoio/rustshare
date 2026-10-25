@@ -10,6 +10,7 @@
 		type CalendarSourceKind
 	} from '$lib/api/calendar';
 	import { queryClient } from '$lib/query-client';
+	import { ApiError } from '$lib/api/types';
 	import ApplicationPageShell from '$lib/components/layout/ApplicationPageShell.svelte';
 	import ApplicationPageSkeleton from '$lib/components/common/ApplicationPageSkeleton.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
@@ -47,6 +48,8 @@
 	let now = $state(new Date());
 	let activeSourceId = $state<string | null>(null);
 	let selectedEvent = $state<CalendarEvent | null>(null);
+	let relatedMailMessageId = $state<string | null>(null);
+	let relatedMailUnavailable = $state(false);
 	let openingMeeting = $state(false);
 	let editorOpen = $state(false);
 	let editingEvent = $state<CalendarEvent | null>(null);
@@ -114,6 +117,45 @@
 			cancelled = true;
 		};
 	});
+
+	$effect(() => {
+		const eventId = selectedEvent?.id;
+		relatedMailMessageId = null;
+		relatedMailUnavailable = false;
+		if (!eventId) return;
+		let cancelled = false;
+		void calendarApi
+			.getEventMailLink(eventId)
+			.then((link) => {
+				if (!cancelled) relatedMailMessageId = link.mail_message_id;
+			})
+			.catch((error) => {
+				if (!cancelled)
+					relatedMailUnavailable = !(error instanceof ApiError && error.status === 404);
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	async function openRelatedMail() {
+		const eventId = selectedEvent?.id;
+		if (!eventId) return;
+		try {
+			const link = await calendarApi.getEventMailLink(eventId);
+			if (selectedEvent?.id !== eventId) return;
+			relatedMailMessageId = link.mail_message_id;
+			queryClient.removeQueries({
+				queryKey: ['mail-message', link.mail_message_id],
+				exact: true
+			});
+			await goto(`/apps/mail/messages/${encodeURIComponent(link.mail_message_id)}`);
+		} catch (error) {
+			if (selectedEvent?.id !== eventId) return;
+			relatedMailMessageId = null;
+			relatedMailUnavailable = !(error instanceof ApiError && error.status === 404);
+		}
+	}
 
 	$effect(() => {
 		eventsQuery.setOptions(buildEventQueryOptions());
@@ -1084,6 +1126,13 @@
 				<p class="mt-3 text-xs text-base-content/50">{sourceAttribution(selectedEvent)}</p>
 			{/if}
 			<div class="mt-4 flex flex-wrap items-center justify-end gap-2">
+				{#if relatedMailMessageId}
+					<button type="button" class="btn btn-outline btn-sm" onclick={openRelatedMail}>
+						Related Mail
+					</button>
+				{:else if relatedMailUnavailable}
+					<span class="text-xs text-base-content/60" role="status">Related Mail unavailable</span>
+				{/if}
 				<button
 					type="button"
 					class="btn btn-outline btn-sm"

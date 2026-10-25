@@ -4333,6 +4333,42 @@
         }
       }
     },
+    "/api/v1/calendar/events/{id}/mail-link": {
+      "get": {
+        "tags": [
+          "crate::handlers::calendar"
+        ],
+        "operationId": "get_calendar_event_mail_link",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarMailLinkResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/calendar/events/{id}/meeting": {
       "post": {
         "tags": [
@@ -4367,6 +4403,107 @@
             "description": "Legacy meeting links are still being indexed; retry shortly"
           }
         }
+      }
+    },
+    "/api/v1/calendar/mail-links": {
+      "get": {
+        "tags": [
+          "crate::handlers::calendar"
+        ],
+        "operationId": "list_calendar_mail_links",
+        "parameters": [
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CalendarMailEventResponse"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "crate::handlers::calendar"
+        ],
+        "operationId": "create_calendar_mail_link",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCalendarMailLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarMailLinkResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/calendar/mail-links/{id}": {
+      "delete": {
+        "tags": [
+          "crate::handlers::calendar"
+        ],
+        "operationId": "delete_calendar_mail_link",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Mail link removed"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
       }
     },
     "/api/v1/decisions": {
@@ -17112,6 +17249,54 @@
           }
         }
       },
+      "CalendarMailEventResponse": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "title",
+          "starts_at",
+          "ends_at"
+        ],
+        "properties": {
+          "ends_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "CalendarMailLinkResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "event_id",
+          "mail_message_id"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mail_message_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "CancelInvitationResponse": {
         "type": "object",
         "required": [
@@ -17536,6 +17721,22 @@
             "type": "string"
           },
           "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateCalendarMailLinkRequest": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "mail_message_ref"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mail_message_ref": {
             "type": "string"
           }
         }
