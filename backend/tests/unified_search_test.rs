@@ -27,8 +27,8 @@
 //!   exercises the REAL `ChatResourceOwner` gate (observation lookup,
 //!   tombstone override, enablement, binding, admission, mapping, then the
 //!   authority).
-//! * The note index (when AI is enabled) is a `ContentIndexer` over
-//!   `InMemoryVectorStore` + `SimpleEmbeddingGenerator`, populated via
+//! * The note index is a `PgVectorStore`, populated via `KeywordIndexer` and,
+//!   when AI is enabled, `ContentIndexer`, via
 //!   `index_note`; a direct-SQL `note_index_chunks` row documents the
 //!   DB-level stale-ACL fixtures.
 //!
@@ -63,10 +63,10 @@ use rustshare_core::domain::{
 };
 use rustshare_core::services::ai::IndexPrincipal;
 use rustshare_core::services::{
-    AiService, ContentIndexer, EmbeddingPolicy, InMemoryVectorStore, IndexAclProjection,
-    IndexVisibility, PermissionResolver, SimpleEmbeddingGenerator,
+    AiService, ContentIndexer, EmbeddingPolicy, IndexAclProjection, IndexVisibility,
+    KeywordIndexer, PermissionResolver, SimpleEmbeddingGenerator, VectorStore,
 };
-use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use rustshare_infrastructure::{repositories::PermissionResolverRepository, PgVectorStore};
 use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_memory::record::{
     AUTHORIZATION_SOURCE_BUZZ, DEFAULT_CLASSIFICATION, SOURCE_APPLICATION, SOURCE_TYPE_MESSAGE,
@@ -1223,9 +1223,10 @@ struct TestHarness {
     authorizer: Arc<SourceAuthorizer>,
     /// Present when the test double is wired as the chat authority.
     scripted: Option<ScriptedAuthority>,
-    /// Present for AI-enabled tests (note-index keyword/vector candidates).
+    /// Present for AI-enabled tests (note-index semantic candidates).
     indexer: Option<Arc<ContentIndexer<SimpleEmbeddingGenerator>>>,
     ai: Option<Arc<AppAiService>>,
+    keyword_indexer: Arc<KeywordIndexer>,
 }
 
 impl TestHarness {
@@ -1236,6 +1237,10 @@ impl TestHarness {
             Arc::clone(&self.metadata_store),
             self.ai.clone(),
             Arc::clone(&self.memory_catalog_store),
+        )
+        .with_keyword_indexer(
+            Arc::clone(&self.keyword_indexer),
+            Arc::clone(&self.permission_resolver),
         )
     }
 }
@@ -1328,10 +1333,11 @@ async fn harness_with_scripted_authority(pool: PgPool, with_ai: bool) -> TestHar
     let chat_observation_store = ChatObservationStore::new(pool.clone());
     let memory_catalog_store = Arc::new(MemoryCatalogStore::new(pool.clone()));
     let scripted = ScriptedAuthority::new(ScriptedOutcome::Allow);
+    let store: Arc<dyn VectorStore> = Arc::new(PgVectorStore::new(pool.clone()));
+    let keyword_indexer = Arc::new(KeywordIndexer::new(Arc::clone(&store)));
     let (indexer, ai) = if with_ai {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let store = Arc::new(InMemoryVectorStore::new());
-        let indexer = Arc::new(ContentIndexer::new(generator, store));
+        let indexer = Arc::new(ContentIndexer::new(generator, Arc::clone(&store)));
         let ai = Arc::new(AiService::new(
             Arc::clone(&indexer),
             Arc::clone(&permission_resolver),
@@ -1365,6 +1371,7 @@ async fn harness_with_scripted_authority(pool: PgPool, with_ai: bool) -> TestHar
         scripted: Some(scripted),
         indexer,
         ai,
+        keyword_indexer,
     }
 }
 
@@ -1380,10 +1387,11 @@ async fn harness_with_real_gateway(
     let chat_identity_store = ChatIdentityStore::new(pool.clone());
     let chat_observation_store = ChatObservationStore::new(pool.clone());
     let memory_catalog_store = Arc::new(MemoryCatalogStore::new(pool.clone()));
+    let store: Arc<dyn VectorStore> = Arc::new(PgVectorStore::new(pool.clone()));
+    let keyword_indexer = Arc::new(KeywordIndexer::new(Arc::clone(&store)));
     let (indexer, ai) = if with_ai {
         let generator = Arc::new(SimpleEmbeddingGenerator::new());
-        let store = Arc::new(InMemoryVectorStore::new());
-        let indexer = Arc::new(ContentIndexer::new(generator, store));
+        let indexer = Arc::new(ContentIndexer::new(generator, Arc::clone(&store)));
         let ai = Arc::new(AiService::new(
             Arc::clone(&indexer),
             Arc::clone(&permission_resolver),
@@ -1417,6 +1425,7 @@ async fn harness_with_real_gateway(
         scripted: None,
         indexer,
         ai,
+        keyword_indexer,
     }
 }
 
@@ -2611,7 +2620,7 @@ async fn duplicate_candidates_collapse_deterministically() {
 #[ignore = "requires DATABASE_URL and S3-compatible object storage"]
 async fn keyword_search_works_without_embeddings() {
     let _guard = SERIAL.lock().await;
-    // `ai = None`: only Files name/path + Chat Memory candidates exist.
+    // AI is disabled, but permitted keyword indexing remains available.
     let harness = harness_with_scripted_authority(pool().await, false).await;
     let pool = harness.pool.clone();
     let tenant = TenantId::from(harness.tenant);
@@ -2628,7 +2637,7 @@ async fn keyword_search_works_without_embeddings() {
     )
     .await;
     // Content-only match (invisible without embeddings: no name/path hit).
-    let content_only = create_file_with_content(
+    let mut content_only = create_file_with_content(
         &harness,
         owner.id,
         "operations.md",
@@ -2636,6 +2645,53 @@ async fn keyword_search_works_without_embeddings() {
         b"the secret budget figure is 42",
     )
     .await;
+    sqlx::query("UPDATE files SET mime_type = 'text/markdown' WHERE id = $1")
+        .bind(content_only.id)
+        .execute(&pool)
+        .await
+        .expect("mark the saved source as a Markdown Note");
+    content_only.mime_type = "text/markdown".to_string();
+    harness
+        .keyword_indexer
+        .index_note(
+            content_only.id,
+            content_only.name.clone(),
+            content_only.path.clone(),
+            "the secret budget figure is 42".to_string(),
+            content_only.mime_type.clone(),
+            owner.id,
+            owner_acl(tenant.0, content_only.id, owner.id),
+        )
+        .await
+        .expect("keyword indexing does not require AI or embeddings");
+    harness
+        .keyword_indexer
+        .index_note(
+            content_only.id,
+            content_only.name.clone(),
+            content_only.path.clone(),
+            "the secret budget figure is 42".to_string(),
+            content_only.mime_type.clone(),
+            owner.id,
+            owner_acl(tenant.0, content_only.id, owner.id),
+        )
+        .await
+        .expect("repeated keyword indexing is idempotent");
+    let row_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM note_index_chunks WHERE source_file_id = $1")
+            .bind(content_only.id)
+            .fetch_one(&pool)
+            .await
+            .expect("count repeated index rows");
+    assert_eq!(row_count, 1, "retries do not create duplicate chunks");
+    let embedding_is_null: bool = sqlx::query_scalar(
+        "SELECT embedding IS NULL FROM note_index_chunks WHERE source_file_id = $1",
+    )
+    .bind(content_only.id)
+    .fetch_one(&pool)
+    .await
+    .expect("keyword-only row is persisted");
+    assert!(embedding_is_null, "AI-disabled keyword rows have no vector");
     let keys = Keys::generate();
     let env = setup_tenant_with_relay_for_principal(
         &pool,
@@ -2673,18 +2729,44 @@ async fn keyword_search_works_without_embeddings() {
         .expect("the request succeeds");
     assert_eq!(
         response.results.len(),
-        2,
-        "the named file and the chat message appear without embeddings: {response:?}"
+        3,
+        "the named file, body match and chat message appear without AI: {response:?}"
     );
     let rendered = render_response(&response);
     assert!(
         rendered.contains(&named.id.to_string()),
         "the name/path-matched file appears"
     );
-    assert!(rendered.contains(&msg_id), "the chat message appears");
     assert!(
-        !rendered.contains(&content_only.id.to_string()),
-        "a content-only match (no name/path hit) yields nothing without embeddings"
+        rendered.contains(&content_only.id.to_string()),
+        "the note-body keyword match appears without embeddings"
+    );
+    assert!(rendered.contains(&msg_id), "the chat message appears");
+
+    let mut denied_acl = owner_acl(tenant.0, content_only.id, owner.id);
+    denied_acl.embedding_policy = EmbeddingPolicy::Denied;
+    harness
+        .keyword_indexer
+        .index_note(
+            content_only.id,
+            content_only.name.clone(),
+            content_only.path.clone(),
+            "the secret budget figure is 42".to_string(),
+            content_only.mime_type.clone(),
+            owner.id,
+            denied_acl,
+        )
+        .await
+        .expect("a denied content-index policy removes previous keyword rows");
+    let remaining_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM note_index_chunks WHERE source_file_id = $1")
+            .bind(content_only.id)
+            .fetch_one(&pool)
+            .await
+            .expect("count rows after policy revocation");
+    assert_eq!(
+        remaining_rows, 0,
+        "denied body text is removed from the index"
     );
 
     cleanup(&pool, tenant).await;

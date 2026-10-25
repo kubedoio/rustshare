@@ -19,7 +19,8 @@ use rustshare_core::domain::{ActionCapability, ApplicationId};
 use rustshare_core::services::is_hidden_file_for_path;
 #[cfg(test)]
 use rustshare_core::services::is_hidden_file_name;
-use rustshare_core::services::SemanticSearchResult;
+use rustshare_core::services::{KeywordIndexer, PermissionResolver, SemanticSearchResult};
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_memory::MemoryCatalogRecord;
 use rustshare_resource_auth::{
     PrincipalContext, Purpose, Representation, ResourceRef, SourceAuthorizer, SourceError,
@@ -175,6 +176,8 @@ pub struct UnifiedSearchService {
     authorizer: Arc<SourceAuthorizer>,
     metadata: Arc<MetadataStore>,
     ai: Option<Arc<AppAiService>>,
+    keyword_indexer: Option<Arc<KeywordIndexer>>,
+    permission_resolver: Option<Arc<PermissionResolver<PermissionResolverRepository>>>,
     memory_catalog: Arc<MemoryCatalogStore>,
 }
 
@@ -189,8 +192,20 @@ impl UnifiedSearchService {
             authorizer,
             metadata,
             ai,
+            keyword_indexer: None,
+            permission_resolver: None,
             memory_catalog,
         }
+    }
+
+    pub fn with_keyword_indexer(
+        mut self,
+        keyword_indexer: Arc<KeywordIndexer>,
+        permission_resolver: Arc<PermissionResolver<PermissionResolverRepository>>,
+    ) -> Self {
+        self.keyword_indexer = Some(keyword_indexer);
+        self.permission_resolver = Some(permission_resolver);
+        self
     }
 
     /// Run one permission-aware unified search.
@@ -670,7 +685,61 @@ impl UnifiedSearchService {
             })
             .collect();
 
-        // Note-index candidates (keyword + vector) when AI is configured.
+        // Note-index keyword candidates are independent of AI and embeddings.
+        if let (Some(indexer), Some(permission_resolver)) =
+            (&self.keyword_indexer, &self.permission_resolver)
+        {
+            match permission_resolver
+                .resolve_user_group_ids(ctx.principal_id.0, ctx.tenant_id.0)
+                .await
+            {
+                Ok(group_ids) => {
+                    let principal = rustshare_core::services::RetrievalPrincipal {
+                        tenant_id: ctx.tenant_id.0,
+                        workspace_id: Some(ctx.tenant_id.0),
+                        user_id: ctx.principal_id.0,
+                        group_ids,
+                        min_acl_versions: HashMap::new(),
+                    };
+                    match indexer.search_with_acl(&principal, query, budget).await {
+                        Ok(results) => {
+                            candidates.extend(results.into_iter().map(|(doc, score)| Candidate {
+                                source_application: FILES_APPLICATION.to_string(),
+                                source_type: "file".to_string(),
+                                resource_ref: ResourceRef::new(
+                                    ApplicationId::new(FILES_APPLICATION),
+                                    "file",
+                                    doc.file_id.to_string(),
+                                ),
+                                score,
+                                title: doc.file_name,
+                                location: Some(doc.file_path),
+                                occurred_at: None,
+                                file_id: Some(doc.file_id),
+                                note_id: None,
+                                mime_type: Some(doc.mime_type),
+                                cached_hint: None,
+                                message_id: None,
+                                community_id: None,
+                                channel_id: None,
+                                channel_kind: None,
+                                author_pubkey: None,
+                            }))
+                        }
+                        Err(error) => tracing::warn!(
+                            %error,
+                            "unified search: keyword candidates unavailable; skipping source"
+                        ),
+                    }
+                }
+                Err(error) => tracing::warn!(
+                    %error,
+                    "unified search: keyword ACL principal unavailable; skipping source"
+                ),
+            }
+        }
+
+        // Semantic candidates remain available only when AI is configured.
         if let Some(ai) = &self.ai {
             let user_id = ctx.principal_id.0;
             let tenant_id = ctx.tenant_id.0;
@@ -683,13 +752,13 @@ impl UnifiedSearchService {
                     );
                 }
             }
-            match ai.keyword_search(query, user_id, tenant_id, budget).await {
-                Ok(results) => candidates.extend(results.into_iter().map(semantic_candidate)),
-                Err(error) => {
-                    tracing::warn!(
+            if self.keyword_indexer.is_none() || self.permission_resolver.is_none() {
+                match ai.keyword_search(query, user_id, tenant_id, budget).await {
+                    Ok(results) => candidates.extend(results.into_iter().map(semantic_candidate)),
+                    Err(error) => tracing::warn!(
                         %error,
-                        "unified search: keyword candidates unavailable; skipping source"
-                    );
+                        "unified search: legacy keyword candidates unavailable; skipping source"
+                    ),
                 }
             }
         }

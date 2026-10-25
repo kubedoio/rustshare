@@ -150,6 +150,11 @@ jobs:
           RUSTSHARE_SCIM_BEARER_TOKEN="$(openssl rand -hex 32)" \
             cargo test --workspace --all-features -j 1 -- --ignored --test-threads=1
 
+      - name: Notes keyword search without AI (PostgreSQL)
+        run: >-
+          cargo test -p rustshare-server --test unified_search_test
+          keyword_search_works_without_embeddings -- --ignored --exact --test-threads=1
+
       - name: Ask Workspace security matrix (repeated)
         # Keep this explicit: the recording-provider matrix is the security
         # gate for source authorization and must pass twice, independently of

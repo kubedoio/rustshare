@@ -164,13 +164,6 @@ pub async fn reconcile_files_memory(
                 )),
             )
         })?;
-    let Some(ai_service) = state.ai_service.as_ref() else {
-        return Err((
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorResponse::new("Memory index is unavailable")),
-        ));
-    };
-
     let mut page = state
         .metadata_store
         .list_files_for_memory_reconciliation(
@@ -204,8 +197,9 @@ pub async fn reconcile_files_memory(
                 internal_error()
             })?
         else {
-            let removed = ai_service
-                .remove_source_file_chunks(body.tenant_id, file.id)
+            let removed = state
+                .note_service
+                .remove_source_file_from_index(file.id, body.tenant_id)
                 .await
                 .map_err(|error| {
                     tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: index removal failed");
@@ -216,8 +210,9 @@ pub async fn reconcile_files_memory(
             continue;
         };
         if !is_active || !entry.owner_available {
-            let removed = ai_service
-                .remove_source_file_chunks(body.tenant_id, file.id)
+            let removed = state
+                .note_service
+                .remove_source_file_from_index(file.id, body.tenant_id)
                 .await
                 .map_err(|error| {
                     tracing::error!(tenant = %body.tenant_id, file_id = %file.id, %error, "memory files reconcile: index removal failed");

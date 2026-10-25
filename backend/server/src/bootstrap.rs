@@ -21,9 +21,9 @@ use rustshare_core::{
     events::EventBroadcaster,
     services::{
         AiService, ChatIntegrationService, ContentIndexer, FileService, FolderService,
-        HttpWebhookDispatcher, IntegrationEventPublisher, NotificationService, PermissionResolver,
-        ShareService, SimpleEmbeddingGenerator, ThumbnailService, UserShareService,
-        UserShareServiceDeps, VaultSyncService,
+        HttpWebhookDispatcher, IntegrationEventPublisher, KeywordIndexer, NotificationService,
+        PermissionResolver, ShareService, SimpleEmbeddingGenerator, ThumbnailService,
+        UserShareService, UserShareServiceDeps, VaultSyncService, VectorStore,
     },
 };
 use rustshare_crypto::{SecretEncryptionKey, WebhookSigner};
@@ -65,6 +65,7 @@ struct Services {
     notification_service: Arc<NotificationService<NotificationRepository>>,
     user_share_service: Arc<AppUserShareService>,
     ai_service: Option<Arc<AppAiService>>,
+    keyword_indexer: Arc<KeywordIndexer>,
     upload_service: Arc<AppUploadService>,
     user_repository: Arc<UserRepository>,
     vault_sync_service: Arc<VaultSyncService<MetadataStore, ObjectStore>>,
@@ -414,23 +415,32 @@ async fn init_services(
         "calendar OAuth redirect URIs (register these verbatim in the provider console)"
     );
 
-    // Shared content indexer used both by the AI service and by the note
-    // service's indexing callback sink. Kept outside the tokio::join! so both
-    // services can be wired to the same in-memory index.
+    // Shared PostgreSQL index used by keyword search, the optional AI service,
+    // and NoteService's indexing callback sink.
     let ai_service_enabled = config.ai_enabled;
+    let vector_store: Arc<dyn VectorStore> = Arc::new(PgVectorStore::new(db_pool.clone()));
+    let keyword_indexer = Arc::new(KeywordIndexer::new(Arc::clone(&vector_store)));
     let shared_content_indexer: Option<Arc<ContentIndexer<SimpleEmbeddingGenerator>>> =
         if ai_service_enabled {
             let embedding_generator = Arc::new(SimpleEmbeddingGenerator::new());
-            let store = Arc::new(PgVectorStore::new(db_pool.clone()));
-            Some(Arc::new(ContentIndexer::new(embedding_generator, store)))
+            Some(Arc::new(ContentIndexer::new(
+                embedding_generator,
+                Arc::clone(&vector_store),
+            )))
         } else {
             None
         };
 
     let note_index_sink: Option<Arc<dyn crate::services::note_index_sink::NoteIndexSink>> =
-        shared_content_indexer.as_ref().map(|indexer| {
+        Some(if let Some(indexer) = shared_content_indexer.as_ref() {
             Arc::new(
                 crate::services::note_index_sink::ContentIndexerNoteSink::new(Arc::clone(indexer)),
+            ) as Arc<dyn crate::services::note_index_sink::NoteIndexSink>
+        } else {
+            Arc::new(
+                crate::services::note_index_sink::KeywordIndexerNoteSink::new(Arc::clone(
+                    &keyword_indexer,
+                )),
             ) as Arc<dyn crate::services::note_index_sink::NoteIndexSink>
         });
 
@@ -622,6 +632,7 @@ async fn init_services(
         notification_service,
         user_share_service,
         ai_service,
+        keyword_indexer,
         upload_service,
         user_repository,
         vault_sync_service,
@@ -768,7 +779,7 @@ pub async fn init_app() -> Result<AppState> {
     let trash_cleanup_config = TrashCleanupConfig::from_env();
     spawn_trash_cleanup_worker(
         Arc::clone(&metadata_store),
-        services.ai_service.clone(),
+        Arc::clone(&services.note_service),
         trash_cleanup_config,
         shutdown_tx.subscribe(),
     );
@@ -1011,15 +1022,24 @@ pub async fn init_app() -> Result<AppState> {
     // Permission-aware unified search: candidates come from Files metadata,
     // the note index and the Memory catalog; final inclusion is gated by the
     // source authorizer (Files → PermissionResolver; Chat → BuzzAuthority).
-    let unified_search_service =
-        Arc::new(crate::services::unified_search::UnifiedSearchService::new(
+    let unified_search_service = Arc::new(
+        crate::services::unified_search::UnifiedSearchService::new(
             Arc::clone(&source_authorizer),
             Arc::clone(&metadata_store),
             services.ai_service.clone(),
             Arc::clone(&memory_catalog_store),
-        ));
-    let llm_provider = crate::services::ask_workspace::OpenAiCompatibleProvider::from_env()
-        .map_err(|error| anyhow::anyhow!("LLM provider configuration failed: {error}"))?;
+        )
+        .with_keyword_indexer(
+            Arc::clone(&services.keyword_indexer),
+            Arc::clone(&permission_resolver),
+        ),
+    );
+    let llm_provider = if config.ai_enabled {
+        crate::services::ask_workspace::OpenAiCompatibleProvider::from_env()
+            .map_err(|error| anyhow::anyhow!("LLM provider configuration failed: {error}"))?
+    } else {
+        None
+    };
     let ask_workspace_service = Arc::new(crate::services::ask_workspace::AskWorkspaceService::new(
         Arc::clone(&unified_search_service),
         llm_provider,

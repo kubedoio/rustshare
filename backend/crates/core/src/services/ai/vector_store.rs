@@ -20,6 +20,19 @@ pub trait VectorStore: Send + Sync {
         acl: &NoteAclPayload,
     ) -> anyhow::Result<()>;
 
+    /// Upsert a keyword-only chunk without an embedding. Stores that require
+    /// embeddings may fall back to `upsert_chunk`; persistent stores should
+    /// represent the missing vector as NULL so semantic search ignores it.
+    async fn upsert_keyword_chunk(
+        &self,
+        tenant_id: Uuid,
+        chunk_id: Uuid,
+        doc: &IndexedDocument,
+        acl: &NoteAclPayload,
+    ) -> anyhow::Result<()> {
+        self.upsert_chunk(tenant_id, chunk_id, doc, acl).await
+    }
+
     /// Search for chunks similar to the query, pre-filtered by tenant and ACL.
     async fn search_with_acl(
         &self,

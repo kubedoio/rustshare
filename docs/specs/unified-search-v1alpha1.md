@@ -98,7 +98,8 @@ Field semantics:
 PrincipalContext + query
 → candidate retrieval
     Files: files metadata name/path (always)
-           + note index keyword + vector (when AI configured)
+           + permitted note-index keyword (always)
+           + note-index vector (when AI configured)
     Chat:  Memory catalog keyword
 → dedupe by canonical ResourceRef (keep best score)
 → batch reauthorization per owning source
@@ -140,9 +141,10 @@ Simple and deterministic (no reranker, no external search infra):
 - Dedupe keeps the max score per canonical `ResourceRef`.
 - Final sort: score desc, occurred_at desc, source application, ref URI —
   fully deterministic for API use.
-- Keyword search works without embeddings/AI providers: name/path and Chat
-  candidate sources are always available; the note-index sources simply
-  contribute nothing when AI is disabled.
+- Keyword search works without embeddings/AI providers: Files name/path, Chat
+  catalog and policy-permitted Notes body candidates remain available when AI
+  is disabled. Keyword-only rows have no vector. Existing `embedding_policy`
+  continues to gate whether note body text may be retained in the index.
 
 ## Fail-closed and existence-hiding
 

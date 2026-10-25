@@ -23,6 +23,67 @@ impl PgVectorStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+
+    async fn upsert_chunk_with_embedding(
+        &self,
+        tenant_id: Uuid,
+        chunk_id: Uuid,
+        doc: &IndexedDocument,
+        acl: &NoteAclPayload,
+        embedding: Option<String>,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO note_index_chunks (
+                id, tenant_id, workspace_id, source_folder_id, note_id, source_file_id,
+                file_name, file_path, content, mime_type, owner_id, embedding, acl_hash,
+                acl_version, read_acl, visibility, embedding_policy, indexed_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::vector, $13, $14, $15, $16, $17, $18
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                tenant_id = EXCLUDED.tenant_id,
+                workspace_id = EXCLUDED.workspace_id,
+                source_folder_id = EXCLUDED.source_folder_id,
+                note_id = EXCLUDED.note_id,
+                source_file_id = EXCLUDED.source_file_id,
+                file_name = EXCLUDED.file_name,
+                file_path = EXCLUDED.file_path,
+                content = EXCLUDED.content,
+                mime_type = EXCLUDED.mime_type,
+                owner_id = EXCLUDED.owner_id,
+                embedding = EXCLUDED.embedding,
+                acl_hash = EXCLUDED.acl_hash,
+                acl_version = EXCLUDED.acl_version,
+                read_acl = EXCLUDED.read_acl,
+                visibility = EXCLUDED.visibility,
+                embedding_policy = EXCLUDED.embedding_policy,
+                indexed_at = EXCLUDED.indexed_at
+            "#,
+        )
+        .bind(chunk_id)
+        .bind(tenant_id)
+        .bind(acl.workspace_id)
+        .bind(acl.source_folder_id)
+        .bind(acl.note_id)
+        .bind(acl.source_file_id)
+        .bind(&doc.file_name)
+        .bind(&doc.file_path)
+        .bind(&doc.content)
+        .bind(&doc.mime_type)
+        .bind(doc.owner_id)
+        .bind(embedding)
+        .bind(&acl.acl_hash)
+        .bind(acl.acl_version)
+        .bind(&acl.read_acl)
+        .bind(&acl.visibility)
+        .bind(&acl.embedding_policy)
+        .bind(doc.indexed_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 /// Encode a slice of f32 as a pgvector text literal.
@@ -65,8 +126,12 @@ fn row_to_indexed_doc(row: &PgRow, tenant_id: Uuid) -> Result<IndexedDocument> {
         embedding_policy: row.try_get("embedding_policy")?,
     };
 
-    let embedding_text: String = row.try_get("embedding")?;
-    let embedding = decode_vector(&embedding_text)?;
+    let embedding_text: Option<String> = row.try_get("embedding")?;
+    let embedding = embedding_text
+        .as_deref()
+        .map(decode_vector)
+        .transpose()?
+        .unwrap_or_default();
 
     Ok(IndexedDocument {
         file_id: row.try_get("id")?,
@@ -122,59 +187,25 @@ impl VectorStore for PgVectorStore {
         doc: &IndexedDocument,
         acl: &NoteAclPayload,
     ) -> Result<()> {
-        let embedding_text = encode_vector(&doc.embedding);
-
-        sqlx::query(
-            r#"
-            INSERT INTO note_index_chunks (
-                id, tenant_id, workspace_id, source_folder_id, note_id, source_file_id,
-                file_name, file_path, content, mime_type, owner_id, embedding, acl_hash,
-                acl_version, read_acl, visibility, embedding_policy, indexed_at
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::vector, $13, $14, $15, $16, $17, $18
-            )
-            ON CONFLICT (id) DO UPDATE SET
-                tenant_id = EXCLUDED.tenant_id,
-                workspace_id = EXCLUDED.workspace_id,
-                source_folder_id = EXCLUDED.source_folder_id,
-                note_id = EXCLUDED.note_id,
-                source_file_id = EXCLUDED.source_file_id,
-                file_name = EXCLUDED.file_name,
-                file_path = EXCLUDED.file_path,
-                content = EXCLUDED.content,
-                mime_type = EXCLUDED.mime_type,
-                owner_id = EXCLUDED.owner_id,
-                embedding = EXCLUDED.embedding,
-                acl_hash = EXCLUDED.acl_hash,
-                acl_version = EXCLUDED.acl_version,
-                read_acl = EXCLUDED.read_acl,
-                visibility = EXCLUDED.visibility,
-                embedding_policy = EXCLUDED.embedding_policy,
-                indexed_at = EXCLUDED.indexed_at
-            "#,
+        self.upsert_chunk_with_embedding(
+            tenant_id,
+            chunk_id,
+            doc,
+            acl,
+            Some(encode_vector(&doc.embedding)),
         )
-        .bind(chunk_id)
-        .bind(tenant_id)
-        .bind(acl.workspace_id)
-        .bind(acl.source_folder_id)
-        .bind(acl.note_id)
-        .bind(acl.source_file_id)
-        .bind(&doc.file_name)
-        .bind(&doc.file_path)
-        .bind(&doc.content)
-        .bind(&doc.mime_type)
-        .bind(doc.owner_id)
-        .bind(&embedding_text)
-        .bind(&acl.acl_hash)
-        .bind(acl.acl_version)
-        .bind(&acl.read_acl)
-        .bind(&acl.visibility)
-        .bind(&acl.embedding_policy)
-        .bind(doc.indexed_at)
-        .execute(&self.pool)
-        .await?;
+        .await
+    }
 
-        Ok(())
+    async fn upsert_keyword_chunk(
+        &self,
+        tenant_id: Uuid,
+        chunk_id: Uuid,
+        doc: &IndexedDocument,
+        acl: &NoteAclPayload,
+    ) -> Result<()> {
+        self.upsert_chunk_with_embedding(tenant_id, chunk_id, doc, acl, None)
+            .await
     }
 
     async fn search_with_acl(
@@ -203,6 +234,7 @@ impl VectorStore for PgVectorStore {
             FROM note_index_chunks
             WHERE tenant_id = $2
               AND embedding_policy = 'allowed'
+              AND embedding IS NOT NULL
               AND 1 - (embedding <=> $1::vector) > 0.1
               AND (
                   owner_id = $3

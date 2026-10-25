@@ -197,11 +197,11 @@ pub fn validate_and_project(acl: &NoteAclPayload) -> anyhow::Result<IndexAclProj
 }
 
 /// Maximum content length to index per document (to prevent memory issues).
-const MAX_CONTENT_LENGTH: usize = 100_000;
+pub(crate) const MAX_CONTENT_LENGTH: usize = 100_000;
 
 /// Truncate text to a maximum number of Unicode characters without splitting
 /// multi-byte code points.
-fn truncate_to_length(text: &str, max_len: usize) -> String {
+pub(crate) fn truncate_to_length(text: &str, max_len: usize) -> String {
     text.chars().take(max_len).collect()
 }
 
@@ -491,11 +491,17 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
         note_id: Uuid,
         new_acl: NoteAclPayload,
     ) -> usize {
-        match self
-            .store
-            .update_note_acl(tenant_id, note_id, &new_acl)
-            .await
-        {
+        let update = if matches!(
+            new_acl.embedding_policy.parse::<EmbeddingPolicy>(),
+            Ok(EmbeddingPolicy::Allowed)
+        ) {
+            self.store
+                .update_note_acl(tenant_id, note_id, &new_acl)
+                .await
+        } else {
+            self.store.remove_note_chunks(tenant_id, note_id).await
+        };
+        match update {
             Ok(count) => count,
             Err(e) => {
                 tracing::error!(
@@ -669,7 +675,10 @@ impl<EG: EmbeddingGenerator> ContentIndexer<EG> {
 /// The storage payload keeps the stringified forms of enums and principals so
 /// existing vector-store implementations and database columns continue to work
 /// without migration.
-fn note_acl_payload_from_projection(file_id: Uuid, acl: &IndexAclProjection) -> NoteAclPayload {
+pub(crate) fn note_acl_payload_from_projection(
+    file_id: Uuid,
+    acl: &IndexAclProjection,
+) -> NoteAclPayload {
     NoteAclPayload {
         tenant_id: acl.tenant_id,
         workspace_id: acl.workspace_id,
@@ -689,7 +698,7 @@ fn note_acl_payload_from_projection(file_id: Uuid, acl: &IndexAclProjection) -> 
 ///
 /// If the document does not start with a frontmatter block, the original text
 /// is returned unchanged.
-fn strip_frontmatter(doc: &str) -> String {
+pub(crate) fn strip_frontmatter(doc: &str) -> String {
     split_frontmatter(doc)
         .map(|(_, body)| body)
         .unwrap_or_else(|| doc.to_string())

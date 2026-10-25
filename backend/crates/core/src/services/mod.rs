@@ -6,6 +6,7 @@ pub mod eml_parser;
 mod errors;
 mod file_service;
 mod folder_service;
+mod keyword_index;
 mod notification_errors;
 mod notification_service;
 mod permission_resolver;
@@ -47,6 +48,7 @@ pub use file_service::{
 pub use folder_service::{
     EventStoreOps as FolderEventStoreOps, FolderService, MetadataStoreOps as FolderMetadataStoreOps,
 };
+pub use keyword_index::KeywordIndexer;
 pub use notification_errors::NotificationError;
 pub use notification_service::{
     CreateNotification, NotificationRepositoryOps, NotificationService,

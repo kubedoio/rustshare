@@ -1,4 +1,4 @@
-//! Callback sink that forwards note indexing operations to the AI content index.
+//! Callback sink that forwards note indexing operations to the shared content index.
 //!
 //! `NoteService` does not own the `ContentIndexer`; instead it accepts an
 //! optional `Arc<dyn NoteIndexSink>`. This keeps unit tests lightweight while
@@ -9,7 +9,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use rustshare_core::domain::UserId;
-use rustshare_core::services::{ContentIndexer, EmbeddingGenerator, IndexAclProjection};
+use rustshare_core::services::{
+    ContentIndexer, EmbeddingGenerator, IndexAclProjection, KeywordIndexer,
+};
 use uuid::Uuid;
 
 /// Trait for note indexing callbacks.
@@ -51,16 +53,16 @@ pub trait NoteIndexSink: Send + Sync {
         &self,
         tenant_id: Uuid,
         file_id: Uuid,
-    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send>> {
         let remove = self.remove_note(tenant_id, file_id);
         Box::pin(async move {
             remove.await;
-            Ok(())
+            Ok(0)
         })
     }
 }
 
-/// No-op sink used when AI indexing is disabled.
+/// No-op sink for configurations where Notes content indexing is unavailable.
 pub struct NoOpNoteIndexSink;
 
 impl NoteIndexSink for NoOpNoteIndexSink {
@@ -191,13 +193,89 @@ impl<EG: EmbeddingGenerator + Send + Sync + 'static> NoteIndexSink for ContentIn
         &self,
         tenant_id: Uuid,
         file_id: Uuid,
-    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send>> {
         let indexer = self.indexer.clone();
         Box::pin(async move {
             indexer
                 .remove_source_file_chunks(tenant_id, file_id)
                 .await
-                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+    }
+}
+
+/// Note index sink used when AI embeddings are disabled. It writes keyword
+/// content and current ACL projections to the shared PostgreSQL index only.
+pub struct KeywordIndexerNoteSink {
+    indexer: Arc<KeywordIndexer>,
+}
+
+impl KeywordIndexerNoteSink {
+    pub fn new(indexer: Arc<KeywordIndexer>) -> Self {
+        Self { indexer }
+    }
+}
+
+impl NoteIndexSink for KeywordIndexerNoteSink {
+    #[allow(clippy::too_many_arguments)]
+    fn index_note(
+        &self,
+        file_id: Uuid,
+        file_name: String,
+        file_path: String,
+        content: String,
+        mime_type: String,
+        owner_id: UserId,
+        acl: IndexAclProjection,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
+        let indexer = Arc::clone(&self.indexer);
+        Box::pin(async move {
+            indexer
+                .index_note(
+                    file_id, file_name, file_path, content, mime_type, owner_id, acl,
+                )
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn update_acl(
+        &self,
+        tenant_id: Uuid,
+        note_id: Uuid,
+        acl: rustshare_core::services::NoteAclPayload,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        let indexer = Arc::clone(&self.indexer);
+        Box::pin(async move {
+            if let Err(error) = indexer.update_note_acl(tenant_id, note_id, &acl).await {
+                tracing::warn!(tenant_id = %tenant_id, note_id = %note_id, %error, "Failed to update keyword index ACL");
+            }
+        })
+    }
+
+    fn remove_note(
+        &self,
+        tenant_id: Uuid,
+        note_id: Uuid,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        let indexer = Arc::clone(&self.indexer);
+        Box::pin(async move {
+            if let Err(error) = indexer.remove_note_chunks(tenant_id, note_id).await {
+                tracing::warn!(tenant_id = %tenant_id, note_id = %note_id, %error, "Failed to remove note from keyword index");
+            }
+        })
+    }
+
+    fn remove_source_file(
+        &self,
+        tenant_id: Uuid,
+        file_id: Uuid,
+    ) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send>> {
+        let indexer = Arc::clone(&self.indexer);
+        Box::pin(async move {
+            indexer
+                .remove_source_file_chunks(tenant_id, file_id)
+                .await
                 .map_err(|error| error.to_string())
         })
     }
