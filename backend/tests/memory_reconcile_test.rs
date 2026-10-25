@@ -177,7 +177,7 @@ async fn files_memory_reconciliation_repairs_a_missed_index_and_deleted_source()
     let file_id = Uuid::new_v4();
     let mut file = rustshare_core::domain::File::new(
         "index.md".to_string(),
-        format!("/Workspace/Meetings/2026/10/{file_id}/index.md"),
+        format!("/Workspace/Meetings/General/2026/2026-10-25-recovery-{file_id}/index.md"),
         format!("memory-reconcile-{file_id}"),
         body.len() as i64,
         "text/markdown".to_string(),
