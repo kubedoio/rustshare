@@ -187,6 +187,10 @@ Without LLM/embeddings, Elembra Memory should still provide:
 - source links;
 - retention/audit integration.
 
+For Files-backed Notes, keyword search uses the existing PostgreSQL index and
+does not require AI initialization. The existing note `embedding_policy`
+continues to gate retention of indexed body text, including keyword-only rows.
+
 This is an important sovereignty and operational property.
 
 ## Failure/rebuild model

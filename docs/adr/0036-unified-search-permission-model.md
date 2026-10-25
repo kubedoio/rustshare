@@ -36,8 +36,9 @@ producers are never final authority.**
 
 1. **Candidate producers** (hints, tenant-scoped, never authorization):
    - Files name/path over the `files` metadata table (always available);
-   - note-index keyword (`keyword_search_with_acl`) and vector
-     (`semantic_search`) over `note_index_chunks` (when AI is configured);
+   - note-index keyword (`keyword_search_with_acl`) over `note_index_chunks`
+     (independent of AI configuration), and vector (`semantic_search`) when
+     AI is configured;
    - Chat over the Memory-owned `memory_catalog` (tombstoned records
      excluded). `memory_catalog` is a searchable index of references — it
      never authorizes.
@@ -61,9 +62,11 @@ producers are never final authority.**
    a citation reauthorizes through the owning source. Chat provenance
    preserves community/channel/message context as citation context, never as
    authorization.
-6. **Keyword search works without embeddings/AI providers**: name/path and
-   Chat sources are always available; the note-index sources simply contribute
-   nothing when AI is disabled.
+6. **Keyword search works without embeddings/AI providers**: Files name/path,
+   Chat catalog, and policy-permitted Notes body keyword search are available
+   when AI is disabled. Keyword-only rows have no vector; vector similarity is
+   available only when AI is configured. Existing `embedding_policy` continues
+   to gate all retained note body text, and `denied` removes prior chunks.
 7. **No new infrastructure**: reuse `SourceAuthorizer`, `ResourceRef`,
    `PrincipalContext`, the existing permission-aware note index, the Memory
    catalog, and the Buzz authority gateway. No new vector store, no new

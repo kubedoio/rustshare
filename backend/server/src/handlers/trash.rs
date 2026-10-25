@@ -100,16 +100,13 @@ pub async fn empty_trash(
             // actually deleted. empty_trash permanently deletes files, so
             // restore is not possible; cleanup is best-effort and must not
             // fail the request.
-            if let Some(ref ai_service) = state.ai_service {
-                for file_id in deleted_file_ids {
-                    if let Err(e) = ai_service.remove_file(file_id, auth.tenant_id).await {
-                        tracing::warn!(
-                            file_id = %file_id,
-                            tenant_id = %auth.tenant_id,
-                            error = %e,
-                            "Failed to remove file chunk from AI index after trash empty"
-                        );
-                    }
+            for file_id in deleted_file_ids {
+                if let Err(e) = state
+                    .note_service
+                    .remove_source_file_from_index(file_id, auth.tenant_id)
+                    .await
+                {
+                    tracing::warn!(file_id = %file_id, tenant_id = %auth.tenant_id, error = %e, "Failed to remove file chunk from content index after trash empty");
                 }
             }
             Ok(StatusCode::NO_CONTENT.into_response())

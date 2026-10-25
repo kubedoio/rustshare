@@ -9,10 +9,12 @@ consumer receipts and behavior remain unchanged.
 
 Files-backed Notes use a separate projection in `note_index_chunks`. Note
 mutations invoke `NoteIndexSink` directly; the production sink writes the
-PostgreSQL vector index but currently logs and swallows failures. There is no
-durable Files/Notes event consumer or rebuild endpoint. Ordinary Files search
-uses authoritative metadata queries; the rebuildable content projection in
-this slice is the existing OKF note index.
+shared PostgreSQL content index but currently logs and swallows failures. AI
+disabled does not disable policy-permitted keyword indexing; keyword-only rows
+have no vector. There is no
+durable Files/Notes event consumer. M3.1's rebuild endpoint remains a manual,
+admin-triggered repair path. Ordinary Files search uses authoritative metadata
+queries; the rebuildable content projection is the existing OKF note index.
 
 M3.1 adds an admin-triggered, cursor-paged sweep over authoritative `files`
 rows for the caller's tenant. The cursor is a canonical Files ResourceRef
@@ -56,5 +58,5 @@ to its Files source file ID; the normal search path renders that ID as the
 canonical ResourceRef and performs live Files authorization.
 
 The underlying `files.deleted_at` record is the deletion tombstone. The sweep
-removes any associated vector chunks, including rows whose OKF note ID differs
+removes any associated index chunks, including rows whose OKF note ID differs
 from the file ID. It does not recreate or copy authoritative source records.

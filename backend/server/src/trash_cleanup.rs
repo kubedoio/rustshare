@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use rustshare_storage::MetadataStore;
 use tracing::{error, info, warn};
 
-use crate::state::AppAiService;
+use crate::services::note_service::NoteService;
 
 #[derive(Debug, Clone)]
 pub struct TrashCleanupConfig {
@@ -32,7 +32,7 @@ impl TrashCleanupConfig {
 
 pub fn spawn_trash_cleanup_worker(
     metadata_store: Arc<MetadataStore>,
-    ai_service: Option<Arc<AppAiService>>,
+    note_service: Arc<NoteService>,
     config: TrashCleanupConfig,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) {
@@ -54,7 +54,7 @@ pub fn spawn_trash_cleanup_worker(
                     break;
                 }
                 _ = tokio::time::sleep(config.interval) => {
-                    if let Err(error) = tick_trash_cleanup(&metadata_store, ai_service.clone()).await {
+                    if let Err(error) = tick_trash_cleanup(&metadata_store, Arc::clone(&note_service)).await {
                         error!(error = %error, "Trash cleanup tick failed");
                     }
                 }
@@ -65,7 +65,7 @@ pub fn spawn_trash_cleanup_worker(
 
 async fn tick_trash_cleanup(
     metadata_store: &MetadataStore,
-    ai_service: Option<Arc<AppAiService>>,
+    note_service: Arc<NoteService>,
 ) -> anyhow::Result<()> {
     let users = metadata_store
         .list_users_with_trash_retention()
@@ -93,16 +93,12 @@ async fn tick_trash_cleanup(
                     );
                 }
 
-                if let Some(ref ai_service) = ai_service {
-                    for file_id in &cleaned {
-                        if let Err(e) = ai_service.remove_file(*file_id, tenant_id).await {
-                            warn!(
-                                file_id = %file_id,
-                                tenant_id = %tenant_id,
-                                error = %e,
-                                "Failed to remove file chunk from AI index during trash cleanup"
-                            );
-                        }
+                for file_id in &cleaned {
+                    if let Err(e) = note_service
+                        .remove_source_file_from_index(*file_id, tenant_id)
+                        .await
+                    {
+                        warn!(file_id = %file_id, tenant_id = %tenant_id, error = %e, "Failed to remove file chunk from content index during trash cleanup");
                     }
                 }
 

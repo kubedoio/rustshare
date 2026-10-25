@@ -808,7 +808,7 @@ impl NoteService {
             .map_err(|e| NoteError::Database(format!("Failed to resolve ACL principals: {e}")))
     }
 
-    /// Build the ACL projection used by the AI content indexer.
+    /// Build the ACL projection used by the shared Notes content index.
     ///
     /// Returns an error if any resolved read principal cannot be parsed. Parsed
     /// principals come from the authoritative permission resolver, so a parse
@@ -925,8 +925,8 @@ impl NoteService {
 
     /// Rebuild the current note index from its authoritative Files row and
     /// object-store content. Returns `true` when an eligible note was indexed.
-    /// Non-note or disabled-embedding resources have their chunks removed by
-    /// source file identity; deleted rows are removed by the page reconciler.
+    /// Non-note or policy-denied resources have their chunks removed by source
+    /// file identity; deleted rows are removed by the page reconciler.
     pub async fn reconcile_index_file(
         &self,
         file_id: Uuid,
@@ -982,7 +982,7 @@ impl NoteService {
             .await
     }
 
-    /// Remove a single note from the AI index.
+    /// Remove a single note from the shared Notes content index.
     pub async fn remove_note_from_index(
         &self,
         file_id: Uuid,
@@ -1009,6 +1009,27 @@ impl NoteService {
             sink.remove_note(tenant_id, note_id).await;
         }
         Ok(())
+    }
+
+    /// Remove all indexed chunks for an authoritative Files source. Used by
+    /// file lifecycle handlers and reconciliation independently of AI state.
+    pub async fn remove_source_file_from_index(
+        &self,
+        file_id: Uuid,
+        tenant_id: Uuid,
+    ) -> Result<usize, NoteError> {
+        let Some(sink) = &self.index_sink else {
+            return Err(NoteError::Storage(
+                "keyword index is unavailable".to_string(),
+            ));
+        };
+        sink.remove_source_file(tenant_id, file_id)
+            .await
+            .map_err(|error| {
+                NoteError::Storage(format!(
+                    "Failed to remove source from keyword index: {error}"
+                ))
+            })
     }
 
     /// Refresh the indexed ACL projection for a resource after a share
@@ -1048,7 +1069,7 @@ impl NoteService {
 
     /// Refresh the indexed ACL projection for every resource shared with a group.
     ///
-    /// Call after group membership changes so the AI index reflects the new
+    /// Call after group membership changes so the Notes index reflects the new
     /// effective ACL for all resources shared with that group. Targets are the
     /// active shares (`recipient_group_id`, `revoked_at IS NULL`) and each
     /// share contributes its own tenant — never the group's tenant, which may
