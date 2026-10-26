@@ -134,18 +134,42 @@ async fn seed_authoritative_source(
         .unwrap();
 }
 
+async fn cleanup_authoritative_sources(pool: &sqlx::PgPool, sources: &[(Uuid, Uuid, Uuid)]) {
+    let mut file_ids: Vec<_> = sources.iter().map(|(_, file_id, _)| *file_id).collect();
+    file_ids.sort_unstable();
+    file_ids.dedup();
+    let mut owner_ids: Vec<_> = sources.iter().map(|(_, _, owner_id)| *owner_id).collect();
+    owner_ids.sort_unstable();
+    owner_ids.dedup();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("DELETE FROM files WHERE id=ANY($1)")
+        .bind(file_ids)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id=ANY($1)")
+        .bind(owner_ids)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+}
+
 async fn run_permission_contract<S: VectorStore>(
     store: &S,
     supports_acl_less_chunks: bool,
     pg_pool: Option<&sqlx::PgPool>,
 ) {
+    let mut seeded_sources = Vec::new();
     macro_rules! upsert_chunk {
         ($tenant_id:expr, $chunk_id:expr, $doc:expr, $acl:expr $(,)?) => {{
             let tenant_id = $tenant_id;
             let chunk_id = $chunk_id;
             let doc = $doc;
             let acl = $acl.clone();
+            let seeded_sources = &mut seeded_sources;
             async move {
+                seeded_sources.push((tenant_id, acl.source_file_id, acl.owner_id));
                 seed_authoritative_source(pg_pool, tenant_id, acl.source_file_id, acl.owner_id)
                     .await;
                 store.upsert_chunk(tenant_id, chunk_id, doc, &acl).await
@@ -937,6 +961,10 @@ async fn run_permission_contract<S: VectorStore>(
         );
 
         let _ = store.clear_tenant(tenant_a).await;
+    }
+
+    if let Some(pool) = pg_pool {
+        cleanup_authoritative_sources(pool, &seeded_sources).await;
     }
 }
 
