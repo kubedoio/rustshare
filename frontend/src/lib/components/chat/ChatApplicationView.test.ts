@@ -179,6 +179,23 @@ describe('ChatApplicationView', () => {
 		);
 	});
 
+	it.each([null, { status: 'Active', buzz_pubkey: 'pk-2' }])(
+		'locks the old signing session when binding changes to %s',
+		async (binding) => {
+			mocks.getChatStatus.mockResolvedValue(activeStatus());
+			mocks.getChatChannels.mockResolvedValue(CHANNELS);
+			mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
+			mocks.hasChatKey = true;
+			mocks.sessionState.set({ state: 'unlocked', pubkey: 'pk-1' });
+			mocks.signingKey = 'sk-1';
+			renderView();
+			await waitFor(() => expect(screen.getByLabelText('Message text')).toBeTruthy());
+			queryClient.setQueryData(['chat-status'], activeStatus({ binding }));
+			await waitFor(() => expect(mocks.signingKey).toBeNull());
+			expect(screen.queryByLabelText('Message text')).toBeNull();
+		}
+	);
+
 	it('shows the configuring notice when no community mapping exists', async () => {
 		mocks.getChatStatus.mockResolvedValue(activeStatus({ mapping: null, binding: null }));
 		renderView();

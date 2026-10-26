@@ -19,6 +19,16 @@ beforeEach(() => {
 });
 
 describe('chat session', () => {
+	it('rejects concurrent unlock attempts', async () => {
+		setChatKeyUser('user-1');
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		await saveChatKey(sk, pk, 'pass');
+		const first = unlock('pass', pk);
+		await expect(unlock('pass', pk)).rejects.toMatchObject({ code: 'RETRY' });
+		await first;
+		expect(getSigningKey()).toBe(sk);
+	});
 	it('unlocks, exposes the signing key, and reports unlocked', async () => {
 		setChatKeyUser('user-1');
 		const sk = generateSecretKey();

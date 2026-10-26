@@ -17,7 +17,17 @@
 	import MessageTimeline from './MessageTimeline.svelte';
 	import MessageComposer from './MessageComposer.svelte';
 	import ChatIdentityUnlock from './ChatIdentityUnlock.svelte';
-	import { chatSessionStore } from '$lib/chat/session';
+	import { chatSessionStore, lock } from '$lib/chat/session';
+
+	$effect(() => {
+		const session = $chatSessionStore;
+		if (
+			$statusQuery.data &&
+			session.state === 'unlocked' &&
+			session.pubkey !== $statusQuery.data.binding?.buzz_pubkey
+		)
+			lock();
+	});
 
 	const statusQuery = createQuery({
 		queryKey: ['chat-status'],
@@ -310,7 +320,7 @@
 					}
 				}}
 			/>
-			{#if $chatSessionStore.state === 'unlocked'}
+			{#if $chatSessionStore.state === 'unlocked' && $chatSessionStore.pubkey === status.binding?.buzz_pubkey}
 				{#key selectedChannelId}
 					<MessageComposer
 						relayUrl={status.mapping.relay_url}
