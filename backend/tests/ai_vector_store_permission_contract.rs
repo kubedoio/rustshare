@@ -109,7 +109,49 @@ fn workspace_member_principal(
 /// represent a chunk with no ACL payload at all (e.g., the in-memory store).
 /// PostgreSQL stores every ACL column with a NOT NULL default, so the legacy
 /// ACL-less path is tested only where it can actually occur.
-async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_chunks: bool) {
+async fn seed_authoritative_source(
+    pool: Option<&sqlx::PgPool>,
+    tenant_id: Uuid,
+    file_id: Uuid,
+    owner_id: Uuid,
+) {
+    let Some(pool) = pool else { return };
+    sqlx::query("INSERT INTO users (id, username, email, password_hash, display_name, storage_quota, tenant_id) VALUES ($1,$2,$3,'test','test',1,$4) ON CONFLICT (id) DO NOTHING")
+        .bind(owner_id)
+        .bind(format!("vector-contract-{owner_id}"))
+        .bind(format!("vector-contract-{owner_id}@example.test"))
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, tenant_id) VALUES ($1,'contract.md',$2,1,'text/markdown','test-hash','test-key',$3,$4) ON CONFLICT (id) DO NOTHING")
+        .bind(file_id)
+        .bind(format!("/contract-{file_id}.md"))
+        .bind(owner_id)
+        .bind(tenant_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn run_permission_contract<S: VectorStore>(
+    store: &S,
+    supports_acl_less_chunks: bool,
+    pg_pool: Option<&sqlx::PgPool>,
+) {
+    macro_rules! upsert_chunk {
+        ($tenant_id:expr, $chunk_id:expr, $doc:expr, $acl:expr $(,)?) => {{
+            let tenant_id = $tenant_id;
+            let chunk_id = $chunk_id;
+            let doc = $doc;
+            let acl = $acl.clone();
+            async move {
+                seed_authoritative_source(pg_pool, tenant_id, acl.source_file_id, acl.owner_id)
+                    .await;
+                store.upsert_chunk(tenant_id, chunk_id, doc, &acl).await
+            }
+        }};
+    }
     // Scenario 1: owner can retrieve their own private note.
     {
         let tenant_id = Uuid::new_v4();
@@ -127,8 +169,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             1,
         );
         let doc = make_indexed_doc(chunk_id, tenant_id, note_id, owner_id, "owner content", acl);
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -166,8 +207,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "private content",
             acl,
         );
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -215,8 +255,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "shared content",
             acl,
         );
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -252,8 +291,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             1,
         );
         let doc = make_indexed_doc(chunk_id, tenant_id, note_id, owner_id, "group content", acl);
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -300,8 +338,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "workspace content",
             acl,
         );
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -347,8 +384,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "public content",
             acl,
         );
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -395,8 +431,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "cross tenant content",
             acl,
         );
-        store
-            .upsert_chunk(tenant_a, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_a, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -440,8 +475,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "denied content",
             acl,
         );
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -483,24 +517,23 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             acl,
         );
         doc.acl = None;
-        store
-            .upsert_chunk(
+        upsert_chunk!(
+            tenant_id,
+            chunk_id,
+            &doc,
+            &make_acl_payload(
                 tenant_id,
+                note_id,
                 chunk_id,
-                &doc,
-                &make_acl_payload(
-                    tenant_id,
-                    note_id,
-                    chunk_id,
-                    owner_id,
-                    vec![IndexPrincipal::Owner(owner_id)],
-                    IndexVisibility::Private,
-                    EmbeddingPolicy::Allowed,
-                    1,
-                ),
-            )
-            .await
-            .unwrap();
+                owner_id,
+                vec![IndexPrincipal::Owner(owner_id)],
+                IndexVisibility::Private,
+                EmbeddingPolicy::Allowed,
+                1,
+            ),
+        )
+        .await
+        .unwrap();
 
         let results = store
             .search_with_acl(&owner_principal(tenant_id, owner_id), &unit_embedding(), 10)
@@ -536,8 +569,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "malformed content",
             acl.clone(),
         );
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, &acl)
+        upsert_chunk!(tenant_id, chunk_id, &doc, &acl)
             .await
             .unwrap();
 
@@ -567,8 +599,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             1,
         );
         let doc = make_indexed_doc(chunk_id, tenant_id, note_id, owner_id, "stale content", acl);
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -612,8 +643,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "revocable content",
             acl_v1.clone(),
         );
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, &acl_v1)
+        upsert_chunk!(tenant_id, chunk_id, &doc, &acl_v1)
             .await
             .unwrap();
 
@@ -690,15 +720,14 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "closer inaccessible workspace content",
             workspace_acl.clone(),
         );
-        store
-            .upsert_chunk(
-                tenant_id,
-                workspace_chunk_id,
-                &workspace_doc,
-                &workspace_acl,
-            )
-            .await
-            .unwrap();
+        upsert_chunk!(
+            tenant_id,
+            workspace_chunk_id,
+            &workspace_doc,
+            &workspace_acl
+        )
+        .await
+        .unwrap();
 
         let shared_chunk_id = Uuid::new_v4();
         let shared_acl = make_acl_payload(
@@ -720,8 +749,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             shared_acl.clone(),
         );
         shared_doc.embedding[EMBEDDING_DIM / 2..].fill(0.0);
-        store
-            .upsert_chunk(tenant_id, shared_chunk_id, &shared_doc, &shared_acl)
+        upsert_chunk!(tenant_id, shared_chunk_id, &shared_doc, &shared_acl)
             .await
             .unwrap();
 
@@ -764,8 +792,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "the quarterly budget plan",
             acl,
         );
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -811,8 +838,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "private budget details",
             acl,
         );
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -852,8 +878,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "stale budget content",
             acl,
         );
-        store
-            .upsert_chunk(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_id, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -898,8 +923,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
             "cross tenant budget content",
             acl,
         );
-        store
-            .upsert_chunk(tenant_a, chunk_id, &doc, doc.acl.as_ref().unwrap())
+        upsert_chunk!(tenant_a, chunk_id, &doc, doc.acl.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -919,7 +943,7 @@ async fn run_permission_contract<S: VectorStore>(store: &S, supports_acl_less_ch
 #[tokio::test]
 async fn test_in_memory_vector_store_permission_contract() {
     let store = InMemoryVectorStore::new();
-    run_permission_contract(&store, true).await;
+    run_permission_contract(&store, true, None).await;
 }
 
 #[tokio::test]
@@ -930,6 +954,6 @@ async fn test_pgvector_store_permission_contract() {
     let pool = sqlx::PgPool::connect(&database_url)
         .await
         .expect("failed to connect to test database");
-    let store = PgVectorStore::new(pool);
-    run_permission_contract(&store, false).await;
+    let store = PgVectorStore::new(pool.clone());
+    run_permission_contract(&store, false, Some(&pool)).await;
 }
