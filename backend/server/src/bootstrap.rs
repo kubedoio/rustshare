@@ -418,8 +418,7 @@ async fn init_services(
     // Shared PostgreSQL index used by keyword search, the optional AI service,
     // and NoteService's indexing callback sink.
     let ai_service_enabled = config.ai_enabled;
-    let pg_vector_store = Arc::new(PgVectorStore::new(db_pool.clone()));
-    let vector_store: Arc<dyn VectorStore> = pg_vector_store.clone();
+    let vector_store: Arc<dyn VectorStore> = Arc::new(PgVectorStore::new(db_pool.clone()));
     let keyword_indexer = Arc::new(KeywordIndexer::new(Arc::clone(&vector_store)));
     let shared_content_indexer: Option<Arc<ContentIndexer<SimpleEmbeddingGenerator>>> =
         if ai_service_enabled {

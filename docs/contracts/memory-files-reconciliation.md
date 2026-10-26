@@ -27,6 +27,12 @@ counters, retry state, heartbeat, and fenced lease generation in PostgreSQL.
 An interrupted page is replayed; failed pages back off and eventually require
 an administrator retry.
 
+Resumed pages use direct UUID range predicates so PostgreSQL's cached generic
+plans can seek past the cursor rather than rescan the preceding index rows.
+Deletions and the generation-fenced checkpoint commit in one transaction.
+Timeout cancellation drops that transaction before retry bookkeeping; page
+processing continues while a heartbeat waits for the checkpoint row lock.
+
 A chunk is eligible only when its non-NULL `source_file_id` has no `files` row
 with both the same tenant and source ID. The worker checks this again inside
 the delete transaction immediately before deleting exact `(chunk id, source ID)`

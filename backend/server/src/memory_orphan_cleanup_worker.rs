@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use rustshare_infrastructure::PgVectorStore;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, QueryBuilder, Row};
 use tokio::{sync::broadcast, task::JoinSet};
 use uuid::Uuid;
 
@@ -116,12 +116,13 @@ pub async fn discover_tenant_page(pool: &PgPool) -> anyhow::Result<()> {
     )
     .fetch_one(&mut *tx)
     .await?;
-    let rows = sqlx::query(
-        "SELECT id, tenant_id FROM note_index_chunks WHERE ($1::uuid IS NULL OR id>$1) ORDER BY id LIMIT 100",
-    )
-    .bind(cursor)
-    .fetch_all(&mut *tx)
-    .await?;
+    let mut query =
+        QueryBuilder::<sqlx::Postgres>::new("SELECT id, tenant_id FROM note_index_chunks");
+    if let Some(cursor) = cursor {
+        query.push(" WHERE id>").push_bind(cursor);
+    }
+    query.push(" ORDER BY id LIMIT 100");
+    let rows = query.build().fetch_all(&mut *tx).await?;
     let next: Option<Uuid> = if rows.len() == 100 {
         rows.last().map(|row| row.try_get("id")).transpose()?
     } else {
@@ -198,24 +199,29 @@ async fn run_page(
     owner: Uuid,
     lease: MemoryOrphanCleanupLease,
 ) {
-    let page = process_page_and_checkpoint(&pool, &vector_store, config, owner, &lease);
-    tokio::pin!(page);
-    let deadline = tokio::time::sleep(config.page_timeout);
-    tokio::pin!(deadline);
-    let result = loop {
-        tokio::select! {
-            biased;
-            _ = &mut deadline => break None,
-            result = &mut page => break Some(result),
-            _ = tokio::time::sleep(config.lease / 3) => {
-                let beat = tokio::select! {
-                    _ = &mut deadline => break None,
-                    result = tokio::time::timeout(config.lease / 3, heartbeat(&pool, &lease, owner, config.lease)) => result,
-                };
-                if !matches!(beat, Ok(Ok(()))) {
-                    tracing::warn!(tenant_id = %lease.tenant_id, "Memory orphan cleanup lease lost; page will replay");
-                    metrics::counter!("memory_orphan_cleanup_pages_total", "outcome" => "lease_lost").increment(1);
-                    return;
+    // Drop an interrupted page transaction before recording its retry on another connection.
+    let result = {
+        let page = process_page_and_checkpoint(&pool, &vector_store, config, owner, &lease);
+        tokio::pin!(page);
+        let deadline = tokio::time::sleep(config.page_timeout);
+        tokio::pin!(deadline);
+        loop {
+            tokio::select! {
+                biased;
+                _ = &mut deadline => break None,
+                result = &mut page => break Some(result),
+                _ = tokio::time::sleep(config.lease / 3) => {
+                    let beat = tokio::select! {
+                        biased;
+                        _ = &mut deadline => break None,
+                        result = &mut page => break Some(result),
+                        result = tokio::time::timeout(config.lease / 3, heartbeat(&pool, &lease, owner, config.lease)) => result,
+                    };
+                    if !matches!(beat, Ok(Ok(()))) {
+                        tracing::warn!(tenant_id = %lease.tenant_id, "Memory orphan cleanup lease lost; page will replay");
+                        metrics::counter!("memory_orphan_cleanup_pages_total", "outcome" => "lease_lost").increment(1);
+                        return;
+                    }
                 }
             }
         }
