@@ -20,6 +20,7 @@
 	} from '$lib/api/users';
 	import { themeStore, type Theme } from '$lib/stores/theme';
 	import Toast from '$lib/components/common/Toast.svelte';
+	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 	import { formatFileSize, formatDate } from '$lib/utils/format';
 	import { filterUserVisibleEntries } from '$lib/utils/artifactVisibility';
 	import { listAllFiles } from '$lib/api/files';
@@ -28,6 +29,7 @@
 	import { userApplicationPreferences } from '$lib/stores/userApplicationPreferences';
 	import { createQuery } from '$lib/query-compat';
 	import MailSettingsPanel from '$lib/settings/MailSettingsPanel.svelte';
+	import ChatDeviceSafetyNotice from '$lib/components/chat/ChatDeviceSafetyNotice.svelte';
 	import {
 		FileText,
 		Folder,
@@ -94,6 +96,11 @@
 	let devices = $state<UserDevice[]>([]);
 	let devicesLoading = $state(true);
 	let revokingDeviceId = $state<string | null>(null);
+	let credentialToRevoke = $state<
+		| { type: 'browser session'; id: string; label: string }
+		| { type: 'device token'; id: string; label: string }
+		| null
+	>(null);
 	let userCodeInput = $state('');
 	let approvingDevice = $state(false);
 
@@ -477,6 +484,8 @@
 			<!-- Security Tab -->
 			<div class="overflow-hidden rounded-xl border border-base-300 bg-base-200">
 				<div class="p-6">
+					<ChatDeviceSafetyNotice />
+
 					<SettingsSection title="Password" description="Change your account password">
 						{#if passwordFormError}
 							<div
@@ -524,7 +533,10 @@
 					</SettingsSection>
 
 					<div class="mt-6 border-t border-base-300 pt-6">
-						<SettingsSection title="Active Sessions" description="Manage your signed-in devices">
+						<SettingsSection
+							title="Browser sessions"
+							description="Elembra browser-session credentials. Revoked sessions are no longer listed."
+						>
 							{#if sessionsLoading}
 								<div class="py-8 text-center">
 									<div
@@ -544,6 +556,11 @@
 													<p class="text-sm font-medium text-base-content">
 														{session.user_agent || 'Browser'}
 													</p>
+													<span
+														class="rounded bg-base-200 px-2 py-0.5 text-xs text-base-content/60"
+													>
+														Browser session · Active
+													</span>
 													{#if session.is_current}
 														<span
 															class="inline-flex items-center rounded bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
@@ -552,16 +569,22 @@
 													{/if}
 												</div>
 												<p class="mt-1 text-xs text-base-content/50">
-													{session.ip_address || 'Unknown IP'} • {formatDateTime(
+													Last active {formatDateTime(session.last_seen_at)} · Started {formatDateTime(
 														session.created_at
-													)}
+													)}{#if session.ip_address}
+														· {session.ip_address}{/if}
 												</p>
 											</div>
 											{#if !session.is_current}
 												<button
 													type="button"
 													class="rounded-lg px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/10"
-													onclick={() => handleRevokeSession(session.id)}
+													onclick={() =>
+														(credentialToRevoke = {
+															type: 'browser session',
+															id: session.id,
+															label: session.user_agent || 'Browser'
+														})}
 													disabled={revokingSessionId === session.id}
 												>
 													{#if revokingSessionId === session.id}
@@ -622,7 +645,7 @@
 					<div class="mt-6 border-t border-base-300 pt-6">
 						<SettingsRow
 							label="Sign out"
-							description="Sign out of your account on this device"
+							description="End this browser session and lock Chat in this browser. Its encrypted key backup remains on this device."
 							actionLabel="Sign out"
 							danger={true}
 							onAction={handleLogout}
@@ -635,8 +658,8 @@
 			<div class="overflow-hidden rounded-xl border border-base-300 bg-base-200">
 				<div class="p-6">
 					<SettingsSection
-						title="Pair New Device"
-						description="Connect a mobile device to your account"
+						title="Pair an account device"
+						description="Approve an Elembra device token. This does not enroll a Buzz signing key."
 					>
 						<div class="py-4">
 							<p class="mb-3 text-sm text-base-content/70">
@@ -676,8 +699,8 @@
 
 					<div class="mt-6 border-t border-base-300 pt-6">
 						<SettingsSection
-							title="Connected Devices"
-							description="Devices that have access to your account"
+							title="Device tokens"
+							description="Account-access credentials approved for desktop or mobile clients. This list does not track Buzz signing-key copies."
 						>
 							{#if devicesLoading}
 								<div class="py-8 text-center">
@@ -688,7 +711,7 @@
 							{:else if devices.length === 0}
 								<div class="py-6 text-center">
 									<Smartphone size={32} class="mx-auto mb-2 text-base-content/20" />
-									<p class="text-sm text-base-content/60">No devices connected</p>
+									<p class="text-sm text-base-content/60">No active device tokens</p>
 									<p class="mt-1 text-xs text-base-content/40">
 										Use the <a href="/device" class="text-brand-500 hover:underline"
 											>Pair This Device</a
@@ -702,7 +725,14 @@
 											class="flex items-center justify-between rounded-lg border border-base-300 bg-base-100 p-3"
 										>
 											<div>
-												<p class="text-sm font-medium text-base-content">{device.device_name}</p>
+												<div class="flex items-center gap-2">
+													<p class="text-sm font-medium text-base-content">{device.device_name}</p>
+													<span
+														class="rounded bg-base-200 px-2 py-0.5 text-xs text-base-content/60"
+													>
+														Device token · Active
+													</span>
+												</div>
 												<p class="text-xs text-base-content/50">
 													Last active: {device.last_used_at
 														? formatDateTime(device.last_used_at)
@@ -712,7 +742,12 @@
 											<button
 												type="button"
 												class="rounded-lg px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/10"
-												onclick={() => handleRevokeDevice(device.id)}
+												onclick={() =>
+													(credentialToRevoke = {
+														type: 'device token',
+														id: device.id,
+														label: device.device_name
+													})}
 												disabled={revokingDeviceId === device.id}
 											>
 												{#if revokingDeviceId === device.id}
@@ -732,8 +767,8 @@
 
 					<div class="mt-6 border-t border-base-300 pt-6">
 						<SettingsRow
-							label="This Device"
-							description="Pair this browser for mobile access"
+							label="Pair an account device"
+							description="Create an Elembra device token. This does not enroll a Buzz signing key."
 							actionLabel="Pair This Device"
 							actionHref="/device"
 						/>
@@ -977,6 +1012,24 @@
 		{/if}
 	</div>
 </div>
+
+{#if credentialToRevoke}
+	<ConfirmModal
+		open={true}
+		title={`Revoke ${credentialToRevoke.type}: ${credentialToRevoke.label}?`}
+		message={`This stops the selected ${credentialToRevoke.type} from authenticating to Elembra. It does not erase data or encrypted backups on that device, and it does not revoke a copied Buzz signing key. If the device may have had an unlocked Chat key, treat that shared key as compromised and contact your workspace administrator about controlled identity rotation.`}
+		confirmLabel="Revoke credential"
+		danger={true}
+		onConfirm={async () => {
+			const target = credentialToRevoke;
+			credentialToRevoke = null;
+			if (!target) return;
+			if (target.type === 'browser session') await handleRevokeSession(target.id);
+			else await handleRevokeDevice(target.id);
+		}}
+		onCancel={() => (credentialToRevoke = null)}
+	/>
+{/if}
 
 {#if showToast}
 	<Toast message={toastMessage} type={toastType} onClose={() => (showToast = false)} />
