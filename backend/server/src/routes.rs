@@ -900,6 +900,14 @@ pub fn chat_integration_routes() -> Router<AppState> {
             post(crate::memory_files_reconcile_worker::retry),
         )
         .route(
+            "/api/v1/admin/applications/memory/files/orphans/status",
+            get(crate::handlers::memory_orphan_cleanup::get_status),
+        )
+        .route(
+            "/api/v1/admin/applications/memory/files/orphans/retry",
+            post(crate::handlers::memory_orphan_cleanup::retry),
+        )
+        .route(
             "/api/v1/integrations/chat/unfurl",
             post(crate::handlers::chat_integration::unfurl_link),
         )

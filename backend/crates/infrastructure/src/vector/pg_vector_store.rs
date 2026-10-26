@@ -19,6 +19,15 @@ pub struct PgVectorStore {
     pool: PgPool,
 }
 
+#[derive(Debug, Default)]
+pub struct OrphanCleanupPage {
+    pub next_cursor: Option<Uuid>,
+    pub scanned: usize,
+    pub candidates: usize,
+    pub removed: usize,
+    pub unresolved: usize,
+}
+
 impl PgVectorStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -33,6 +42,19 @@ impl PgVectorStore {
         embedding: Option<String>,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
+        set_index_timeouts(&mut tx).await?;
+        lock_source_file(&mut tx, tenant_id, acl.source_file_id).await?;
+        let source_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM files WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL)",
+        )
+        .bind(tenant_id)
+        .bind(acl.source_file_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !source_exists {
+            tx.commit().await?;
+            return Ok(());
+        }
         sqlx::query(
             r#"
             INSERT INTO note_index_chunks (
@@ -85,6 +107,114 @@ impl PgVectorStore {
         tx.commit().await?;
 
         Ok(())
+    }
+
+    /// Inspect one bounded page of tenant chunks and remove only chunks whose
+    /// exact Files source is still absent while holding the shared source lock.
+    pub async fn cleanup_orphan_chunks_page(
+        &self,
+        tenant_id: Uuid,
+        after: Option<Uuid>,
+        limit: usize,
+        dry_run: bool,
+    ) -> Result<OrphanCleanupPage> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET LOCAL statement_timeout='5s'")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SET LOCAL lock_timeout='5s'")
+            .execute(&mut *tx)
+            .await?;
+        let page = self
+            .cleanup_orphan_chunks_page_in_tx(&mut tx, tenant_id, after, limit, dry_run)
+            .await?;
+        tx.commit().await?;
+        Ok(page)
+    }
+
+    /// Run the bounded orphan scan in a caller-owned transaction so the
+    /// worker can commit deletion and its fenced checkpoint atomically.
+    pub async fn cleanup_orphan_chunks_page_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        tenant_id: Uuid,
+        after: Option<Uuid>,
+        limit: usize,
+        dry_run: bool,
+    ) -> Result<OrphanCleanupPage> {
+        let limit = limit.clamp(1, 100);
+        let mut rows = sqlx::query(
+            "SELECT id, source_file_id FROM note_index_chunks WHERE tenant_id=$1 AND ($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT $3",
+        )
+        .bind(tenant_id)
+        .bind(after)
+        .bind((limit + 1) as i64)
+        .fetch_all(&mut **tx)
+        .await?;
+        let has_more = rows.len() > limit;
+        rows.truncate(limit);
+
+        let next_cursor = if has_more {
+            Some(
+                rows.last()
+                    .ok_or_else(|| anyhow::anyhow!("orphan cleanup page cursor is missing"))?
+                    .try_get("id")?,
+            )
+        } else {
+            None
+        };
+        let mut candidates = Vec::with_capacity(rows.len());
+        let mut unresolved = 0;
+        for row in &rows {
+            let chunk_id: Uuid = row.try_get("id")?;
+            let source_file_id: Option<Uuid> = row.try_get("source_file_id")?;
+            if let Some(source_file_id) = source_file_id {
+                candidates.push((chunk_id, source_file_id));
+            } else {
+                unresolved += 1;
+            }
+        }
+
+        let mut source_ids: Vec<_> = candidates.iter().map(|(_, source)| *source).collect();
+        source_ids.sort_unstable();
+        source_ids.dedup();
+        for source_id in &source_ids {
+            lock_source_file(tx, tenant_id, *source_id).await?;
+        }
+        let absent_sources: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT sources.source_id FROM unnest($2::uuid[]) AS sources(source_id) WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.tenant_id=$1 AND f.id=sources.source_id)",
+        )
+        .bind(tenant_id)
+        .bind(&source_ids)
+        .fetch_all(&mut **tx)
+        .await?;
+        let absent: std::collections::HashSet<_> = absent_sources.into_iter().collect();
+        let confirmed: Vec<_> = candidates
+            .into_iter()
+            .filter(|(_, source_id)| absent.contains(source_id))
+            .collect();
+        let removed = if dry_run || confirmed.is_empty() {
+            0
+        } else {
+            let chunk_ids: Vec<_> = confirmed.iter().map(|(chunk, _)| *chunk).collect();
+            let source_ids: Vec<_> = confirmed.iter().map(|(_, source)| *source).collect();
+            sqlx::query(
+                "DELETE FROM note_index_chunks c USING unnest($2::uuid[], $3::uuid[]) AS candidate(chunk_id, source_file_id) WHERE c.tenant_id=$1 AND c.id=candidate.chunk_id AND c.source_file_id=candidate.source_file_id AND NOT EXISTS (SELECT 1 FROM files f WHERE f.tenant_id=c.tenant_id AND f.id=c.source_file_id)",
+            )
+            .bind(tenant_id)
+            .bind(chunk_ids)
+            .bind(source_ids)
+            .execute(&mut **tx)
+            .await?
+            .rows_affected() as usize
+        };
+        Ok(OrphanCleanupPage {
+            next_cursor,
+            scanned: rows.len(),
+            candidates: confirmed.len(),
+            removed,
+            unresolved,
+        })
     }
 }
 
@@ -436,6 +566,8 @@ impl VectorStore for PgVectorStore {
         source_file_id: Uuid,
     ) -> Result<usize> {
         let mut tx = self.pool.begin().await?;
+        set_index_timeouts(&mut tx).await?;
+        lock_source_file(&mut tx, tenant_id, source_file_id).await?;
         let result = sqlx::query(
             "DELETE FROM note_index_chunks WHERE tenant_id = $1 AND source_file_id = $2",
         )
@@ -512,6 +644,29 @@ impl VectorStore for PgVectorStore {
             Ok(None)
         }
     }
+}
+
+async fn lock_source_file(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tenant_id: Uuid,
+    source_file_id: Uuid,
+) -> Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text || ':' || $2::text, 0))")
+        .bind(tenant_id)
+        .bind(source_file_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn set_index_timeouts(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Result<()> {
+    sqlx::query("SET LOCAL statement_timeout='5s'")
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("SET LOCAL lock_timeout='5s'")
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
 #[cfg(test)]

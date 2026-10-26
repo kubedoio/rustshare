@@ -912,6 +912,8 @@ Stable release for the `0.3.0` release line.
 
 ### Added
 
+- Add opt-in, dry-run-first cleanup for tenant-scoped orphaned Files-backed Memory chunks, with durable cursors, fenced leases, retries, and admin status.
+
 - Real-time WebSocket sync for module edits, with collaborative cursor support and conflict resolution.
 - Note bundle architecture: notes now store as folders with `index.md`, `.rustshare.json`, and `events.jsonl`, enabling richer metadata and attachment handling.
 - H1-based folder rename on save: editing the top-level heading in a note automatically renames its backing folder.

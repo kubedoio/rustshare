@@ -418,7 +418,8 @@ async fn init_services(
     // Shared PostgreSQL index used by keyword search, the optional AI service,
     // and NoteService's indexing callback sink.
     let ai_service_enabled = config.ai_enabled;
-    let vector_store: Arc<dyn VectorStore> = Arc::new(PgVectorStore::new(db_pool.clone()));
+    let pg_vector_store = Arc::new(PgVectorStore::new(db_pool.clone()));
+    let vector_store: Arc<dyn VectorStore> = pg_vector_store.clone();
     let keyword_indexer = Arc::new(KeywordIndexer::new(Arc::clone(&vector_store)));
     let shared_content_indexer: Option<Arc<ContentIndexer<SimpleEmbeddingGenerator>>> =
         if ai_service_enabled {
@@ -886,6 +887,23 @@ pub async fn init_app() -> Result<AppState> {
         None
     };
 
+    let memory_orphan_cleanup_worker = if config.memory_files_orphan_cleanup_enabled {
+        let task = crate::memory_orphan_cleanup_worker::spawn_memory_orphan_cleanup_worker(
+            db_pool.clone(),
+            Arc::new(PgVectorStore::new(db_pool.clone())),
+            crate::memory_orphan_cleanup_worker::MemoryOrphanCleanupConfig::from_config(&config)?,
+            shutdown_tx.subscribe(),
+        );
+        info!(
+            dry_run = config.memory_files_orphan_cleanup_dry_run,
+            "Memory orphan cleanup worker enabled"
+        );
+        Some(Arc::new(Mutex::new(task)))
+    } else {
+        info!("Memory orphan cleanup worker disabled");
+        None
+    };
+
     if !metadata_store.has_users().await? {
         let admin_username = std::env::var("RUSTSHARE_ADMIN_USERNAME")?;
         let admin_email = std::env::var("RUSTSHARE_ADMIN_EMAIL")?;
@@ -1113,6 +1131,8 @@ pub async fn init_app() -> Result<AppState> {
         outbox_readiness_staleness_secs: outbox_worker_config.readiness_staleness_secs,
         shutdown_tx,
         memory_files_reconcile_worker,
+        memory_orphan_cleanup_worker,
+        memory_orphan_cleanup_dry_run: config.memory_files_orphan_cleanup_dry_run,
         prometheus_handle,
     };
 
