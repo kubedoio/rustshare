@@ -114,41 +114,48 @@ async fn seed_authoritative_source(
     tenant_id: Uuid,
     file_id: Uuid,
     owner_id: Uuid,
-) {
-    let Some(pool) = pool else { return };
-    sqlx::query("INSERT INTO users (id, username, email, password_hash, display_name, storage_quota, tenant_id) VALUES ($1,$2,$3,'test','test',1,$4) ON CONFLICT (id) DO NOTHING")
+) -> (Option<Uuid>, Option<Uuid>) {
+    let Some(pool) = pool else {
+        return (None, None);
+    };
+    let created_user = sqlx::query_scalar::<_, Uuid>("INSERT INTO users (id, username, email, password_hash, display_name, storage_quota, tenant_id) VALUES ($1,$2,$3,'test','test',1,$4) ON CONFLICT (id) DO NOTHING RETURNING id")
         .bind(owner_id)
         .bind(format!("vector-contract-{owner_id}"))
         .bind(format!("vector-contract-{owner_id}@example.test"))
         .bind(tenant_id)
-        .execute(pool)
+        .fetch_optional(pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, tenant_id) VALUES ($1,'contract.md',$2,1,'text/markdown','test-hash','test-key',$3,$4) ON CONFLICT (id) DO NOTHING")
+    let created_file = sqlx::query_scalar::<_, Uuid>("INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, tenant_id) VALUES ($1,'contract.md',$2,1,'text/markdown','test-hash','test-key',$3,$4) ON CONFLICT (id) DO NOTHING RETURNING id")
         .bind(file_id)
         .bind(format!("/contract-{file_id}.md"))
         .bind(owner_id)
         .bind(tenant_id)
-        .execute(pool)
+        .fetch_optional(pool)
         .await
         .unwrap();
+    (created_user, created_file)
 }
 
-async fn cleanup_authoritative_sources(pool: &sqlx::PgPool, sources: &[(Uuid, Uuid, Uuid)]) {
-    let mut file_ids: Vec<_> = sources.iter().map(|(_, file_id, _)| *file_id).collect();
-    file_ids.sort_unstable();
-    file_ids.dedup();
-    let mut owner_ids: Vec<_> = sources.iter().map(|(_, _, owner_id)| *owner_id).collect();
-    owner_ids.sort_unstable();
-    owner_ids.dedup();
+async fn cleanup_authoritative_sources(
+    pool: &sqlx::PgPool,
+    files: &[(Uuid, Uuid)],
+    users: &[(Uuid, Uuid)],
+) {
+    let file_tenants: Vec<_> = files.iter().map(|(tenant, _)| *tenant).collect();
+    let file_ids: Vec<_> = files.iter().map(|(_, file_id)| *file_id).collect();
+    let user_tenants: Vec<_> = users.iter().map(|(tenant, _)| *tenant).collect();
+    let user_ids: Vec<_> = users.iter().map(|(_, user_id)| *user_id).collect();
     let mut tx = pool.begin().await.unwrap();
-    sqlx::query("DELETE FROM files WHERE id=ANY($1)")
+    sqlx::query("DELETE FROM files f USING unnest($1::uuid[], $2::uuid[]) AS seeded(tenant_id, id) WHERE f.tenant_id=seeded.tenant_id AND f.id=seeded.id")
+        .bind(file_tenants)
         .bind(file_ids)
         .execute(&mut *tx)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM users WHERE id=ANY($1)")
-        .bind(owner_ids)
+    sqlx::query("DELETE FROM users u USING unnest($1::uuid[], $2::uuid[]) AS seeded(tenant_id, id) WHERE u.tenant_id=seeded.tenant_id AND u.id=seeded.id")
+        .bind(user_tenants)
+        .bind(user_ids)
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -160,18 +167,26 @@ async fn run_permission_contract<S: VectorStore>(
     supports_acl_less_chunks: bool,
     pg_pool: Option<&sqlx::PgPool>,
 ) {
-    let mut seeded_sources = Vec::new();
+    let mut seeded_files = Vec::new();
+    let mut seeded_users = Vec::new();
     macro_rules! upsert_chunk {
         ($tenant_id:expr, $chunk_id:expr, $doc:expr, $acl:expr $(,)?) => {{
             let tenant_id = $tenant_id;
             let chunk_id = $chunk_id;
             let doc = $doc;
             let acl = $acl.clone();
-            let seeded_sources = &mut seeded_sources;
+            let seeded_files = &mut seeded_files;
+            let seeded_users = &mut seeded_users;
             async move {
-                seeded_sources.push((tenant_id, acl.source_file_id, acl.owner_id));
-                seed_authoritative_source(pg_pool, tenant_id, acl.source_file_id, acl.owner_id)
-                    .await;
+                let (created_user, created_file) =
+                    seed_authoritative_source(pg_pool, tenant_id, acl.source_file_id, acl.owner_id)
+                        .await;
+                if let Some(id) = created_file {
+                    seeded_files.push((tenant_id, id));
+                }
+                if let Some(id) = created_user {
+                    seeded_users.push((tenant_id, id));
+                }
                 store.upsert_chunk(tenant_id, chunk_id, doc, &acl).await
             }
         }};
@@ -964,7 +979,7 @@ async fn run_permission_contract<S: VectorStore>(
     }
 
     if let Some(pool) = pg_pool {
-        cleanup_authoritative_sources(pool, &seeded_sources).await;
+        cleanup_authoritative_sources(pool, &seeded_files, &seeded_users).await;
     }
 }
 
