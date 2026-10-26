@@ -317,6 +317,17 @@ impl ChatIdentityStore {
         workspace_id: WorkspaceId,
     ) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
+        let principal = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM users WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL
+             FOR NO KEY UPDATE",
+        )
+        .bind(principal_id.0)
+        .bind(tenant_id.0)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if principal.is_none() {
+            return Ok(false);
+        }
         let row = sqlx::query(
             "SELECT b.binding_id, b.buzz_pubkey, m.mapping_id, m.community_id, m.relay_url
              FROM chat_identity_bindings b
@@ -456,6 +467,22 @@ impl ChatIdentityStore {
         .await?;
         if key_seen {
             return Ok(false);
+        }
+        if challenge.rotation_of.is_none() {
+            let already_active = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(
+                    SELECT 1 FROM chat_identity_bindings
+                    WHERE tenant_id = $1 AND principal_id = $2
+                      AND status = 'active' AND revoked_at IS NULL
+                )",
+            )
+            .bind(challenge.tenant_id.0)
+            .bind(challenge.principal_id.0)
+            .fetch_one(&mut *tx)
+            .await?;
+            if already_active {
+                return Ok(false);
+            }
         }
         let consumed = sqlx::query(
             "UPDATE chat_binding_challenges

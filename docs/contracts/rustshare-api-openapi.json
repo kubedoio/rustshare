@@ -14896,6 +14896,43 @@
         }
       }
     },
+    "/api/v1/user/devices/{id}": {
+      "delete": {
+        "tags": [
+          "Devices"
+        ],
+        "summary": "DELETE /api/v1/user/devices/:id",
+        "description": "Revokes a device token (sets revoked_at = NOW()).\nUsers can only revoke their own devices.\nReturns 404 if the device doesn't belong to the user.",
+        "operationId": "revoke_user_device",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Device token Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/me/applications": {
       "get": {
         "tags": [
@@ -15233,17 +15270,39 @@
     "/api/vault-sync/v1/devices/{device_id}": {
       "delete": {
         "tags": [
-          "Devices"
+          "Vault Sync"
         ],
-        "summary": "DELETE /api/v1/user/devices/:id",
-        "description": "Revokes a device token (sets revoked_at = NOW()).\nUsers can only revoke their own devices.\nReturns 404 if the device doesn't belong to the user.",
+        "summary": "Revoke a vault sync device.",
+        "description": "DELETE /api/vault-sync/v1/devices/{device_id}",
         "operationId": "revoke_device",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "description": "Device Id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
         "responses": {
           "204": {
             "description": "Deleted"
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {

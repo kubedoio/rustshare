@@ -238,7 +238,7 @@ async fn user_device_inventory_and_revocation_are_owner_scoped() -> TestResult<(
                         .body(Body::empty())?,
                 )
                 .await?;
-            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
         }
 
         let foreign_sessions: i64 =
@@ -315,28 +315,45 @@ async fn user_device_inventory_and_revocation_are_owner_scoped() -> TestResult<(
     }
     .await;
 
-    let cleanup = async {
-        sqlx::query("DELETE FROM user_sessions WHERE user_id = ANY($1)")
+    let mut cleanup_errors = Vec::new();
+    for statement in [
+        "DELETE FROM user_sessions WHERE user_id = ANY($1)",
+        "DELETE FROM device_tokens WHERE user_id = ANY($1)",
+        "DELETE FROM users WHERE id = ANY($1)",
+    ] {
+        if let Err(error) = sqlx::query(statement)
             .bind(vec![user_id, other_user_id, other_tenant_user_id])
             .execute(&pool)
-            .await?;
-        sqlx::query("DELETE FROM device_tokens WHERE user_id = ANY($1)")
-            .bind(vec![user_id, other_user_id, other_tenant_user_id])
-            .execute(&pool)
-            .await?;
-        sqlx::query("DELETE FROM users WHERE id = ANY($1)")
-            .bind(vec![user_id, other_user_id, other_tenant_user_id])
-            .execute(&pool)
-            .await?;
-        sqlx::query("DELETE FROM tenants WHERE id = ANY($1)")
-            .bind(vec![tenant_id, other_tenant_id])
-            .execute(&pool)
-            .await?;
-        Ok::<_, sqlx::Error>(())
+            .await
+        {
+            cleanup_errors.push(format!("{statement}: {error}"));
+        }
     }
-    .await;
-    attempt?;
-    cleanup?;
+    let statement = "DELETE FROM tenants WHERE id = ANY($1)";
+    if let Err(error) = sqlx::query(statement)
+        .bind(vec![tenant_id, other_tenant_id])
+        .execute(&pool)
+        .await
+    {
+        cleanup_errors.push(format!("{statement}: {error}"));
+    }
+    if let Err(error) = attempt {
+        if cleanup_errors.is_empty() {
+            return Err(error);
+        }
+        return Err(format!(
+            "attempt failed: {error}; cleanup errors: {}",
+            cleanup_errors.join("; ")
+        )
+        .into());
+    }
+    if !cleanup_errors.is_empty() {
+        return Err(format!(
+            "failed to clean up disposable device fixtures: {}",
+            cleanup_errors.join("; ")
+        )
+        .into());
+    }
     Ok(())
 }
 

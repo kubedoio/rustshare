@@ -42,6 +42,14 @@ regression proves revoked-key history, ownership, wrong-key binding, replay,
 competing rotation and deterministic cross-tenant same-key activation. It also
 exercises same-tenant same-key assignment and explicit revocation concurrently
 without forced overlap, and checks disabled-Principal rejection sequentially.
+Comprehensive review also closed an admission lifecycle race: admission now
+holds the same Principal lock as activation and revocation. Deterministic
+PostgreSQL barriers prove admission cannot commit after explicit revocation,
+disablement or rotation. A second unrotated key is rejected without consuming
+its challenge. The OpenAPI contract distinguishes account-device and Vault Sync
+revocation routes and operation IDs. Failed sign-out retains platform
+authentication and real-time state while clearing Chat state and reporting that
+the server credential may remain active.
 
 - `npm ci --ignore-scripts --no-audit --no-fund` — passed; npm reported
   existing peer-dependency/deprecation warnings.
@@ -51,14 +59,14 @@ without forced overlap, and checks disabled-Principal rejection sequentially.
   contain only the public key and signed NIP-42 event, never a signing-key
   field; settings tests cover refresh/revocation concurrency and same-route
   navigation from the safety notice to device tokens.
-- `npm run test` — 1,348 passed across 127 files.
+- `npm run test` — 1,352 passed across 128 files.
 - `npm run check` — zero errors, 36 existing Svelte warnings.
 - `npm run lint` — Prettier passed; ESLint completed with zero errors and 155
   existing warnings.
 - `npm run build` — passed with existing Svelte/Vite bundler warnings.
 - `cargo fmt --all --check` and `git diff --check` — passed.
 - PostgreSQL against a newly created loopback-only disposable database and
-  RustFS bucket: `chat_identity_lifecycle_test` — 1 passed; credential
+  RustFS bucket: `chat_identity_lifecycle_test` — 2 passed; credential
   inventory/revocation — 1 passed. The runner dropped the database and bucket
   after completion. No application database or bucket was used.
 - Test targets for both PostgreSQL regressions compile with

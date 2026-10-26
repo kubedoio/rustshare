@@ -104,6 +104,22 @@ describe('credential inventory and lost-device actions', () => {
 		expect(screen.queryByRole('heading', { name: 'Chat devices and lost devices' })).toBeNull();
 	});
 
+	it.each(['/settings', '/settings?tab=invalid'])(
+		'restores General when navigating from Devices to %s',
+		async (target) => {
+			mocks.url = new URL('http://localhost/settings?tab=devices');
+			render(Page);
+			await screen.findByText('Lost phone');
+
+			mocks.url = new URL(target, 'http://localhost');
+			expect(mocks.pageSubscriber).toBeDefined();
+			mocks.pageSubscriber!({ url: mocks.url });
+
+			await screen.findByRole('link', { name: 'Edit Profile' });
+			expect(screen.queryByText('Lost phone')).toBeNull();
+		}
+	);
+
 	it.each(['SHORT', 'ABCDEFGHI'])(
 		'rejects an approval code of the wrong length: %s',
 		async (code) => {

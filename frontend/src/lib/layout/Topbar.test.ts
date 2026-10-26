@@ -1,6 +1,15 @@
-import { render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+	goto: vi.fn(),
+	logout: vi.fn(),
+	toast: vi.fn()
+}));
+
+vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
+vi.mock('$lib/stores/toast', () => ({ toastStore: { show: mocks.toast } }));
 
 vi.mock('$app/stores', () => ({
 	page: readable({
@@ -17,7 +26,7 @@ vi.mock('$lib/stores/auth', () => ({
 		is_admin: true
 	}),
 	authStore: {
-		logout: vi.fn()
+		logout: mocks.logout
 	}
 }));
 
@@ -70,8 +79,8 @@ vi.mock('./topbar/NewMenuDropdown.svelte', () => ({
 	default: vi.fn()
 }));
 
-vi.mock('./topbar/UserMenuDropdown.svelte', () => ({
-	default: vi.fn()
+vi.mock('$lib/api/organization-admin', () => ({
+	getOrganizationAdminCapability: vi.fn().mockResolvedValue({ allowed: false })
 }));
 
 vi.mock('./topbar/InvitePopover.svelte', () => ({
@@ -87,6 +96,7 @@ import Topbar from './Topbar.svelte';
 describe('Topbar', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mocks.logout.mockReset().mockResolvedValue(undefined);
 	});
 
 	it('keeps the notification bell in the top header', () => {
@@ -95,5 +105,20 @@ describe('Topbar', () => {
 		const notificationsLink = screen.getByRole('link', { name: 'Notifications' });
 		expect(notificationsLink).toBeTruthy();
 		expect(notificationsLink.getAttribute('href')).toBe('/notifications');
+	});
+
+	it('warns and does not redirect when server logout fails', async () => {
+		mocks.logout.mockRejectedValueOnce(new Error('offline'));
+		render(Topbar);
+		await fireEvent.click(screen.getByRole('button', { name: 'A Alex' }));
+		await fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+
+		await waitFor(() =>
+			expect(mocks.toast).toHaveBeenCalledWith(
+				'Sign out failed. Your browser session may still be active. Try again.',
+				'error'
+			)
+		);
+		expect(mocks.goto).not.toHaveBeenCalled();
 	});
 });

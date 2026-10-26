@@ -95,6 +95,10 @@ all of the following before implementation is reported complete:
    Principal's key. Make replay, concurrent replacement, retry and bridge
    delivery idempotent and fail closed.
 
+Account-device enrollment, approval and revocation auditing is explicitly
+required for M4.1b2. It is not implemented by M4.1b's platform-credential
+inventory/revocation work; this defers, rather than drops, the #215 requirement.
+
 M4.1b2 must preserve the PostgreSQL history, ownership and concurrent-rotation
 guarantees and add live Buzz ordering/membership and stolen/invalid pairing
 tests before exposing pairing or replacement UX.
