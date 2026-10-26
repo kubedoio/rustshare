@@ -10619,7 +10619,7 @@
         "tags": [
           "Users"
         ],
-        "summary": "List active browser sessions for the authenticated user.",
+        "summary": "List stored browser sessions, including expired sessions, for the authenticated user.",
         "operationId": "list_user_sessions",
         "responses": {
           "200": {
