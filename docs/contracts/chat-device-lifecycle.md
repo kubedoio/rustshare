@@ -15,10 +15,12 @@ and [Chat identity recovery](chat-identity-recovery.md).
 
 Browser sessions and device tokens are independent credential types. A device
 token label or activity timestamp is not proof that its client has a Buzz key.
-Current inventory APIs return only active credentials; they do not provide
-revocation history. Browser session inventory identifies the current session
-and reports last-seen time. Device token inventory reports its name and last
-use when available, but has no current-browser indicator.
+The token API returns only active tokens. The browser-session API also returns
+expired session records; the UI labels their expiry status at the last refresh.
+Neither inventory provides revocation history. Browser session inventory
+identifies the current session and reports last-seen time. Device token
+inventory reports its name and last use when available, but has no
+current-browser indicator.
 
 The user Settings → Security view reuses these APIs. Revocation is confirmed,
 tenant/user scoped by the existing handlers, and reports its credential type.
@@ -40,7 +42,7 @@ or remotely locks a different browser's in-memory key.
 
 ## Existing behavior and bounded delivery
 
-- `GET /api/v1/me/sessions` lists the authenticated user's active browser
+- `GET /api/v1/me/sessions` lists the authenticated user's stored browser
   sessions. `DELETE /api/v1/me/sessions/{id}` only deletes a session found for
   that user; the current session must use Sign Out. The session credential is
   rejected after deletion.
@@ -52,6 +54,12 @@ or remotely locks a different browser's in-memory key.
 - Key creation, backup encryption/import and in-memory lock/unlock are
   client-side. Plaintext signing keys and passphrases do not go to the server.
   Account switching and logout clear the local in-memory Chat session.
+- Activation rechecks the active Principal inside its transaction and excludes
+  public keys with any previous binding. Revoked keys cannot be restored or
+  reassigned to another Principal or tenant. Principal and public-key locks
+  serialize competing activations, rotation and explicit Principal revocation.
+  The storage boundary also requires the new binding's tenant, Principal, key
+  and `rotation_of` to match the verified challenge.
 - Existing `rotation_of` verification proves that the proposed replacement key
   signed the NIP-42 challenge. In one Elembra transaction it revokes the old
   binding/admission record, queues Buzz revocation, and activates the new
@@ -87,6 +95,6 @@ all of the following before implementation is reported complete:
    Principal's key. Make replay, concurrent replacement, retry and bridge
    delivery idempotent and fail closed.
 
-M4.1b2 must add PostgreSQL isolation/ownership tests, live Buzz ordering and
-membership tests, replay/concurrent-rotation tests, and stolen/invalid pairing
+M4.1b2 must preserve the PostgreSQL history, ownership and concurrent-rotation
+guarantees and add live Buzz ordering/membership and stolen/invalid pairing
 tests before exposing pairing or replacement UX.

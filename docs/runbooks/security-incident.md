@@ -179,7 +179,8 @@ Rotating `JWT_SECRET` invalidates all bearer-token and cookie-based sessions. Se
    device's local encrypted backup or revoke a copied Buzz key.
 2. If the device may have had Chat unlocked, or both an encrypted backup and
    its passphrase may be exposed, treat the Buzz key as compromised. Preserve
-   the key and event evidence needed for incident review.
+   public-key identifiers, signed event IDs and credential IDs needed for
+   incident review. Do not collect private signing keys, backups or passphrases.
 3. Have an authorized administrator coordinate old Elembra binding and Buzz
    community-admission revocation. Verify the Buzz bridge has applied the
    revocation before enabling a replacement identity. Historical signed events

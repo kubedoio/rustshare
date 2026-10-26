@@ -10,5 +10,11 @@ describe('Chat device safety notice', () => {
 		expect(screen.getByText(/device token does not prove.*Buzz signing key/i)).toBeTruthy();
 		expect(screen.getByText(/cannot erase a copied key or invalidate signatures/i)).toBeTruthy();
 		expect(screen.getByText(/this page does not perform that rotation/i)).toBeTruthy();
+		expect(screen.getByRole('link', { name: 'Review browser sessions' }).getAttribute('href')).toBe(
+			'/settings?tab=security'
+		);
+		expect(screen.getByRole('link', { name: 'Review device tokens' }).getAttribute('href')).toBe(
+			'/settings?tab=devices'
+		);
 	});
 });

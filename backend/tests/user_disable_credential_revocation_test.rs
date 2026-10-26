@@ -165,34 +165,37 @@ async fn user_device_inventory_and_revocation_are_owner_scoped() -> TestResult<(
             .merge(rustshare_server::routes::device_management_routes())
             .with_state(state.clone());
         let user_bearer = create_auth_token(&state, user_id, tenant_id);
+        let session_cookie = format!(
+            "{}={session_token}",
+            rustshare_auth::WEB_SESSION_COOKIE_NAME
+        );
+        assert_eq!(
+            get_me_with_bearer(&app, &device_token).await?,
+            StatusCode::OK
+        );
         for (path, expected_id) in [
             ("/api/v1/me/sessions", session_id),
             ("/api/v1/user/devices", device_id),
         ] {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .uri(path)
-                        .header(
-                            axum::http::header::AUTHORIZATION,
-                            format!("Bearer {user_bearer}"),
-                        )
-                        .body(Body::empty())?,
+            let request = Request::builder().uri(path);
+            let request = if path.ends_with("sessions") {
+                request.header(axum::http::header::COOKIE, &session_cookie)
+            } else {
+                request.header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {user_bearer}"),
                 )
-                .await?;
+            };
+            let response = app.clone().oneshot(request.body(Body::empty())?).await?;
             assert_eq!(response.status(), StatusCode::OK);
             let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
             let body: serde_json::Value = serde_json::from_slice(&bytes)?;
             let values = if path.ends_with("sessions") {
-                body.as_array()
-                    .expect("session inventory is an array")
-                    .clone()
+                body.as_array().expect("session inventory is an array")
             } else {
                 body["devices"]
                     .as_array()
                     .expect("device inventory is an array")
-                    .clone()
             };
             assert_eq!(
                 values.len(),
@@ -200,36 +203,60 @@ async fn user_device_inventory_and_revocation_are_owner_scoped() -> TestResult<(
                 "inventory must exclude other users/tenants"
             );
             assert_eq!(values[0]["id"], expected_id.to_string());
+            if path.ends_with("sessions") {
+                assert_eq!(values[0]["is_current"], true);
+            }
         }
 
-        let cross_user_session = app
+        let current_session = app
             .clone()
             .oneshot(
                 Request::builder()
                     .method("DELETE")
-                    .uri(format!("/api/v1/me/sessions/{other_session_id}"))
-                    .header(
-                        axum::http::header::AUTHORIZATION,
-                        format!("Bearer {user_bearer}"),
-                    )
+                    .uri(format!("/api/v1/me/sessions/{session_id}"))
+                    .header(axum::http::header::COOKIE, &session_cookie)
                     .body(Body::empty())?,
             )
             .await?;
-        assert_eq!(cross_user_session.status(), StatusCode::NOT_FOUND);
-        let cross_user_device = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("DELETE")
-                    .uri(format!("/api/v1/user/devices/{other_device_id}"))
-                    .header(
-                        axum::http::header::AUTHORIZATION,
-                        format!("Bearer {user_bearer}"),
-                    )
-                    .body(Body::empty())?,
-            )
-            .await?;
-        assert_eq!(cross_user_device.status(), StatusCode::NOT_FOUND);
+        assert_eq!(current_session.status(), StatusCode::BAD_REQUEST);
+        for path in [
+            format!("/api/v1/me/sessions/{other_session_id}"),
+            format!("/api/v1/me/sessions/{other_tenant_session_id}"),
+            format!("/api/v1/user/devices/{other_device_id}"),
+            format!("/api/v1/user/devices/{other_tenant_device_id}"),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("DELETE")
+                        .uri(&path)
+                        .header(
+                            axum::http::header::AUTHORIZATION,
+                            format!("Bearer {user_bearer}"),
+                        )
+                        .body(Body::empty())?,
+                )
+                .await?;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+
+        let foreign_sessions: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM user_sessions WHERE id = ANY($1)")
+                .bind(vec![other_session_id, other_tenant_session_id])
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(foreign_sessions, 2, "foreign sessions must remain intact");
+        let foreign_tokens: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM device_tokens WHERE id = ANY($1) AND revoked_at IS NULL",
+        )
+        .bind(vec![other_device_id, other_tenant_device_id])
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(
+            foreign_tokens, 2,
+            "foreign device tokens must remain active"
+        );
 
         let revoked_session = app
             .clone()

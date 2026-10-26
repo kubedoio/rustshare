@@ -478,7 +478,7 @@ pub async fn verify_binding(
         .map_err(internal_db)?
     {
         return Err(AppError::conflict(
-            "binding challenge was already consumed or expired",
+            "binding challenge is consumed, expired, or no longer eligible",
         ));
     }
     Ok((
