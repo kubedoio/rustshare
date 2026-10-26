@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { apiClient } from '$lib/api/client';
 	import {
 		generateSecretKey,
@@ -32,6 +33,10 @@
 	let backupJson = $state('');
 	let confirmLegacy = $state(false);
 	let localKey = $state(hasChatKey());
+	let active = true;
+	onDestroy(() => {
+		active = false;
+	});
 
 	async function bind(): Promise<void> {
 		if (busy) return;
@@ -44,9 +49,11 @@
 		busy = true;
 		error = '';
 		const generation = chatKeySession();
+		const submittedPassphrase = passphrase;
 		const user = $currentUser;
 		const workspace = user?.tenant_id;
 		const checkAccount = () => {
+			if (!active) throw new Error('Chat setup closed. Try again.');
 			assertChatKeySession(generation);
 			if ($currentUser?.id !== user?.id || $currentUser?.tenant_id !== workspace)
 				throw new Error('Chat account changed. Try again.');
@@ -56,19 +63,27 @@
 			const existing = hasChatKey();
 			const secretKey =
 				mode === 'import'
-					? await importChatKey(backupJson, passphrase, undefined, confirmLegacy)
+					? await importChatKey(
+							backupJson,
+							submittedPassphrase,
+							undefined,
+							confirmLegacy,
+							checkAccount
+						)
 					: existing
-						? await loadChatKey(passphrase)
+						? await loadChatKey(submittedPassphrase)
 						: generateSecretKey();
 			checkAccount();
 			const pubkey = publicKeyOf(secretKey);
 			if (mode === 'create' && !existing) {
-				await saveChatKey(secretKey, pubkey, passphrase);
+				await saveChatKey(secretKey, pubkey, submittedPassphrase, checkAccount);
 			}
 			checkAccount();
 			localKey = true;
 			const challenge: {
 				challenge_id: string;
+				tenant_id: string;
+				principal_id: string;
 				nonce: string;
 				buzz_pubkey: string;
 				relay_url: string;
@@ -78,6 +93,11 @@
 				buzz_pubkey: pubkey
 			});
 			checkAccount();
+			if (challenge.tenant_id !== workspace || challenge.principal_id !== user?.id) {
+				throw new Error(
+					'Binding challenge belongs to a different or unknown account. Sign in again.'
+				);
+			}
 			if (
 				challenge.buzz_pubkey !== pubkey ||
 				!Number.isFinite(Date.parse(challenge.expires_at)) ||
@@ -137,6 +157,7 @@
 			disabled={busy}
 			onclick={() => {
 				mode = 'create';
+				confirmLegacy = false;
 				backupJson = '';
 				passphrase = '';
 			}}>{localKey ? 'Use stored Chat identity' : 'Create new Chat identity'}</button
@@ -148,6 +169,7 @@
 			disabled={busy}
 			onclick={() => {
 				mode = 'import';
+				confirmLegacy = false;
 				passphrase = '';
 			}}>Import existing Chat identity</button
 		>
@@ -158,6 +180,10 @@
 			id="chat-onboarding-backup"
 			class="textarea mb-2 w-full"
 			maxlength={4096}
+			disabled={busy}
+			oninput={() => {
+				confirmLegacy = false;
+			}}
 			bind:value={backupJson}></textarea>
 		<label class="mb-3 flex items-start gap-2 text-sm"
 			><input type="checkbox" bind:checked={confirmLegacy} disabled={busy} />For a legacy backup
@@ -171,6 +197,7 @@
 			class="input input-sm"
 			placeholder="key passphrase"
 			aria-label={mode === 'import' ? 'backup passphrase' : 'key passphrase'}
+			disabled={busy}
 			bind:value={passphrase}
 		/>
 		<button type="button" class="btn btn-primary btn-sm" disabled={busy} onclick={bind}>

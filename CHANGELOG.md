@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - Add explicit Chat identity creation and pre-bind encrypted backup import, transactional account-bound recovery, and shared passphrase retry delays without server key custody.
+- Reject Chat binding challenges for a different displayed account, cancel setup after navigation, and clear cached query data and mounted private views when session refresh changes the Principal or tenant.
 
 - Add an opt-in, resumable Files-backed Memory reconciliation worker with tenant-scoped status and retry.
 

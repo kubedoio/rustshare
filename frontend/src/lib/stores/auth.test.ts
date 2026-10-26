@@ -48,6 +48,47 @@ describe('Auth Store Race Condition', () => {
 		vi.clearAllMocks();
 	});
 
+	it('clears cached private data before publishing an account change discovered by session refresh', async () => {
+		const profile: Awaited<ReturnType<typeof getUserProfile>> = {
+			id: 'user-a',
+			tenant_id: 'tenant-a',
+			email: 'a@example.com',
+			display_name: 'User A',
+			is_admin: false,
+			storage_quota: 0,
+			storage_used: 0,
+			theme: 'system',
+			username: 'user-a',
+			created_at: new Date().toISOString(),
+			updated_at: new Date().toISOString()
+		};
+		vi.mocked(getUserProfile).mockResolvedValue(profile);
+		await authStore.refreshSession();
+		const secret = generateSecretKey();
+		const pubkey = publicKeyOf(secret);
+		await saveChatKey(secret, pubkey, 'pass');
+		await unlock('pass', pubkey);
+		vi.mocked(queryClient.clear).mockClear();
+		let cacheClearedBeforeAccountChange = false;
+		const unsubscribe = currentUser.subscribe((user) => {
+			if (user?.id === 'user-b')
+				cacheClearedBeforeAccountChange = vi.mocked(queryClient.clear).mock.calls.length > 0;
+		});
+		try {
+			vi.mocked(getUserProfile).mockResolvedValue({
+				...profile,
+				id: 'user-b',
+				tenant_id: 'tenant-b'
+			});
+			await authStore.refreshSession();
+			expect(cacheClearedBeforeAccountChange).toBe(true);
+			expect(getSigningKey()).toBeNull();
+			expect(hasChatKey()).toBe(false);
+		} finally {
+			unsubscribe();
+		}
+	});
+
 	it('should ignore stale bootstrapSession results after a successful login', async () => {
 		const mockLoginRequest = vi.mocked(loginRequest);
 		const mockGetUserProfile = vi.mocked(getUserProfile);
@@ -229,7 +270,13 @@ describe('Auth Store Race Condition', () => {
 		mockLogoutRequest.mockResolvedValue(undefined);
 
 		mockLoginRequest.mockResolvedValue({
-			user: { id: 'user-a', email: 'a@example.com', display_name: 'User A', is_admin: false }
+			user: {
+				id: 'user-a',
+				tenant_id: 'tenant-a',
+				email: 'a@example.com',
+				display_name: 'User A',
+				is_admin: false
+			}
 		});
 		mockGetUserProfile.mockResolvedValue({
 			id: 'user-a',
@@ -253,7 +300,13 @@ describe('Auth Store Race Condition', () => {
 		expect(getSigningKey()).toBe(secretKey);
 
 		mockLoginRequest.mockResolvedValue({
-			user: { id: 'user-b', email: 'b@example.com', display_name: 'User B', is_admin: false }
+			user: {
+				id: 'user-b',
+				tenant_id: 'tenant-b',
+				email: 'b@example.com',
+				display_name: 'User B',
+				is_admin: false
+			}
 		});
 		mockGetUserProfile.mockResolvedValue({
 			id: 'user-b',

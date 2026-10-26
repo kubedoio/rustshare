@@ -6,11 +6,14 @@ M4.1a / #215; authority: [ADR-0034](../adr/0034-elembra-chat-buzz-boundary.md).
 
 Elembra authenticates the tenant/Principal and authorizes binding/admission.
 Buzz owns signed communication identity. An OIDC session does not prove key
-possession. The browser uses the existing endpoints, without schema changes:
+possession. The browser uses the existing endpoint paths and request shapes:
 
 1. `POST /applications/chat/identity-binding/challenge` with workspace ID and
    locally derived Buzz public key.
-2. Sign the returned relay/nonce locally as NIP-42 kind 22242; send only
+2. Require the returned `tenant_id` and `principal_id` to match the displayed
+   account before signing. Missing or foreign identifiers fail closed. This
+   catches an SSO cookie changed in another tab while this tab has stale account
+   state. Sign the returned relay/nonce locally as NIP-42 kind 22242; send only
    `challenge_id` and signed `event` to `/identity-binding/verify`.
 3. Request `/applications/chat/admission` for that workspace.
 
@@ -19,6 +22,12 @@ one-time and atomic. Rotation requires explicit `rotation_of`; normal onboarding
 never requests it. Local recovery cannot reactivate a revoked binding or grant
 admission. No backup, plaintext signing key, or key passphrase is sent to these
 endpoints or included in server logs by this flow.
+
+Challenge responses add `tenant_id` and `principal_id` from the server-issued
+challenge. Upgrade the backend before deploying the updated frontend; older
+clients can ignore the extra fields, while updated clients reject older
+responses that cannot attest their account scope. The existing challenge
+endpoints are documented here; they are not in the generated OpenAPI export.
 
 ## Local encrypted backup contract
 
@@ -50,7 +59,11 @@ Import decrypts and validates before committing. Failure preserves the existing
 vault byte-for-byte. Scope generation guards reject logout/account switching,
 including switching away and back. Concurrent vault changes abort the write.
 An unbound import cannot replace a different local identity. Logout hides the
-vault immediately, before the logout HTTP request completes.
+vault immediately, before the logout HTTP request completes. Closing setup or
+recovery cancels pending writes and later binding proofs. On account or tenant
+changes, auth clears query caches before publishing the new Principal, and the
+application shell recreates private views so old mounted query results and
+local view state cannot carry across the transition.
 
 ## UX and accessibility
 
@@ -58,7 +71,8 @@ vault immediately, before the logout HTTP request completes.
   identity.” If a key already exists, offer “Use stored Chat identity”; retrying
   binding reuses it instead of creating a replacement.
 - Import validates before any challenge request. Owner-less legacy import has
-  an explicit confirmation checkbox. Mismatched known-account backups fail.
+  an explicit confirmation checkbox that resets when the backup or mode changes.
+  Mismatched known-account backups fail.
 - Explain that the browser holds the private key, encrypted by the passphrase.
   Export the encrypted backup and keep the passphrase separately. A copied key
   signs as the same identity on each device.
@@ -66,9 +80,13 @@ vault immediately, before the logout HTTP request completes.
   recovery cannot restore either. If every copy is lost, the original identity
   is unrecoverable; ask an administrator for explicit rotation. Existing signed
   history remains under the old identity.
-- Unlock offers “Recover from backup” even when a local envelope exists.
+- Unlock offers “Recover from backup” even when a local envelope exists, with
+  an accurate recovery heading and “Back to unlock” action that leaves the vault
+  intact and clears the discarded input.
   Inputs have accessible names; failures use alerts and successful backup copy
   uses a status region. Clipboard failure is reported before claiming success.
+- Inputs are disabled during verification. Recovery uses one submitted
+  passphrase for both import and unlock, regardless of later input changes.
 - Passphrase and pasted backup fields clear on completion/failure. JavaScript
   strings cannot promise physical memory zeroization.
 
