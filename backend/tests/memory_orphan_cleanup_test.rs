@@ -94,6 +94,7 @@ async fn memory_orphan_cleanup_discovery_advances_in_bounded_pages(db: PgPool) {
 
     let _guard = SERIAL.lock().await;
     let tenant = create_test_tenant(&db).await;
+    let late_tenant = create_test_tenant(&db).await;
     sqlx::query("INSERT INTO note_index_chunks (id, tenant_id, workspace_id, note_id, source_file_id, file_name, file_path, content, mime_type, owner_id) SELECT ('00000000-0000-0000-0000-' || lpad(to_hex(i),12,'0'))::uuid, $1, $1, gen_random_uuid(), gen_random_uuid(), 'note.md', '/note.md', 'test', 'text/markdown', gen_random_uuid() FROM generate_series(1,201) i")
         .bind(tenant)
         .execute(&db)
@@ -109,6 +110,12 @@ async fn memory_orphan_cleanup_discovery_advances_in_bounded_pages(db: PgPool) {
         .unwrap();
         assert_eq!(cursor, Some(Uuid::from_u128(expected)));
     }
+    sqlx::query("INSERT INTO note_index_chunks (id, tenant_id, workspace_id, note_id, source_file_id, file_name, file_path, content, mime_type, owner_id) VALUES ($1,$2,$2,gen_random_uuid(),gen_random_uuid(),'note.md','/note.md','test','text/markdown',gen_random_uuid())")
+        .bind(Uuid::from_u128(0))
+        .bind(late_tenant)
+        .execute(&db)
+        .await
+        .unwrap();
     discover_tenant_page(&db).await.unwrap();
     let cursor: Option<Uuid> = sqlx::query_scalar(
         "SELECT cursor_chunk_id FROM memory_note_orphan_cleanup_discovery WHERE singleton=true",
@@ -117,24 +124,26 @@ async fn memory_orphan_cleanup_discovery_advances_in_bounded_pages(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(cursor, None);
+    discover_tenant_page(&db).await.unwrap();
     assert!(sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM memory_note_orphan_cleanup_jobs WHERE tenant_id=$1)"
     )
-    .bind(tenant)
+    .bind(late_tenant)
     .fetch_one(&db)
     .await
     .unwrap());
-    sqlx::query("DELETE FROM memory_note_orphan_cleanup_jobs WHERE tenant_id=$1")
-        .bind(tenant)
+    sqlx::query("DELETE FROM memory_note_orphan_cleanup_jobs WHERE tenant_id=ANY($1)")
+        .bind([tenant, late_tenant].as_slice())
         .execute(&db)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM note_index_chunks WHERE tenant_id=$1")
-        .bind(tenant)
+    sqlx::query("DELETE FROM note_index_chunks WHERE tenant_id=ANY($1)")
+        .bind([tenant, late_tenant].as_slice())
         .execute(&db)
         .await
         .unwrap();
     cleanup_tenant(&db, tenant).await;
+    cleanup_tenant(&db, late_tenant).await;
 }
 
 #[sqlx::test(migrations = "../migrations")]
@@ -150,9 +159,9 @@ async fn memory_orphan_cleanup_worker_fences_retries_and_resumes_saved_cursor(db
 
     let _guard = SERIAL.lock().await;
     let tenant = create_test_tenant(&db).await;
-    let chunk = Uuid::new_v4();
-    let source = Uuid::new_v4();
-    insert_chunk(&db, tenant, source, chunk).await;
+    for _ in 0..101 {
+        insert_chunk(&db, tenant, Uuid::new_v4(), Uuid::new_v4()).await;
+    }
     sqlx::query("INSERT INTO memory_note_orphan_cleanup_jobs (tenant_id) VALUES ($1)")
         .bind(tenant)
         .execute(&db)
@@ -208,13 +217,14 @@ async fn memory_orphan_cleanup_worker_fences_retries_and_resumes_saved_cursor(db
     .unwrap();
     assert_eq!(retry_count, 1);
     assert_eq!(saved_cursor, None);
-    assert!(sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM note_index_chunks WHERE id=$1)"
-    )
-    .bind(chunk)
-    .fetch_one(&db)
-    .await
-    .unwrap());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM note_index_chunks WHERE tenant_id=$1")
+            .bind(tenant)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        101
+    );
 
     sqlx::query("DROP TRIGGER m34_reject_index_delete ON note_index_chunks")
         .execute(&db)
@@ -255,24 +265,74 @@ async fn memory_orphan_cleanup_worker_fences_retries_and_resumes_saved_cursor(db
         .await
         .unwrap();
 
+    let saved_cursor: Option<Uuid> = sqlx::query_scalar(
+        "SELECT cursor_chunk_id FROM memory_note_orphan_cleanup_jobs WHERE tenant_id=$1",
+    )
+    .bind(tenant)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert!(
+        saved_cursor.is_some(),
+        "first successful page checkpoints its cursor"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT removed FROM memory_note_orphan_cleanup_jobs WHERE tenant_id=$1"
+        )
+        .bind(tenant)
+        .fetch_one(&db)
+        .await
+        .unwrap(),
+        100
+    );
+
+    // A new process claims the job and resumes strictly after the persisted page cursor.
+    let resumed_owner = Uuid::new_v4();
+    let resumed = claim(&db, resumed_owner, config.lease)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(resumed.generation > next.generation);
+    assert_eq!(resumed.cursor, saved_cursor);
+    assert!(finish_page(
+        &db,
+        &next,
+        next_owner,
+        OrphanCleanupPage {
+            next_cursor: Some(Uuid::new_v4()),
+            scanned: 1,
+            candidates: 1,
+            removed: 1,
+            unresolved: 0,
+        },
+        config.interval,
+    )
+    .await
+    .is_err());
+    process_page_and_checkpoint(&db, &store, config, resumed_owner, &resumed)
+        .await
+        .unwrap();
+
     let row = sqlx::query("SELECT cursor_chunk_id, removed, retry_count, last_success_at FROM memory_note_orphan_cleanup_jobs WHERE tenant_id=$1")
         .bind(tenant)
         .fetch_one(&db)
         .await
         .unwrap();
     assert_eq!(row.get::<Option<Uuid>, _>("cursor_chunk_id"), None);
-    assert_eq!(row.get::<i64, _>("removed"), 1);
+    assert_eq!(row.get::<i64, _>("removed"), 101);
     assert_eq!(row.get::<i32, _>("retry_count"), 0);
     assert!(row
         .get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_success_at")
         .is_some());
-    assert!(!sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM note_index_chunks WHERE id=$1)"
-    )
-    .bind(chunk)
-    .fetch_one(&db)
-    .await
-    .unwrap());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM note_index_chunks WHERE tenant_id=$1")
+            .bind(tenant)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        0
+    );
     sqlx::query("DELETE FROM memory_note_orphan_cleanup_jobs WHERE tenant_id=$1")
         .bind(tenant)
         .execute(&db)
