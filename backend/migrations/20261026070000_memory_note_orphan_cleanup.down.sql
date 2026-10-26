@@ -1,0 +1,4 @@
+DROP INDEX idx_note_index_chunks_tenant_id;
+DROP INDEX memory_note_orphan_cleanup_due_idx;
+DROP TABLE memory_note_orphan_cleanup_discovery;
+DROP TABLE memory_note_orphan_cleanup_jobs;

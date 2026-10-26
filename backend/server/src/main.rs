@@ -181,6 +181,9 @@ async fn main() -> Result<()> {
     if let Some(worker) = &state.memory_files_reconcile_worker {
         let _ = (&mut *worker.lock().await).await;
     }
+    if let Some(worker) = &state.memory_orphan_cleanup_worker {
+        let _ = (&mut *worker.lock().await).await;
+    }
 
     Ok(())
 }

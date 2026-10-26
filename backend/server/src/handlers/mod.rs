@@ -28,6 +28,7 @@ pub mod mail;
 pub mod meeting_actions;
 pub mod meeting_decisions;
 pub mod meetings;
+pub mod memory_orphan_cleanup;
 pub mod memory_reconcile;
 pub mod notes;
 pub mod notifications;

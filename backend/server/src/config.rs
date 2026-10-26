@@ -165,6 +165,13 @@ pub struct AppConfig {
         rename = "rustshare_memory_files_reconcile_page_timeout_secs"
     )]
     pub memory_files_reconcile_page_timeout_secs: u64,
+    #[serde(default, rename = "rustshare_memory_files_orphan_cleanup_enabled")]
+    pub memory_files_orphan_cleanup_enabled: bool,
+    #[serde(
+        default = "default_memory_files_orphan_cleanup_dry_run",
+        rename = "rustshare_memory_files_orphan_cleanup_dry_run"
+    )]
+    pub memory_files_orphan_cleanup_dry_run: bool,
     #[serde(
         default = "default_calendar_sync_past_days",
         rename = "rustshare_calendar_sync_past_days"
@@ -420,6 +427,10 @@ fn default_memory_files_reconcile_lease_secs() -> u64 {
 
 fn default_memory_files_reconcile_page_timeout_secs() -> u64 {
     300
+}
+
+fn default_memory_files_orphan_cleanup_dry_run() -> bool {
+    true
 }
 
 fn default_calendar_sync_past_days() -> i64 {

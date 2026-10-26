@@ -2,7 +2,9 @@
 
 The Files/Notes reconciliation worker repairs missed or stale OKF Note index
 writes from authoritative Files rows. It does not reconcile Chat/Buzz or clean
-index rows whose Files source was hard-deleted.
+index rows whose Files source was hard-deleted. Hard-delete orphan cleanup is
+a separate opt-in worker; it is disabled by default and defaults to count-only
+dry-run mode.
 
 ## Enable and bound the worker
 
@@ -50,6 +52,53 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 The existing manual page endpoint remains available at
 `POST /api/v1/admin/applications/memory/files/reconcile`.
+
+## Verify and activate hard-delete orphan cleanup
+
+Apply migrations before starting the worker. Enable count-only verification
+first and restart/recreate the backend:
+
+```dotenv
+RUSTSHARE_MEMORY_FILES_ORPHAN_CLEANUP_ENABLED=true
+RUSTSHARE_MEMORY_FILES_ORPHAN_CLEANUP_DRY_RUN=true
+```
+
+The companion worker reuses the configured reconciliation interval, poll,
+concurrency, lease, and page-timeout bounds. Each database page is limited to
+100 index rows. Dry-run counters show how many exact source identities are
+missing while leaving their chunks untouched. Inspect only your tenant's
+status:
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  "$RUSTSHARE_PUBLIC_URL/api/v1/admin/applications/memory/files/orphans/status"
+```
+
+After verifying candidate and unresolved counts, enable deletion explicitly:
+
+```dotenv
+RUSTSHARE_MEMORY_FILES_ORPHAN_CLEANUP_ENABLED=true
+RUSTSHARE_MEMORY_FILES_ORPHAN_CLEANUP_DRY_RUN=false
+```
+
+Recreate the backend after changing the root `.env`. The same status endpoint
+reports cumulative scanned, candidate, removed, and unresolved counts, last
+successful full sweep, cursor, sanitized error, retry count, and next run. An
+administrator can safely retry the tenant's saved cursor:
+
+```sh
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  "$RUSTSHARE_PUBLIC_URL/api/v1/admin/applications/memory/files/orphans/retry"
+```
+
+The worker removes only rows whose non-NULL source file ID is still absent
+within that tenant at deletion time. Existing Files rows, including soft-
+deleted rows, are preserved. NULL source identities remain unresolved and are
+never deleted. This scope does not add a Files legal-hold model: automatic
+trash purge already obeys `trash_retention_days`, including folder cascades;
+explicit permanent deletion and owner cascades are treated as the authoritative
+deletion decision. Do not enable destructive cleanup if
+your deployment applies legal holds outside Files' deletion flow.
 
 ## Recovery behavior
 

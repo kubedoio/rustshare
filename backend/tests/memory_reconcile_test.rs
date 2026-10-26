@@ -1459,6 +1459,245 @@ async fn reconcile_repairs_missing_record() {
     cleanup(&pool, tenant).await;
 }
 
+async fn insert_orphan_cleanup_chunk(
+    db: &PgPool,
+    tenant_id: Uuid,
+    owner_id: Uuid,
+    chunk_id: Uuid,
+    source_file_id: Option<Uuid>,
+    embedding: Option<&str>,
+) {
+    sqlx::query("INSERT INTO note_index_chunks (id, tenant_id, workspace_id, note_id, source_file_id, file_name, file_path, content, mime_type, owner_id, embedding, acl_hash, acl_version, read_acl, visibility, embedding_policy) VALUES ($1,$2,$2,$3,$4,'note.md','/note.md','private test body','text/markdown',$5,$6::vector,'test',1,'{}','private','allowed')")
+        .bind(chunk_id)
+        .bind(tenant_id)
+        .bind(Uuid::new_v4())
+        .bind(source_file_id)
+        .bind(owner_id)
+        .bind(embedding)
+        .execute(db)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test(migrations = "../migrations")]
+#[ignore = "requires PostgreSQL and migrations applied"]
+async fn memory_orphan_cleanup_is_tenant_scoped_dry_run_first_and_idempotent(db: PgPool) {
+    use rustshare_infrastructure::PgVectorStore;
+    use support::calendar_harness::{
+        cleanup_tenant, create_test_tenant, create_test_user, setup_test_env_with_pool,
+    };
+
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env_with_pool(db.clone()).await;
+    let tenant = create_test_tenant(&db).await;
+    let foreign_tenant = create_test_tenant(&db).await;
+    let owner = create_test_user(&state, "orphan_cleanup_owner", tenant).await;
+    let foreign_owner = create_test_user(&state, "orphan_cleanup_foreign", foreign_tenant).await;
+    let metadata = MetadataStore::new(db.clone());
+
+    let mut soft_deleted = rustshare_core::domain::File::new(
+        "retained.md".into(),
+        "/retained.md".into(),
+        "soft-delete-hash".into(),
+        1,
+        "text/markdown".into(),
+        None,
+        owner.id,
+        tenant,
+    );
+    soft_deleted.id = Uuid::new_v4();
+    metadata.create_file(&soft_deleted).await.unwrap();
+    metadata
+        .delete_file(soft_deleted.id, owner.id)
+        .await
+        .unwrap();
+
+    let mut hard_deleted = rustshare_core::domain::File::new(
+        "purged.md".into(),
+        "/purged.md".into(),
+        "hard-delete-hash".into(),
+        1,
+        "text/markdown".into(),
+        None,
+        owner.id,
+        tenant,
+    );
+    hard_deleted.id = Uuid::new_v4();
+    metadata.create_file(&hard_deleted).await.unwrap();
+    metadata
+        .delete_file(hard_deleted.id, owner.id)
+        .await
+        .unwrap();
+    assert!(metadata
+        .permanently_delete_file(hard_deleted.id, owner.id)
+        .await
+        .unwrap());
+
+    let mut foreign_deleted = rustshare_core::domain::File::new(
+        "foreign.md".into(),
+        "/foreign.md".into(),
+        "foreign-delete-hash".into(),
+        1,
+        "text/markdown".into(),
+        None,
+        foreign_owner.id,
+        foreign_tenant,
+    );
+    foreign_deleted.id = Uuid::new_v4();
+    metadata.create_file(&foreign_deleted).await.unwrap();
+    metadata
+        .delete_file(foreign_deleted.id, foreign_owner.id)
+        .await
+        .unwrap();
+    metadata
+        .permanently_delete_file(foreign_deleted.id, foreign_owner.id)
+        .await
+        .unwrap();
+
+    let vector = format!("[{}]", vec!["0"; 768].join(","));
+    let vector_store = PgVectorStore::new(db.clone());
+    let soft_chunk = Uuid::new_v4();
+    let keyword_orphan = Uuid::new_v4();
+    let vector_orphan = Uuid::new_v4();
+    let foreign_chunk = Uuid::new_v4();
+    insert_orphan_cleanup_chunk(
+        &db,
+        tenant,
+        owner.id,
+        soft_chunk,
+        Some(soft_deleted.id),
+        None,
+    )
+    .await;
+    insert_orphan_cleanup_chunk(
+        &db,
+        tenant,
+        owner.id,
+        keyword_orphan,
+        Some(hard_deleted.id),
+        None,
+    )
+    .await;
+    insert_orphan_cleanup_chunk(
+        &db,
+        tenant,
+        owner.id,
+        vector_orphan,
+        Some(hard_deleted.id),
+        Some(&vector),
+    )
+    .await;
+    insert_orphan_cleanup_chunk(
+        &db,
+        foreign_tenant,
+        foreign_owner.id,
+        foreign_chunk,
+        Some(foreign_deleted.id),
+        None,
+    )
+    .await;
+
+    let dry_run = vector_store
+        .cleanup_orphan_chunks_page(tenant, None, 100, true)
+        .await
+        .unwrap();
+    assert_eq!(dry_run.candidates, 2);
+    assert_eq!(dry_run.removed, 0);
+    assert_eq!(dry_run.unresolved, 0);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM note_index_chunks WHERE tenant_id=$1")
+            .bind(tenant)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        3
+    );
+
+    let removed = vector_store
+        .cleanup_orphan_chunks_page(tenant, None, 100, false)
+        .await
+        .unwrap();
+    assert_eq!(removed.candidates, 2);
+    assert_eq!(removed.removed, 2);
+    assert_eq!(removed.next_cursor, None);
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM note_index_chunks WHERE id=$1)")
+            .bind(soft_chunk)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        "soft-deleted Files rows still exist and must be preserved"
+    );
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM note_index_chunks WHERE id=$1)")
+            .bind(foreign_chunk)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        "cleanup for one tenant must not delete another tenant's chunks"
+    );
+    let repeated = vector_store
+        .cleanup_orphan_chunks_page(tenant, None, 100, false)
+        .await
+        .unwrap();
+    assert_eq!(repeated.removed, 0);
+    assert_eq!(repeated.candidates, 0);
+
+    sqlx::query("DELETE FROM note_index_chunks WHERE tenant_id = ANY($1)")
+        .bind([tenant, foreign_tenant].as_slice())
+        .execute(&db)
+        .await
+        .unwrap();
+    cleanup_tenant(&db, tenant).await;
+    cleanup_tenant(&db, foreign_tenant).await;
+}
+
+#[sqlx::test(migrations = "../migrations")]
+#[ignore = "requires PostgreSQL and migrations applied"]
+async fn memory_orphan_cleanup_keeps_null_source_identity_unresolved(db: PgPool) {
+    use rustshare_infrastructure::PgVectorStore;
+    use support::calendar_harness::{
+        cleanup_tenant, create_test_tenant, create_test_user, setup_test_env_with_pool,
+    };
+
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env_with_pool(db.clone()).await;
+    let tenant = create_test_tenant(&db).await;
+    let owner = create_test_user(&state, "orphan_cleanup_null", tenant).await;
+    let chunk_id = Uuid::new_v4();
+    sqlx::query("ALTER TABLE note_index_chunks ALTER COLUMN source_file_id DROP NOT NULL")
+        .execute(&db)
+        .await
+        .unwrap();
+    insert_orphan_cleanup_chunk(&db, tenant, owner.id, chunk_id, None, None).await;
+
+    let result = PgVectorStore::new(db.clone())
+        .cleanup_orphan_chunks_page(tenant, None, 100, false)
+        .await
+        .unwrap();
+    assert_eq!(result.unresolved, 1);
+    assert_eq!(result.candidates, 0);
+    assert_eq!(result.removed, 0);
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM note_index_chunks WHERE id=$1 AND source_file_id IS NULL)"
+    )
+    .bind(chunk_id)
+    .fetch_one(&db)
+    .await
+    .unwrap());
+
+    sqlx::query("DELETE FROM note_index_chunks WHERE id=$1")
+        .bind(chunk_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE note_index_chunks ALTER COLUMN source_file_id SET NOT NULL")
+        .execute(&db)
+        .await
+        .unwrap();
+    cleanup_tenant(&db, tenant).await;
+}
+
 // ---------------------------------------------------------------------------
 // 2. `since` watermark limits the rebuild to later observations
 // ---------------------------------------------------------------------------

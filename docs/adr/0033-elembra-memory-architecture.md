@@ -201,7 +201,15 @@ configured, checkpoints only after a bounded page succeeds, and uses expiring
 leases with generation fencing. Full sweeps restart from the beginning.
 Reconciliation reads current Files and NoteService policy; it does not make
 the Memory index an authorization authority. Soft-delete tombstones are
-reconciled, while hard-deleted Files rows are outside the source scan.
+reconciled, while hard-deleted Files rows are outside the source scan. M3.4
+adds a separate disabled-by-default, dry-run-first worker that removes indexed
+chunks only when their exact tenant-scoped `source_file_id` has no Files row.
+It keeps a bounded PostgreSQL keyset cursor and fenced lease, rechecks source
+absence in the deletion transaction, and synchronizes with index upserts. NULL
+source IDs remain reported unresolved. Files does not currently model legal
+holds; automatic trash cleanup honors `trash_retention_days`, and any future
+Files legal-hold support must gate hard deletion before the authority row is
+removed.
 
 - Source Applications continue working when Memory is down.
 - Publication events remain in outbox/retry queues.

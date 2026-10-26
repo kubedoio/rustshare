@@ -1,4 +1,4 @@
-# Files and Notes Memory reconciliation contract (M3.1/M3.3)
+# Files and Notes Memory reconciliation contract (M3.1–M3.4)
 
 ## M3.3 durable automation
 
@@ -15,6 +15,40 @@ beginning. This is required because UUIDs created after an earlier cursor can
 sort before it. Source enumeration includes soft-deleted rows so those
 tombstones remove their index chunks. Hard-deleted rows are absent from the
 source scan; M3.3 does not claim orphan-index cleanup for them.
+
+## M3.4 hard-delete orphan cleanup
+
+The companion orphan worker is separately disabled by default and runs in
+count-only mode by default. It discovers tenants through a durable,
+100-chunk keyset cursor over the index primary key, so each poll reads at most
+100 index rows and periodically restarts from the beginning. Per-tenant cleanup
+pages scan at most 100 chunks using `(tenant_id, id)` and persist their cursor,
+counters, retry state, heartbeat, and fenced lease generation in PostgreSQL.
+An interrupted page is replayed; failed pages back off and eventually require
+an administrator retry.
+
+A chunk is eligible only when its non-NULL `source_file_id` has no `files` row
+with both the same tenant and source ID. The worker checks this again inside
+the delete transaction immediately before deleting exact `(chunk id, source ID)`
+pairs. It coordinates with index upserts and source-index removal using a
+tenant/source advisory transaction lock. Upserts also refuse to write when the
+source is missing or soft-deleted. A soft-deleted row still exists and is not
+an orphan; restore remains valid. Chunks with NULL source identity are counted
+as unresolved and retained. `note_id` is not used as a deletion key, preserving
+the distinction between Notes identity and Files source identity.
+
+Dry-run mode reports candidates without deleting them. Status and metrics
+contain counts and identifiers only; they never expose indexed text. Index
+entries are never permission authorities, and source access continues to be
+reauthorized against Files. The source scan in M3.3 is unchanged.
+
+Files has no legal-hold field or Files-specific hold API. Automatic trash purge
+honors each user's `trash_retention_days` (`NULL` means no automatic purge);
+the orphan worker only acts after the Files row is absent, such as after an
+explicit permanent delete, retention purge (including trashed-folder cascades),
+or user-row cascade deletion. A future Files legal-hold feature
+must prevent permanent deletion while held; this worker cannot infer a hold
+after its sole authoritative source row has been deleted.
 
 The scheduler uses the M3.1 100-row page and source-row lock and calls
 `NoteService::reconcile_index_file` for current content, ACL, and frontmatter
