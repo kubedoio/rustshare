@@ -12,7 +12,7 @@ use rustshare_core::services::ai::{
     RetrievalPrincipal, VectorStore,
 };
 use rustshare_core::validation::escape_ilike;
-use sqlx::{postgres::PgRow, PgPool, Row};
+use sqlx::{postgres::PgRow, PgPool, QueryBuilder, Row};
 use uuid::Uuid;
 
 pub struct PgVectorStore {
@@ -143,14 +143,17 @@ impl PgVectorStore {
         dry_run: bool,
     ) -> Result<OrphanCleanupPage> {
         let limit = limit.clamp(1, 100);
-        let mut rows = sqlx::query(
-            "SELECT id, source_file_id FROM note_index_chunks WHERE tenant_id=$1 AND ($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT $3",
-        )
-        .bind(tenant_id)
-        .bind(after)
-        .bind((limit + 1) as i64)
-        .fetch_all(&mut **tx)
-        .await?;
+        let mut query = QueryBuilder::<sqlx::Postgres>::new(
+            "SELECT id, source_file_id FROM note_index_chunks WHERE tenant_id=",
+        );
+        query.push_bind(tenant_id);
+        if let Some(after) = after {
+            query.push(" AND id>").push_bind(after);
+        }
+        query
+            .push(" ORDER BY id LIMIT ")
+            .push_bind((limit + 1) as i64);
+        let mut rows = query.build().fetch_all(&mut **tx).await?;
         let has_more = rows.len() > limit;
         rows.truncate(limit);
 

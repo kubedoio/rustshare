@@ -20,6 +20,152 @@ async fn insert_chunk(db: &PgPool, tenant: Uuid, source: Uuid, id: Uuid) {
         .unwrap();
 }
 
+async fn delay_checkpoint(db: &PgPool, seconds: u32) {
+    sqlx::query("CREATE FUNCTION m34_delay_checkpoint() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(TG_ARGV[0]::double precision); RETURN NEW; END $$")
+        .execute(db)
+        .await
+        .unwrap();
+    sqlx::query(&format!("CREATE TRIGGER m34_delay_checkpoint BEFORE UPDATE ON memory_note_orphan_cleanup_jobs FOR EACH ROW WHEN (NEW.scanned > OLD.scanned) EXECUTE FUNCTION m34_delay_checkpoint('{seconds}')"))
+        .execute(db)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test(migrations = "../migrations")]
+#[ignore = "requires PostgreSQL and migrations applied"]
+async fn memory_orphan_cleanup_timeout_releases_page_before_recording_retry(db: PgPool) {
+    use rustshare_infrastructure::PgVectorStore;
+    use rustshare_server::memory_orphan_cleanup_worker::{
+        spawn_memory_orphan_cleanup_worker, MemoryOrphanCleanupConfig,
+    };
+    use std::{sync::Arc, time::Duration};
+    use support::calendar_harness::create_test_tenant;
+
+    let _guard = SERIAL.lock().await;
+    let tenant = create_test_tenant(&db).await;
+    let chunk = Uuid::new_v4();
+    insert_chunk(&db, tenant, Uuid::new_v4(), chunk).await;
+    delay_checkpoint(&db, 2).await;
+    let (shutdown, receiver) = tokio::sync::broadcast::channel(2);
+    let worker = spawn_memory_orphan_cleanup_worker(
+        db.clone(),
+        Arc::new(PgVectorStore::new(db.clone())),
+        MemoryOrphanCleanupConfig {
+            interval: Duration::from_secs(3600),
+            poll_interval: Duration::from_millis(10),
+            lease: Duration::from_secs(30),
+            max_concurrent: 1,
+            page_timeout: Duration::from_secs(1),
+            dry_run: false,
+        },
+        receiver,
+    );
+    let retried = tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            let count: Option<i32> = sqlx::query_scalar(
+                "SELECT retry_count FROM memory_note_orphan_cleanup_jobs WHERE tenant_id=$1",
+            )
+            .bind(tenant)
+            .fetch_optional(&db)
+            .await
+            .unwrap();
+            if count == Some(1) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    shutdown.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), worker)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        retried.is_ok(),
+        "timed-out page blocked its own retry update"
+    );
+    let row = sqlx::query("SELECT cursor_chunk_id, scanned, removed, last_success_at, next_run_at > clock_timestamp() AS backed_off FROM memory_note_orphan_cleanup_jobs WHERE tenant_id=$1")
+        .bind(tenant).fetch_one(&db).await.unwrap();
+    assert_eq!(row.get::<Option<Uuid>, _>("cursor_chunk_id"), None);
+    assert_eq!(row.get::<i64, _>("scanned"), 0);
+    assert_eq!(row.get::<i64, _>("removed"), 0);
+    assert!(row
+        .get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_success_at")
+        .is_none());
+    assert!(row.get::<bool, _>("backed_off"));
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM note_index_chunks WHERE id=$1)"
+    )
+    .bind(chunk)
+    .fetch_one(&db)
+    .await
+    .unwrap());
+}
+
+#[sqlx::test(migrations = "../migrations")]
+#[ignore = "requires PostgreSQL and migrations applied"]
+async fn memory_orphan_cleanup_heartbeat_keeps_polling_a_checkpoint_transaction(db: PgPool) {
+    use rustshare_infrastructure::PgVectorStore;
+    use rustshare_server::memory_orphan_cleanup_worker::{
+        spawn_memory_orphan_cleanup_worker, MemoryOrphanCleanupConfig,
+    };
+    use std::{sync::Arc, time::Duration};
+    use support::calendar_harness::create_test_tenant;
+
+    let _guard = SERIAL.lock().await;
+    let tenant = create_test_tenant(&db).await;
+    insert_chunk(&db, tenant, Uuid::new_v4(), Uuid::new_v4()).await;
+    delay_checkpoint(&db, 3).await;
+    let (shutdown, receiver) = tokio::sync::broadcast::channel(2);
+    let worker = spawn_memory_orphan_cleanup_worker(
+        db.clone(),
+        Arc::new(PgVectorStore::new(db.clone())),
+        MemoryOrphanCleanupConfig {
+            interval: Duration::from_secs(3600),
+            poll_interval: Duration::from_millis(10),
+            lease: Duration::from_secs(6),
+            max_concurrent: 1,
+            page_timeout: Duration::from_secs(10),
+            dry_run: false,
+        },
+        receiver,
+    );
+    let completed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let removed: Option<i64> = sqlx::query_scalar(
+                "SELECT removed FROM memory_note_orphan_cleanup_jobs WHERE tenant_id=$1",
+            )
+            .bind(tenant)
+            .fetch_optional(&db)
+            .await
+            .unwrap();
+            if removed == Some(1) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    shutdown.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), worker)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        completed.is_ok(),
+        "heartbeat stopped polling the page that held its row lock"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM note_index_chunks WHERE tenant_id=$1")
+            .bind(tenant)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
 #[sqlx::test(migrations = "../migrations")]
 #[ignore = "requires PostgreSQL and migrations applied"]
 async fn memory_orphan_cleanup_worker_discovers_and_removes_hard_deleted_source(db: PgPool) {
