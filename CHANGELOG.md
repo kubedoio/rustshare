@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Add explicit Chat identity creation and pre-bind encrypted backup import, transactional account-bound recovery, and shared passphrase retry delays without server key custody.
+
 - Add an opt-in, resumable Files-backed Memory reconciliation worker with tenant-scoped status and retry.
 
 - Cancel active or queued file explorer uploads individually or as a queue; chunked uploads also abort their server-side upload session.

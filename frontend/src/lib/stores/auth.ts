@@ -56,12 +56,13 @@ function createAuthStore() {
 		return ++sessionGeneration;
 	}
 
-	function setChatUser(userId: string): void {
-		if (activeChatUserId !== null && activeChatUserId !== userId) {
+	function setChatUser(userId: string, tenantId?: string): void {
+		const identity = `${tenantId}:${userId}`;
+		if (activeChatUserId !== null && activeChatUserId !== identity) {
 			clearChatSession();
 		}
-		activeChatUserId = userId;
-		setChatKeyUser(userId);
+		activeChatUserId = identity;
+		setChatKeyUser(userId, tenantId ?? null);
 	}
 
 	async function bootstrapSession() {
@@ -72,7 +73,7 @@ function createAuthStore() {
 
 			const user = toAuthUser(profile);
 
-			setChatUser(profile.id);
+			setChatUser(profile.id, profile.tenant_id);
 			set({
 				user,
 				isAuthenticated: true,
@@ -130,7 +131,7 @@ function createAuthStore() {
 					isLoading: false
 				});
 
-				setChatUser(user.id);
+				setChatUser(user.id, user.tenant_id);
 
 				try {
 					await initializeWebSocket(null, user.id);
@@ -142,6 +143,7 @@ function createAuthStore() {
 					const profile = await getUserProfile();
 					themeStore.loadFromBackend(profile.theme);
 					if (myGeneration !== sessionGeneration) return;
+					setChatUser(profile.id, profile.tenant_id);
 					update((state) => ({
 						...state,
 						user: toAuthUser(profile)
@@ -162,6 +164,7 @@ function createAuthStore() {
 			clearLegacyWebSocketToken();
 			clearChatSession();
 			activeChatUserId = null;
+			setChatKeyUser(null);
 			await logoutRequest();
 			if (myGeneration !== sessionGeneration) return;
 			setChatKeyUser(null);

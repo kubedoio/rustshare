@@ -67,6 +67,32 @@ No shared Buzz/Elembra database schema is allowed.
 
 ## Identity model
 
+### M4.1a: onboarding and recovery (2026-10-26)
+
+The [Chat identity recovery contract](../contracts/chat-identity-recovery.md)
+defines explicit first-device creation and existing encrypted-key import before
+requesting the existing NIP-42 challenge. Buzz remains the signed communication
+authority; Elembra remains the tenant/Principal and admission authority.
+
+Recovery validates and decrypts locally, derives the public key, checks any
+claimed public key and the existing binding, and only then writes the vault.
+New envelopes authenticate their Principal/tenant metadata as AES-GCM additional
+data. Legacy encrypted envelopes remain usable against a known binding, or
+before binding with explicit ownership confirmation and server proof. Legacy
+backups cannot establish historical account ownership. Plaintext backups are
+not accepted. No server-side signing, escrow, or new binding API is introduced.
+
+All password verification entry points share a session-local concurrency guard
+and bounded exponential retry delay. Client throttling cannot prevent offline
+brute force, survive a deliberately restarted browser session, or protect an
+already-compromised browser. PBKDF2-SHA256 (600,000 for new envelopes) and
+AES-256-GCM remain the cryptographic protection.
+
+Account-managed device lifecycle is M4.1b. A copied signing key remains
+cryptographically valid after logout; individual-device revocation cannot be
+claimed while devices share that key. Existing binding/admission revocation
+and explicit rotation remain the authorization mechanisms.
+
 Elembra and Buzz have different but complementary identities.
 
 ```text

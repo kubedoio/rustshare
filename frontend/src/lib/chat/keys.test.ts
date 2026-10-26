@@ -20,6 +20,181 @@ beforeEach(() => {
 });
 
 describe('chat key custody', () => {
+	it('preserves a valid vault on claimed-key and binding mismatch', async () => {
+		setChatKeyUser('user-1');
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		await saveChatKey(sk, pk, 'pass');
+		const backup = exportChatKey();
+		const other = publicKeyOf(generateSecretKey());
+		await expect(
+			importChatKey(JSON.stringify({ ...JSON.parse(backup), pubkey: other }), 'pass', pk)
+		).rejects.toThrow('does not match');
+		expect(exportChatKey()).toBe(backup);
+		await expect(importChatKey(backup, 'pass', other)).rejects.toThrow('does not match');
+		expect(exportChatKey()).toBe(backup);
+	});
+
+	it.each([
+		'null',
+		'[]',
+		'{}',
+		'{',
+		'x'.repeat(4097),
+		'{"v":1,"secret_key":"' + '01'.repeat(32) + '"}'
+	])('rejects malformed or plaintext backup without changing the vault: %.20s', async (backup) => {
+		setChatKeyUser('user-1');
+		const sk = generateSecretKey();
+		await saveChatKey(sk, publicKeyOf(sk), 'pass');
+		const original = exportChatKey();
+		await expect(importChatKey(backup, 'pass')).rejects.toThrow();
+		expect(exportChatKey()).toBe(original);
+	});
+
+	it('rejects cross-account and cross-tenant backups', async () => {
+		setChatKeyUser('user-1', 'tenant-1');
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		await saveChatKey(sk, pk, 'pass');
+		const backup = exportChatKey();
+		setChatKeyUser('user-2', 'tenant-1');
+		await expect(importChatKey(backup, 'pass', pk)).rejects.toThrow('another account');
+		expect(hasChatKey()).toBe(false);
+		setChatKeyUser('user-1', 'tenant-2');
+		await expect(importChatKey(backup, 'pass', pk)).rejects.toThrow('another workspace');
+	});
+
+	it.each([null, 'user-2', 'user-1'])(
+		'cancels an import on logout or account switching, including ABA (%s)',
+		async (nextUser) => {
+			setChatKeyUser('user-1');
+			const sk = generateSecretKey();
+			await saveChatKey(sk, publicKeyOf(sk), 'pass');
+			const original = exportChatKey();
+			const pending = importChatKey(original, 'pass');
+			setChatKeyUser('user-2');
+			setChatKeyUser(nextUser);
+			await expect(pending).rejects.toThrow('account changed');
+			setChatKeyUser('user-1');
+			expect(exportChatKey()).toBe(original);
+		}
+	);
+
+	it('shares bounded attempts and increasing backoff across unlock and import, resetting on success', async () => {
+		setChatKeyUser('user-1');
+		const sk = generateSecretKey();
+		await saveChatKey(sk, publicKeyOf(sk), 'pass');
+		const backup = exportChatKey();
+		const now = vi.spyOn(Date, 'now').mockReturnValue(100_000);
+		try {
+			await expect(loadChatKey('wrong')).rejects.toThrow();
+			await expect(importChatKey(backup, 'wrong')).rejects.toThrow();
+			await expect(loadChatKey('wrong')).rejects.toThrow();
+			await expect(importChatKey(backup, 'pass')).rejects.toThrow('1 seconds');
+			setChatKeyUser('user-2');
+			await expect(loadChatKey('pass')).rejects.toThrow('no stored chat key');
+			setChatKeyUser('user-1');
+			await expect(loadChatKey('pass')).rejects.toThrow('1 seconds');
+			now.mockReturnValue(101_000);
+			await expect(importChatKey(backup, 'wrong')).rejects.toThrow('wrong passphrase');
+			await expect(loadChatKey('pass')).rejects.toThrow('2 seconds');
+			now.mockReturnValue(103_000);
+			await expect(loadChatKey('pass')).resolves.toBe(sk);
+			await expect(loadChatKey('wrong')).rejects.toThrow();
+			await expect(loadChatKey('pass')).resolves.toBe(sk);
+		} finally {
+			now.mockRestore();
+		}
+	});
+
+	it('rejects concurrent verification through another entry point', async () => {
+		setChatKeyUser('user-1');
+		const sk = generateSecretKey();
+		await saveChatKey(sk, publicKeyOf(sk), 'pass');
+		const backup = exportChatKey();
+		const pending = loadChatKey('pass');
+		await expect(importChatKey(backup, 'pass')).rejects.toThrow('already in progress');
+		await expect(pending).resolves.toBe(sk);
+	});
+
+	it('rejects a decrypted value that is not a valid cryptographic secret without replacing the vault', async () => {
+		setChatKeyUser('user-1');
+		const sk = generateSecretKey();
+		await saveChatKey(sk, publicKeyOf(sk), 'pass');
+		const original = exportChatKey();
+		const decrypt = vi.spyOn(crypto.subtle, 'decrypt').mockResolvedValue(new Uint8Array(32).buffer);
+		try {
+			await expect(importChatKey(original, 'pass')).rejects.toThrow();
+			expect(exportChatKey()).toBe(original);
+		} finally {
+			decrypt.mockRestore();
+		}
+	});
+
+	it('requires a known binding or explicit confirmation for legacy encrypted backups', async () => {
+		setChatKeyUser('user-1');
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		await saveChatKey(sk, pk, 'pass');
+		const salt = new Uint8Array(16).fill(1);
+		const iv = new Uint8Array(12).fill(2);
+		const material = await crypto.subtle.importKey(
+			'raw',
+			new TextEncoder().encode('pass'),
+			'PBKDF2',
+			false,
+			['deriveKey']
+		);
+		const key = await crypto.subtle.deriveKey(
+			{ name: 'PBKDF2', salt, iterations: 100_000, hash: 'SHA-256' },
+			material,
+			{ name: 'AES-GCM', length: 256 },
+			false,
+			['encrypt']
+		);
+		const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, hexToBytes(sk));
+		const parsed = {
+			v: 1,
+			salt: bytesToHex(salt),
+			iv: bytesToHex(iv),
+			ciphertext: bytesToHex(new Uint8Array(ciphertext))
+		};
+		clearChatKey();
+		await expect(importChatKey(JSON.stringify(parsed), 'pass')).rejects.toThrow(
+			'existing account binding'
+		);
+		await expect(importChatKey(JSON.stringify(parsed), 'pass', pk)).resolves.toBe(sk);
+		clearChatKey();
+		await expect(importChatKey(JSON.stringify(parsed), 'pass', undefined, true)).resolves.toBe(sk);
+	});
+
+	it('authenticates account metadata and rejects relabeling or stripping it', async () => {
+		setChatKeyUser('user-1', 'tenant-1');
+		const sk = generateSecretKey();
+		await saveChatKey(sk, publicKeyOf(sk), 'pass');
+		const backup = JSON.parse(exportChatKey());
+		setChatKeyUser('user-2', 'tenant-2');
+		await expect(
+			importChatKey(JSON.stringify({ ...backup, owner: 'user-2', tenant: 'tenant-2' }), 'pass')
+		).rejects.toThrow('wrong passphrase or corrupt');
+		const { owner: _owner, tenant: _tenant, aad: _aad, ...stripped } = backup;
+		await expect(importChatKey(JSON.stringify(stripped), 'pass', undefined, true)).rejects.toThrow(
+			'wrong passphrase or corrupt'
+		);
+		expect(hasChatKey()).toBe(false);
+	});
+
+	it.each([0, 99_999, 600_001, 1.5, '600000'])(
+		'rejects unsafe KDF iteration values: %s',
+		async (iter) => {
+			setChatKeyUser('user-1');
+			const sk = generateSecretKey();
+			await saveChatKey(sk, publicKeyOf(sk), 'pass');
+			await expect(
+				importChatKey(JSON.stringify({ ...JSON.parse(exportChatKey()), iter }), 'pass')
+			).rejects.toThrow('unsupported');
+		}
+	);
 	it('round-trips the key with the correct passphrase', async () => {
 		setChatKeyUser('user-1');
 		const sk = generateSecretKey();
@@ -77,7 +252,7 @@ describe('chat key custody', () => {
 	it('rejects a backup whose secret key is not a 32-byte hex key', async () => {
 		setChatKeyUser('user-1');
 		await expect(importChatKey('{"v":1,"secret_key":"zzzz"}', 'pass')).rejects.toThrow(
-			'invalid backup format'
+			'unsupported chat key format'
 		);
 	});
 
@@ -217,7 +392,7 @@ describe('chat key custody', () => {
 				iter: 100_000
 			})
 		);
-		await importChatKey(localStorage.getItem(`${LEGACY_KEY}.user-1`)!, 'pass');
+		await importChatKey(localStorage.getItem(`${LEGACY_KEY}.user-1`)!, 'pass', publicKeyOf(sk));
 		expect(storedKeyPubkey()).toBe(publicKeyOf(sk));
 	});
 
