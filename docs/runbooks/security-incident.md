@@ -172,6 +172,30 @@ curl -X POST \
 
 Rotating `JWT_SECRET` invalidates all bearer-token and cookie-based sessions. See [Rotate `JWT_SECRET`](#31-rotate-jwt_secret).
 
+### 4.4 Lost Chat device or suspected Buzz-key exposure
+
+1. In **Settings → Security / Devices**, revoke the affected browser session or
+   device token. This blocks that Elembra credential; it does not erase the
+   device's local encrypted backup or revoke a copied Buzz key.
+2. If the device may have had Chat unlocked, or both an encrypted backup and
+   its passphrase may be exposed, treat the Buzz key as compromised. Preserve
+   the key and event evidence needed for incident review.
+3. Have an authorized administrator coordinate old Elembra binding and Buzz
+   community-admission revocation. Verify the Buzz bridge has applied the
+   revocation before enabling a replacement identity. Historical signed events
+   remain attributed to the old public key.
+4. Use controlled replacement only after M4.1b2's confirmation, replacement-key
+   proof, bridge-ordering and membership-reconciliation flow is available. The
+   current backend `rotation_of` endpoint is not an end-user recovery workflow.
+5. If SSO is suspected, disable/reset the account and revoke its sessions and
+   device tokens, then review security events. SSO compromise alone does not
+   prove the Buzz private key was exposed, but account-authorized identity
+   operations must be treated as part of the incident.
+
+Never tell users that removing a local device record or logging out invalidates
+all copies of the Buzz signing key. A fully lost key cannot be restored; a new
+identity does not inherit the old identity's signatures.
+
 ---
 
 ## 5. Isolate a Tenant or User

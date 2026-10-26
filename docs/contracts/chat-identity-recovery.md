@@ -107,8 +107,9 @@ passphrases and the KDF remain necessary.
 
 ## M4.1b requirements
 
-Device inventory and audited enrollment/removal; device-to-device pairing;
-lost-device session handling; compromise/rotation and membership migration UX;
-and a protocol distinguishing per-device credentials from a shared signing key.
-Removing one device record cannot revoke one copy of a shared key. Do not claim
-otherwise. Managed signing and server key escrow remain out of scope.
+The bounded inventory, revocation and lost-device response is specified in the
+[Chat device lifecycle contract](chat-device-lifecycle.md). Device-token
+revocation is not Buzz-key revocation. Stronger pairing and controlled key
+replacement require M4.1b2's explicit contract and tests; they are not completed
+functionality in this milestone. Managed signing and server key escrow remain
+out of scope.

@@ -99,6 +99,23 @@ cryptographically valid after logout; individual-device revocation cannot be
 claimed while devices share that key. Existing binding/admission revocation
 and explicit rotation remain the authorization mechanisms.
 
+### M4.1b: device credentials and lost-device response
+
+The [Chat device lifecycle contract](../contracts/chat-device-lifecycle.md)
+separates browser sessions and Elembra device tokens from Buzz signing keys.
+The user Security view reuses the existing active-session and active-token
+inventory/revocation APIs. Revoking either platform credential stops that
+credential from authenticating to Elembra; it does not erase a local backup,
+clear another browser's unlocked key, or invalidate signatures from a copied
+Buzz key. A token inventory entry is not proof of Chat key enrollment.
+
+Per-device Buzz signing authority, authenticated second-device pairing and
+ordered replacement with confirmed Buzz admission revocation and community
+membership reconciliation are M4.1b2. No key escrow is permitted. The current
+`rotation_of` backend flow is not advertised as user-facing recovery because
+the Buzz bridge is asynchronous and has no completion/ordering confirmation
+for this UX.
+
 Elembra and Buzz have different but complementary identities.
 
 ```text

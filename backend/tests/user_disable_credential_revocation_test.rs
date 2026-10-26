@@ -42,6 +42,277 @@ async fn get_me_with_bearer(app: &axum::Router, token: &str) -> TestResult<Statu
         .status())
 }
 
+#[tokio::test]
+#[ignore = "requires explicitly configured disposable local PostgreSQL and RustFS"]
+async fn user_device_inventory_and_revocation_are_owner_scoped() -> TestResult<()> {
+    let _serial = SERIAL.lock().await;
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("set DATABASE_URL to an explicitly disposable local database");
+    assert_disposable_database(&database_url);
+    assert_local_database();
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE")
+            .ok()
+            .as_deref(),
+        Some("1"),
+        "set RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE=1 only for disposable local RustFS"
+    );
+
+    let state = setup_test_env().await;
+    let pool = state.db_pool.clone();
+    let tenant_id = Uuid::new_v4();
+    let other_tenant_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    let other_user_id = Uuid::new_v4();
+    let other_tenant_user_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    let other_session_id = Uuid::new_v4();
+    let other_tenant_session_id = Uuid::new_v4();
+    let session_token = rustshare_auth::generate_web_session_token();
+    let other_session_token = rustshare_auth::generate_web_session_token();
+    let other_tenant_session_token = rustshare_auth::generate_web_session_token();
+    let session_hash = rustshare_auth::hash_web_session_token(&session_token);
+    let other_session_hash = rustshare_auth::hash_web_session_token(&other_session_token);
+    let other_tenant_session_hash =
+        rustshare_auth::hash_web_session_token(&other_tenant_session_token);
+    let device_id = Uuid::new_v4();
+    let other_device_id = Uuid::new_v4();
+    let other_tenant_device_id = Uuid::new_v4();
+    let device_token = format!("chat-device-lifecycle-{}", Uuid::new_v4());
+    let other_device_token = format!("chat-device-lifecycle-{}", Uuid::new_v4());
+    let other_tenant_device_token = format!("chat-device-lifecycle-{}", Uuid::new_v4());
+    let device_hash = hex::encode(Sha256::digest(device_token.as_bytes()));
+    let other_device_hash = hex::encode(Sha256::digest(other_device_token.as_bytes()));
+    let other_tenant_device_hash =
+        hex::encode(Sha256::digest(other_tenant_device_token.as_bytes()));
+
+    let attempt: TestResult<()> = async {
+        for tenant in [tenant_id, other_tenant_id] {
+            sqlx::query(
+                "INSERT INTO tenants (id, name, created_at, updated_at)
+                 VALUES ($1, $2, NOW(), NOW())",
+            )
+            .bind(tenant)
+            .bind(format!("Chat device lifecycle test {tenant}"))
+            .execute(&pool)
+            .await?;
+        }
+        for (id, tenant) in [
+            (user_id, tenant_id),
+            (other_user_id, tenant_id),
+            (other_tenant_user_id, other_tenant_id),
+        ] {
+            sqlx::query(
+                "INSERT INTO users
+                    (id, username, email, password_hash, display_name,
+                     storage_quota, tenant_id)
+                 VALUES ($1, $2, $3, 'test-password-hash', $2, 10737418240, $4)",
+            )
+            .bind(id)
+            .bind(format!("chat_device_{}", id.simple()))
+            .bind(format!("chat-device-{}@test.local", id.simple()))
+            .bind(tenant)
+            .execute(&pool)
+            .await?;
+        }
+        for (id, owner, hash, tenant) in [
+            (session_id, user_id, &session_hash, tenant_id),
+            (
+                other_session_id,
+                other_user_id,
+                &other_session_hash,
+                tenant_id,
+            ),
+            (
+                other_tenant_session_id,
+                other_tenant_user_id,
+                &other_tenant_session_hash,
+                other_tenant_id,
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO user_sessions (id, user_id, session_token_hash, expires_at, tenant_id)
+                 VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour', $4)",
+            )
+            .bind(id)
+            .bind(owner)
+            .bind(hash)
+            .bind(tenant)
+            .execute(&pool)
+            .await?;
+        }
+        for (id, owner, hash) in [
+            (device_id, user_id, &device_hash),
+            (other_device_id, other_user_id, &other_device_hash),
+            (
+                other_tenant_device_id,
+                other_tenant_user_id,
+                &other_tenant_device_hash,
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO device_tokens (id, user_id, token_hash, device_name)
+                 VALUES ($1, $2, $3, 'lifecycle test')",
+            )
+            .bind(id)
+            .bind(owner)
+            .bind(hash)
+            .execute(&pool)
+            .await?;
+        }
+
+        let app = rustshare_server::routes::user_routes()
+            .merge(rustshare_server::routes::device_management_routes())
+            .with_state(state.clone());
+        let user_bearer = create_auth_token(&state, user_id, tenant_id);
+        for (path, expected_id) in [
+            ("/api/v1/me/sessions", session_id),
+            ("/api/v1/user/devices", device_id),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(
+                            axum::http::header::AUTHORIZATION,
+                            format!("Bearer {user_bearer}"),
+                        )
+                        .body(Body::empty())?,
+                )
+                .await?;
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+            let body: serde_json::Value = serde_json::from_slice(&bytes)?;
+            let values = if path.ends_with("sessions") {
+                body.as_array()
+                    .expect("session inventory is an array")
+                    .clone()
+            } else {
+                body["devices"]
+                    .as_array()
+                    .expect("device inventory is an array")
+                    .clone()
+            };
+            assert_eq!(
+                values.len(),
+                1,
+                "inventory must exclude other users/tenants"
+            );
+            assert_eq!(values[0]["id"], expected_id.to_string());
+        }
+
+        let cross_user_session = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/v1/me/sessions/{other_session_id}"))
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        format!("Bearer {user_bearer}"),
+                    )
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(cross_user_session.status(), StatusCode::NOT_FOUND);
+        let cross_user_device = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/v1/user/devices/{other_device_id}"))
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        format!("Bearer {user_bearer}"),
+                    )
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(cross_user_device.status(), StatusCode::NOT_FOUND);
+
+        let revoked_session = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/v1/me/sessions/{session_id}"))
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        format!("Bearer {user_bearer}"),
+                    )
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(revoked_session.status(), StatusCode::NO_CONTENT);
+        let stale_session = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/me")
+                    .header(
+                        axum::http::header::COOKIE,
+                        format!(
+                            "{}={session_token}",
+                            rustshare_auth::WEB_SESSION_COOKIE_NAME
+                        ),
+                    )
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(stale_session.status(), StatusCode::UNAUTHORIZED);
+
+        let revoked_device = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/v1/user/devices/{device_id}"))
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        format!("Bearer {user_bearer}"),
+                    )
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(revoked_device.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            get_me_with_bearer(&app, &device_token).await?,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            get_me_with_bearer(&app, &other_device_token).await?,
+            StatusCode::OK
+        );
+        Ok(())
+    }
+    .await;
+
+    let cleanup = async {
+        sqlx::query("DELETE FROM user_sessions WHERE user_id = ANY($1)")
+            .bind(vec![user_id, other_user_id, other_tenant_user_id])
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM device_tokens WHERE user_id = ANY($1)")
+            .bind(vec![user_id, other_user_id, other_tenant_user_id])
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM users WHERE id = ANY($1)")
+            .bind(vec![user_id, other_user_id, other_tenant_user_id])
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM tenants WHERE id = ANY($1)")
+            .bind(vec![tenant_id, other_tenant_id])
+            .execute(&pool)
+            .await?;
+        Ok::<_, sqlx::Error>(())
+    }
+    .await;
+    attempt?;
+    cleanup?;
+    Ok(())
+}
+
 struct CredentialRevocationResult {
     authenticated: StatusCode,
     scim_v1_status: StatusCode,
