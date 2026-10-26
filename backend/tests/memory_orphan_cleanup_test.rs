@@ -333,6 +333,45 @@ async fn memory_orphan_cleanup_worker_fences_retries_and_resumes_saved_cursor(db
             .unwrap(),
         0
     );
+
+    let earlier_chunk = Uuid::from_u128(0);
+    insert_chunk(&db, tenant, Uuid::new_v4(), earlier_chunk).await;
+    sqlx::query("UPDATE memory_note_orphan_cleanup_jobs SET next_run_at=clock_timestamp() WHERE tenant_id=$1")
+        .bind(tenant)
+        .execute(&db)
+        .await
+        .unwrap();
+    let sweep_owner = Uuid::new_v4();
+    let sweep = claim(&db, sweep_owner, config.lease)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        sweep.cursor, None,
+        "a periodic full sweep restarts at the beginning"
+    );
+    process_page_and_checkpoint(&db, &store, config, sweep_owner, &sweep)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT removed FROM memory_note_orphan_cleanup_jobs WHERE tenant_id=$1"
+        )
+        .bind(tenant)
+        .fetch_one(&db)
+        .await
+        .unwrap(),
+        102
+    );
+    assert!(!sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM note_index_chunks WHERE tenant_id=$1 AND id=$2)"
+    )
+    .bind(tenant)
+    .bind(earlier_chunk)
+    .fetch_one(&db)
+    .await
+    .unwrap());
+
     sqlx::query("DELETE FROM memory_note_orphan_cleanup_jobs WHERE tenant_id=$1")
         .bind(tenant)
         .execute(&db)
