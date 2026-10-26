@@ -103,7 +103,7 @@ and explicit rotation remain the authorization mechanisms.
 
 The [Chat device lifecycle contract](../contracts/chat-device-lifecycle.md)
 separates browser sessions and Elembra device tokens from Buzz signing keys.
-The user Security view reuses the existing active-session and active-token
+The user Security view reuses the existing stored-session and active-token
 inventory/revocation APIs. Revoking either platform credential stops that
 credential from authenticating to Elembra; it does not erase a local backup,
 clear another browser's unlocked key, or invalidate signatures from a copied

@@ -85,7 +85,7 @@ export async function updateUserPassword(
 }
 
 /**
- * List active browser sessions for the current user.
+ * List stored browser sessions for the current user, including expired sessions.
  */
 export async function listUserSessions(): Promise<UserSession[]> {
 	return apiClient.get<UserSession[]>('/me/sessions');
@@ -212,7 +212,7 @@ interface ListDevicesResponse {
 }
 
 /**
- * List active devices for the current user.
+ * List active Elembra device tokens for the current user.
  */
 export async function listUserDevices(): Promise<UserDevice[]> {
 	const response = await apiClient.get<ListDevicesResponse>('/user/devices');

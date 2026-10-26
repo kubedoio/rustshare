@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Prevent Chat keys with binding history from being rebound or reassigned globally across tenants, and serialize competing identity activations and Principal revocation.
+- Label browser sessions and device tokens separately in Settings, confirm revocation with lost-Chat-key guidance, and report unavailable inventory and expired sessions accurately.
 - Add explicit Chat identity creation and pre-bind encrypted backup import, transactional account-bound recovery, and shared passphrase retry delays without server key custody.
 - Reject Chat binding challenges for a different displayed account, cancel setup after navigation, and clear cached query data and mounted private views when session refresh changes the Principal or tenant.
 

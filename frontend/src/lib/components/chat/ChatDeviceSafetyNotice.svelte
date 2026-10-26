@@ -16,11 +16,13 @@
 			browser's in-memory key. Controlled identity rotation needs administrator-coordinated Buzz
 			admission revocation and replacement; this page does not perform that rotation.
 		</p>
-		<a
-			class="mt-3 inline-block font-medium text-brand-500 hover:underline"
-			href="/settings?tab=devices"
-		>
-			Review browser sessions and device tokens
-		</a>
+		<div class="mt-3 flex flex-wrap gap-4">
+			<a class="font-medium text-brand-500 hover:underline" href="/settings?tab=security">
+				Review browser sessions
+			</a>
+			<a class="font-medium text-brand-500 hover:underline" href="/settings?tab=devices">
+				Review device tokens
+			</a>
+		</div>
 	</div>
 </section>

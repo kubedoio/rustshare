@@ -141,7 +141,21 @@ describe('Chat onboarding with real local cryptography', () => {
 			'/applications/chat/identity-binding/verify',
 			'/applications/chat/admission'
 		]);
+		expect(Object.keys(mocks.post.mock.calls[0][1]).sort()).toEqual([
+			'buzz_pubkey',
+			'workspace_id'
+		]);
+		expect(Object.keys(mocks.post.mock.calls[1][1]).sort()).toEqual(['challenge_id', 'event']);
 		const proof = mocks.post.mock.calls[1][1].event;
+		expect(Object.keys(proof).sort()).toEqual([
+			'content',
+			'created_at',
+			'id',
+			'kind',
+			'pubkey',
+			'sig',
+			'tags'
+		]);
 		expect(proof.kind).toBe(22242);
 		expect(proof.pubkey).toBe(storedKeyPubkey());
 		expect(proof.tags).toContainEqual(['challenge', 'nonce-1']);

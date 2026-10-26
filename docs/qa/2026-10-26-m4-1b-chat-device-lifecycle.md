@@ -22,43 +22,69 @@ Already present at baseline:
 M4.1b adds a Security warning and confirmation workflow to the existing
 credential inventory. Browser sessions and device tokens are labeled by their
 actual credential type; only the session API identifies the current browser.
-These active-only APIs expose no revocation history. The UI does not add Chat
+The browser API includes expired sessions; the token API returns active tokens.
+Neither exposes revocation history. The UI does not add Chat
 device records or claim that tokens prove Buzz-key custody. See the
 [device lifecycle contract](../contracts/chat-device-lifecycle.md) for the
 explicit threat model, supported revocation guarantees and M4.1b2 boundary.
 
-## Validation on this revision
+## Review and validation on the review head
+
+The first full Vitest run during cold Rust compilation had one intermittent
+Mail inline-image failure. The focused Mail test then passed, and the complete
+suite passed on an idle frontend run. A review of the activation transaction
+found that a previously revoked Buzz key could be rebound or reassigned after
+revocation. Activation now rejects any public key with prior binding history
+across tenants and serializes activation with Principal revocation/disablement and
+other attempts for the same key. The storage boundary requires binding scope,
+key and rotation fields to match the verified challenge. The PostgreSQL
+regression proves revoked-key history, ownership, wrong-key binding, replay,
+competing rotation and deterministic cross-tenant same-key activation. It also
+exercises same-tenant same-key assignment and explicit revocation concurrently
+without forced overlap, and checks disabled-Principal rejection sequentially.
 
 - `npm ci --ignore-scripts --no-audit --no-fund` — passed; npm reported
   existing peer-dependency/deprecation warnings.
-- `npm run test` — 1,333 passed across 126 files. Existing test bootstrap/mock
-  warnings and Excalidraw/RoughJS module-resolution stderr were emitted; no
-  tests failed.
-- `npm run check` — zero errors, 36 Svelte warnings.
-- `npm run lint` — Prettier passed; ESLint completed with existing warnings.
-- `npm run build` — passed.
-- `cargo fmt --all --check` — passed.
-- `SQLX_OFFLINE=true cargo test --workspace --all-features --lib` (debug
-  symbols and incremental compilation disabled to fit local disk) — passed.
+- Focused Settings/Chat notice tests — 53 passed; focused Mail test — 40 passed.
+- Final Settings, Chat binding/no-private-key request-shape and safety-link
+  tests — 28 passed across 3 files. The binding test asserts backend requests
+  contain only the public key and signed NIP-42 event, never a signing-key
+  field; settings tests cover refresh/revocation concurrency and same-route
+  navigation from the safety notice to device tokens.
+- `npm run test` — 1,348 passed across 127 files.
+- `npm run check` — zero errors, 36 existing Svelte warnings.
+- `npm run lint` — Prettier passed; ESLint completed with zero errors and 155
+  existing warnings.
+- `npm run build` — passed with existing Svelte/Vite bundler warnings.
+- `cargo fmt --all --check` and `git diff --check` — passed.
+- PostgreSQL against a newly created loopback-only disposable database and
+  RustFS bucket: `chat_identity_lifecycle_test` — 1 passed; credential
+  inventory/revocation — 1 passed. The runner dropped the database and bucket
+  after completion. No application database or bucket was used.
+- Test targets for both PostgreSQL regressions compile with
+  `cargo test -p rustshare-server --all-features --test
+chat_identity_lifecycle_test --no-run` and the matching
+  `user_disable_credential_revocation_test --no-run` command.
+- `SQLX_OFFLINE=true cargo test --workspace --all-features --lib` — passed.
 - `SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features --
--D warnings` (debug symbols and incremental compilation disabled) — passed.
+-D warnings` — passed.
 - `cargo deny --manifest-path Cargo.toml --all-features check` — passed;
-  existing duplicate-dependency and ignored-advisory warnings remain.
-- The new PostgreSQL inventory/revocation integration test compiled with
-  `cargo test -p rustshare-server --test
-user_disable_credential_revocation_test --no-run`. It was not executed: the
-  available local database container uses database `rustshare`, not the
-  required disposable `rustshare_test`, and the disposable-service opt-ins are
-  unset. Do not target it.
-- Live Chat/Buzz conformance, protected PR CI and independent
-  architecture/security review remain required before approval. No merge,
-  deployment or Gate A execution is part of this work.
+  repository-configured ignored advisories not present in the current graph
+  produce existing warnings.
+- `cargo sqlx prepare --workspace --check` — passed with the existing
+  potentially-unused-query warning. No migration or SQLx metadata changed.
+- The existing PR CI run passed on the earlier head; protected CI must be
+  checked again after the current review fixes are committed and pushed.
+- Independent agent architecture/security and code-quality reviews were
+  performed and their findings resolved. Explicit human approval and protected
+  CI remain required before merge. No merge, deployment or Gate A execution is
+  part of this work.
 
 ## Review limits
 
-M4.1b2 (#424) must provide and test stronger authenticated pairing, per-device Buzz
-signing authority, deliberate replacement confirmation, ordered revocation and
-community membership reconciliation. The current async bridge does not provide
-completion confirmation for safe end-user rotation UX. The current browser
-session and device-token revocation guarantees do not invalidate copied Buzz
-keys.
+M4.1b2 (#424) must provide and test stronger authenticated pairing, per-device
+Buzz signing authority, deliberate replacement confirmation, ordered
+revocation and community membership reconciliation. The current async bridge
+does not provide completion confirmation for safe end-user rotation UX. The
+current browser-session and device-token revocation guarantees do not
+invalidate copied Buzz keys.

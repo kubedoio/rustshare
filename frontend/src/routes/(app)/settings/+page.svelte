@@ -90,17 +90,20 @@
 	// Sessions state
 	let sessions = $state<UserSession[]>([]);
 	let sessionsLoading = $state(true);
+	let sessionsError = $state('');
+	let sessionsCheckedAt = $state(0);
 	let revokingSessionId = $state<string | null>(null);
 
 	// Devices state
 	let devices = $state<UserDevice[]>([]);
 	let devicesLoading = $state(true);
+	let devicesError = $state('');
 	let revokingDeviceId = $state<string | null>(null);
-	let credentialToRevoke = $state<
-		| { type: 'browser session'; id: string; label: string }
-		| { type: 'device token'; id: string; label: string }
-		| null
-	>(null);
+	let credentialToRevoke = $state<{
+		type: 'browser session' | 'device token';
+		id: string;
+		label: string;
+	} | null>(null);
 	let userCodeInput = $state('');
 	let approvingDevice = $state(false);
 
@@ -141,11 +144,14 @@
 		})()
 	);
 
-	onMount(() => {
+	$effect(() => {
 		const tabFromUrl = $page.url.searchParams.get('tab');
 		if (tabFromUrl && VALID_TABS.includes(tabFromUrl as TabId)) {
 			activeTab = tabFromUrl as TabId;
 		}
+	});
+
+	onMount(() => {
 		void Promise.all([
 			loadProfile(),
 			refreshSessions(),
@@ -274,10 +280,11 @@
 
 	async function refreshDevices() {
 		devicesLoading = true;
+		devicesError = '';
 		try {
 			devices = await listUserDevices();
-		} catch (error) {
-			console.error('Failed to load devices:', error);
+		} catch {
+			devicesError = 'Could not load device tokens. Their status is unknown. Try again.';
 		} finally {
 			devicesLoading = false;
 		}
@@ -285,7 +292,7 @@
 
 	async function handleApproveDevice() {
 		const code = userCodeInput.replace(/[-\s]/g, '').toUpperCase();
-		if (!code || code.length < 8) {
+		if (code.length !== 8) {
 			showNotification('Please enter a valid 8-character pairing code', 'error');
 			return;
 		}
@@ -309,8 +316,8 @@
 		revokingDeviceId = deviceId;
 		try {
 			await revokeUserDevice(deviceId);
-			await refreshDevices();
-			showNotification('Device revoked', 'success');
+			devices = devices.filter((device) => device.id !== deviceId);
+			showNotification('Device token revoked', 'success');
 		} catch (error) {
 			showNotification(error instanceof Error ? error.message : 'Failed to revoke device', 'error');
 		} finally {
@@ -320,10 +327,12 @@
 
 	async function refreshSessions() {
 		sessionsLoading = true;
+		sessionsError = '';
 		try {
 			sessions = await listUserSessions();
-		} catch (error) {
-			console.error('Failed to load sessions:', error);
+			sessionsCheckedAt = Date.now();
+		} catch {
+			sessionsError = 'Could not load browser sessions. Their status is unknown. Try again.';
 		} finally {
 			sessionsLoading = false;
 		}
@@ -333,8 +342,8 @@
 		revokingSessionId = sessionId;
 		try {
 			await revokeUserSession(sessionId);
-			await refreshSessions();
-			showNotification('Session revoked', 'success');
+			sessions = sessions.filter((session) => session.id !== sessionId);
+			showNotification('Browser session revoked', 'success');
 		} catch (error) {
 			showNotification(
 				error instanceof Error ? error.message : 'Failed to revoke session',
@@ -345,8 +354,15 @@
 		}
 	}
 
-	function handleLogout() {
-		authStore.logout();
+	async function handleLogout() {
+		try {
+			await authStore.logout();
+		} catch {
+			showNotification(
+				'Sign out failed. Your browser session may still be active. Try again.',
+				'error'
+			);
+		}
 	}
 
 	function showNotification(message: string, type: 'success' | 'error' | 'info') {
@@ -535,16 +551,28 @@
 					<div class="mt-6 border-t border-base-300 pt-6">
 						<SettingsSection
 							title="Browser sessions"
-							description="Elembra browser-session credentials. Revoked sessions are no longer listed."
+							description="Stored Elembra browser sessions, including expired sessions. Status reflects the last inventory refresh. Revoked sessions are no longer listed."
 						>
+							<button
+								type="button"
+								class="btn btn-sm"
+								onclick={refreshSessions}
+								disabled={sessionsLoading ||
+									revokingSessionId !== null ||
+									credentialToRevoke?.type === 'browser session'}
+							>
+								{sessionsError ? 'Retry' : 'Refresh browser sessions'}
+							</button>
 							{#if sessionsLoading}
 								<div class="py-8 text-center">
 									<div
 										class="inline-block h-6 w-6 animate-spin rounded-full border-2 border-brand-500 border-t-transparent"
 									></div>
 								</div>
+							{:else if sessionsError}
+								<p role="alert" class="py-4 text-sm text-error">{sessionsError}</p>
 							{:else if sessions.length === 0}
-								<p class="py-4 text-sm text-base-content/60">No active sessions</p>
+								<p class="py-4 text-sm text-base-content/60">No browser sessions</p>
 							{:else}
 								<div class="space-y-3 py-4">
 									{#each sessions as session}
@@ -559,7 +587,9 @@
 													<span
 														class="rounded bg-base-200 px-2 py-0.5 text-xs text-base-content/60"
 													>
-														Browser session · Active
+														Browser session · {Date.parse(session.expires_at) <= sessionsCheckedAt
+															? 'Expired'
+															: 'Active'}
 													</span>
 													{#if session.is_current}
 														<span
@@ -578,6 +608,7 @@
 											{#if !session.is_current}
 												<button
 													type="button"
+													aria-label={`Revoke browser session: ${session.user_agent || 'Browser'}`}
 													class="rounded-lg px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/10"
 													onclick={() =>
 														(credentialToRevoke = {
@@ -585,7 +616,7 @@
 															id: session.id,
 															label: session.user_agent || 'Browser'
 														})}
-													disabled={revokingSessionId === session.id}
+													disabled={sessionsLoading || revokingSessionId !== null}
 												>
 													{#if revokingSessionId === session.id}
 														<span
@@ -669,22 +700,20 @@
 								<input
 									type="text"
 									placeholder="XXXX-XXXX"
+									aria-label="Account device pairing code"
 									class="w-32 rounded-lg border border-base-300 bg-base-100 px-4 py-2 font-mono text-sm text-base-content uppercase placeholder:text-base-content/40 focus:border-brand-500/50 focus:outline-hidden"
 									bind:value={userCodeInput}
 									maxlength="9"
-									oninput={(e) =>
-										(userCodeInput =
-											userCodeInput
-												.replace(/[^a-zA-Z0-9]/g, '')
-												.toUpperCase()
-												.slice(0, 4) +
-											(userCodeInput.length > 4 ? '-' + userCodeInput.slice(4, 8) : ''))}
 								/>
 								<button
 									type="button"
 									class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600 disabled:opacity-50"
 									onclick={handleApproveDevice}
-									disabled={approvingDevice || !userCodeInput}
+									disabled={approvingDevice ||
+										devicesLoading ||
+										revokingDeviceId !== null ||
+										credentialToRevoke?.type === 'device token' ||
+										!userCodeInput}
 								>
 									{#if approvingDevice}
 										<span
@@ -700,14 +729,27 @@
 					<div class="mt-6 border-t border-base-300 pt-6">
 						<SettingsSection
 							title="Device tokens"
-							description="Account-access credentials approved for desktop or mobile clients. This list does not track Buzz signing-key copies."
+							description="Account-access credentials approved for desktop or mobile clients. Status reflects the last inventory refresh. Revoked tokens are no longer listed. This list does not track Buzz signing-key copies."
 						>
+							<button
+								type="button"
+								class="btn btn-sm"
+								onclick={refreshDevices}
+								disabled={devicesLoading ||
+									approvingDevice ||
+									revokingDeviceId !== null ||
+									credentialToRevoke?.type === 'device token'}
+							>
+								{devicesError ? 'Retry' : 'Refresh device tokens'}
+							</button>
 							{#if devicesLoading}
 								<div class="py-8 text-center">
 									<div
 										class="inline-block h-6 w-6 animate-spin rounded-full border-2 border-brand-500 border-t-transparent"
 									></div>
 								</div>
+							{:else if devicesError}
+								<p role="alert" class="py-4 text-sm text-error">{devicesError}</p>
 							{:else if devices.length === 0}
 								<div class="py-6 text-center">
 									<Smartphone size={32} class="mx-auto mb-2 text-base-content/20" />
@@ -736,11 +778,12 @@
 												<p class="text-xs text-base-content/50">
 													Last active: {device.last_used_at
 														? formatDateTime(device.last_used_at)
-														: 'Never'}
+														: 'Not available'}
 												</p>
 											</div>
 											<button
 												type="button"
+												aria-label={`Revoke device token: ${device.device_name}`}
 												class="rounded-lg px-3 py-1.5 text-sm font-medium text-error transition-colors hover:bg-error/10"
 												onclick={() =>
 													(credentialToRevoke = {
@@ -748,7 +791,7 @@
 														id: device.id,
 														label: device.device_name
 													})}
-												disabled={revokingDeviceId === device.id}
+												disabled={devicesLoading || approvingDevice || revokingDeviceId !== null}
 											>
 												{#if revokingDeviceId === device.id}
 													<span
@@ -1032,5 +1075,7 @@
 {/if}
 
 {#if showToast}
-	<Toast message={toastMessage} type={toastType} onClose={() => (showToast = false)} />
+	<div role={toastType === 'error' ? 'alert' : 'status'}>
+		<Toast message={toastMessage} type={toastType} onClose={() => (showToast = false)} />
+	</div>
 {/if}

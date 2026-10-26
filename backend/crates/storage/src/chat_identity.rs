@@ -415,7 +415,7 @@ impl ChatIdentityStore {
         .transpose()
     }
 
-    /// Consume a challenge and activate its binding atomically.
+    /// Consume a challenge and activate a previously unused key atomically.
     pub async fn consume_and_activate(
         &self,
         challenge: &BindingChallenge,
@@ -423,6 +423,40 @@ impl ChatIdentityStore {
         now: DateTime<Utc>,
     ) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
+        if binding.tenant_id != challenge.tenant_id
+            || binding.principal_id != challenge.principal_id
+            || binding.buzz_pubkey != challenge.buzz_pubkey
+            || binding.rotation_of != challenge.rotation_of
+        {
+            return Ok(false);
+        }
+        // Serialize activation with rotation, explicit revocation and account disablement.
+        let principal = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM users WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL
+             FOR NO KEY UPDATE",
+        )
+        .bind(challenge.principal_id.0)
+        .bind(challenge.tenant_id.0)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if principal.is_none() {
+            return Ok(false);
+        }
+        // Principals in different tenants must not race the same key's history check.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("chat-binding:{}", challenge.buzz_pubkey))
+            .execute(&mut *tx)
+            .await?;
+        let key_seen = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM chat_identity_bindings
+                           WHERE buzz_pubkey = $1)",
+        )
+        .bind(&challenge.buzz_pubkey)
+        .fetch_one(&mut *tx)
+        .await?;
+        if key_seen {
+            return Ok(false);
+        }
         let consumed = sqlx::query(
             "UPDATE chat_binding_challenges
              SET consumed_at = $2
@@ -693,6 +727,11 @@ impl ChatIdentityStore {
         principal_id: PrincipalId,
     ) -> Result<u64> {
         let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT id FROM users WHERE id = $1 AND tenant_id = $2 FOR NO KEY UPDATE")
+            .bind(principal_id.0)
+            .bind(tenant_id.0)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query(
             "INSERT INTO integration_outbox
                 (source, event_id, event_type, application_id, tenant_id, workspace_id, event_json)
