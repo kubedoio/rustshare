@@ -1,6 +1,6 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{Duration, Utc};
-use rustshare_core::domain::{PrincipalId, TenantId};
+use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_resource_auth::{BindingChallenge, BindingStatus, ChatIdentityBinding};
 use rustshare_storage::ChatIdentityStore;
 use sqlx::{postgres::PgConnectOptions, PgPool};
@@ -120,6 +120,33 @@ async fn revoked_keys_stay_revoked_and_competing_rotations_fail_closed() -> Resu
             .await?,
         "replay must fail"
     );
+    let (second_key, second_binding) = issue(&store, tenant, owner, '9', None).await?;
+    assert!(
+        !store
+            .consume_and_activate(&second_key, &second_binding, Utc::now())
+            .await?,
+        "a distinct key without rotation_of is ineligible while another key is active"
+    );
+    let inserted: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM chat_identity_bindings WHERE buzz_pubkey = $1",
+    )
+    .bind(&second_key.buzz_pubkey)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(inserted, 0, "ineligible activation must not insert a binding");
+    let consumed: bool = sqlx::query_scalar(
+        "SELECT consumed_at IS NOT NULL FROM chat_binding_challenges WHERE challenge_id = $1",
+    )
+    .bind(second_key.challenge_id)
+    .fetch_one(&pool)
+    .await?;
+    assert!(!consumed, "ineligible activation must not consume the challenge");
+    let current = store
+        .active_binding(TenantId(tenant), PrincipalId(owner))
+        .await?
+        .unwrap();
+    assert_eq!(current.binding_id, replacement_binding.binding_id);
+
     for (scope, principal) in [(tenant, other), (foreign_tenant, foreign)] {
         let (challenge, binding) = issue(
             &store,
@@ -322,21 +349,338 @@ async fn revoked_keys_stay_revoked_and_competing_rotations_fail_closed() -> Resu
     }
     .await;
 
-    let cleanup: Result<()> = async {
-        for query in [
-            "DELETE FROM chat_binding_challenges WHERE tenant_id = ANY($1)",
-            "DELETE FROM chat_identity_bindings WHERE tenant_id = ANY($1)",
-            "DELETE FROM users WHERE tenant_id = ANY($1)",
-            "DELETE FROM tenants WHERE id = ANY($1)",
-        ] {
-            sqlx::query(query)
-                .bind(vec![tenant, foreign_tenant])
+    let mut cleanup_errors = Vec::new();
+    for statement in [
+        "DELETE FROM chat_binding_challenges WHERE tenant_id = ANY($1)",
+        "DELETE FROM chat_identity_bindings WHERE tenant_id = ANY($1)",
+        "DELETE FROM users WHERE tenant_id = ANY($1)",
+        "DELETE FROM tenants WHERE id = ANY($1)",
+    ] {
+        if let Err(error) = sqlx::query(statement)
+            .bind(vec![tenant, foreign_tenant])
+            .execute(&pool)
+            .await
+        {
+            cleanup_errors.push(format!("{statement}: {error}"));
+        }
+    }
+    if let Err(error) = attempt {
+        anyhow::ensure!(
+            cleanup_errors.is_empty(),
+            "attempt failed: {error}; cleanup errors: {}",
+            cleanup_errors.join("; ")
+        );
+        return Err(error);
+    }
+    anyhow::ensure!(
+        cleanup_errors.is_empty(),
+        "failed to clean up Chat identity fixtures: {}",
+        cleanup_errors.join("; ")
+    );
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum AdmissionRace {
+    ExplicitRevocation,
+    Disablement,
+    Rotation,
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires explicitly configured disposable local PostgreSQL"]
+async fn admission_is_serialized_with_principal_revocation_disablement_and_rotation() -> Result<()>
+{
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB").as_deref(),
+        Ok("1")
+    );
+    let database_url = std::env::var("DATABASE_URL")?;
+    let options: PgConnectOptions = database_url.parse()?;
+    assert!(matches!(
+        options.get_host(),
+        "127.0.0.1" | "localhost" | "::1"
+    ));
+    assert!(options
+        .get_database()
+        .is_some_and(|db| db == "rustshare_test" || db.starts_with("rustshare_test_")));
+    let application_name = format!("chat-admission-race-{}", Uuid::new_v4());
+    let pool = PgPool::connect_with(options.application_name(&application_name)).await?;
+
+    for (race, original_key, replacement_key) in [
+        (AdmissionRace::ExplicitRevocation, 'a', 'd'),
+        (AdmissionRace::Disablement, 'b', 'e'),
+        (AdmissionRace::Rotation, 'c', 'f'),
+    ] {
+        let tenant = Uuid::new_v4();
+        let principal = Uuid::new_v4();
+        let attempt: Result<()> = async {
+            sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+                .bind(tenant)
+                .bind(format!("Chat admission race {tenant}"))
                 .execute(&pool)
                 .await?;
+            sqlx::query(
+                "INSERT INTO users (id, username, email, password_hash, display_name, storage_quota, tenant_id)
+                 VALUES ($1, $2, $3, 'test-only', $2, 1024, $4)",
+            )
+            .bind(principal)
+            .bind(format!("chat_admission_{}", principal.simple()))
+            .bind(format!("{principal}@test.local"))
+            .bind(tenant)
+            .execute(&pool)
+            .await?;
+            let store = ChatIdentityStore::new(pool.clone());
+            let (challenge, binding) = issue(&store, tenant, principal, original_key, None).await?;
+            anyhow::ensure!(
+                store
+                    .consume_and_activate(&challenge, &binding, Utc::now())
+                    .await?
+            );
+
+            let seed_workspace = Uuid::new_v4();
+            let race_workspace = Uuid::new_v4();
+            let seed_mapping = Uuid::new_v4();
+            let race_mapping = Uuid::new_v4();
+            for (mapping, workspace, community) in [
+                (seed_mapping, seed_workspace, format!("seed-{tenant}")),
+                (race_mapping, race_workspace, format!("race-{tenant}")),
+            ] {
+                sqlx::query(
+                    "INSERT INTO chat_workspace_communities
+                        (mapping_id, tenant_id, workspace_id, community_id, relay_url)
+                     VALUES ($1, $2, $3, $4, 'wss://relay.example.test')",
+                )
+                .bind(mapping)
+                .bind(tenant)
+                .bind(workspace)
+                .bind(community)
+                .execute(&pool)
+                .await?;
+                sqlx::query(
+                    "INSERT INTO application_enablements
+                        (tenant_id, workspace_id, application_id, enabled)
+                     VALUES ($1, $2, 'io.elembra.chat', true)",
+                )
+                .bind(tenant)
+                .bind(workspace)
+                .execute(&pool)
+                .await?;
+            }
+            anyhow::ensure!(
+                store
+                    .admit_binding(
+                        TenantId(tenant),
+                        PrincipalId(principal),
+                        WorkspaceId(seed_workspace),
+                    )
+                    .await?
+            );
+            sqlx::query(
+                "CREATE FUNCTION chat_lifecycle_admission_barrier() RETURNS trigger
+                 LANGUAGE plpgsql AS $$
+                 BEGIN
+                     PERFORM pg_advisory_xact_lock(hashtextextended(TG_ARGV[0], 0));
+                     RETURN NEW;
+                 END $$",
+            )
+            .execute(&pool)
+            .await?;
+            let barrier_key = format!("chat-admission-test-{tenant}");
+            sqlx::query(&format!(
+                "CREATE TRIGGER chat_lifecycle_admission_barrier
+                 BEFORE INSERT ON chat_buzz_admissions FOR EACH ROW
+                 EXECUTE FUNCTION chat_lifecycle_admission_barrier('{barrier_key}')"
+            ))
+            .execute(&pool)
+            .await?;
+            let mut blocker = pool.begin().await?;
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+                .bind(&barrier_key)
+                .execute(&mut *blocker)
+                .await?;
+
+            let admission = tokio::spawn({
+                let store = store.clone();
+                async move {
+                    store
+                        .admit_binding(
+                            TenantId(tenant),
+                            PrincipalId(principal),
+                            WorkspaceId(race_workspace),
+                        )
+                        .await
+                }
+            });
+            let admission_blocked = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                async {
+                    loop {
+                        let waiting: i64 = sqlx::query_scalar(
+                            "SELECT count(*) FROM pg_stat_activity
+                             WHERE application_name = $1 AND wait_event_type = 'Lock'
+                               AND query ILIKE '%chat_buzz_admissions%'",
+                        )
+                        .bind(&application_name)
+                        .fetch_one(&pool)
+                        .await?;
+                        if waiting == 1 {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                    Ok::<_, sqlx::Error>(())
+                },
+            )
+            .await;
+            if let Err(error) = admission_blocked {
+                blocker.commit().await?;
+                admission.await??;
+                return Err(anyhow!("admission did not reach the barrier: {error}"));
+            }
+            admission_blocked??;
+
+            let (rotation_challenge, rotation_binding) = issue(
+                &store,
+                tenant,
+                principal,
+                replacement_key,
+                Some(binding.binding_id),
+            )
+            .await?;
+            let counter = tokio::spawn({
+                let store = store.clone();
+                let pool = pool.clone();
+                async move {
+                    match race {
+                        AdmissionRace::ExplicitRevocation => {
+                            store
+                                .revoke_principal(TenantId(tenant), PrincipalId(principal))
+                                .await?;
+                        }
+                        AdmissionRace::Disablement => {
+                            sqlx::query("UPDATE users SET disabled_at = now() WHERE id = $1")
+                                .bind(principal)
+                                .execute(&pool)
+                                .await?;
+                        }
+                        AdmissionRace::Rotation => {
+                            anyhow::ensure!(
+                                store
+                                    .consume_and_activate(
+                                        &rotation_challenge,
+                                        &rotation_binding,
+                                        Utc::now(),
+                                    )
+                                    .await?
+                            );
+                        }
+                    }
+                    Ok::<_, anyhow::Error>(())
+                }
+            });
+            let counter_ready = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                async {
+                    loop {
+                        if counter.is_finished() {
+                            break;
+                        }
+                        let waiting: i64 = sqlx::query_scalar(
+                            "SELECT count(*) FROM pg_stat_activity
+                             WHERE application_name = $1 AND wait_event_type = 'Lock'",
+                        )
+                        .bind(&application_name)
+                        .fetch_one(&pool)
+                        .await?;
+                        if waiting >= 2 {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                    Ok::<_, sqlx::Error>(())
+                },
+            )
+            .await;
+            if let Err(error) = counter_ready {
+                blocker.commit().await?;
+                admission.await??;
+                counter.await??;
+                return Err(anyhow!("competing operation did not reach its barrier: {error}"));
+            }
+            counter_ready??;
+            blocker.commit().await?;
+
+            anyhow::ensure!(admission.await??);
+            counter.await??;
+            let active: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM chat_buzz_admissions a
+                 JOIN chat_identity_bindings b ON b.tenant_id = a.tenant_id AND b.binding_id = a.binding_id
+                 WHERE a.tenant_id = $1 AND b.principal_id = $2 AND a.active",
+            )
+            .bind(tenant)
+            .bind(principal)
+            .fetch_one(&pool)
+            .await?;
+            anyhow::ensure!(active == 0, "a revoked Principal retains {active} active admissions");
+            let historical: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM chat_buzz_admissions WHERE tenant_id = $1",
+            )
+            .bind(tenant)
+            .fetch_one(&pool)
+            .await?;
+            anyhow::ensure!(historical == 2, "admission history must be preserved");
+            let requested: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM integration_outbox
+                 WHERE tenant_id = $1 AND event_type = 'io.elembra.chat.buzz.admission.requested.v1'",
+            )
+            .bind(tenant)
+            .fetch_one(&pool)
+            .await?;
+            let revoked: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM integration_outbox
+                 WHERE tenant_id = $1 AND event_type = 'io.elembra.chat.buzz.admission.revoked.v1'",
+            )
+            .bind(tenant)
+            .fetch_one(&pool)
+            .await?;
+            anyhow::ensure!(
+                requested == 2 && revoked == 2,
+                "outbox must contain both admissions followed by both revocations, got {requested} admissions and {revoked} revocations"
+            );
+            Ok(())
         }
-        Ok(())
+        .await;
+
+        let mut cleanup_errors = Vec::new();
+        for statement in [
+            "DROP TRIGGER IF EXISTS chat_lifecycle_admission_barrier ON chat_buzz_admissions",
+            "DROP FUNCTION IF EXISTS chat_lifecycle_admission_barrier",
+            "DELETE FROM integration_outbox WHERE tenant_id = $1",
+            "DELETE FROM chat_buzz_admissions WHERE tenant_id = $1",
+            "DELETE FROM chat_binding_challenges WHERE tenant_id = $1",
+            "DELETE FROM chat_identity_bindings WHERE tenant_id = $1",
+            "DELETE FROM chat_workspace_communities WHERE tenant_id = $1",
+            "DELETE FROM application_enablements WHERE tenant_id = $1",
+            "DELETE FROM users WHERE tenant_id = $1",
+            "DELETE FROM tenants WHERE id = $1",
+        ] {
+            let result = if statement.contains("$1") {
+                sqlx::query(statement).bind(tenant).execute(&pool).await
+            } else {
+                sqlx::query(statement).execute(&pool).await
+            };
+            if let Err(error) = result {
+                cleanup_errors.push(format!("{statement}: {error}"));
+            }
+        }
+        if let Err(error) = attempt {
+            return Err(anyhow!(
+                "admission race attempt failed: {error}; cleanup errors: {}",
+                cleanup_errors.join("; ")
+            ));
+        }
+        anyhow::ensure!(cleanup_errors.is_empty(), "{}", cleanup_errors.join("; "));
     }
-    .await;
-    attempt?;
-    cleanup
+    Ok(())
 }

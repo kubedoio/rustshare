@@ -99,8 +99,10 @@ pub async fn list_devices(
 /// Returns 404 if the device doesn't belong to the user.
 #[utoipa::path(
     delete,
-    path = "/api/vault-sync/v1/devices/{device_id}",
+    operation_id = "revoke_user_device",
+    path = "/api/v1/user/devices/{id}",
     tag = "Devices",
+    params(("id" = Uuid, Path, description = "Device token Id")),
     responses(
         (status = 204, description = "Deleted"),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),

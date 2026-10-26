@@ -158,14 +158,14 @@ function createAuthStore() {
 		},
 		logout: async () => {
 			const myGeneration = nextGeneration();
-			cleanupWebSocket();
-			replicationStore.reset();
-			clearLegacyWebSocketToken();
 			clearChatSession();
 			activeChatUserId = null;
 			setChatKeyUser(null);
 			await logoutRequest();
 			if (myGeneration !== sessionGeneration) return;
+			cleanupWebSocket();
+			replicationStore.reset();
+			clearLegacyWebSocketToken();
 			setChatKeyUser(null);
 			set({
 				user: null,

@@ -5,6 +5,7 @@
 	import { currentUser, authStore } from '$lib/stores/auth';
 	import { getApplicationByRouteSlug } from '$lib/applications/registry';
 	import { searchQuery as globalSearchQuery } from '$lib/stores/search';
+	import { toastStore } from '$lib/stores/toast';
 	import { createQuery } from '$lib/query-compat';
 	import { getUnreadNotificationCount } from '$lib/api/notifications';
 	import { listAllFiles } from '$lib/api/files';
@@ -177,7 +178,15 @@
 	}
 
 	async function handleLogout() {
-		await authStore.logout();
+		try {
+			await authStore.logout();
+		} catch {
+			toastStore.show(
+				'Sign out failed. Your browser session may still be active. Try again.',
+				'error'
+			);
+			return;
+		}
 		goto('/login');
 	}
 

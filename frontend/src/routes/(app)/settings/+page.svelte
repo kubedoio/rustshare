@@ -146,9 +146,8 @@
 
 	$effect(() => {
 		const tabFromUrl = $page.url.searchParams.get('tab');
-		if (tabFromUrl && VALID_TABS.includes(tabFromUrl as TabId)) {
-			activeTab = tabFromUrl as TabId;
-		}
+		activeTab =
+			tabFromUrl && VALID_TABS.includes(tabFromUrl as TabId) ? (tabFromUrl as TabId) : 'general';
 	});
 
 	onMount(() => {

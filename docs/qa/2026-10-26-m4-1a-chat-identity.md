@@ -146,8 +146,10 @@ One PR: **M4.1a: safe Chat identity onboarding and recovery**. Human security
 review and green protected CI are required before merge. No automatic merge,
 deployment, or Gate A execution is authorized by this change.
 
-M4.1b retains device inventory, audited enrollment/removal and pairing,
-lost-device sessions, compromise/rotation and membership migration UX, and
-per-device credential/admission design. A shared signing key cannot support
-cryptographic revocation of just one copied device key. Principal offboarding
-and explicit binding/admission revocation already exist and remain in force.
+M4.1b delivers bounded device inventory and lost-device platform-credential
+handling. M4.1b2 retains audited account-device enrollment, approval and
+revocation, authenticated pairing, compromise/rotation and membership
+migration UX, and per-device credential/admission design. A shared signing key
+cannot support cryptographic revocation of just one copied device key.
+Principal offboarding and explicit binding/admission revocation already exist
+and remain in force.
