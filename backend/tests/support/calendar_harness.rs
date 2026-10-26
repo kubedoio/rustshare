@@ -194,7 +194,25 @@ async fn setup_test_env_inner(calendar_outbox: bool, providers: TestProviders) -
     dotenvy::dotenv().ok();
 
     let pool = connect_pool().await;
+    setup_test_env_with_pool_inner(calendar_outbox, providers, pool).await
+}
 
+/// Build the service graph against a database owned by a `sqlx::test` fixture.
+pub async fn setup_test_env_with_pool(pool: PgPool) -> AppState {
+    assert_local_database();
+    let options = pool.connect_options();
+    assert!(is_local_host(options.get_host()));
+    assert!(options
+        .get_database()
+        .is_some_and(|name| name.starts_with("_sqlx_test") || is_test_database_name(name)));
+    setup_test_env_with_pool_inner(true, TestProviders::default(), pool).await
+}
+
+async fn setup_test_env_with_pool_inner(
+    calendar_outbox: bool,
+    providers: TestProviders,
+    pool: PgPool,
+) -> AppState {
     let metadata_store = Arc::new(rustshare_storage::MetadataStore::new(pool.clone()));
     let event_store = Arc::new(rustshare_storage::EventStore::new(pool.clone()));
     let broadcaster = Arc::new(rustshare_core::events::EventBroadcaster::new(100));
@@ -499,6 +517,7 @@ async fn setup_test_env_inner(calendar_outbox: bool, providers: TestProviders) -
         outbox_worker_enabled: false,
         outbox_readiness_staleness_secs: 60,
         shutdown_tx: tokio::sync::broadcast::channel(1).0,
+        memory_files_reconcile_worker: None,
         prometheus_handle: rustshare_server::metrics::init_metrics(),
     }
 }

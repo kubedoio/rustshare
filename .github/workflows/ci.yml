@@ -53,6 +53,10 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.prod.yml config --format json > /tmp/production-compose.json
           jq -e '.services.nginx.ports == [{"mode":"ingress","host_ip":"127.0.0.1","target":80,"published":"8080","protocol":"tcp"}]' /tmp/production-compose.json
           jq -e '.services.backend.healthcheck.test == ["CMD", "/usr/local/bin/rustshare-server", "--healthcheck"]' /tmp/production-compose.json
+          jq -e '.services.backend.environment.RUSTSHARE_MEMORY_FILES_RECONCILE_ENABLED == "false" and .services.backend.environment.RUSTSHARE_MEMORY_FILES_RECONCILE_PAGE_TIMEOUT_SECS == "300"' /tmp/production-compose.json
+          RUSTSHARE_MEMORY_FILES_RECONCILE_ENABLED=true RUSTSHARE_MEMORY_FILES_RECONCILE_PAGE_TIMEOUT_SECS=90 \
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml config --format json | \
+            jq -e '.services.backend.environment.RUSTSHARE_MEMORY_FILES_RECONCILE_ENABLED == "true" and .services.backend.environment.RUSTSHARE_MEMORY_FILES_RECONCILE_PAGE_TIMEOUT_SECS == "90"'
           jq -e '.services.rustfs.image | test("^rustfs/rustfs@sha256:[0-9a-f]{64}$")' /tmp/production-compose.json
           docker compose -p rustshare-fws-contract \
             -f docker-compose.yml \

@@ -32,6 +32,7 @@ impl PgVectorStore {
         acl: &NoteAclPayload,
         embedding: Option<String>,
     ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
         sqlx::query(
             r#"
             INSERT INTO note_index_chunks (
@@ -79,8 +80,9 @@ impl PgVectorStore {
         .bind(&acl.visibility)
         .bind(&acl.embedding_policy)
         .bind(doc.indexed_at)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
 
         Ok(())
     }
@@ -416,12 +418,14 @@ impl VectorStore for PgVectorStore {
     }
 
     async fn remove_note_chunks(&self, tenant_id: Uuid, note_id: Uuid) -> Result<usize> {
+        let mut tx = self.pool.begin().await?;
         let result =
             sqlx::query("DELETE FROM note_index_chunks WHERE tenant_id = $1 AND note_id = $2")
                 .bind(tenant_id)
                 .bind(note_id)
-                .execute(&self.pool)
+                .execute(&mut *tx)
                 .await?;
+        tx.commit().await?;
 
         Ok(result.rows_affected() as usize)
     }
@@ -431,13 +435,15 @@ impl VectorStore for PgVectorStore {
         tenant_id: Uuid,
         source_file_id: Uuid,
     ) -> Result<usize> {
+        let mut tx = self.pool.begin().await?;
         let result = sqlx::query(
             "DELETE FROM note_index_chunks WHERE tenant_id = $1 AND source_file_id = $2",
         )
         .bind(tenant_id)
         .bind(source_file_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
 
         Ok(result.rows_affected() as usize)
     }

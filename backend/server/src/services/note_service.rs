@@ -888,14 +888,12 @@ impl NoteService {
             let read_acl = self
                 .resolve_note_read_principals(file, tenant_id)
                 .await
-                .map_err(|error| {
-                    tracing::warn!(tenant_id = %tenant_id, file_id = %file.id, %error, "Failed to resolve ACL principals for note index");
-                    error
+                .inspect_err(|_| {
+                    tracing::warn!(tenant_id = %tenant_id, "Failed to resolve ACL principals for note index");
                 })?;
-            let mut acl = Self::build_acl_payload(file, meta, content, tenant_id, read_acl).map_err(
-                |error| {
-                    tracing::warn!(tenant_id = %tenant_id, file_id = %file.id, %error, "Failed to build ACL projection for note index");
-                    error
+            let mut acl = Self::build_acl_payload(file, meta, content, tenant_id, read_acl).inspect_err(
+                |_| {
+                    tracing::warn!(tenant_id = %tenant_id, "Failed to build ACL projection for note index");
                 },
             )?;
 
@@ -921,7 +919,7 @@ impl NoteService {
             )
             .await
             .map_err(|error| {
-                tracing::warn!(tenant_id = %tenant_id, file_id = %file.id, %error, "Failed to persist note index");
+                tracing::warn!(tenant_id = %tenant_id, "Failed to persist note index");
                 NoteError::Storage(format!("Failed to persist note index: {error}"))
             })?;
             Ok(allowed)

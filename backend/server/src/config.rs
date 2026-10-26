@@ -161,6 +161,11 @@ pub struct AppConfig {
     )]
     pub memory_files_reconcile_lease_secs: u64,
     #[serde(
+        default = "default_memory_files_reconcile_page_timeout_secs",
+        rename = "rustshare_memory_files_reconcile_page_timeout_secs"
+    )]
+    pub memory_files_reconcile_page_timeout_secs: u64,
+    #[serde(
         default = "default_calendar_sync_past_days",
         rename = "rustshare_calendar_sync_past_days"
     )]
@@ -411,6 +416,10 @@ fn default_memory_files_reconcile_max_concurrent() -> usize {
 }
 fn default_memory_files_reconcile_lease_secs() -> u64 {
     120
+}
+
+fn default_memory_files_reconcile_page_timeout_secs() -> u64 {
+    300
 }
 
 fn default_calendar_sync_past_days() -> i64 {

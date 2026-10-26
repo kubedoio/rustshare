@@ -3085,6 +3085,9 @@ impl MetadataStore {
         file_id: Uuid,
     ) -> Result<Option<(sqlx::Transaction<'static, sqlx::Postgres>, bool)>> {
         let mut tx = self.pool.begin().await?;
+        sqlx::query("SET LOCAL lock_timeout='5s'")
+            .execute(&mut *tx)
+            .await?;
         let is_active = sqlx::query_scalar::<_, bool>(
             "SELECT deleted_at IS NULL FROM files WHERE tenant_id = $1 AND id = $2 FOR UPDATE",
         )

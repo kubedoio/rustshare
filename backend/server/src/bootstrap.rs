@@ -872,17 +872,19 @@ pub async fn init_app() -> Result<AppState> {
         info!("Calendar sync worker disabled");
     }
 
-    if config.memory_files_reconcile_enabled {
-        crate::memory_files_reconcile_worker::spawn_memory_files_reconcile_worker(
+    let memory_files_reconcile_worker = if config.memory_files_reconcile_enabled {
+        let task = crate::memory_files_reconcile_worker::spawn_memory_files_reconcile_worker(
             Arc::clone(&metadata_store),
             Arc::clone(&services.note_service),
             crate::memory_files_reconcile_worker::MemoryFilesReconcileConfig::from_config(&config)?,
             shutdown_tx.subscribe(),
         );
         info!("Files-backed Memory reconciliation worker enabled");
+        Some(Arc::new(Mutex::new(task)))
     } else {
         info!("Files-backed Memory reconciliation worker disabled");
-    }
+        None
+    };
 
     if !metadata_store.has_users().await? {
         let admin_username = std::env::var("RUSTSHARE_ADMIN_USERNAME")?;
@@ -1110,6 +1112,7 @@ pub async fn init_app() -> Result<AppState> {
         outbox_worker_enabled: outbox_worker_config.enabled,
         outbox_readiness_staleness_secs: outbox_worker_config.readiness_staleness_secs,
         shutdown_tx,
+        memory_files_reconcile_worker,
         prometheus_handle,
     };
 

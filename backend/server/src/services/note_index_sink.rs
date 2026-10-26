@@ -136,7 +136,7 @@ impl<EG: EmbeddingGenerator + Send + Sync + 'static> NoteIndexSink for ContentIn
                 )
                 .await
             {
-                tracing::warn!("Failed to index note {}: {}", file_id, e);
+                tracing::warn!("Failed to index note");
                 return Err(e.to_string());
             }
             Ok(())

@@ -178,6 +178,10 @@ async fn main() -> Result<()> {
     .with_graceful_shutdown(shutdown_signal(state.shutdown_tx.clone()))
     .await?;
 
+    if let Some(worker) = &state.memory_files_reconcile_worker {
+        let _ = (&mut *worker.lock().await).await;
+    }
+
     Ok(())
 }
 
