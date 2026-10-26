@@ -58,8 +58,9 @@ function createAuthStore() {
 
 	function setChatUser(userId: string, tenantId?: string): void {
 		const identity = `${tenantId}:${userId}`;
-		if (activeChatUserId !== null && activeChatUserId !== identity) {
+		if (activeChatUserId !== identity) {
 			clearChatSession();
+			queryClient.clear();
 		}
 		activeChatUserId = identity;
 		setChatKeyUser(userId, tenantId ?? null);
@@ -123,15 +124,13 @@ function createAuthStore() {
 				clearLegacyWebSocketToken();
 
 				if (myGeneration !== sessionGeneration) return;
-				queryClient.clear();
+				setChatUser(user.id, user.tenant_id);
 
 				set({
 					user,
 					isAuthenticated: true,
 					isLoading: false
 				});
-
-				setChatUser(user.id, user.tenant_id);
 
 				try {
 					await initializeWebSocket(null, user.id);

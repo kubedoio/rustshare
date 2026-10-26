@@ -11,6 +11,7 @@ import {
 	clearChatKey
 } from '$lib/chat/keys';
 import { generateSecretKey, publicKeyOf } from '$lib/chat/nostr';
+import * as keys from '$lib/chat/keys';
 
 const mocks = vi.hoisted(() => ({ post: vi.fn() }));
 vi.mock('$lib/api/client', () => ({ apiClient: { post: mocks.post } }));
@@ -30,6 +31,8 @@ beforeEach(() => {
 		path.endsWith('/challenge')
 			? {
 					challenge_id: 'challenge-1',
+					principal_id: 'user-1',
+					tenant_id: 'tenant-1',
 					nonce: 'nonce-1',
 					relay_url: 'wss://buzz.example',
 					buzz_pubkey: body.buzz_pubkey,
@@ -38,9 +41,92 @@ beforeEach(() => {
 			: {}
 	);
 });
-afterEach(cleanup);
+afterEach(() => {
+	cleanup();
+	vi.restoreAllMocks();
+});
 
 describe('Chat onboarding with real local cryptography', () => {
+	it.each([
+		{ principal_id: 'other-user' },
+		{ tenant_id: 'other-tenant' },
+		{ principal_id: undefined },
+		{ tenant_id: undefined }
+	])('does not sign a challenge issued for a different or unknown account: %s', async (scope) => {
+		mocks.post.mockImplementation(async (_path, body) => ({
+			challenge_id: 'challenge-1',
+			principal_id: 'user-1',
+			tenant_id: 'tenant-1',
+			nonce: 'nonce-1',
+			relay_url: 'wss://buzz.example',
+			buzz_pubkey: body.buzz_pubkey,
+			expires_at: new Date(Date.now() + 300_000).toISOString(),
+			...scope
+		}));
+		render(BindingPanel, { onBound: vi.fn() });
+		await fireEvent.input(screen.getByLabelText('key passphrase'), { target: { value: 'pass' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Create identity & bind' }));
+		expect((await screen.findByRole('alert')).textContent).toContain(
+			'different or unknown account'
+		);
+		expect(mocks.post).toHaveBeenCalledOnce();
+	});
+	it('cancels fresh key creation before the vault write when setup closes', async () => {
+		const saving = vi.spyOn(keys, 'saveChatKey');
+		const view = render(BindingPanel, { onBound: vi.fn() });
+		await fireEvent.input(screen.getByLabelText('key passphrase'), { target: { value: 'pass' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Create identity & bind' }));
+		view.unmount();
+		await expect(saving.mock.results[0].value).rejects.toThrow('Chat setup closed');
+		expect(hasChatKey()).toBe(false);
+		expect(mocks.post).not.toHaveBeenCalled();
+	});
+
+	it('reports a clipboard failure without claiming the only backup was copied', async () => {
+		const sk = generateSecretKey();
+		await saveChatKey(sk, publicKeyOf(sk), 'pass');
+		vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('clipboard denied'));
+		render(BindingPanel, { onBound: vi.fn() });
+		await fireEvent.click(screen.getByRole('button', { name: 'Export key backup' }));
+		expect((await screen.findByRole('alert')).textContent).toContain('Could not copy the backup');
+		expect(screen.queryByRole('status')).toBeNull();
+	});
+	it('cancels pre-bind import when the setup view is closed', async () => {
+		const sk = generateSecretKey();
+		await saveChatKey(sk, publicKeyOf(sk), 'pass');
+		const backup = exportChatKey();
+		clearChatKey();
+		const importing = vi.spyOn(keys, 'importChatKey');
+		const onBound = vi.fn();
+		const view = render(BindingPanel, { onBound });
+		await fireEvent.click(screen.getByRole('button', { name: 'Import existing Chat identity' }));
+		await fireEvent.input(screen.getByLabelText('Encrypted key backup'), {
+			target: { value: backup }
+		});
+		await fireEvent.input(screen.getByLabelText('backup passphrase'), {
+			target: { value: 'pass' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Import & bind' }));
+		view.unmount();
+		await expect(importing.mock.results[0].value).rejects.toThrow('Chat setup closed');
+		expect(hasChatKey()).toBe(false);
+		expect(mocks.post).not.toHaveBeenCalled();
+		expect(onBound).not.toHaveBeenCalled();
+	});
+
+	it('requires renewed legacy ownership confirmation when the backup or setup mode changes', async () => {
+		render(BindingPanel, { onBound: vi.fn() });
+		await fireEvent.click(screen.getByRole('button', { name: 'Import existing Chat identity' }));
+		await fireEvent.click(screen.getByRole('checkbox'));
+		await fireEvent.input(screen.getByLabelText('Encrypted key backup'), {
+			target: { value: 'another backup' }
+		});
+		expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
+		await fireEvent.click(screen.getByRole('checkbox'));
+		await fireEvent.click(screen.getByRole('button', { name: 'Create new Chat identity' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Import existing Chat identity' }));
+		expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
+	});
 	it('creates one identity and sends only its public key and signed proof to the binding API', async () => {
 		const onBound = vi.fn();
 		render(BindingPanel, { onBound });

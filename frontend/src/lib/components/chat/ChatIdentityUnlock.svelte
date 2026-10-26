@@ -10,7 +10,7 @@
 
 	let { boundPubkey, onUnlocked }: Props = $props();
 
-	type Mode = 'locked' | 'missing' | 'corrupt' | 'mismatch';
+	type Mode = 'locked' | 'missing' | 'corrupt' | 'mismatch' | 'recover';
 
 	let mode = $state<Mode>('locked');
 	let passphrase = $state('');
@@ -81,12 +81,13 @@
 		}
 		importing = true;
 		const pubkey = boundPubkey;
+		const submittedPassphrase = importPassphrase;
 		try {
-			await importChatKey(backupJson.trim(), importPassphrase, pubkey, false, () =>
+			await importChatKey(backupJson.trim(), submittedPassphrase, pubkey, false, () =>
 				bindingGuard(pubkey)
 			);
 			// load the just-imported envelope into the in-memory session
-			await unlock(importPassphrase, pubkey, () => bindingGuard(pubkey));
+			await unlock(submittedPassphrase, pubkey, () => bindingGuard(pubkey));
 			onUnlocked();
 		} catch (err) {
 			importError =
@@ -99,23 +100,27 @@
 	}
 
 	const heading = $derived(
-		mode === 'locked'
-			? 'Unlock Chat'
-			: mode === 'missing'
-				? 'No Chat identity on this device'
-				: mode === 'corrupt'
-					? 'Chat key is corrupted'
-					: 'Chat key does not match this account'
+		mode === 'recover'
+			? 'Recover Chat identity'
+			: mode === 'locked'
+				? 'Unlock Chat'
+				: mode === 'missing'
+					? 'No Chat identity on this device'
+					: mode === 'corrupt'
+						? 'Chat key is corrupted'
+						: 'Chat key does not match this account'
 	);
 
 	const explanation = $derived(
-		mode === 'locked'
-			? 'Enter your key passphrase to send messages from this device.'
-			: mode === 'missing'
-				? 'Import the encrypted backup copied from your original device to use your existing identity. Without it, an administrator must rotate your binding.'
-				: mode === 'corrupt'
-					? 'The stored key cannot be read. Import the backup from your original device to recover your identity.'
-					: 'The key stored on this device belongs to a different identity. Import the backup from your original device, or ask an administrator to rotate your binding.'
+		mode === 'recover'
+			? 'Import the encrypted backup for this account. Your stored key will be replaced only after the backup and passphrase are verified.'
+			: mode === 'locked'
+				? 'Enter your key passphrase to send messages from this device.'
+				: mode === 'missing'
+					? 'Import the encrypted backup copied from your original device to use your existing identity. Without it, an administrator must rotate your binding.'
+					: mode === 'corrupt'
+						? 'The stored key cannot be read. Import the backup from your original device to recover your identity.'
+						: 'The key stored on this device belongs to a different identity. Import the backup from your original device, or ask an administrator to rotate your binding.'
 	);
 </script>
 
@@ -130,6 +135,7 @@
 				class="input flex-1 input-sm"
 				placeholder="key passphrase"
 				aria-label="key passphrase"
+				disabled={unlocking}
 				bind:value={passphrase}
 				onkeydown={(e) => {
 					if (e.key === 'Enter') {
@@ -149,7 +155,7 @@
 			disabled={unlocking}
 			onclick={() => {
 				passphrase = '';
-				mode = 'missing';
+				mode = 'recover';
 			}}>Recover from backup</button
 		>
 	{:else}
@@ -158,6 +164,7 @@
 			id="chat-key-backup"
 			rows={2}
 			maxlength={4096}
+			disabled={importing}
 			class="textarea mb-2 w-full font-mono text-xs textarea-sm"
 			placeholder={`Paste the "Export key backup" contents`}
 			bind:value={backupJson}></textarea>
@@ -167,6 +174,7 @@
 				class="input flex-1 input-sm"
 				placeholder="backup passphrase"
 				aria-label="backup passphrase"
+				disabled={importing}
 				bind:value={importPassphrase}
 			/>
 			<button type="button" class="btn btn-primary btn-sm" disabled={importing} onclick={tryImport}>
@@ -174,5 +182,19 @@
 			</button>
 		</div>
 		{#if importError}<p role="alert" class="mt-2 text-sm text-error">{importError}</p>{/if}
+		{#if mode === 'recover'}
+			<button
+				type="button"
+				class="btn btn-ghost btn-sm"
+				disabled={importing}
+				onclick={() => {
+					backupJson = '';
+					importPassphrase = '';
+					importError = '';
+					unlockError = '';
+					mode = 'locked';
+				}}>Back to unlock</button
+			>
+		{/if}
 	{/if}
 </div>

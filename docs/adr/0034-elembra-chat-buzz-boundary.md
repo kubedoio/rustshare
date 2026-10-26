@@ -82,6 +82,12 @@ before binding with explicit ownership confirmation and server proof. Legacy
 backups cannot establish historical account ownership. Plaintext backups are
 not accepted. No server-side signing, escrow, or new binding API is introduced.
 
+The existing challenge response also returns its tenant and Principal. The
+client checks both before signing, rejecting a stale account display when a
+shared SSO cookie has changed in another tab. Account transitions clear query
+caches before publishing the new Principal and recreate private application
+views; leaving setup or recovery cancels pending local writes and binding work.
+
 All password verification entry points share a session-local concurrency guard
 and bounded exponential retry delay. Client throttling cannot prevent offline
 brute force, survive a deliberately restarted browser session, or protect an

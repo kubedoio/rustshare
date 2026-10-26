@@ -57,39 +57,41 @@
 
 {#if checkComplete}
 	{#if $authStore.isAuthenticated}
-		<div class="flex h-screen overflow-hidden bg-base-100">
-			<!-- Far Left Icon Rail -->
-			<LeftRail />
+		{#key `${$authStore.user?.tenant_id}:${$authStore.user?.id}`}
+			<div class="flex h-screen overflow-hidden bg-base-100">
+				<!-- Far Left Icon Rail -->
+				<LeftRail />
 
-			<!-- Main Layout Area (Topbar + Content Wrapper) -->
-			<div class="flex min-w-0 flex-1 flex-col">
-				<Topbar onMenuClick={toggleMobileMenu} />
+				<!-- Main Layout Area (Topbar + Content Wrapper) -->
+				<div class="flex min-w-0 flex-1 flex-col">
+					<Topbar onMenuClick={toggleMobileMenu} />
 
-				<!-- Wrapper for Secondary Sidebar + Main Content -->
-				<div class="flex min-h-0 min-w-0 flex-1">
-					<!-- Secondary Sidebar (Folder Tree for files variant) -->
-					{#if sidebarVariant === 'files'}
-						<SidebarNav
-							variant="files"
-							mobileOpen={mobileMenuOpen}
-							onClose={closeMobileMenu}
-							{onCreateFolder}
-						/>
-					{/if}
+					<!-- Wrapper for Secondary Sidebar + Main Content -->
+					<div class="flex min-h-0 min-w-0 flex-1">
+						<!-- Secondary Sidebar (Folder Tree for files variant) -->
+						{#if sidebarVariant === 'files'}
+							<SidebarNav
+								variant="files"
+								mobileOpen={mobileMenuOpen}
+								onClose={closeMobileMenu}
+								{onCreateFolder}
+							/>
+						{/if}
 
-					<main class="flex-1 overflow-auto bg-base-100">
-						{@render children?.()}
-					</main>
+						<main class="flex-1 overflow-auto bg-base-100">
+							{@render children?.()}
+						</main>
+					</div>
 				</div>
 			</div>
-		</div>
 
-		<KeyboardShortcuts
-			open={$showKeyboardShortcuts}
-			onClose={() => showKeyboardShortcuts.set(false)}
-		/>
+			<KeyboardShortcuts
+				open={$showKeyboardShortcuts}
+				onClose={() => showKeyboardShortcuts.set(false)}
+			/>
 
-		<ToastContainer />
+			<ToastContainer />
+		{/key}
 	{:else}
 		<!-- Redirecting... -->
 		<div class="flex h-screen items-center justify-center bg-base-100">

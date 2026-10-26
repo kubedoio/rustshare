@@ -18,6 +18,43 @@ afterEach(() => {
 });
 
 describe('Chat recovery', () => {
+	it('can return from recovery to the existing stored identity without claiming it is missing', async () => {
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		await saveChatKey(sk, pk, 'pass');
+		const original = exportChatKey();
+		const onUnlocked = vi.fn();
+		render(ChatIdentityUnlock, { boundPubkey: pk, onUnlocked });
+		await fireEvent.click(screen.getByRole('button', { name: 'Recover from backup' }));
+		expect(screen.getByRole('heading', { name: 'Recover Chat identity' })).toBeTruthy();
+		await fireEvent.input(screen.getByLabelText('backup passphrase'), {
+			target: { value: 'discarded input' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Back to unlock' }));
+		expect(exportChatKey()).toBe(original);
+		expect((screen.getByLabelText('key passphrase') as HTMLInputElement).value).toBe('');
+		await fireEvent.input(screen.getByLabelText('key passphrase'), { target: { value: 'pass' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+		await waitFor(() => expect(onUnlocked).toHaveBeenCalledOnce(), { timeout: 4000 });
+	});
+	it('uses the submitted passphrase throughout recovery even if the input changes during verification', async () => {
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		await saveChatKey(sk, pk, 'pass');
+		const backup = exportChatKey();
+		clearChatKey();
+		const onUnlocked = vi.fn();
+		render(ChatIdentityUnlock, { boundPubkey: pk, onUnlocked });
+		await fireEvent.input(screen.getByLabelText('Key backup'), { target: { value: backup } });
+		const input = screen.getByLabelText('backup passphrase');
+		await fireEvent.input(input, { target: { value: 'pass' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Import key' }));
+		expect((input as HTMLInputElement).disabled).toBe(true);
+		expect((screen.getByLabelText('Key backup') as HTMLTextAreaElement).disabled).toBe(true);
+		await fireEvent.input(input, { target: { value: 'changed during verification' } });
+		await waitFor(() => expect(onUnlocked).toHaveBeenCalledOnce(), { timeout: 5000 });
+		expect(getSigningKey()).toBe(sk);
+	});
 	it.each(['rotation', 'unmount'])(
 		'does not commit a backup after %s during verification',
 		async (transition) => {
@@ -56,7 +93,7 @@ describe('Chat recovery', () => {
 			target: { value: 'pass' }
 		});
 		await fireEvent.click(screen.getByRole('button', { name: 'Import key' }));
-		await waitFor(() => expect(onUnlocked).toHaveBeenCalledOnce());
+		await waitFor(() => expect(onUnlocked).toHaveBeenCalledOnce(), { timeout: 4000 });
 		expect(getSigningKey()).toBe(sk);
 	});
 

@@ -29,6 +29,8 @@ pub struct ChallengeRequest {
 #[derive(Debug, Serialize)]
 pub struct ChallengeResponse {
     pub challenge_id: Uuid,
+    pub tenant_id: Uuid,
+    pub principal_id: Uuid,
     pub nonce: String,
     pub buzz_pubkey: String,
     pub relay_url: String,
@@ -424,6 +426,8 @@ pub async fn create_challenge(
         StatusCode::CREATED,
         Json(ChallengeResponse {
             challenge_id: challenge.challenge_id,
+            tenant_id: challenge.tenant_id.0,
+            principal_id: challenge.principal_id.0,
             nonce: challenge.nonce,
             buzz_pubkey: challenge.buzz_pubkey,
             relay_url: challenge.relay_url,
