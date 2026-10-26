@@ -1495,6 +1495,19 @@ async fn memory_orphan_cleanup_is_tenant_scoped_dry_run_first_and_idempotent(db:
     let foreign_owner = create_test_user(&state, "orphan_cleanup_foreign", foreign_tenant).await;
     let metadata = MetadataStore::new(db.clone());
 
+    let mut active = rustshare_core::domain::File::new(
+        "active.md".into(),
+        "/active.md".into(),
+        "active-hash".into(),
+        1,
+        "text/markdown".into(),
+        None,
+        owner.id,
+        tenant,
+    );
+    active.id = Uuid::new_v4();
+    metadata.create_file(&active).await.unwrap();
+
     let mut soft_deleted = rustshare_core::domain::File::new(
         "retained.md".into(),
         "/retained.md".into(),
@@ -1557,9 +1570,11 @@ async fn memory_orphan_cleanup_is_tenant_scoped_dry_run_first_and_idempotent(db:
     let vector = format!("[{}]", vec!["0"; 768].join(","));
     let vector_store = PgVectorStore::new(db.clone());
     let soft_chunk = Uuid::new_v4();
+    let active_chunk = Uuid::new_v4();
     let keyword_orphan = Uuid::new_v4();
     let vector_orphan = Uuid::new_v4();
     let foreign_chunk = Uuid::new_v4();
+    insert_orphan_cleanup_chunk(&db, tenant, owner.id, active_chunk, Some(active.id), None).await;
     insert_orphan_cleanup_chunk(
         &db,
         tenant,
@@ -1610,13 +1625,18 @@ async fn memory_orphan_cleanup_is_tenant_scoped_dry_run_first_and_idempotent(db:
             .fetch_one(&db)
             .await
             .unwrap(),
-        3
+        4
     );
 
     let removed = vector_store
         .cleanup_orphan_chunks_page(tenant, None, 100, false)
         .await
         .unwrap();
+    // Restoring a retained source after cleanup keeps the retained index usable.
+    assert!(metadata
+        .restore_file(soft_deleted.id, owner.id, tenant)
+        .await
+        .unwrap());
     assert_eq!(removed.candidates, 2);
     assert_eq!(removed.removed, 2);
     assert_eq!(removed.next_cursor, None);
@@ -1627,6 +1647,14 @@ async fn memory_orphan_cleanup_is_tenant_scoped_dry_run_first_and_idempotent(db:
             .await
             .unwrap(),
         "soft-deleted Files rows still exist and must be preserved"
+    );
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM note_index_chunks WHERE id=$1)")
+            .bind(active_chunk)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        "chunks with an active authoritative Files row must be preserved"
     );
     assert!(
         sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM note_index_chunks WHERE id=$1)")
