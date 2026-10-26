@@ -18,6 +18,14 @@ CREATE TABLE memory_files_reconcile_jobs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE memory_files_reconcile_discovery (
+    singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton),
+    cursor_tenant_id UUID
+);
+INSERT INTO memory_files_reconcile_discovery (singleton) VALUES (true);
+
 CREATE INDEX memory_files_reconcile_due_idx
     ON memory_files_reconcile_jobs (next_run_at, last_claimed_at, tenant_id)
     WHERE status IN ('idle', 'running');
+
+CREATE INDEX memory_files_reconcile_sources_idx ON files (tenant_id, id);

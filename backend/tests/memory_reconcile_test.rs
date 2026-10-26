@@ -448,19 +448,44 @@ async fn keyword_only_notes_recover_without_ai_and_reject_an_unavailable_index()
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
 
-#[tokio::test]
+#[sqlx::test(migrations = "../migrations")]
 #[ignore = "requires DATABASE_URL and migrations applied"]
-async fn files_reconcile_worker_leases_fence_checkpoints_and_resume_cursors() {
+async fn files_reconcile_worker_leases_fence_checkpoints_and_resume_cursors(db: PgPool) {
     use rustshare_resource_auth::ResourceRef;
     use rustshare_server::{
         handlers::memory_reconcile::FilesReconcileResponse,
-        memory_files_reconcile_worker::{claim, fail_page, finish_page},
+        memory_files_reconcile_worker::{
+            claim, discover_tenant_page, fail_page, finish_page, heartbeat,
+        },
     };
     use std::time::Duration;
     use support::calendar_harness::{cleanup_tenant, create_test_tenant};
 
     let _guard = SERIAL.lock().await;
-    let db = pool().await;
+    sqlx::query("INSERT INTO tenants (id,name,created_at,updated_at) SELECT ('00000000-0000-0000-0000-'||lpad(to_hex(i),12,'0'))::uuid, 'reconcile discovery '||i, NOW(), NOW() FROM generate_series(1,201) i")
+        .execute(&db).await.unwrap();
+    for expected in [100_u128, 200] {
+        discover_tenant_page(&MetadataStore::new(db.clone()))
+            .await
+            .unwrap();
+        let cursor: Option<Uuid> = sqlx::query_scalar(
+            "SELECT cursor_tenant_id FROM memory_files_reconcile_discovery WHERE singleton=true",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(cursor, Some(Uuid::from_u128(expected)));
+    }
+    discover_tenant_page(&MetadataStore::new(db.clone()))
+        .await
+        .unwrap();
+    let discovery_cursor: Option<Uuid> = sqlx::query_scalar(
+        "SELECT cursor_tenant_id FROM memory_files_reconcile_discovery WHERE singleton=true",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(discovery_cursor, None);
     let tenant = create_test_tenant(&db).await;
     let metadata = MetadataStore::new(db.clone());
     let initial = Uuid::new_v4();
@@ -492,11 +517,21 @@ async fn files_reconcile_worker_leases_fence_checkpoints_and_resume_cursors() {
 
     sqlx::query("UPDATE memory_files_reconcile_jobs SET lease_until=NOW()-INTERVAL '1 second' WHERE tenant_id=$1")
         .bind(tenant).execute(&db).await.unwrap();
+    assert!(
+        heartbeat(&metadata, &first, first_owner, Duration::from_secs(30))
+            .await
+            .is_err()
+    );
     let current = claim(&metadata, successor, Duration::from_secs(30))
         .await
         .unwrap()
         .unwrap();
     assert!(current.generation > first.generation);
+    assert!(
+        heartbeat(&metadata, &first, first_owner, Duration::from_secs(30))
+            .await
+            .is_err()
+    );
     let ref_for = |id: Uuid| {
         ResourceRef::new(
             rustshare_core::domain::ApplicationId::new("io.elembra.files"),
@@ -521,6 +556,7 @@ async fn files_reconcile_worker_leases_fence_checkpoints_and_resume_cursors() {
     )
     .await
     .is_err());
+    assert!(fail_page(&metadata, &first, first_owner).await.is_err());
     let saved: Option<Uuid> = sqlx::query_scalar(
         "SELECT cursor_file_id FROM memory_files_reconcile_jobs WHERE tenant_id=$1",
     )
@@ -601,21 +637,429 @@ async fn files_reconcile_worker_leases_fence_checkpoints_and_resume_cursors() {
     cleanup_tenant(&db, tenant).await;
 }
 
+async fn wait_for_worker_job(
+    db: &PgPool,
+    tenant: Uuid,
+    ready: impl Fn(&sqlx::postgres::PgRow) -> bool,
+) -> sqlx::postgres::PgRow {
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            if let Some(row) =
+                sqlx::query("SELECT * FROM memory_files_reconcile_jobs WHERE tenant_id=$1")
+                    .bind(tenant)
+                    .fetch_optional(db)
+                    .await
+                    .unwrap()
+            {
+                if ready(&row) {
+                    break row;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("worker did not reach the expected durable state")
+}
+
+#[sqlx::test(migrations = "../migrations")]
+#[ignore = "requires DATABASE_URL and object storage"]
+async fn files_reconcile_worker_automates_recovery_and_bounds_failures(db: PgPool) {
+    use rustshare_core::services::KeywordIndexer;
+    use rustshare_infrastructure::PgVectorStore;
+    use rustshare_server::{
+        memory_files_reconcile_worker::{
+            spawn_memory_files_reconcile_worker, MemoryFilesReconcileConfig,
+        },
+        services::note_index_sink::KeywordIndexerNoteSink,
+    };
+    use std::{sync::Arc, time::Duration};
+    use support::calendar_harness::{
+        create_test_tenant, create_test_user, setup_test_env_with_pool,
+    };
+
+    let state = setup_test_env_with_pool(db.clone()).await;
+    let tenant = create_test_tenant(&db).await;
+    let owner = create_test_user(&state, "worker_recovery", tenant).await;
+    let other_tenant = create_test_tenant(&db).await;
+    let other_owner = create_test_user(&state, "worker_other_tenant", other_tenant).await;
+    let other_note = state
+        .note_service
+        .create_note(
+            other_owner.id,
+            other_tenant,
+            Some("Other tenant source".into()),
+            None,
+            Some("Isolated quince body.".into()),
+        )
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO memory_files_reconcile_jobs (tenant_id, status) VALUES ($1,'paused')")
+        .bind(other_tenant)
+        .execute(&db)
+        .await
+        .unwrap();
+    // With no worker and no sink, authoritative Notes writes still succeed.
+    assert!(state.memory_files_reconcile_worker.is_none());
+    let note = state
+        .note_service
+        .create_note(
+            owner.id,
+            tenant,
+            Some("Worker source".into()),
+            None,
+            Some("A durable persimmon body.".into()),
+        )
+        .await
+        .unwrap();
+    let orphan = rustshare_core::domain::File::new(
+        "orphan.md".into(),
+        "/orphan.md".into(),
+        "orphan-hash".into(),
+        1,
+        "text/markdown".into(),
+        None,
+        owner.id,
+        Uuid::new_v4(),
+    );
+    state.metadata_store.create_file(&orphan).await.unwrap();
+    let notes = Arc::new((*state.note_service).clone().with_index_sink(Some(Arc::new(
+        KeywordIndexerNoteSink::new(Arc::new(KeywordIndexer::new(Arc::new(PgVectorStore::new(
+            db.clone(),
+        ))))),
+    ))));
+    assert!(state.ai_service.is_none());
+    let count = || {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM note_index_chunks WHERE tenant_id=$1 AND source_file_id=$2",
+        )
+        .bind(tenant)
+        .bind(note.id)
+        .fetch_one(&db)
+    };
+    assert_eq!(count().await.unwrap(), 0);
+    // A newly created source may sort before the cursor saved by an earlier page.
+    let saved_cursor = Uuid::from_u128(u128::MAX);
+    assert!(note.id < saved_cursor);
+    sqlx::query(
+        "INSERT INTO memory_files_reconcile_jobs (tenant_id, cursor_file_id) VALUES ($1,$2)",
+    )
+    .bind(tenant)
+    .bind(saved_cursor)
+    .execute(&db)
+    .await
+    .unwrap();
+    let config = MemoryFilesReconcileConfig {
+        interval: Duration::from_secs(60),
+        poll_interval: Duration::from_millis(20),
+        lease: Duration::from_secs(3),
+        max_concurrent: 1,
+        page_timeout: Duration::from_secs(2),
+    };
+    let (shutdown, _) = tokio::sync::broadcast::channel(1);
+    let worker = spawn_memory_files_reconcile_worker(
+        state.metadata_store.clone(),
+        notes.clone(),
+        config,
+        shutdown.subscribe(),
+    );
+    let completed = wait_for_worker_job(&db, tenant, |r| {
+        r.get::<Option<DateTime<Utc>>, _>("last_success_at")
+            .is_some()
+    })
+    .await;
+    assert_eq!(completed.get::<Option<Uuid>, _>("cursor_file_id"), None);
+    assert_eq!(count().await.unwrap(), 0);
+
+    let (source_lock, _) = state
+        .metadata_store
+        .lock_file_for_memory_reconciliation(tenant, note.id)
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query("UPDATE memory_files_reconcile_jobs SET next_run_at=NOW() WHERE tenant_id=$1")
+        .bind(tenant)
+        .execute(&db)
+        .await
+        .unwrap();
+    let claimed =
+        wait_for_worker_job(&db, tenant, |r| r.get::<&str, _>("status") == "running").await;
+    let first_heartbeat = claimed.get::<Option<DateTime<Utc>>, _>("heartbeat_at");
+    sqlx::query("UPDATE memory_files_reconcile_jobs SET status='idle' WHERE tenant_id=$1")
+        .bind(other_tenant)
+        .execute(&db)
+        .await
+        .unwrap();
+    let running: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM memory_files_reconcile_jobs WHERE status='running'",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(
+        running, 1,
+        "one worker slot must process only one tenant at a time"
+    );
+    wait_for_worker_job(&db, tenant, |r| {
+        r.get::<Option<DateTime<Utc>>, _>("heartbeat_at") > first_heartbeat
+    })
+    .await;
+    let failed = wait_for_worker_job(&db, tenant, |r| r.get::<i32, _>("retry_count") == 1).await;
+    assert_eq!(failed.get::<Option<Uuid>, _>("cursor_file_id"), None);
+    assert_eq!(
+        failed.get::<Option<DateTime<Utc>>, _>("last_success_at"),
+        completed.get::<Option<DateTime<Utc>>, _>("last_success_at")
+    );
+    assert!(failed.get::<DateTime<Utc>, _>("next_run_at") > Utc::now());
+    wait_for_worker_job(&db, other_tenant, |r| {
+        r.get::<Option<DateTime<Utc>>, _>("last_success_at")
+            .is_some()
+    })
+    .await;
+    let other_chunks: i64 = sqlx::query_scalar("SELECT count(*) FROM note_index_chunks WHERE tenant_id=$1 AND source_file_id=$2 AND content LIKE '%quince%'")
+        .bind(other_tenant).bind(other_note.id).fetch_one(&db).await.unwrap();
+    assert_eq!(
+        other_chunks, 1,
+        "an overdue tenant runs while the failed tenant is backing off"
+    );
+    assert_eq!(count().await.unwrap(), 0);
+
+    // Shutdown cancels a blocked replay and leaves its cursor for lease recovery.
+    sqlx::query("UPDATE memory_files_reconcile_jobs SET next_run_at=NOW() WHERE tenant_id=$1")
+        .bind(tenant)
+        .execute(&db)
+        .await
+        .unwrap();
+    wait_for_worker_job(&db, tenant, |r| r.get::<&str, _>("status") == "running").await;
+    shutdown.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), worker)
+        .await
+        .unwrap()
+        .unwrap();
+    source_lock.rollback().await.unwrap();
+    sqlx::query("UPDATE memory_files_reconcile_jobs SET lease_until=NOW()-INTERVAL '1 second' WHERE tenant_id=$1")
+        .bind(tenant).execute(&db).await.unwrap();
+    let worker = spawn_memory_files_reconcile_worker(
+        state.metadata_store.clone(),
+        notes.clone(),
+        config,
+        shutdown.subscribe(),
+    );
+    wait_for_worker_job(&db, tenant, |r| {
+        r.get::<Option<DateTime<Utc>>, _>("last_success_at")
+            > completed.get::<Option<DateTime<Utc>>, _>("last_success_at")
+    })
+    .await;
+    assert_eq!(
+        count().await.unwrap(),
+        1,
+        "a full sweep repairs the source before the old UUID cursor"
+    );
+    shutdown.send(()).unwrap();
+    worker.await.unwrap();
+
+    // An object-store outage cannot mark the saved cursor complete or erase
+    // the previous projection; once content is restored, the page can replay.
+    let source_file = state
+        .metadata_store
+        .find_file_by_id_unchecked(note.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let source_key = source_file.storage_key();
+    let source_body = state.object_store.get(&source_key).await.unwrap();
+    state.object_store.delete(&source_key).await.unwrap();
+    sqlx::query("UPDATE memory_files_reconcile_jobs SET next_run_at=NOW() WHERE tenant_id=$1")
+        .bind(tenant)
+        .execute(&db)
+        .await
+        .unwrap();
+    let worker = spawn_memory_files_reconcile_worker(
+        state.metadata_store.clone(),
+        notes.clone(),
+        config,
+        shutdown.subscribe(),
+    );
+    let outage = wait_for_worker_job(&db, tenant, |r| r.get::<i32, _>("retry_count") == 1).await;
+    assert_eq!(outage.get::<Option<Uuid>, _>("cursor_file_id"), None);
+    assert_eq!(count().await.unwrap(), 1);
+    shutdown.send(()).unwrap();
+    worker.await.unwrap();
+    state
+        .object_store
+        .put(&source_key, source_body)
+        .await
+        .unwrap();
+
+    // An index statement that outlives a page timeout must roll back before a
+    // concurrent source deletion completes, so it cannot recreate stale chunks.
+    sqlx::query("CREATE FUNCTION m33_block_note_index() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(418); RETURN NEW; END $$")
+        .execute(&db).await.unwrap();
+    sqlx::query("CREATE TRIGGER m33_block_note_index BEFORE INSERT ON note_index_chunks FOR EACH ROW EXECUTE FUNCTION m33_block_note_index()")
+        .execute(&db).await.unwrap();
+    let mut advisory = db.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(418)")
+        .execute(&mut *advisory)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE memory_files_reconcile_jobs SET next_run_at=NOW() WHERE tenant_id=$1")
+        .bind(tenant)
+        .execute(&db)
+        .await
+        .unwrap();
+    let worker = spawn_memory_files_reconcile_worker(
+        state.metadata_store.clone(),
+        notes.clone(),
+        config,
+        shutdown.subscribe(),
+    );
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND NOT granted)")
+                .fetch_one(&db).await.unwrap();
+            if waiting { break; }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }).await.expect("worker did not reach the blocked index write");
+    wait_for_worker_job(&db, tenant, |r| r.get::<i32, _>("retry_count") == 1).await;
+    shutdown.send(()).unwrap();
+    worker.await.unwrap();
+    state
+        .file_service
+        .delete_file(note.id, owner.id)
+        .await
+        .unwrap();
+    notes
+        .remove_source_file_from_index(note.id, tenant)
+        .await
+        .unwrap();
+    assert_eq!(count().await.unwrap(), 0);
+    advisory.rollback().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND NOT granted)")
+                .fetch_one(&db).await.unwrap();
+            if !waiting { break; }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }).await.expect("timed-out index write did not finish");
+    assert_eq!(
+        count().await.unwrap(),
+        0,
+        "a canceled index write must not outlive its source lock"
+    );
+    sqlx::query("DROP TRIGGER m33_block_note_index ON note_index_chunks")
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("DROP FUNCTION m33_block_note_index()")
+        .execute(&db)
+        .await
+        .unwrap();
+    state
+        .metadata_store
+        .restore_file(note.id, owner.id, tenant)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE memory_files_reconcile_jobs SET next_run_at=NOW() WHERE tenant_id=$1")
+        .bind(tenant)
+        .execute(&db)
+        .await
+        .unwrap();
+    let worker = spawn_memory_files_reconcile_worker(
+        state.metadata_store.clone(),
+        notes.clone(),
+        config,
+        shutdown.subscribe(),
+    );
+    wait_for_worker_job(&db, tenant, |r| {
+        r.get::<i64, _>("processed") > 0
+            && r.get::<i32, _>("retry_count") == 0
+            && r.get::<Option<Uuid>, _>("cursor_file_id").is_none()
+    })
+    .await;
+    assert_eq!(count().await.unwrap(), 1);
+    shutdown.send(()).unwrap();
+    worker.await.unwrap();
+
+    // A real index outage retries the same page and eventually stops, without losing source data.
+    let failed_pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy_with(db.connect_options().as_ref().clone());
+    failed_pool.close().await;
+    let failing = Arc::new((*state.note_service).clone().with_index_sink(Some(Arc::new(
+        KeywordIndexerNoteSink::new(Arc::new(KeywordIndexer::new(Arc::new(PgVectorStore::new(
+            failed_pool,
+        ))))),
+    ))));
+    let worker = spawn_memory_files_reconcile_worker(
+        state.metadata_store.clone(),
+        failing,
+        config,
+        shutdown.subscribe(),
+    );
+    for retry in 1..=8 {
+        sqlx::query("UPDATE memory_files_reconcile_jobs SET next_run_at=NOW() WHERE tenant_id=$1")
+            .bind(tenant)
+            .execute(&db)
+            .await
+            .unwrap();
+        let row =
+            wait_for_worker_job(&db, tenant, |r| r.get::<i32, _>("retry_count") == retry).await;
+        assert_eq!(row.get::<Option<Uuid>, _>("cursor_file_id"), None);
+    }
+    let failed = wait_for_worker_job(&db, tenant, |r| r.get::<&str, _>("status") == "failed").await;
+    assert_eq!(failed.get::<i32, _>("retry_count"), 8);
+    assert_eq!(
+        failed.get::<&str, _>("last_error"),
+        "reconciliation page failed"
+    );
+    assert_eq!(count().await.unwrap(), 1);
+    assert!(state
+        .note_service
+        .get_note(note.id, owner.id, tenant)
+        .await
+        .unwrap()
+        .content
+        .contains("persimmon"));
+    shutdown.send(()).unwrap();
+    worker.await.unwrap();
+    for source_tenant in [tenant, other_tenant] {
+        for entry in state
+            .metadata_store
+            .list_files_for_memory_reconciliation(source_tenant, None, 100)
+            .await
+            .unwrap()
+        {
+            state
+                .object_store
+                .delete(&entry.file.storage_key())
+                .await
+                .unwrap();
+        }
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL, object storage, and migrations applied"]
 async fn memory_reconcile_status_is_scoped_to_admin_tenant() {
-    use axum::{body::Body, http::Request, routing::get, Router};
-    use rustshare_server::memory_files_reconcile_worker::get_status;
+    use axum::{
+        body::Body,
+        http::Request,
+        routing::{get, post},
+        Router,
+    };
+    use rustshare_server::memory_files_reconcile_worker::{get_status, retry};
     use support::calendar_harness::{
         cleanup_tenant, create_auth_token, create_test_tenant, create_test_user, setup_test_env,
     };
     use tower::ServiceExt;
 
     let _guard = SERIAL.lock().await;
-    let state = setup_test_env().await;
+    let mut state = setup_test_env().await;
     let tenant = create_test_tenant(&state.db_pool).await;
     let other_tenant = create_test_tenant(&state.db_pool).await;
     let admin = create_test_user(&state, "memory_reconcile_status", tenant).await;
+    let foreign_user = create_test_user(&state, "memory_reconcile_foreign", other_tenant).await;
     sqlx::query("UPDATE users SET is_admin = true WHERE id = $1")
         .bind(admin.id)
         .execute(&state.db_pool)
@@ -630,9 +1074,13 @@ async fn memory_reconcile_status_is_scoped_to_admin_tenant() {
     .await
     .unwrap();
     let token = create_auth_token(&state, admin.id, tenant);
-    let response = Router::new()
+    let foreign_token = create_auth_token(&state, foreign_user.id, other_tenant);
+    let app = Router::new()
         .route("/status", get(get_status))
-        .with_state(state.clone())
+        .route("/retry", post(retry))
+        .with_state(state.clone());
+    let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/status")
@@ -650,6 +1098,77 @@ async fn memory_reconcile_status_is_scoped_to_admin_tenant() {
     )
     .unwrap();
     assert_eq!(status["processed"], 11);
+    assert_eq!(status["enabled"], false);
+    assert_eq!(status["status"], "disabled");
+    for (method, path) in [("GET", "/status"), ("POST", "/retry")] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("authorization", format!("Bearer {foreign_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+    }
+
+    let cursor = Uuid::new_v4();
+    sqlx::query("UPDATE memory_files_reconcile_jobs SET status='running', cursor_file_id=$2, lease_owner=$3, lease_generation=4, lease_until=NOW()+INTERVAL '1 minute', heartbeat_at=NOW() WHERE tenant_id=$1")
+        .bind(tenant).bind(cursor).bind(Uuid::new_v4()).execute(&state.db_pool).await.unwrap();
+    let resume = || {
+        Request::builder()
+            .method("POST")
+            .uri("/retry")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(
+        app.clone().oneshot(resume()).await.unwrap().status(),
+        axum::http::StatusCode::CONFLICT
+    );
+    sqlx::query("UPDATE memory_files_reconcile_jobs SET lease_until=NOW()-INTERVAL '1 second' WHERE tenant_id=$1")
+        .bind(tenant).execute(&state.db_pool).await.unwrap();
+    state.memory_files_reconcile_worker = Some(std::sync::Arc::new(tokio::sync::Mutex::new(
+        tokio::spawn(async {}),
+    )));
+    let enabled_app = Router::new()
+        .route("/status", get(get_status))
+        .with_state(state.clone());
+    let response = enabled_app
+        .oneshot(
+            Request::builder()
+                .uri("/status")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let paused: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(paused["enabled"], true);
+    assert_eq!(paused["status"], "paused");
+    assert_eq!(
+        app.oneshot(resume()).await.unwrap().status(),
+        axum::http::StatusCode::ACCEPTED
+    );
+    let row = sqlx::query("SELECT cursor_file_id, lease_generation, heartbeat_at FROM memory_files_reconcile_jobs WHERE tenant_id=$1")
+        .bind(tenant).fetch_one(&state.db_pool).await.unwrap();
+    assert_eq!(row.get::<Option<Uuid>, _>("cursor_file_id"), Some(cursor));
+    assert_eq!(row.get::<i64, _>("lease_generation"), 5);
+    assert!(row
+        .get::<Option<DateTime<Utc>>, _>("heartbeat_at")
+        .is_none());
     cleanup_tenant(&state.db_pool, tenant).await;
     cleanup_tenant(&state.db_pool, other_tenant).await;
 }

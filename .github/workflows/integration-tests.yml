@@ -145,7 +145,7 @@ jobs:
 
       - name: Memory reconciliation lease and restart recovery (PostgreSQL)
         run: |
-          cargo test -p rustshare-server --test memory_reconcile_test files_reconcile_worker_leases_fence_checkpoints_and_resume_cursors -- --ignored --exact --test-threads=1
+          cargo test -p rustshare-server --test memory_reconcile_test files_reconcile_worker_ -- --ignored --test-threads=1
           cargo test -p rustshare-server --test memory_reconcile_test memory_reconcile_status_is_scoped_to_admin_tenant -- --ignored --exact --test-threads=1
 
       - name: Run all integration tests

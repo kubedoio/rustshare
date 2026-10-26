@@ -319,6 +319,7 @@ pub async fn setup_test_server() -> (AppState, String) {
         outbox_worker_enabled: false,
         outbox_readiness_staleness_secs: 60,
         shutdown_tx: tokio::sync::broadcast::channel(1).0,
+        memory_files_reconcile_worker: None,
         prometheus_handle,
     };
 

@@ -3,7 +3,7 @@
 ## M3.3 durable automation
 
 The optional Files-backed Notes scheduler is disabled by default. When enabled,
-it discovers tenants from authoritative `files` rows and schedules one bounded
+it discovers existing tenants with authoritative `files` rows and schedules one bounded
 page at a time from PostgreSQL. Each tenant has a durable cursor, page counters,
 retry state, last completion, next run, heartbeat, lease owner, and monotonically
 increasing lease generation. A checkpoint is written only after the complete
@@ -20,7 +20,9 @@ The scheduler uses the M3.1 100-row page and source-row lock and calls
 `NoteService::reconcile_index_file` for current content, ACL, and frontmatter
 policy. Keyword-only mode remains supported. A failed page keeps its input
 cursor and uses bounded exponential retry; exhausted jobs require an explicit
-admin retry. File/Notes writes remain independent of the worker.
+admin retry. An explicit page deadline bounds stalled source work, lease statements
+and source row-lock waits have database timeouts, and shutdown cancels pages
+before awaiting worker termination. File/Notes writes remain independent of the worker.
 
 Operational status and retry are available to an authenticated tenant admin:
 
@@ -29,7 +31,9 @@ Operational status and retry are available to an authenticated tenant admin:
 
 Status excludes source content and exposes only a generic, sanitized error.
 The retry endpoint schedules the caller's tenant; it cannot select another
-tenant.
+tenant. A live lease rejects retry; an expired lease can be resumed with a new
+generation and the same cursor. Status derives activation from the initialized
+worker and reports expired running leases as paused.
 
 ## Audit and design decision
 
@@ -44,7 +48,9 @@ shared PostgreSQL content index but currently logs and swallows failures. AI
 disabled does not disable policy-permitted keyword indexing; keyword-only rows
 have no vector. There is no durable Files/Notes event consumer. M3.1 added a
 manual repair endpoint; M3.3 optionally schedules the same page logic for
-automatic repair. Ordinary Files search uses authoritative metadata queries;
+automatic repair. Tenant discovery advances a separate PostgreSQL cursor by at
+most 100 tenant rows per poll and revisits earlier UUIDs after each full pass.
+Ordinary Files search uses authoritative metadata queries;
 the rebuildable content projection is the existing OKF note index.
 
 M3.1 adds an admin-triggered, cursor-paged sweep over authoritative `files`

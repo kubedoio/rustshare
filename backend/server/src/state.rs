@@ -260,6 +260,7 @@ pub struct AppState {
     /// Staleness window (seconds) for the `outbox` readiness component.
     pub outbox_readiness_staleness_secs: u64,
     pub shutdown_tx: broadcast::Sender<()>,
+    pub memory_files_reconcile_worker: Option<Arc<Mutex<tokio::task::JoinHandle<()>>>>,
     pub prometheus_handle: metrics_exporter_prometheus::PrometheusHandle,
 }
 
