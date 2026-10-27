@@ -4,6 +4,8 @@ This bounded client extends `BuzzGatewayClient` using its existing service
 credentials, URL validation, redirect policy, body limits, NIP-98 signing
 and pinned kind-19030 verification. It introduces no public HTTP route or
 binding activation consumer. All v1alpha1 methods remain unchanged.
+`services::chat_membership::verify_buzz_membership` owns Elembra receipt
+persistence; the gateway remains an HTTP-only adapter with no database pool.
 
 Each call durably records a fresh UUID before sending its authenticated read.
 Only the exact community/key/nonce echoes, a valid pinned relay signature,
