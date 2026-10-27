@@ -11,5 +11,5 @@ CREATE TABLE chat_buzz_membership_verifications (
     CHECK ((accepted_at IS NULL) = (accepted_revision IS NULL))
 );
 CREATE INDEX chat_buzz_membership_accepted_revision ON chat_buzz_membership_verifications
-    (community_id, pubkey, relay_pubkey, accepted_revision DESC)
+    (community_id, pubkey, accepted_revision DESC)
     WHERE accepted_at IS NOT NULL;

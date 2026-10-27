@@ -15,12 +15,16 @@ Unknown membership, invalid revisions, transport/HTTP failures, stale replies,
 wrong pins and persistence failures return an error; callers must deny.
 The revision range is 0..=i64::MAX, matching Buzz's non-wrapping BIGINT.
 Absent requires revision zero; active/revoked require a positive revision.
-Acceptance serializes by relay/community/key and also rejects a revision
+Acceptance serializes by community/key and also rejects a revision
 below any previously accepted durable receipt, including concurrent reads.
-It explicitly uses READ COMMITTED isolation, rechecks both signed timestamps
-after waiting for the lock, and uses the database wall clock for request
-expiry. An old transaction snapshot or a long lock wait cannot accept an
-older revision or an expired response.
+Changing the pinned relay identity does not reset that revision history.
+It explicitly uses READ COMMITTED isolation, checks both signed timestamps
+after the acceptance UPDATE and before returning, and uses the database wall
+clock for request expiry. An old transaction snapshot, delayed UPDATE or
+commit acknowledgement cannot return an older revision or expired response.
+An expiry detected before commit rolls back acceptance. If commit acknowledgement
+arrives after expiry, the nonce may already be consumed; the caller receives an
+error and must issue a fresh read, never use the receipt as an authorization cache.
 The acceptance UPDATE consumes the durable receipt once. Calls after a
 restart always generate a new nonce; pending receipts are never resumed.
 
