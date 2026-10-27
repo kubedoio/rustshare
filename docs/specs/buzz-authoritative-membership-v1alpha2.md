@@ -34,8 +34,8 @@ mutation path:
 2. Add durable per-`(community_id, pubkey)` revision and revocation-tombstone
    state plus durable operation receipts. An unseen key reads as revision zero
    and `absent`; a removed key reads as `revoked` and is never re-admitted.
-   Seed current `relay_members` rows as active during migration. Prior removed
-   keys have no authoritative tombstones in v1alpha1 and cannot be reconstructed
+   Seed current `relay_members` rows as active at revision one during migration.
+   Prior removed keys have no authoritative tombstones in v1alpha1 and cannot be reconstructed
    from signed event history; Elembra's historical-key prohibition remains in
    force, and each v1alpha2 removal creates a new sticky Buzz tombstone.
 3. Route every kind-9030/9031 writer for an enabled v1alpha2 community through
@@ -173,8 +173,10 @@ key.
   enabling the contract. No writer may bypass the tombstone rule.
 - For racing commands at revision `r`, at most one state change can commit
   from `r`. A no-op processed before that change may also succeed without
-  advancing the revision; commands processed after it receive a stale-revision
-  rejection and must read again. For example, with an active key, an add
+  advancing the revision; new operations processed after it receive a
+  stale-revision rejection and must read again. Retries of recorded operation
+  IDs return their stored outcomes even if the current state has changed.
+  For example, with an active key, an add
   processed before a remove is a successful no-op and the remove still revokes
   the key. If the remove is processed first, the add is stale and rejected.
   Both orderings end at `revoked`. Delayed commands based on `r` cannot restore
