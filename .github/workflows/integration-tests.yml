@@ -138,7 +138,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: kubedoio/buzz
-          ref: b41ab5dccae5799e1a21bc7e47fc7cf8fe2bd03b
+          ref: 7c4e2a0df0ff229a0d8c4b0d9d84fffe91d93b75
           path: .buzz-membership-source
           persist-credentials: false
 
@@ -150,9 +150,28 @@ jobs:
           CARGO_TARGET_DIR="${RUNNER_TEMP}/buzz-membership-target" CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 \
             cargo build -p buzz-relay --locked
           docker run -d --name buzz-membership-redis -p 127.0.0.1:6379:6379 redis:7-alpine
-          echo "BUZZ_TEST_DATABASE_URL=${DATABASE_URL}" >> "$GITHUB_ENV"
+          docker run -d --name m41-buzz-postgres -p 127.0.0.1:55442:5432 \
+            -e POSTGRES_USER=rustshare -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" -e POSTGRES_DB=buzz postgres:16
+          for attempt in $(seq 1 30); do
+            if docker exec m41-buzz-postgres pg_isready -U rustshare; then break; fi
+            if [[ "$attempt" == 30 ]]; then exit 1; fi
+            sleep 1
+          done
+          echo "BUZZ_TEST_DATABASE_URL=postgres://rustshare:${POSTGRES_PASSWORD}@localhost:55442/buzz" >> "$GITHUB_ENV"
           echo "BUZZ_TEST_REDIS_URL=redis://127.0.0.1:6379" >> "$GITHUB_ENV"
           echo "BUZZ_TEST_RELAY_BINARY=${RUNNER_TEMP}/buzz-membership-target/debug/buzz-relay" >> "$GITHUB_ENV"
+          echo "BUZZ_TEST_POSTGRES_CONTAINER=m41-buzz-postgres" >> "$GITHUB_ENV"
+
+      - name: Buzz v1alpha2 migration and live conformance
+        working-directory: .buzz-membership-source
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/buzz-membership-target
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_INCREMENTAL: "0"
+        run: |
+          unset RUSTUP_TOOLCHAIN
+          cargo test -p buzz-db --test membership_v1alpha2 -- --ignored
+          cargo test -p buzz-test-client --test authoritative_membership -- --ignored --nocapture
 
       - name: Test feature workflow repository and authentication
         run: |

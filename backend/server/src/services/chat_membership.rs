@@ -48,16 +48,28 @@ pub async fn verify_buzz_membership(
         .begin()
         .await
         .map_err(|_| BuzzAuthorityError::Transport("cannot begin membership acceptance".into()))?;
+    // A waiting lock must not retain a snapshot older than the last accepted revision.
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        .execute(&mut *acceptance)
+        .await
+        .map_err(|_| {
+            BuzzAuthorityError::Transport("cannot set membership acceptance isolation".into())
+        })?;
     // Serialize acceptance for this authority/key, including concurrent reads.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(format!("{relay_pubkey}:{community_id}:{pubkey}"))
         .execute(&mut *acceptance)
         .await
         .map_err(|_| BuzzAuthorityError::Transport("cannot lock membership acceptance".into()))?;
+    if !observation.is_fresh_at(chrono::Utc::now().timestamp()) {
+        return Err(BuzzAuthorityError::InvalidResponse(
+            "membership response expired while waiting for acceptance".into(),
+        ));
+    }
     let accepted = sqlx::query(
         "UPDATE chat_buzz_membership_verifications AS pending \
-        SET accepted_at=now(), accepted_revision=$2 WHERE request_id=$1 AND accepted_at IS NULL \
-        AND requested_at >= now() - interval '30 seconds' AND NOT EXISTS \
+        SET accepted_at=clock_timestamp(), accepted_revision=$2 WHERE request_id=$1 AND accepted_at IS NULL \
+        AND requested_at >= clock_timestamp() - interval '30 seconds' AND NOT EXISTS \
         (SELECT 1 FROM chat_buzz_membership_verifications previous \
          WHERE previous.community_id=pending.community_id AND previous.pubkey=pending.pubkey \
          AND previous.relay_pubkey=pending.relay_pubkey AND previous.accepted_at IS NOT NULL \
@@ -91,6 +103,7 @@ mod tests {
     use reqwest::Client;
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
+    use std::sync::atomic::{AtomicI64, Ordering};
     use std::{sync::Arc, time::Duration};
     use url::Url;
     use uuid::Uuid;
@@ -126,9 +139,8 @@ mod tests {
             std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB").as_deref(),
             Ok("1")
         );
-        let pool = sqlx::PgPool::connect(&std::env::var("DATABASE_URL").unwrap())
-            .await
-            .unwrap();
+        let database_url = crate::test_guard::disposable_database_url_from_env().unwrap();
+        let pool = sqlx::PgPool::connect(&database_url).await.unwrap();
         let service = Keys::generate();
         let service_pubkey = service.public_key();
         let relay = Keys::generate();
@@ -136,13 +148,16 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let saved = Arc::new(tokio::sync::Mutex::new(None::<Value>));
+        let offset = Arc::new(AtomicI64::new(0));
         let app = axum::Router::new().route(
             "/api/v1/relay/membership/check",
             axum::routing::post({
                 let saved = saved.clone();
+                let offset = offset.clone();
                 move |headers: axum::http::HeaderMap, body: axum::body::Bytes| {
                     let relay = relay.clone();
                     let saved = saved.clone();
+                    let offset = offset.clone();
                     async move {
                         let url = format!("http://{address}/api/v1/relay/membership/check");
                         let caller = verify_auth_header(
@@ -161,7 +176,8 @@ mod tests {
                         let mut content: Value = serde_json::from_slice(&body).unwrap();
                         content["membership"] = json!("active");
                         content["membership_revision"] = json!(1);
-                        content["evaluated_at"] = json!(Utc::now().timestamp());
+                        content["evaluated_at"] =
+                            json!(Utc::now().timestamp() + offset.load(Ordering::SeqCst));
                         let response = serde_json::to_value(relay_19030(&relay, content)).unwrap();
                         *saved = Some(response.clone());
                         axum::Json(response)
@@ -172,7 +188,7 @@ mod tests {
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        let client = test_client(service);
+        let client = test_client(service.clone());
         let community = Uuid::new_v4();
         let key = Keys::generate().public_key().to_hex();
         let url = format!("ws://{address}");
@@ -205,12 +221,77 @@ mod tests {
                 .await
                 .is_err()
         );
+        // A blocked acceptance must not use an old snapshot or an expired signature.
+        let application = format!("membership-review-{}", Uuid::new_v4());
+        let options: sqlx::postgres::PgConnectOptions = database_url.parse().unwrap();
+        let repeatable = sqlx::postgres::PgPoolOptions::new()
+            .after_connect(|connection, _| {
+                Box::pin(async move {
+                    sqlx::query("SET default_transaction_isolation = 'repeatable read'")
+                        .execute(connection)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect_with(options.application_name(&application))
+            .await
+            .unwrap();
+        let mut rejected = Vec::new();
+        for expires in [false, true] {
+            let subject = Keys::generate().public_key().to_hex();
+            *saved.lock().await = None;
+            offset.store(if expires { -20 } else { 0 }, Ordering::SeqCst);
+            let mut lock = pool.begin().await.unwrap();
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+                .bind(format!("{relay_pubkey}:{community}:{subject}"))
+                .execute(&mut *lock)
+                .await
+                .unwrap();
+            let (reader, client, url, pin, target) = (
+                repeatable.clone(),
+                test_client(service.clone()),
+                url.clone(),
+                relay_pubkey.clone(),
+                subject.clone(),
+            );
+            let pending = tokio::spawn(async move {
+                verify_buzz_membership(&reader, &client, &url, &pin, community, &target, 0).await
+            });
+            let mut waiting = false;
+            for _ in 0..250 {
+                waiting = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock')")
+                    .bind(&application).fetch_one(&pool).await.unwrap();
+                if waiting {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(waiting, "acceptance never reached its advisory lock");
+            if expires {
+                // Allow ingress margin, then expire the signed answer while its lock is held.
+                tokio::time::sleep(Duration::from_secs(11)).await;
+            } else {
+                sqlx::query("INSERT INTO chat_buzz_membership_verifications \
+                    (request_id,community_id,pubkey,relay_pubkey,minimum_revision,accepted_at,accepted_revision) \
+                    VALUES ($1,$2,$3,$4,0,now(),2)")
+                    .bind(Uuid::new_v4()).bind(community).bind(&subject).bind(&relay_pubkey)
+                    .execute(&mut *lock).await.unwrap();
+            }
+            lock.commit().await.unwrap();
+            rejected.push(pending.await.unwrap().is_err());
+        }
+        repeatable.close().await;
         sqlx::query("DELETE FROM chat_buzz_membership_verifications WHERE community_id=$1")
             .bind(community)
             .execute(&pool)
             .await
             .unwrap();
         server.abort();
+        assert_eq!(
+            rejected,
+            vec![true, true],
+            "accepted a regressing or expired response after waiting for a lock"
+        );
     }
 
     #[tokio::test]
@@ -220,22 +301,25 @@ mod tests {
             std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB").as_deref(),
             Ok("1")
         );
-        let pool = sqlx::PgPool::connect(&std::env::var("DATABASE_URL").unwrap())
-            .await
-            .unwrap();
+        let elembra_url = crate::test_guard::disposable_database_url_from_env().unwrap();
         let buzz_admin_url = std::env::var("BUZZ_TEST_DATABASE_URL").unwrap();
+        let mut database_url = Url::parse(&buzz_admin_url).unwrap();
+        assert!(
+            database_url.query().is_none(),
+            "test database URL must not redirect through connection parameters"
+        );
+        assert!(matches!(
+            database_url.host_str(),
+            Some("127.0.0.1" | "localhost")
+        ));
+        let pool = sqlx::PgPool::connect(&elembra_url).await.unwrap();
         let admin = sqlx::PgPool::connect(&buzz_admin_url).await.unwrap();
         let name = format!("membership_client_{}", Uuid::new_v4().simple());
         sqlx::query(&format!("CREATE DATABASE {name}"))
             .execute(&admin)
             .await
             .unwrap();
-        let mut database_url = Url::parse(&buzz_admin_url).unwrap();
         database_url.set_path(&name);
-        assert!(matches!(
-            database_url.host_str(),
-            Some("127.0.0.1" | "localhost")
-        ));
         let service = Keys::generate();
         let relay = Keys::generate();
         let pin = relay.public_key().to_hex();
