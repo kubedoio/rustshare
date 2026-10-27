@@ -14,7 +14,8 @@ enablement is authorized by this report.
   `7c4e2a0df0ff229a0d8c4b0d9d84fffe91d93b75`, base
   `7fa6bf960d74e6a498caa772b0a81c4142666c9f`; draft, open, unmerged.
   Security fix pushed as **`8ecd46f0bbdfd9042243ecb2076f77fe90556dc6`**;
-  this is the current qualification candidate and requires fresh human review.
+  followed by registry/test fix **`c3bcde053a5845b5ca16e2f8deb8d9bf2f18fc5a`**;
+  the latter is the current qualification candidate and requires fresh human review.
 
 Elembra head `3c75bb2…` reports these GitHub Actions successes:
 
@@ -49,6 +50,23 @@ approval to carry forward. The prior self-reported fixes were checked in source:
 | Migration / restart | Active schema-28 rows seeded at revision one, deleted history unrecoverable; same-owner startup supported; migration/schema function bodies match |
 | Secrets | No new plaintext private-key logging identified; human-key custody remains outside Elembra |
 
+The added affected-library gate also exposed two source failures: the embedded
+migrator test expected 28 rather than 29 migrations, and the tenant schema lint
+rejected the intentionally global receipt operation-ID primary key. The fix
+updates the migration assertions and explicitly registers receipts alongside
+the existing global replay registries. Only UUID uniqueness is global: receipt
+ownership, community FK, actor and exact-command authorization remain scoped.
+Focused migration assertions preserve every receipt comparison, and PostgreSQL
+tests compare unchanged receipts/both communities after conflict and race a
+single operation UUID across communities to prove at most one effect/receipt.
+This retains cross-community reuse rejection instead of silently weakening the
+key or removing the isolation lint. Known-ID collisions intentionally couple
+availability; concurrent collisions may abort and roll back, then require retry
+with the same ID. The mutation HTTP response does not disclose prior revision.
+Fresh independent human review must explicitly accept this global-registry
+classification. Migration 29 is still unreleased; its checksum changes, so
+retest from fresh schema 28 rather than reusing an already migrated fixture.
+
 Independent agent security review covered all 11 files and connected code and
 reported the fallback-key finding. This is useful review evidence, **not an
 independent human architecture/security approval**. Fresh human review of the
@@ -57,6 +75,8 @@ invented and no approval was submitted on the author's behalf.
 Fresh agent review of the fix and live regression found the signing-identity
 finding resolved in source with no additional finding. That review covered
 the working diff subsequently committed as `8ecd46f0bbdfd9042243ecb2076f77fe90556dc6`.
+Another fresh agent review covered the registry/test diff committed as
+`c3bcde053a5845b5ca16e2f8deb8d9bf2f18fc5a`, with no additional blocking finding.
 
 ## CI enforcement and blocker
 
@@ -118,6 +138,17 @@ all-target Clippy with warnings denied passed. Logs:
 not GitHub CI artifacts). No infrastructure-unavailable skip is counted as success.
 Relay binary Clippy with warnings denied also passed on this candidate. Relay
 all-target/library validation remains subject to the disk limit below.
+After correcting the library failures, `buzz-db --lib` passed 94 tests (154
+infrastructure tests ignored by that ordinary unit invocation) and
+`buzz-test-client --lib` passed 4. The dedicated ignored PostgreSQL and live
+tests are executed separately; ordinary ignored counts are not conformance.
+Final retest of code committed as `c3bcde053a5845b5ca16e2f8deb8d9bf2f18fc5a`
+passed those 98 unit tests, relay build, PostgreSQL migration/receipt/concurrency
+contract (1), live relay conformance including fallback identity (1), db/client
+all-target Clippy, relay binary Clippy and formatting. Final runner log:
+`/tmp/m41b2-qualification-final-retest.log`. Relay all-target Clippy/library
+tests and full `just ci` remain incomplete; narrower successes do not satisfy
+those broader gates.
 
 Broader relay library test compilation and affected all-target Clippy were
 attempted but exhausted local disk (`No space left on device`); the Clippy
