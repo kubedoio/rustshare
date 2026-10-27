@@ -410,8 +410,9 @@ read Buzz tables, store private keys, or claim to be the durable adapter.
   previous implementation activated locally before asynchronous Buzz
   revocation completed and is now rejected. Replacement remains disabled
   until operation-correlated Buzz membership read-back can safely gate
-  activation. A second active key without an explicit, completed replacement
-  is rejected by the tenant/Principal uniqueness constraint.
+  activation. A second active key remains rejected by the tenant/Principal
+  uniqueness constraint because no replacement operation is currently
+  implemented.
 * Elembra stores only public binding metadata and admission state. Sovereign
   mode never stores a plaintext Buzz private key. Managed/KMS identities, if
   added later, must be an explicit identity mode and must not reuse this path.
@@ -508,13 +509,21 @@ sequenceDiagram
   B-->>P: denied for revoked community; old history remains valid
 ```
 
-The same binding/admission contracts cover first identity creation, existing-key
-binding, additional-device enrollment, lost-device revocation, recovery, and
-rotation. Creation and recovery happen in the client; lost/all-device recovery
-cannot restore the exact old pubkey without an explicit encrypted backup or
-escrow, and the system must say so rather than impersonate the user.
+The implemented binding/admission contracts cover first identity creation,
+existing-key binding, Principal revocation, and same-key recovery from an
+encrypted client backup. Per-device key enrollment and controlled identity
+replacement remain unsupported. Any future replacement must use the
+remove-old → verify-revoked → add-new → verify-active protocol in the
+[replacement contract](../contracts/chat-identity-replacement.md), backed by
+the proposed [Buzz membership read-back contract](../specs/buzz-authoritative-membership-v1alpha2.md).
+Creation and recovery happen in the client; lost/all-device recovery cannot
+restore the exact old pubkey without an explicit encrypted backup or escrow,
+and the system must say so rather than impersonate the user.
 
-The nine required lifecycle cases are specified as follows:
+The target lifecycle for a future complete rollout is specified as follows.
+Steps 1–6 describe current first-time use; steps 7–9 are requirements only.
+Per-device enrollment and identity replacement have no enabled UX or complete
+backend protocol today.
 
 ```mermaid
 sequenceDiagram
@@ -533,8 +542,8 @@ sequenceDiagram
   U->>B: 6. Sign and post normal Buzz event
   B-->>U: Signed event accepted; Buzz owns history
   U->>E: 7. Enroll additional device using encrypted key backup
-  U->>E: 8. Report loss/compromise; rotate and revoke old binding
-  E->>B: 9. Revoke old community admission
+  U->>E: 8. Future requirement: request identity replacement
+  E->>B: 9. Future requirement: revoke old community admission
 ```
 
 Lost-device recovery creates a new key unless the user restores an encrypted
@@ -549,7 +558,7 @@ old key future admission; replacement is currently disabled.
 | IdP or Elembra DB compromise | No plaintext sovereign private key and no ability to sign as a user. |
 | Wrong tenant/principal/key, replay, expiry, bad relay/signature | Binding fails closed; challenge is not reusable. |
 | Malicious tenant administrator | Cannot cross tenant boundaries or bind a key without its proof. Audit and rotation semantics remain explicit. |
-| Device theft/key compromise | Revoke binding/admission; signed history remains valid; replacement is currently disabled until Buzz membership can be verified. |
+| Device theft/key compromise | Revoke binding/admission; signed history remains valid; replacement is currently disabled until Buzz membership can be verified. Buzz replacement must preserve a durable revocation tombstone so the old key cannot be re-admitted by delayed commands. |
 | Disabled Principal | Bridge revokes admission; a mathematically valid old signature cannot regain workspace access. |
 | Buzz/Elembra/bridge outage | No new admission or access is granted on stale success; signed Buzz history remains Buzz-owned; revocation delivery is retryable and audited. |
 | Agent key confusion | Agent has its own Principal/key; human key is never used as an agent signer. |

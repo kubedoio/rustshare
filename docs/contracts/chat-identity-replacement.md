@@ -64,14 +64,19 @@ Only the final verified state may atomically activate the replacement binding
 and its local admission. Failure, timeout, restart, dead-letter, or an
 unavailable relay leaves replacement sending denied.
 
-Retries use the stable operation ID as the idempotency key. Before repeating a
-membership mutation, the bridge reads authoritative Buzz state: an already
-absent old key or already-present replacement key is treated as the completed
-effect for that step. Replays return the persisted state. A failed operation
-can resume from the last verified step; it cannot reactivate the old binding
-or reuse the consumed challenge. Duplicate delivery and process restart must
-not create duplicate bindings, admissions, audit transitions, or a second
-rotation.
+Retries use a stable operation ID for each mutation step. The old key's
+revocation step is complete only after Buzz reports its durable `revoked`
+tombstone; `absent` alone is insufficient because the key could otherwise be
+admitted later. Before adding the replacement key, Buzz must report it as
+`absent` with no tombstone. If it is already `active` before this operation's
+add has a recorded outcome, the operation fails closed instead of adopting
+that membership. After an ambiguous delivery, the bridge retries the same
+operation ID and then performs a fresh read; it does not infer completion from
+current membership alone. Replays return the persisted state. A failed
+operation can resume from the last verified step; it cannot reactivate the old
+binding or reuse the consumed challenge. Duplicate delivery and process
+restart must not create duplicate bindings, admissions, audit transitions,
+or a second rotation.
 
 Status is visible only to the owning authenticated Principal or an explicitly
 authorized tenant security administrator. Responses distinguish pending,
@@ -111,9 +116,13 @@ relay `OK` response as successful outbox delivery. That delivery result is not
 an operation state, doesn't prove the expected roster was reconciled, and is
 not correlated to a durable replacement operation. The v1alpha1 Buzz
 authorization API covers content-access decisions and channel discovery, not
-an authoritative identity membership read-back. The pinned Buzz NIP-AA
-contract explicitly says kind 13534 may advertise membership but is not the
-authoritative source of membership state.
+an authoritative identity membership read-back. Buzz publishes kind 13534 as
+a relay-signed membership snapshot, but a retrieved historical event has no
+request-bound freshness and may precede later membership changes. It is not a
+current-state query. The exact proposed read and
+versioned-command semantics are specified in [Buzz authoritative membership
+contract v1alpha2](../specs/buzz-authoritative-membership-v1alpha2.md); the
+current Buzz compatibility pin does not implement it.
 
 Before enabling replacement, Buzz must provide a supported, relay-authenticated
 query of authoritative membership state that is fresh and scoped to the exact

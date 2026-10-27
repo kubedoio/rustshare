@@ -1059,7 +1059,7 @@
 	<ConfirmModal
 		open={true}
 		title={`Revoke ${credentialToRevoke.type}: ${credentialToRevoke.label}?`}
-		message={`This stops the selected ${credentialToRevoke.type} from authenticating to Elembra. It does not erase data or encrypted backups on that device, and it does not revoke a copied Buzz signing key. If the device may have had an unlocked Chat key, treat that shared key as compromised and contact your workspace administrator about controlled identity rotation.`}
+		message={`This stops the selected ${credentialToRevoke.type} from authenticating to Elembra. It does not erase data or encrypted backups on that device, and it does not revoke a copied Buzz signing key. If the device may have had an unlocked Chat key, treat that shared key as compromised and contact your workspace administrator to coordinate Buzz admission revocation. Identity replacement is currently unavailable.`}
 		confirmLabel="Revoke credential"
 		danger={true}
 		onConfirm={async () => {
