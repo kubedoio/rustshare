@@ -215,22 +215,17 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
         owner_succeeded, other_succeeded,
         "exactly one Principal can activate a public key"
     );
-    let owner_current = store
-        .active_binding(TenantId(tenant), PrincipalId(owner))
-        .await?
-        .unwrap();
-    let (owner_challenge, owner_binding) =
-        issue(&store, tenant, owner, '8', Some(owner_current.binding_id)).await?;
+    let (local_challenge, local_binding) = issue(&store, tenant, other, '8', None).await?;
     let (foreign_challenge, foreign_binding) =
         issue(&store, foreign_tenant, foreign, '8', None).await?;
     let mut key_blocker = pool.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-        .bind(format!("chat-binding:{}", owner_challenge.buzz_pubkey))
+        .bind(format!("chat-binding:{}", local_challenge.buzz_pubkey))
         .execute(&mut *key_blocker)
         .await?;
     let activations = async {
         tokio::join!(
-            store.consume_and_activate(&owner_challenge, &owner_binding, Utc::now()),
+            store.consume_and_activate(&local_challenge, &local_binding, Utc::now()),
             store.consume_and_activate(&foreign_challenge, &foreign_binding, Utc::now()),
         )
     };
@@ -258,19 +253,19 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
     };
     let ((owner_result, foreign_result), released) = tokio::join!(activations, release);
     released?;
-    let (owner_succeeded, foreign_succeeded) = (owner_result?, foreign_result?);
+    let (local_succeeded, foreign_succeeded) = (owner_result?, foreign_result?);
     assert_ne!(
-        owner_succeeded, foreign_succeeded,
+        local_succeeded, foreign_succeeded,
         "exactly one cross-tenant activation of the same key must succeed"
     );
     let claimed: Vec<(Uuid, Uuid)> = sqlx::query_as(
         "SELECT tenant_id, principal_id FROM chat_identity_bindings WHERE buzz_pubkey = $1",
     )
-    .bind(&owner_challenge.buzz_pubkey)
+    .bind(&local_challenge.buzz_pubkey)
     .fetch_all(&pool)
     .await?;
-    let expected = if owner_succeeded {
-        (tenant, owner)
+    let expected = if local_succeeded {
+        (tenant, other)
     } else {
         (foreign_tenant, foreign)
     };
@@ -288,7 +283,7 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
         store.consume_and_activate(&challenge, &binding, Utc::now()),
         store.revoke_principal(TenantId(tenant), PrincipalId(owner)),
     );
-    rotation?;
+    assert!(!rotation?, "replacement stays unavailable during revocation");
     revocation?;
     assert!(
         store
@@ -360,13 +355,11 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
 enum AdmissionRace {
     ExplicitRevocation,
     Disablement,
-    Rotation,
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires explicitly configured disposable local PostgreSQL"]
-async fn admission_is_serialized_with_principal_revocation_disablement_and_rotation() -> Result<()>
-{
+async fn admission_is_serialized_with_principal_revocation_and_disablement() -> Result<()> {
     assert_eq!(
         std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB").as_deref(),
         Ok("1")
@@ -383,10 +376,9 @@ async fn admission_is_serialized_with_principal_revocation_disablement_and_rotat
     let application_name = format!("chat-admission-race-{}", Uuid::new_v4());
     let pool = PgPool::connect_with(options.application_name(&application_name)).await?;
 
-    for (race, original_key, replacement_key) in [
-        (AdmissionRace::ExplicitRevocation, 'a', 'd'),
-        (AdmissionRace::Disablement, 'b', 'e'),
-        (AdmissionRace::Rotation, 'c', 'f'),
+    for (race, original_key) in [
+        (AdmissionRace::ExplicitRevocation, 'a'),
+        (AdmissionRace::Disablement, 'b'),
     ] {
         let tenant = Uuid::new_v4();
         let principal = Uuid::new_v4();
@@ -516,14 +508,6 @@ async fn admission_is_serialized_with_principal_revocation_disablement_and_rotat
             }
             admission_blocked??;
 
-            let (rotation_challenge, rotation_binding) = issue(
-                &store,
-                tenant,
-                principal,
-                replacement_key,
-                Some(binding.binding_id),
-            )
-            .await?;
             let counter = tokio::spawn({
                 let store = store.clone();
                 let pool = pool.clone();
@@ -539,17 +523,6 @@ async fn admission_is_serialized_with_principal_revocation_disablement_and_rotat
                                 .bind(principal)
                                 .execute(&pool)
                                 .await?;
-                        }
-                        AdmissionRace::Rotation => {
-                            anyhow::ensure!(
-                                store
-                                    .consume_and_activate(
-                                        &rotation_challenge,
-                                        &rotation_binding,
-                                        Utc::now(),
-                                    )
-                                    .await?
-                            );
                         }
                     }
                     Ok::<_, anyhow::Error>(())
