@@ -64,6 +64,7 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
     let tenant = Uuid::new_v4();
     let foreign_tenant = Uuid::new_v4();
     let owner = Uuid::new_v4();
+    let revoked_owner = Uuid::new_v4();
     let other = Uuid::new_v4();
     let same_tenant_local = Uuid::new_v4();
     let foreign = Uuid::new_v4();
@@ -77,6 +78,7 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
     }
     for (id, scope) in [
         (owner, tenant),
+        (revoked_owner, tenant),
         (other, tenant),
         (same_tenant_local, tenant),
         (foreign, foreign_tenant),
@@ -87,17 +89,17 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
             .bind(format!("{id}@test.local")).bind(scope).execute(&pool).await?;
     }
     let store = ChatIdentityStore::new(pool.clone());
-    let (original, original_binding) = issue(&store, tenant, owner, '1', None).await?;
+    let (original, original_binding) = issue(&store, tenant, revoked_owner, '1', None).await?;
     assert!(
         store
             .consume_and_activate(&original, &original_binding, Utc::now())
             .await?
     );
     store
-        .revoke_principal(TenantId(tenant), PrincipalId(owner))
+        .revoke_principal(TenantId(tenant), PrincipalId(revoked_owner))
         .await?;
 
-    for (scope, principal) in [(tenant, owner), (tenant, other), (foreign_tenant, foreign)] {
+    for (scope, principal) in [(tenant, revoked_owner), (tenant, other), (foreign_tenant, foreign)] {
         let (challenge, binding) = issue(&store, scope, principal, '1', None).await?;
         assert!(
             !store
@@ -106,6 +108,25 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
             "a previously bound key cannot be restored, reassigned or reused across tenants"
         );
     }
+    let (implicit_replacement, implicit_binding) =
+        issue(&store, tenant, revoked_owner, '2', None).await?;
+    assert!(
+        !store
+            .consume_and_activate(&implicit_replacement, &implicit_binding, Utc::now())
+            .await?,
+        "a revoked Principal cannot bypass replacement verification by omitting rotation_of"
+    );
+    let consumed: bool = sqlx::query_scalar(
+        "SELECT consumed_at IS NOT NULL FROM chat_binding_challenges WHERE challenge_id = $1",
+    )
+    .bind(implicit_replacement.challenge_id)
+    .fetch_one(&pool)
+    .await?;
+    assert!(!consumed, "implicit replacement must not consume the challenge");
+    assert!(store
+        .active_binding(TenantId(tenant), PrincipalId(revoked_owner))
+        .await?
+        .is_none());
     let (replacement, replacement_binding) = issue(&store, tenant, owner, '2', None).await?;
     let mut wrong_key_binding = replacement_binding.clone();
     wrong_key_binding.buzz_pubkey = '8'.to_string().repeat(64);
@@ -419,11 +440,14 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
         .await?
         .unwrap();
     let (challenge, binding) = issue(&store, tenant, owner, '6', Some(current.binding_id)).await?;
-    let (rotation, revocation) = tokio::join!(
+    let (implicit_challenge, implicit_binding) = issue(&store, tenant, owner, '6', None).await?;
+    let (rotation, implicit_rotation, revocation) = tokio::join!(
         store.consume_and_activate(&challenge, &binding, Utc::now()),
+        store.consume_and_activate(&implicit_challenge, &implicit_binding, Utc::now()),
         store.revoke_principal(TenantId(tenant), PrincipalId(owner)),
     );
     assert!(!rotation?, "replacement stays unavailable during revocation");
+    assert!(!implicit_rotation?, "omitted rotation intent cannot race revocation");
     revocation?;
     assert!(
         store
@@ -432,6 +456,45 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
             .is_none(),
         "explicit revocation must also cover a competing rotation"
     );
+    let durable_state_before: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+            (SELECT count(*) FROM chat_identity_bindings WHERE tenant_id = $1),
+            (SELECT count(*) FROM chat_buzz_admissions WHERE tenant_id = $1),
+            (SELECT count(*) FROM integration_outbox WHERE tenant_id = $1),
+            (SELECT count(*) FROM user_security_events WHERE user_id = $2)",
+    )
+    .bind(tenant)
+    .bind(owner)
+    .fetch_one(&pool)
+    .await?;
+    assert!(
+        !store
+            .consume_and_activate(&implicit_challenge, &implicit_binding, Utc::now())
+            .await?,
+        "a challenge issued before revocation cannot activate a replacement afterward"
+    );
+    let consumed: bool = sqlx::query_scalar(
+        "SELECT consumed_at IS NOT NULL FROM chat_binding_challenges WHERE challenge_id = $1",
+    )
+    .bind(implicit_challenge.challenge_id)
+    .fetch_one(&pool)
+    .await?;
+    assert!(!consumed);
+    let durable_state_after: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+            (SELECT count(*) FROM chat_identity_bindings WHERE tenant_id = $1),
+            (SELECT count(*) FROM chat_buzz_admissions WHERE tenant_id = $1),
+            (SELECT count(*) FROM integration_outbox WHERE tenant_id = $1),
+            (SELECT count(*) FROM user_security_events WHERE user_id = $2)",
+    )
+    .bind(tenant)
+    .bind(owner)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(durable_state_after, durable_state_before);
+    assert!(!store
+        .active_admission(TenantId(tenant), &community_id, &current.buzz_pubkey)
+        .await?);
     sqlx::query("UPDATE users SET disabled_at = now() WHERE id = $1")
         .bind(owner)
         .execute(&pool)
@@ -452,7 +515,7 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
     .await?;
     assert_eq!(
         historical,
-        vec![owner],
+        vec![revoked_owner],
         "historical attribution must be preserved"
     );
 

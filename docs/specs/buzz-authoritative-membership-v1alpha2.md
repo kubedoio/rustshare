@@ -146,9 +146,9 @@ locks that row before checking the expected revision; concurrent first writes
 must not create two independent revision histories. It validates
 service/admin authority and role restrictions, checks the expected revision,
 applies the NIP-43 add/remove effect, records a receipt, and advances the
-revision in one database transaction. Removal of the relay owner remains
-forbidden. For a community enabled for v1alpha2, every membership writer must
-obey these rules. Unversioned commands are rejected for that community. A
+revision only for a state change, in one database transaction. Removal of the
+relay owner remains forbidden. For a community enabled for v1alpha2, every
+membership writer must obey these rules. Unversioned commands are rejected for that community. A
 legacy writer must never bypass a revocation tombstone or restore a revoked
 key.
 
@@ -171,9 +171,14 @@ key.
   same conditional mutation path; old unversioned Elembra admission events
   must be drained or quarantined and every bridge worker upgraded before
   enabling the contract. No writer may bypass the tombstone rule.
-- For racing commands at revision `r`, exactly one transition can commit from
-  `r`; losers receive a stale-revision rejection and must read again. Delayed
-  commands based on `r` cannot restore a key after a later revocation.
+- For racing commands at revision `r`, at most one state change can commit
+  from `r`. A no-op processed before that change may also succeed without
+  advancing the revision; commands processed after it receive a stale-revision
+  rejection and must read again. For example, with an active key, an add
+  processed before a remove is a successful no-op and the remove still revokes
+  the key. If the remove is processed first, the add is stale and rejected.
+  Both orderings end at `revoked`. Delayed commands based on `r` cannot restore
+  a key after a later revocation.
 
 The Nostr `OK` result acknowledges only whether that versioned command was
 accepted or rejected. It is never a replacement-completion signal. Elembra
@@ -181,7 +186,7 @@ must perform a fresh signed read after each required mutation. A fresh response
 that reports the wrong membership state, a later revision with conflicting
 state, or an unknown result prevents completion.
 
-Elembra serializes the remove-old → verify-absent → add-new → verify-active
+Elembra serializes the remove-old → verify-revoked → add-new → verify-active
 steps per tenant/Principal in its durable replacement operation. Buzz's
 per-key revisions fence stale/duplicate commands for each key; they do not
 replace Elembra's cross-key operation state machine.
@@ -215,9 +220,12 @@ Run against the supported disposable Buzz image, not a RustShare mock:
    responses, stale timestamps and replayed request IDs are rejected.
 5. Retrying identical add/remove operation IDs converges without extra state
    transitions; reused IDs with changed payloads fail.
-6. Out-of-order and concurrent add/remove commands with the same expected
-   revision cannot both commit; stale commands cannot re-admit a removed key,
-   and no authorized writer can bypass its revocation tombstone.
+6. Out-of-order and concurrent commands with the same expected revision commit
+   at most one state change. For an initially active key, test both add/remove
+   orderings: an add no-op may succeed before removal, but the final state is
+   `revoked` in either ordering. For an absent key, the first add/remove state
+   change wins and the other command is stale. Stale commands cannot re-admit
+   a removed key, and no authorized writer can bypass its revocation tombstone.
 7. Unauthorized add/remove and owner-removal attempts do not mutate state.
 8. Relay restart preserves active/absent/revoked state, tombstones, revisions
    and operation receipts.

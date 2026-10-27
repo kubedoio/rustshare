@@ -134,7 +134,12 @@ queued/processed outbox delivery.
 ## M4.1b2a implementation boundary
 
 Until that Buzz contract is available, `rotation_of` verification is rejected
-at both the HTTP and storage boundaries. The earlier path revoked local rows,
+at both the HTTP and storage boundaries. Ordinary binding is limited to a
+Principal with no previous binding history. Revoking a binding does not make
+that Principal eligible for fresh-key onboarding with `rotation_of` omitted;
+such attempts remain rejected while Buzz removal may still be pending. These
+checks run under the Principal lock before consuming the challenge.
+The earlier path revoked local rows,
 queued Buzz removal, and activated the replacement before the asynchronous
 bridge had applied anything. The guard prevents that unsafe transition; it is
 not a replacement implementation. No per-device pairing, replacement status

@@ -426,7 +426,7 @@ impl ChatIdentityStore {
         .transpose()
     }
 
-    /// Consume a challenge and activate a previously unused key atomically.
+    /// Consume a challenge and activate a Principal's first binding atomically.
     pub async fn consume_and_activate(
         &self,
         challenge: &BindingChallenge,
@@ -474,21 +474,19 @@ impl ChatIdentityStore {
         if key_seen {
             return Ok(false);
         }
-        if challenge.rotation_of.is_none() {
-            let already_active = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(
-                    SELECT 1 FROM chat_identity_bindings
-                    WHERE tenant_id = $1 AND principal_id = $2
-                      AND status = 'active' AND revoked_at IS NULL
-                )",
-            )
-            .bind(challenge.tenant_id.0)
-            .bind(challenge.principal_id.0)
-            .fetch_one(&mut *tx)
-            .await?;
-            if already_active {
-                return Ok(false);
-            }
+        // Omitting rotation_of after revocation must not bypass replacement verification.
+        let previously_bound = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                SELECT 1 FROM chat_identity_bindings
+                WHERE tenant_id = $1 AND principal_id = $2
+            )",
+        )
+        .bind(challenge.tenant_id.0)
+        .bind(challenge.principal_id.0)
+        .fetch_one(&mut *tx)
+        .await?;
+        if previously_bound {
+            return Ok(false);
         }
         let consumed = sqlx::query(
             "UPDATE chat_binding_challenges
