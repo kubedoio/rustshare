@@ -41,7 +41,7 @@ async fn issue(
 
 #[tokio::test]
 #[ignore = "requires explicitly configured disposable local PostgreSQL"]
-async fn revoked_keys_stay_revoked_and_competing_rotations_fail_closed() -> Result<()> {
+async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result<()> {
     assert_eq!(
         std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB").as_deref(),
         Ok("1")
@@ -180,52 +180,28 @@ async fn revoked_keys_stay_revoked_and_competing_rotations_fail_closed() -> Resu
         Some(replacement_binding.binding_id),
     )
     .await?;
-    // Hold the old binding so both rotations overlap before either can commit.
-    let mut blocker = pool.begin().await?;
-    sqlx::query("SELECT binding_id FROM chat_identity_bindings WHERE binding_id = $1 FOR UPDATE")
-        .bind(replacement_binding.binding_id)
-        .execute(&mut *blocker)
-        .await?;
-    let rotations = async {
-        tokio::join!(
-            store.consume_and_activate(&left, &left_binding, Utc::now()),
-            store.consume_and_activate(&right, &right_binding, Utc::now()),
-        )
-    };
-    let release = async {
-        let waited = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            loop {
-                let waiting: i64 = sqlx::query_scalar(
-                    "SELECT count(*) FROM pg_stat_activity
-                     WHERE application_name = $1 AND wait_event_type = 'Lock'",
-                )
-                .bind(&application_name)
-                .fetch_one(&pool)
-                .await?;
-                if waiting >= 2 {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-            Ok::<_, sqlx::Error>(())
-        })
-        .await;
-        blocker.commit().await?;
-        waited??;
-        Ok::<_, anyhow::Error>(())
-    };
-    let ((left_result, right_result), released) = tokio::join!(rotations, release);
-    released?;
-    let (left_succeeded, right_succeeded) = (left_result?, right_result?);
-    assert_ne!(
-        left_succeeded, right_succeeded,
-        "exactly one competing rotation must succeed"
+    let (left_result, right_result) = tokio::join!(
+        store.consume_and_activate(&left, &left_binding, Utc::now()),
+        store.consume_and_activate(&right, &right_binding, Utc::now()),
+    );
+    assert!(
+        !left_result? && !right_result?,
+        "replacement stays disabled until Buzz confirmation exists"
     );
     let current = store
         .active_binding(TenantId(tenant), PrincipalId(owner))
         .await?
         .unwrap();
-    assert_eq!(current.rotation_of, Some(replacement_binding.binding_id));
+    assert_eq!(current.binding_id, replacement_binding.binding_id);
+    for challenge in [&left, &right] {
+        let consumed: bool = sqlx::query_scalar(
+            "SELECT consumed_at IS NOT NULL FROM chat_binding_challenges WHERE challenge_id = $1",
+        )
+        .bind(challenge.challenge_id)
+        .fetch_one(&pool)
+        .await?;
+        assert!(!consumed, "rejected replacement challenges remain unconsumed");
+    }
 
     let (owner_challenge, owner_binding) =
         issue(&store, tenant, owner, '5', Some(current.binding_id)).await?;

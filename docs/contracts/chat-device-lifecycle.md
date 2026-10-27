@@ -37,7 +37,7 @@ or remotely locks a different browser's in-memory key.
 | Lost device with unlocked signing key | A copy of the secret in process memory and possibly the encrypted envelope | Revoke platform credentials to stop their Elembra API access. Treat the shared Buzz key as compromised: a copied key can still sign. Arrange old Buzz admission revocation and controlled replacement.                                                                                                                                                              |
 | Stolen encrypted backup               | The passphrase-encrypted envelope                                          | The server has no copy and cannot invalidate it. A strong passphrase limits offline guessing, but client retry throttling does not protect a stolen file. If the passphrase may also be exposed, treat the key as compromised.                                                                                                                                      |
 | Compromised Buzz private key          | Signing authority, including copies on other devices                       | Browser/device-token revocation is insufficient. Revoke the old Elembra binding and Buzz community admission, then prove possession of a replacement key and reconcile membership before enabling it. Historical signed events remain attributed to the old key.                                                                                                    |
-| Compromised SSO/browser session       | Account-level Elembra authority and access to authenticated APIs           | Revoke sessions and device tokens, disable/reset the account as appropriate, and investigate security events. This alone does not reveal a locked Buzz key. Existing identity-rotation APIs are account-authorized; until M4.1b2 provides deliberate confirmation and ordered Buzz completion, do not use them as an end-user recovery flow during an SSO incident. |
+| Compromised SSO/browser session       | Account-level Elembra authority and access to authenticated APIs           | Revoke sessions and device tokens, disable/reset the account as appropriate, and investigate security events. This alone does not reveal a locked Buzz key. The backend rejects identity replacement until M4.1b2 provides durable operation state and Buzz-confirmed membership reconciliation. |
 | Complete loss of every key copy       | No signing material for the old Buzz identity                              | The old identity cannot be recovered. An authorized administrator can coordinate a new identity and revoke old admission; old signed history cannot be reassigned or re-signed as the new identity.                                                                                                                                                                 |
 
 ## Existing behavior and bounded delivery
@@ -57,16 +57,14 @@ or remotely locks a different browser's in-memory key.
 - Activation rechecks the active Principal inside its transaction and excludes
   public keys with any previous binding. Revoked keys cannot be restored or
   reassigned to another Principal or tenant. Principal and public-key locks
-  serialize competing activations, rotation and explicit Principal revocation.
-  The storage boundary also requires the new binding's tenant, Principal, key
-  and `rotation_of` to match the verified challenge.
-- Existing `rotation_of` verification proves that the proposed replacement key
-  signed the NIP-42 challenge. In one Elembra transaction it revokes the old
-  binding/admission record, queues Buzz revocation, and activates the new
-  binding. Buzz processes the outbox asynchronously. There is no user-facing
-  rotation confirmation or completed Buzz membership migration/acknowledgement
-  path in this milestone, so this backend flow is not presented as a safe
-  lost-device action.
+  serialize competing activations and explicit Principal revocation. The
+  storage boundary requires the new binding's tenant, Principal and key to
+  match the verified challenge; `rotation_of` is currently rejected.
+- The legacy `rotation_of` storage path was unsafe: it activated the proposed
+  key in Elembra as soon as the challenge was consumed, while Buzz revocation
+  remained an asynchronous outbox delivery. The verify endpoint now rejects
+  replacement until the durable, relay-confirmed protocol in the
+  [identity replacement contract](chat-identity-replacement.md) is implemented.
 - No additional Chat device registration is created. No server-side key
   escrow or per-device Buzz signing authority is introduced.
 

@@ -116,6 +116,9 @@ membership reconciliation are M4.1b2. No key escrow is permitted. The current
 the Buzz bridge is asynchronous and has no completion/ordering confirmation
 for this UX.
 
+M4.1b2's protocol boundary and deferred Buzz requirements are recorded in the
+[Chat identity replacement contract](../contracts/chat-identity-replacement.md).
+
 Elembra and Buzz have different but complementary identities.
 
 ```text
