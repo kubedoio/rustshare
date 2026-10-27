@@ -227,3 +227,61 @@ Elembra's historical-key prohibition must remain.
 
 Next: [M4.1b2c specification](../specs/chat-durable-identity-replacement-m41b2c.md)
 and [implementation prompt](../plans/m41b2c-next-implementation-prompt.md).
+
+## Comprehensive review/fix loop follow-up
+
+Current Buzz qualification candidate:
+**`fda3a0c13668aecb5c56d744bab6541e4f29ca9f`** (supersedes earlier heads above).
+
+The follow-up review began at Buzz `ad981e008950593043e7c0fa4df0dd93cd9b30bc`
+and repeated source review after each substantive fix. It found and fixed:
+
+1. Cached normal WebSocket authentication survived revocation. Every
+   EVENT/REQ/COUNT now checks current v1alpha2 membership and denies/cancels
+   revoked sessions; the gate precedes observer, ephemeral and persistent routing.
+2. Open-relay mode and NIP-OA delegation could bypass exact-key revocation.
+   Opted-in communities require the submitting key itself to be ACTIVE before
+   either fallback. ABSENT candidate keys also cannot authenticate. Legacy
+   communities retain their open/delegated admission behavior.
+3. Existing subscriptions retained access. Shared local/cross-node fanout now
+   checks primary exact-key authority, including global events, and denies
+   unavailable authority. Anonymous v1alpha2 WebSocket requests are also denied.
+4. Delayed primary reads received a newly minted evaluation timestamp. The
+   timestamp is now captured before the primary read, so delayed evidence ages
+   conservatively; a held-table-lock regression checks this property.
+5. Huddle audio uses a separate cached WebSocket transport. Incoming media is
+   now checked before local/mesh forwarding, and outgoing audio/control is
+   checked before socket delivery, including remote roster updates. A failed
+   check cancels the parent session and drives normal room/mesh cleanup.
+
+The workflow also now executes all three ignored migration-module tests
+serially, in addition to the schema-28 upgrade/receipt contract and live relay
+suite. These tests are mandatory, not infrastructure-unavailable skips.
+
+The live regression proves ACTIVE audio works before removal, then revoked
+senders/receivers close without media. It also covers existing ordinary sockets,
+subscription delivery (with an ACTIVE delivery witness), valid delegation
+rejection on both open and closed relays, ABSENT/anonymous rejection, and delayed
+read freshness. The rest of the existing conformance suite remains enabled.
+
+Validation passed: relay build; 94 db and 4 client ordinary unit tests;
+3 PostgreSQL migration-module tests; 1 schema-28 upgrade/receipt/concurrency test;
+1 expanded actual-relay conformance test; db/client all-target Clippy; relay
+binary Clippy; formatting and whitespace checks. Runner evidence:
+`/tmp/m41b2-review-validation.log`, `/tmp/m41b2-review-audio.log` and
+`/tmp/m41b2-review-complete.log`. These remain ephemeral local logs, not protected CI.
+
+Two independent agent review passes were used; the fresh reviewer found the
+audio gap after the initial fixes. After the audio fix, fresh source review
+reported **no remaining concrete actionable findings**. This is source-review
+evidence, not an independent human approval or an exhaustive proof of safety.
+
+Release remains NO-GO. Full relay library/all-target/workspace validation is
+still incomplete under the local disk limit; protected Buzz CI and the failed
+required-check enforcement demonstration remain blocked by Actions disablement.
+Live multi-node audio was not exercised. Conservative enforcement performs
+primary reads per distinct event recipient and per audio frame: qualify media
+throughput and high-fanout workloads before release. Do not replace these checks
+with a stale positive cache. All substantive changes require fresh human security
+approval on the final head. No merge, deployment, image pin update or feature
+enablement is included.
