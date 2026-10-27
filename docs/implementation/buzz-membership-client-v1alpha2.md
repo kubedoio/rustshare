@@ -17,6 +17,10 @@ The revision range is 0..=i64::MAX, matching Buzz's non-wrapping BIGINT.
 Absent requires revision zero; active/revoked require a positive revision.
 Acceptance serializes by relay/community/key and also rejects a revision
 below any previously accepted durable receipt, including concurrent reads.
+It explicitly uses READ COMMITTED isolation, rechecks both signed timestamps
+after waiting for the lock, and uses the database wall clock for request
+expiry. An old transaction snapshot or a long lock wait cannot accept an
+older revision or an expired response.
 The acceptance UPDATE consumes the durable receipt once. Calls after a
 restart always generate a new nonce; pending receipts are never resumed.
 

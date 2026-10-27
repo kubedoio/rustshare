@@ -76,6 +76,15 @@ pub struct BuzzMembershipObservation {
     pub membership: BuzzMembership,
     pub membership_revision: u64,
     pub evaluated_at: i64,
+    #[serde(skip)]
+    event_created_at: i64,
+}
+
+impl BuzzMembershipObservation {
+    pub(crate) fn is_fresh_at(&self, now: i64) -> bool {
+        (now - 30..=now + 5).contains(&self.evaluated_at)
+            && (now - 30..=now + 5).contains(&self.event_created_at)
+    }
 }
 
 #[derive(Serialize)]
@@ -226,21 +235,18 @@ impl BuzzGatewayClient {
         minimum_revision: u64,
     ) -> Result<BuzzMembershipObservation, BuzzAuthorityError> {
         let event = self.verify_19030(raw, relay_pubkey)?;
-        let result: BuzzMembershipObservation =
+        let mut result: BuzzMembershipObservation =
             serde_json::from_str(&event.content).map_err(|_| {
                 BuzzAuthorityError::InvalidResponse("invalid membership response".into())
             })?;
         let now = Utc::now().timestamp();
-        let event_time = i64::try_from(event.created_at.as_secs()).map_err(|_| {
+        result.event_created_at = i64::try_from(event.created_at.as_secs()).map_err(|_| {
             BuzzAuthorityError::InvalidResponse("invalid membership timestamp".into())
         })?;
         if result.request_id != req.request_id.to_string()
             || result.community_id != req.community_id.to_string()
             || result.pubkey != req.pubkey
-            || result.evaluated_at < now - 30
-            || result.evaluated_at > now + 5
-            || event_time < now - 30
-            || event_time > now + 5
+            || !result.is_fresh_at(now)
             || result.membership_revision < minimum_revision
             || result.membership_revision > i64::MAX as u64
             || (result.membership == BuzzMembership::Absent) != (result.membership_revision == 0)
