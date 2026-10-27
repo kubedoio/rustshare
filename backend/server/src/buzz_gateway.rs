@@ -56,6 +56,35 @@ const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 /// splits larger batches into sequential round-trips of at most this many).
 const MAX_BATCH_CHECKS: usize = 64;
 
+/// Exact community membership, distinct from channel readability.
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BuzzMembership {
+    Active,
+    Absent,
+    Revoked,
+}
+
+/// Verified observation from one fresh, single-use membership request.
+/// This observation does not activate a binding or authorize replacement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuzzMembershipObservation {
+    pub request_id: String,
+    pub community_id: String,
+    pub pubkey: String,
+    pub membership: BuzzMembership,
+    pub membership_revision: u64,
+    pub evaluated_at: i64,
+}
+
+#[derive(Serialize)]
+struct BuzzMembershipRequest<'a> {
+    request_id: uuid::Uuid,
+    community_id: uuid::Uuid,
+    pubkey: &'a str,
+}
+
 /// Access-check request sent to `POST /api/v1/relay/access/check`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuzzAccessCheckRequest {
@@ -160,6 +189,122 @@ pub struct BuzzGatewayClient {
 }
 
 impl BuzzGatewayClient {
+    /// Read exact membership using the existing service credentials and relay pin.
+    /// Each invocation creates a new nonce and accepts only its own response;
+    /// retries and process restarts always issue a new read. No cache is used.
+    /// `minimum_revision` is the caller's durable high-water mark for this key.
+    /// All errors, including unknown membership, are unavailable/deny.
+    pub async fn check_membership(
+        &self,
+        pool: &sqlx::PgPool,
+        relay_url: &str,
+        relay_pubkey: &str,
+        community_id: uuid::Uuid,
+        pubkey: &str,
+        minimum_revision: u64,
+    ) -> Result<BuzzMembershipObservation, BuzzAuthorityError> {
+        let key = nostr::PublicKey::from_hex(pubkey)
+            .map_err(|_| BuzzAuthorityError::Config("invalid membership public key".into()))?;
+        if key.to_hex() != pubkey || community_id.is_nil() {
+            return Err(BuzzAuthorityError::Config(
+                "noncanonical membership identity".into(),
+            ));
+        }
+        let minimum_revision_db = i64::try_from(minimum_revision)
+            .map_err(|_| BuzzAuthorityError::Config("membership revision overflow".into()))?;
+        let req = BuzzMembershipRequest {
+            request_id: uuid::Uuid::new_v4(),
+            community_id,
+            pubkey,
+        };
+        let (base, http) = self.validated_http(relay_url).await?;
+        let url = base
+            .join("/api/v1/relay/membership/check")
+            .map_err(|e| BuzzAuthorityError::Config(e.to_string()))?;
+        let body =
+            serde_json::to_vec(&req).map_err(|e| BuzzAuthorityError::Config(e.to_string()))?;
+        let header = self.nip98_header("POST", &url, Some(&body)).await?;
+        sqlx::query("INSERT INTO chat_buzz_membership_verifications \
+            (request_id, community_id, pubkey, relay_pubkey, minimum_revision) VALUES ($1,$2,$3,$4,$5)")
+            .bind(req.request_id).bind(community_id).bind(pubkey).bind(relay_pubkey)
+            .bind(minimum_revision_db).execute(pool).await
+            .map_err(|_| BuzzAuthorityError::Transport("cannot persist membership request".into()))?;
+        let response = http
+            .post(url)
+            .timeout(self.timeout)
+            .header("Authorization", header)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| BuzzAuthorityError::Transport(e.to_string()))?;
+        let raw = read_response_json(response).await?;
+        let observation = self.membership_from_19030(&raw, relay_pubkey, &req, minimum_revision)?;
+        let mut acceptance = pool.begin().await.map_err(|_| {
+            BuzzAuthorityError::Transport("cannot begin membership acceptance".into())
+        })?;
+        // Serialize acceptance for this authority/key, including concurrent reads.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("{relay_pubkey}:{community_id}:{pubkey}"))
+            .execute(&mut *acceptance)
+            .await
+            .map_err(|_| {
+                BuzzAuthorityError::Transport("cannot lock membership acceptance".into())
+            })?;
+        let accepted = sqlx::query("UPDATE chat_buzz_membership_verifications AS pending \
+            SET accepted_at=now(), accepted_revision=$2 WHERE request_id=$1 AND accepted_at IS NULL \
+            AND requested_at >= now() - interval '30 seconds' AND NOT EXISTS \
+            (SELECT 1 FROM chat_buzz_membership_verifications previous \
+             WHERE previous.community_id=pending.community_id AND previous.pubkey=pending.pubkey \
+             AND previous.relay_pubkey=pending.relay_pubkey AND previous.accepted_at IS NOT NULL \
+             AND previous.accepted_revision > $2)")
+            .bind(req.request_id).bind(observation.membership_revision as i64).execute(&mut *acceptance).await
+            .map_err(|_| BuzzAuthorityError::Transport("cannot persist membership acceptance".into()))?;
+        if accepted.rows_affected() != 1 {
+            return Err(BuzzAuthorityError::InvalidResponse(
+                "membership request expired or consumed".into(),
+            ));
+        }
+        acceptance.commit().await.map_err(|_| {
+            BuzzAuthorityError::Transport("cannot commit membership acceptance".into())
+        })?;
+        Ok(observation)
+    }
+
+    fn membership_from_19030(
+        &self,
+        raw: &Value,
+        relay_pubkey: &str,
+        req: &BuzzMembershipRequest<'_>,
+        minimum_revision: u64,
+    ) -> Result<BuzzMembershipObservation, BuzzAuthorityError> {
+        let event = self.verify_19030(raw, relay_pubkey)?;
+        let result: BuzzMembershipObservation =
+            serde_json::from_str(&event.content).map_err(|_| {
+                BuzzAuthorityError::InvalidResponse("invalid membership response".into())
+            })?;
+        let now = Utc::now().timestamp();
+        let event_time = i64::try_from(event.created_at.as_secs()).map_err(|_| {
+            BuzzAuthorityError::InvalidResponse("invalid membership timestamp".into())
+        })?;
+        if result.request_id != req.request_id.to_string()
+            || result.community_id != req.community_id.to_string()
+            || result.pubkey != req.pubkey
+            || result.evaluated_at < now - 30
+            || result.evaluated_at > now + 5
+            || event_time < now - 30
+            || event_time > now + 5
+            || result.membership_revision < minimum_revision
+            || result.membership_revision > i64::MAX as u64
+            || (result.membership == BuzzMembership::Absent) != (result.membership_revision == 0)
+        {
+            return Err(BuzzAuthorityError::InvalidResponse(
+                "membership response does not match fresh request/revision".into(),
+            ));
+        }
+        Ok(result)
+    }
+
     /// Build a client with the default [`DEFAULT_TIMEOUT`].
     ///
     /// The `http` builder is used with redirects disabled: a hostile relay
@@ -1032,6 +1177,318 @@ mod tests {
 
     /// A 64-char lowercase hex string (pubkey/event-id shaped).
     const HEX64: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn membership_verification_binds_nonce_scope_freshness_and_revision() {
+        let relay = Keys::generate();
+        let gateway = client(Keys::generate());
+        let subject = Keys::generate().public_key().to_hex();
+        let req = BuzzMembershipRequest {
+            request_id: Uuid::new_v4(),
+            community_id: Uuid::new_v4(),
+            pubkey: &subject,
+        };
+        let good = json!({"request_id":req.request_id,"community_id":req.community_id,"pubkey":subject,
+            "membership":"active","membership_revision":2,"evaluated_at":Utc::now().timestamp()});
+        let signed = |content: Value| serde_json::to_value(relay_19030(&relay, content)).unwrap();
+        assert_eq!(
+            gateway
+                .membership_from_19030(&signed(good.clone()), &relay.public_key().to_hex(), &req, 2)
+                .unwrap()
+                .membership,
+            BuzzMembership::Active
+        );
+        for (field, value) in [
+            ("request_id", json!(Uuid::new_v4())),
+            ("community_id", json!(Uuid::new_v4())),
+            ("pubkey", json!(Keys::generate().public_key().to_hex())),
+            ("evaluated_at", json!(Utc::now().timestamp() - 31)),
+            ("evaluated_at", json!(Utc::now().timestamp() + 6)),
+            ("membership_revision", json!(1)),
+            ("membership_revision", json!(-1)),
+            ("membership_revision", json!(0)),
+            ("membership_revision", json!(u64::MAX)),
+            ("membership", json!("unknown")),
+            ("membership", json!("absent")),
+        ] {
+            let mut invalid = good.clone();
+            invalid[field] = value;
+            assert!(
+                gateway
+                    .membership_from_19030(&signed(invalid), &relay.public_key().to_hex(), &req, 2)
+                    .is_err(),
+                "accepted invalid {field}"
+            );
+        }
+        let old = signed(good.clone());
+        let new_request = BuzzMembershipRequest {
+            request_id: Uuid::new_v4(),
+            ..req
+        };
+        assert!(gateway
+            .membership_from_19030(&old, &relay.public_key().to_hex(), &new_request, 0)
+            .is_err());
+        assert!(gateway
+            .membership_from_19030(&old, &Keys::generate().public_key().to_hex(), &req, 0)
+            .is_err());
+        let mut tampered = old;
+        tampered["content"] = json!("{}");
+        assert!(gateway
+            .membership_from_19030(&tampered, &relay.public_key().to_hex(), &req, 0)
+            .is_err());
+        for (membership, revision) in [("absent", 0), ("revoked", 3)] {
+            let mut content = good.clone();
+            content["membership"] = json!(membership);
+            content["membership_revision"] = json!(revision);
+            assert!(gateway
+                .membership_from_19030(&signed(content), &relay.public_key().to_hex(), &req, 0)
+                .is_ok());
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires migrated disposable PostgreSQL"]
+    async fn membership_http_persists_single_use_nonce_and_rejects_replay() {
+        assert_eq!(
+            std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB").as_deref(),
+            Ok("1")
+        );
+        let pool = sqlx::PgPool::connect(&std::env::var("DATABASE_URL").unwrap())
+            .await
+            .unwrap();
+        let service = Keys::generate();
+        let service_pubkey = service.public_key();
+        let relay = Keys::generate();
+        let relay_pubkey = relay.public_key().to_hex();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let saved = Arc::new(tokio::sync::Mutex::new(None::<Value>));
+        let app = axum::Router::new().route(
+            "/api/v1/relay/membership/check",
+            axum::routing::post({
+                let saved = saved.clone();
+                move |headers: axum::http::HeaderMap, body: axum::body::Bytes| {
+                    let relay = relay.clone();
+                    let saved = saved.clone();
+                    async move {
+                        let url = format!("http://{address}/api/v1/relay/membership/check");
+                        let caller = verify_auth_header(
+                            headers["authorization"].to_str().unwrap(),
+                            &Url::parse(&url).unwrap(),
+                            HttpMethod::POST,
+                            Timestamp::now(),
+                            Some(&body),
+                        )
+                        .unwrap();
+                        assert_eq!(caller, service_pubkey);
+                        let mut saved = saved.lock().await;
+                        if let Some(old) = saved.as_ref() {
+                            return axum::Json(old.clone());
+                        }
+                        let mut content: Value = serde_json::from_slice(&body).unwrap();
+                        content["membership"] = json!("active");
+                        content["membership_revision"] = json!(1);
+                        content["evaluated_at"] = json!(Utc::now().timestamp());
+                        let response = serde_json::to_value(relay_19030(&relay, content)).unwrap();
+                        *saved = Some(response.clone());
+                        axum::Json(response)
+                    }
+                }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = test_client(service);
+        let community = Uuid::new_v4();
+        let key = Keys::generate().public_key().to_hex();
+        let url = format!("ws://{address}");
+        let observation = client
+            .check_membership(&pool, &url, &relay_pubkey, community, &key, 0)
+            .await
+            .unwrap();
+        assert_eq!(observation.membership, BuzzMembership::Active);
+        let accepted:bool=sqlx::query_scalar("SELECT accepted_at IS NOT NULL FROM chat_buzz_membership_verifications WHERE request_id=$1")
+            .bind(Uuid::parse_str(&observation.request_id).unwrap()).fetch_one(&pool).await.unwrap();
+        assert!(accepted);
+        assert_eq!(sqlx::query("UPDATE chat_buzz_membership_verifications SET accepted_at=now() WHERE request_id=$1 AND accepted_at IS NULL")
+            .bind(Uuid::parse_str(&observation.request_id).unwrap()).execute(&pool).await.unwrap().rows_affected(),0);
+        assert!(client
+            .check_membership(&pool, &url, &relay_pubkey, community, &key, 0)
+            .await
+            .is_err());
+        let counts:(i64,i64)=sqlx::query_as("SELECT count(*),count(accepted_at) FROM chat_buzz_membership_verifications WHERE community_id=$1")
+            .bind(community).fetch_one(&pool).await.unwrap();
+        assert_eq!(counts, (2, 1));
+        sqlx::query("INSERT INTO chat_buzz_membership_verifications \
+            (request_id,community_id,pubkey,relay_pubkey,minimum_revision,accepted_at,accepted_revision) \
+            VALUES ($1,$2,$3,$4,0,now(),2)")
+            .bind(Uuid::new_v4()).bind(community).bind(&key).bind(&relay_pubkey).execute(&pool).await.unwrap();
+        *saved.lock().await = None;
+        // A fresh, correctly signed lower revision is rejected by the durable floor.
+        assert!(client
+            .check_membership(&pool, &url, &relay_pubkey, community, &key, 0)
+            .await
+            .is_err());
+        sqlx::query("DELETE FROM chat_buzz_membership_verifications WHERE community_id=$1")
+            .bind(community)
+            .execute(&pool)
+            .await
+            .unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable Elembra/Buzz databases, Redis and built Buzz binary; waits for response expiry"]
+    async fn membership_real_buzz_client_and_stale_replay() {
+        assert_eq!(
+            std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB").as_deref(),
+            Ok("1")
+        );
+        let pool = sqlx::PgPool::connect(&std::env::var("DATABASE_URL").unwrap())
+            .await
+            .unwrap();
+        let buzz_admin_url = std::env::var("BUZZ_TEST_DATABASE_URL").unwrap();
+        let admin = sqlx::PgPool::connect(&buzz_admin_url).await.unwrap();
+        let name = format!("membership_client_{}", Uuid::new_v4().simple());
+        sqlx::query(&format!("CREATE DATABASE {name}"))
+            .execute(&admin)
+            .await
+            .unwrap();
+        let mut database_url = Url::parse(&buzz_admin_url).unwrap();
+        database_url.set_path(&name);
+        assert!(matches!(
+            database_url.host_str(),
+            Some("127.0.0.1" | "localhost")
+        ));
+        let service = Keys::generate();
+        let relay = Keys::generate();
+        let pin = relay.public_key().to_hex();
+        let relay_url = "ws://localhost:55447";
+        struct Process(std::process::Child);
+        impl Drop for Process {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let log =
+            std::fs::File::create(std::env::temp_dir().join("elembra-membership-live-relay.log"))
+                .unwrap();
+        let process = Process(
+            std::process::Command::new(std::env::var("BUZZ_TEST_RELAY_BINARY").unwrap())
+                .env("DATABASE_URL", database_url.as_str())
+                .env("REDIS_URL", std::env::var("BUZZ_TEST_REDIS_URL").unwrap())
+                .env("RELAY_URL", relay_url)
+                .env("BUZZ_BIND_ADDR", "127.0.0.1:55447")
+                .env("BUZZ_HEALTH_PORT", "55448")
+                .env("BUZZ_METRICS_PORT", "55449")
+                .env("BUZZ_AUTO_MIGRATE", "true")
+                .env("BUZZ_GIT_ENABLED", "false")
+                .env("BUZZ_RELAY_PRIVATE_KEY", relay.secret_key().to_secret_hex())
+                .env("RELAY_OWNER_PUBKEY", service.public_key().to_hex())
+                .env(
+                    "RELAY_TRUSTED_SERVICE_PUBKEYS",
+                    service.public_key().to_hex(),
+                )
+                .stdout(log.try_clone().unwrap())
+                .stderr(log)
+                .spawn()
+                .unwrap(),
+        );
+        let http = Client::new();
+        let mut ready = false;
+        for _ in 0..120 {
+            if http
+                .get("http://localhost:55447/health")
+                .send()
+                .await
+                .is_ok_and(|r| r.status().is_success())
+            {
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        assert!(ready, "actual Buzz relay did not start");
+        let gateway = test_client(service.clone());
+        let identity = gateway.community_identity(relay_url).await.unwrap();
+        let community = Uuid::parse_str(&identity.community_id).unwrap();
+        assert_eq!(identity.relay_pubkey, pin);
+        // Test-only deployment configuration, never a production membership read.
+        let buzz = sqlx::PgPool::connect(database_url.as_str()).await.unwrap();
+        sqlx::query("UPDATE communities SET membership_v1alpha2=true WHERE id=$1")
+            .bind(community)
+            .execute(&buzz)
+            .await
+            .unwrap();
+        let key = Keys::generate().public_key().to_hex();
+        assert_eq!(
+            gateway
+                .check_membership(&pool, relay_url, &pin, community, &key, 0)
+                .await
+                .unwrap()
+                .membership,
+            BuzzMembership::Absent
+        );
+        assert_eq!(
+            gateway
+                .check_membership(
+                    &pool,
+                    relay_url,
+                    &pin,
+                    community,
+                    &service.public_key().to_hex(),
+                    0
+                )
+                .await
+                .unwrap()
+                .membership,
+            BuzzMembership::Active
+        );
+        let req = BuzzMembershipRequest {
+            request_id: Uuid::new_v4(),
+            community_id: community,
+            pubkey: &key,
+        };
+        let url = Url::parse("http://localhost:55447/api/v1/relay/membership/check").unwrap();
+        let body = serde_json::to_vec(&req).unwrap();
+        let header = gateway
+            .nip98_header("POST", &url, Some(&body))
+            .await
+            .unwrap();
+        let raw: Value = http
+            .post(url)
+            .header("Authorization", header)
+            .body(body)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(gateway.membership_from_19030(&raw, &pin, &req, 0).is_ok());
+        let replay = BuzzMembershipRequest {
+            request_id: Uuid::new_v4(),
+            ..req
+        };
+        assert!(gateway
+            .membership_from_19030(&raw, &pin, &replay, 0)
+            .is_err());
+        tokio::time::sleep(Duration::from_secs(31)).await;
+        assert!(gateway.membership_from_19030(&raw, &pin, &req, 0).is_err());
+        sqlx::query("DELETE FROM chat_buzz_membership_verifications WHERE community_id=$1")
+            .bind(community)
+            .execute(&pool)
+            .await
+            .unwrap();
+        buzz.close().await;
+        drop(process);
+        sqlx::query(&format!("DROP DATABASE {name}"))
+            .execute(&admin)
+            .await
+            .unwrap();
+    }
 
     fn client(keys: Keys) -> BuzzGatewayClient {
         BuzzGatewayClient::new(keys, Client::builder()).expect("build test client")

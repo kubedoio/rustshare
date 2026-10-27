@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Add a service-authenticated, signed Buzz v1alpha2 membership read client with durable single-use verification receipts; identity replacement remains disabled.
+
 - Reject Buzz identity replacement, including fresh-key binding after local revocation with omitted rotation intent, before consuming its challenge or changing bindings and admissions until authoritative Buzz verification is available.
 - Prevent Chat keys with binding history from being rebound or reassigned globally across tenants, and serialize competing identity activations and Principal revocation.
 - Label browser sessions and device tokens separately in Settings, confirm revocation with lost-Chat-key guidance, and report unavailable inventory and expired sessions accurately.
