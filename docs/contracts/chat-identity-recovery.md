@@ -18,10 +18,11 @@ possession. The browser uses the existing endpoint paths and request shapes:
 3. Request `/applications/chat/admission` for that workspace.
 
 Server verification remains tenant/Principal/key/relay scoped, five-minute,
-one-time and atomic. Rotation requires explicit `rotation_of`; normal onboarding
-never requests it. Local recovery cannot reactivate a revoked binding or grant
-admission. No backup, plaintext signing key, or key passphrase is sent to these
-endpoints or included in server logs by this flow.
+one-time and atomic. Normal onboarding never requests `rotation_of`; the
+backend currently rejects replacement requests until Buzz revocation and
+membership can be authoritatively verified. Local recovery cannot reactivate a
+revoked binding or grant admission. No backup, plaintext signing key, or key
+passphrase is sent to these endpoints or included in server logs by this flow.
 
 Challenge responses add `tenant_id` and `principal_id` from the server-issued
 challenge. Upgrade the backend before deploying the updated frontend; older
@@ -78,8 +79,9 @@ local view state cannot carry across the transition.
   signs as the same identity on each device.
 - Recovery requires the original backup and its passphrase. Elembra account
   recovery cannot restore either. If every copy is lost, the original identity
-  is unrecoverable; ask an administrator for explicit rotation. Existing signed
-  history remains under the old identity.
+  is unrecoverable; replacement is currently unavailable, so an administrator
+  cannot rotate it through the backend. Existing signed history remains under
+  the old identity.
 - Unlock offers “Recover from backup” even when a local envelope exists, with
   an accurate recovery heading and “Back to unlock” action that leaves the vault
   intact and clears the discarded input.

@@ -113,9 +113,9 @@ Buzz key. A token inventory entry is not proof of Chat key enrollment.
 Per-device Buzz signing authority, authenticated second-device pairing and
 ordered replacement with confirmed Buzz admission revocation and community
 membership reconciliation are M4.1b2. No key escrow is permitted. The current
-`rotation_of` backend flow is not advertised as user-facing recovery because
-the Buzz bridge is asynchronous and has no completion/ordering confirmation
-for this UX.
+backend rejects `rotation_of` replacement because the Buzz bridge is
+asynchronous and has no completion/ordering confirmation required to safely
+activate a replacement.
 
 M4.1b2's protocol boundary and deferred Buzz requirements are recorded in the
 [Chat identity replacement contract](../contracts/chat-identity-replacement.md).
