@@ -299,15 +299,14 @@ build, selected Clippy, Buzz DB unit/migration tests and the live
 authoritative-membership conformance test passed locally. Those results are
 test-source evidence only and do not qualify an immutable production image.
 
-Replacement implementation is blocked on two contract gaps in that Buzz head:
-its `mutate_relay_membership` function persists the outcome by operation UUID
-and returns a prior receipt unchanged on exact replay. Thus a command whose
-first result is `stale_revision` cannot be retried with the same UUID at a new
-revision; a new UUID is required after a fresh observation. Its add path also
-returns `revoked` when the candidate's membership state has a tombstone, and
-the function contains no transition that clears that tombstone. Therefore an
-ABSENT replacement observation followed by conditional admission cannot reach
-ACTIVE under this source. Elembra must not work around these semantics, treat
-relay OK as completion, or change stock Buzz behavior in this phase. Retain the
-existing HTTP/storage replacement guards until Buzz contract/source changes
-support the required lifecycle and the exact accepted release is qualified.
+The source behavior above is consistent with the v1alpha2 contract: after a
+fresh read proves a conditional command stale, the caller records that attempt
+and uses a new command UUID for the new expected revision; exact retries of
+either command return its immutable receipt. A candidate key must read `absent`
+before admission, while `revoked` is a sticky terminal state. These rules do
+not by themselves block the specified replacement sequence. The release
+blocker is qualification: PR #6 is not an accepted immutable production
+release, and its exact head has no protected Buzz check runs. No Elembra
+replacement worker was retained in this phase. Keep the existing HTTP/storage
+guards until the required Buzz release and independent approval gates pass;
+do not infer remote completion from relay OK.
