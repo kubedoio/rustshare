@@ -21,7 +21,9 @@ Server verification remains tenant/Principal/key/relay scoped, five-minute,
 one-time and atomic. Normal onboarding never requests `rotation_of`; the
 backend currently rejects replacement requests until Buzz revocation and
 membership can be authoritatively verified. Local recovery cannot reactivate a
-revoked binding or grant admission. No backup, plaintext signing key, or key
+revoked binding or grant admission. A Principal with a revoked binding cannot
+enroll a fresh key as first-time onboarding by omitting `rotation_of`.
+No backup, plaintext signing key, or key
 passphrase is sent to these endpoints or included in server logs by this flow.
 
 Challenge responses add `tenant_id` and `principal_id` from the server-issued

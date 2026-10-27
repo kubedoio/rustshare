@@ -38,7 +38,7 @@ or remotely locks a different browser's in-memory key.
 | Stolen encrypted backup               | The passphrase-encrypted envelope                                          | The server has no copy and cannot invalidate it. A strong passphrase limits offline guessing, but client retry throttling does not protect a stolen file. If the passphrase may also be exposed, treat the key as compromised.                                                                                                                                      |
 | Compromised Buzz private key          | Signing authority, including copies on other devices                       | Browser/device-token revocation is insufficient. Revoke the old Elembra binding and coordinate Buzz community admission revocation. Replacement is currently unsupported until Buzz membership can be authoritatively verified. Historical signed events remain attributed to the old key.                                                                                                    |
 | Compromised SSO/browser session       | Account-level Elembra authority and access to authenticated APIs           | Revoke sessions and device tokens, disable/reset the account as appropriate, and investigate security events. This alone does not reveal a locked Buzz key. The backend rejects identity replacement until M4.1b2 provides durable operation state and Buzz-confirmed membership reconciliation. |
-| Complete loss of every key copy       | No signing material for the old Buzz identity                              | The old identity cannot be recovered. An authorized administrator can coordinate a new identity and revoke old admission; old signed history cannot be reassigned or re-signed as the new identity.                                                                                                                                                                 |
+| Complete loss of every key copy       | No signing material for the old Buzz identity                              | The old identity cannot be recovered. An authorized administrator can coordinate old admission revocation, but identity replacement is currently unsupported. Old signed history cannot be reassigned or re-signed as a new identity. |
 
 ## Existing behavior and bounded delivery
 
@@ -59,7 +59,10 @@ or remotely locks a different browser's in-memory key.
   reassigned to another Principal or tenant. Principal and public-key locks
   serialize competing activations and explicit Principal revocation. The
   storage boundary requires the new binding's tenant, Principal and key to
-  match the verified challenge; `rotation_of` is currently rejected.
+  match the verified challenge; `rotation_of` is currently rejected. First-time
+  binding requires no prior binding history for the Principal, including
+  revoked bindings, so omitting rotation intent cannot bypass replacement
+  verification after local revocation.
 - The legacy `rotation_of` storage path was unsafe: it activated the proposed
   key in Elembra as soon as the challenge was consumed, while Buzz revocation
   remained an asynchronous outbox delivery. The verify endpoint now rejects

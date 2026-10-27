@@ -115,7 +115,9 @@ ordered replacement with confirmed Buzz admission revocation and community
 membership reconciliation are M4.1b2. No key escrow is permitted. The current
 backend rejects `rotation_of` replacement because the Buzz bridge is
 asynchronous and has no completion/ordering confirmation required to safely
-activate a replacement.
+activate a replacement. A Principal with any binding history is also
+ineligible for ordinary fresh-key onboarding after local revocation; omitting
+`rotation_of` cannot bypass the replacement boundary.
 
 M4.1b2's protocol boundary and deferred Buzz requirements are recorded in the
 [Chat identity replacement contract](../contracts/chat-identity-replacement.md).
