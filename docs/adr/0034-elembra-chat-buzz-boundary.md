@@ -96,8 +96,9 @@ AES-256-GCM remain the cryptographic protection.
 
 Account-managed device lifecycle is M4.1b. A copied signing key remains
 cryptographically valid after logout; individual-device revocation cannot be
-claimed while devices share that key. Existing binding/admission revocation
-and explicit rotation remain the authorization mechanisms.
+claimed while devices share that key. Binding/admission revocation remains the
+available authorization mechanism. Identity replacement is disabled until the
+M4.1b2 protocol can verify Buzz membership completion.
 
 ### M4.1b: device credentials and lost-device response
 
@@ -405,10 +406,12 @@ read Buzz tables, store private keys, or claim to be the durable adapter.
   the user's encrypted key backup/device enrollment. Device-specific keys are
   deferred: Buzz's signed history is pubkey-continuous, and silently changing
   pubkeys would make rotation/recovery and attribution a different product.
-  A second key therefore requires `rotation_of` to name the current binding;
-  the transaction revokes its old admission before activating the replacement.
-  A second active key without explicit rotation is rejected by the tenant/
-  Principal uniqueness constraint.
+  A replacement key must name the current binding with `rotation_of`. The
+  previous implementation activated locally before asynchronous Buzz
+  revocation completed and is now rejected. Replacement remains disabled
+  until operation-correlated Buzz membership read-back can safely gate
+  activation. A second active key without an explicit, completed replacement
+  is rejected by the tenant/Principal uniqueness constraint.
 * Elembra stores only public binding metadata and admission state. Sovereign
   mode never stores a plaintext Buzz private key. Managed/KMS identities, if
   added later, must be an explicit identity mode and must not reuse this path.
@@ -432,7 +435,7 @@ The Elembra implementation now exposes the following trusted boundary:
 | --- | --- |
 | `POST /api/v1/admin/applications/chat/workspaces/{workspace_id}/community` | Admin-only explicit tenant mapping; names and URLs are not inferred. |
 | `POST /api/v1/applications/chat/identity-binding/challenge` | Authenticated active Principal + enabled Chat Application + active mapping → five-minute challenge. |
-| `POST /api/v1/applications/chat/identity-binding/verify` | Authenticated same Principal + NIP-42 proof → atomic one-use challenge consumption and active binding. |
+| `POST /api/v1/applications/chat/identity-binding/verify` | Authenticated same Principal + NIP-42 proof → atomic one-use challenge consumption and active binding for first binding; `rotation_of` replacement is rejected until Buzz completion can be verified. |
 | `POST /api/v1/applications/chat/admission` | Active binding + mapping + Chat access → Elembra admission row and durable Buzz bridge operation (`202 queued`). |
 
 The "names and URLs are not inferred" rule is preserved and extended by
@@ -535,8 +538,9 @@ sequenceDiagram
 ```
 
 Lost-device recovery creates a new key unless the user restores an encrypted
-backup. Full recovery without escrow cannot reconstruct the old identity. Key
-rotation preserves old signed history and denies the old key future admission.
+backup. Full recovery without escrow cannot reconstruct the old identity. A
+future completed key replacement preserves old signed history and denies the
+old key future admission; replacement is currently disabled.
 
 ### Threat model and failure behavior
 
@@ -545,7 +549,7 @@ rotation preserves old signed history and denies the old key future admission.
 | IdP or Elembra DB compromise | No plaintext sovereign private key and no ability to sign as a user. |
 | Wrong tenant/principal/key, replay, expiry, bad relay/signature | Binding fails closed; challenge is not reusable. |
 | Malicious tenant administrator | Cannot cross tenant boundaries or bind a key without its proof. Audit and rotation semantics remain explicit. |
-| Device theft/key compromise | Revoke binding/admission; signed history remains valid; rotate to a new key when custody permits. |
+| Device theft/key compromise | Revoke binding/admission; signed history remains valid; replacement is currently disabled until Buzz membership can be verified. |
 | Disabled Principal | Bridge revokes admission; a mathematically valid old signature cannot regain workspace access. |
 | Buzz/Elembra/bridge outage | No new admission or access is granted on stale success; signed Buzz history remains Buzz-owned; revocation delivery is retryable and audited. |
 | Agent key confusion | Agent has its own Principal/key; human key is never used as an agent signer. |
