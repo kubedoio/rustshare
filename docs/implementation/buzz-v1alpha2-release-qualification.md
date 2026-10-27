@@ -285,3 +285,24 @@ throughput and high-fanout workloads before release. Do not replace these checks
 with a stale positive cache. All substantive changes require fresh human security
 approval on the final head. No merge, deployment, image pin update or feature
 enablement is included.
+
+## M4.1b2c follow-up dependency check (2026-10-27)
+
+The exact current Buzz PR #6 head was rechecked as
+`fda3a0c13668aecb5c56d744bab6541e4f29ca9f`. Its protected required check has no
+run/check result and the PR remains draft/blocked; the v1alpha1 production image
+pin remains unchanged. Source-only tests were run against that exact checkout:
+formatting, relay build, selected Clippy, Buzz DB unit/migration tests and the
+live authoritative-membership conformance test passed locally. Those results
+are test-source evidence only and do not qualify an immutable production image.
+
+Replacement implementation is blocked on two contract gaps in that Buzz head:
+its conditional membership mutation records `stale_revision` against the stable
+operation UUID, so replaying the exact command cannot re-evaluate a newer
+revision; and a key with a revoked tombstone cannot be re-admitted. Therefore an
+ABSENT replacement observation followed by conditional admission cannot reach
+ACTIVE. Elembra must not work around these semantics, treat relay OK as
+completion, or change stock Buzz behavior in this phase. The safe result for
+M4.1b2c is to retain the existing HTTP/storage replacement guards and await a
+Buzz contract/source revision plus exact-head protected checks and release
+qualification before implementing the worker.
