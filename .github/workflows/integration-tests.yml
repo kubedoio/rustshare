@@ -51,7 +51,7 @@ jobs:
   integration-tests:
     runs-on: ubuntu-latest
     needs: [generate-secrets]
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     services:
       postgres:
@@ -131,6 +131,26 @@ jobs:
 
       - name: Run migrations
         run: sqlx migrate run --source backend/migrations
+
+      # Test-only source pin for the separately reviewed v1alpha2 Buzz PR.
+      # The production image and config/buzz-compatibility.env stay unchanged.
+      - name: Checkout Buzz membership contract implementation
+        uses: actions/checkout@v7
+        with:
+          repository: kubedoio/buzz
+          ref: b41ab5dccae5799e1a21bc7e47fc7cf8fe2bd03b
+          path: .buzz-membership-source
+          persist-credentials: false
+
+      - name: Build disposable v1alpha2 relay
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          CARGO_TARGET_DIR="${RUNNER_TEMP}/buzz-membership-target" CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 \
+            cargo +1.95.0 build --manifest-path .buzz-membership-source/Cargo.toml -p buzz-relay --locked
+          docker run -d --name buzz-membership-redis -p 127.0.0.1:6379:6379 redis:7-alpine
+          echo "BUZZ_TEST_DATABASE_URL=${DATABASE_URL}" >> "$GITHUB_ENV"
+          echo "BUZZ_TEST_REDIS_URL=redis://127.0.0.1:6379" >> "$GITHUB_ENV"
+          echo "BUZZ_TEST_RELAY_BINARY=${RUNNER_TEMP}/buzz-membership-target/debug/buzz-relay" >> "$GITHUB_ENV"
 
       - name: Test feature workflow repository and authentication
         run: |
