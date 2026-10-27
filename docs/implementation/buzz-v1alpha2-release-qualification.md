@@ -15,7 +15,9 @@ enablement is authorized by this report.
   `7fa6bf960d74e6a498caa772b0a81c4142666c9f`; draft, open, unmerged.
   Security fix pushed as **`8ecd46f0bbdfd9042243ecb2076f77fe90556dc6`**;
   followed by registry/test fix **`c3bcde053a5845b5ca16e2f8deb8d9bf2f18fc5a`**;
-  the latter is the current qualification candidate and requires fresh human review.
+  then test-only migration retry correction
+  **`ad981e008950593043e7c0fa4df0dd93cd9b30bc`**. The final SHA is the current
+  qualification candidate and requires fresh human review.
 
 Elembra head `3c75bb2…` reports these GitHub Actions successes:
 
@@ -66,6 +68,9 @@ with the same ID. The mutation HTTP response does not disclose prior revision.
 Fresh independent human review must explicitly accept this global-registry
 classification. Migration 29 is still unreleased; its checksum changes, so
 retest from fresh schema 28 rather than reusing an already migrated fixture.
+Running the complete ignored migration-module suite also found an old retry
+test still expecting migration 27 after `run_migrations`. Its expected terminal
+version is updated to 29; the migration behavior and repair assertions remain.
 
 Independent agent security review covered all 11 files and connected code and
 reported the fallback-key finding. This is useful review evidence, **not an
@@ -105,6 +110,9 @@ protection and a valid check on that PR; no exemption for #6.
 After pushing `8ecd46f0bbdfd9042243ecb2076f77fe90556dc6`, the Actions/check-runs
 APIs still report zero runs and zero checks for that exact SHA. No green Buzz
 check result is claimed.
+Final API read-back for `c3bcde053a5845b5ca16e2f8deb8d9bf2f18fc5a` likewise
+shows zero workflow/check runs; the PR is open, draft, unmerged and
+`mergeable_state=blocked`. This is not a successful failed-check-only proof.
 
 Main protection previously had strict checks but an empty required-check list.
 This audit configured the exact required context
@@ -149,6 +157,15 @@ all-target Clippy, relay binary Clippy and formatting. Final runner log:
 `/tmp/m41b2-qualification-final-retest.log`. Relay all-target Clippy/library
 tests and full `just ci` remain incomplete; narrower successes do not satisfy
 those broader gates.
+On final head `ad981e008950593043e7c0fa4df0dd93cd9b30bc`, the complete ignored
+PostgreSQL migration-module suite passed **3/3** with `--test-threads=1`, and
+db unit tests passed **94** again. The only change since the complete prior
+conformance run is the test's expected final migration version (27→29).
+Final migration-suite log: `/tmp/m41b2-qualification-migration-suite-final.log`.
+The disposable PostgreSQL/Redis containers were removed after testing.
+Final-head Actions and check-run API queries both returned zero for
+`ad981e008950593043e7c0fa4df0dd93cd9b30bc`; the PR remains draft/unmerged.
+The final db all-target Clippy and format recheck also passed.
 
 Broader relay library test compilation and affected all-target Clippy were
 attempted but exhausted local disk (`No space left on device`); the Clippy
