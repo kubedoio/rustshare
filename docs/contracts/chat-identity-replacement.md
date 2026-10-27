@@ -111,16 +111,16 @@ relay `OK` response as successful outbox delivery. That delivery result is not
 an operation state, doesn't prove the expected roster was reconciled, and is
 not correlated to a durable replacement operation. The v1alpha1 Buzz
 authorization API covers content-access decisions and channel discovery, not
-an operation-correlated identity membership read-back.
+an authoritative identity membership read-back. The pinned Buzz NIP-AA
+contract explicitly says kind 13534 may advertise membership but is not the
+authoritative source of membership state.
 
 Before enabling replacement, Buzz must provide a supported, relay-authenticated
-membership read-back that is fresh and bound to the exact community and
-operation target, plus conformance evidence that removal denies the old key
-and that duplicate/retried add/remove operations converge. The existing NIP-43
-roster event may be used only if Buzz guarantees the required freshness,
-authority, and reconciliation semantics in its public contract. Elembra must
-not infer revocation from a local admission row or a queued/processed outbox
-delivery.
+query of authoritative membership state that is fresh and scoped to the exact
+community and target key, plus conformance evidence that removal denies the
+old key and that duplicate/retried add/remove operations converge. Elembra
+must not infer revocation from a NIP-43 roster event, local admission row, or
+queued/processed outbox delivery.
 
 ## M4.1b2a implementation boundary
 
