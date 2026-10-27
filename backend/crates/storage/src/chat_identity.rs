@@ -433,6 +433,12 @@ impl ChatIdentityStore {
         binding: &ChatIdentityBinding,
         now: DateTime<Utc>,
     ) -> Result<bool> {
+        // The legacy rotation path activates the replacement before Buzz
+        // confirms revocation. Keep it closed until the replacement protocol
+        // has durable operation state and authoritative relay read-back.
+        if challenge.rotation_of.is_some() {
+            return Ok(false);
+        }
         let mut tx = self.pool.begin().await?;
         if binding.tenant_id != challenge.tenant_id
             || binding.principal_id != challenge.principal_id
@@ -441,7 +447,7 @@ impl ChatIdentityStore {
         {
             return Ok(false);
         }
-        // Serialize activation with rotation, explicit revocation and account disablement.
+        // Serialize activation with explicit revocation and account disablement.
         let principal = sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM users WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL
              FOR NO KEY UPDATE",
@@ -496,69 +502,6 @@ impl ChatIdentityStore {
         .rows_affected();
         if consumed != 1 {
             return Ok(false);
-        }
-
-        if let Some(rotation_of) = challenge.rotation_of {
-            let previous_active = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(
-                    SELECT 1 FROM chat_identity_bindings
-                    WHERE binding_id = $1 AND tenant_id = $2 AND principal_id = $3
-                      AND status = 'active' AND revoked_at IS NULL
-                )",
-            )
-            .bind(rotation_of)
-            .bind(challenge.tenant_id.0)
-            .bind(challenge.principal_id.0)
-            .fetch_one(&mut *tx)
-            .await?;
-            if !previous_active {
-                return Ok(false);
-            }
-            sqlx::query(
-                "INSERT INTO integration_outbox
-                    (source, event_id, event_type, application_id, tenant_id, workspace_id, event_json)
-                 SELECT 'elembra://io.elembra.chat', outbox_event.event_id,
-                        'io.elembra.chat.buzz.admission.revoked.v1', 'io.elembra.chat',
-                        a.tenant_id, m.workspace_id,
-                        jsonb_build_object(
-                            'specversion', '1.0', 'id', outbox_event.event_id,
-                            'source', 'elembra://io.elembra.chat',
-                            'type', 'io.elembra.chat.buzz.admission.revoked.v1',
-                            'time', now(), 'datacontenttype', 'application/json',
-                            'elembraTenant', a.tenant_id, 'elembraWorkspace', m.workspace_id,
-                            'data', jsonb_build_object('operation', 'revoke',
-                                                       'admission_id', a.admission_id,
-                                                       'community_id', m.community_id,
-                                                       'relay_url', m.relay_url,
-                                                       'buzz_pubkey', a.buzz_pubkey))
-                 FROM chat_buzz_admissions a
-                 JOIN chat_workspace_communities m
-                   ON m.tenant_id = a.tenant_id AND m.mapping_id = a.mapping_id
-                 CROSS JOIN LATERAL (SELECT gen_random_uuid() AS event_id) outbox_event
-                 WHERE a.tenant_id = $1 AND a.binding_id = $2 AND a.active",
-            )
-            .bind(challenge.tenant_id.0)
-            .bind(rotation_of)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(
-                "UPDATE chat_buzz_admissions
-                 SET active = false, revoked_at = COALESCE(revoked_at, now())
-                 WHERE tenant_id = $1 AND binding_id = $2 AND active",
-            )
-            .bind(challenge.tenant_id.0)
-            .bind(rotation_of)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(
-                "UPDATE chat_identity_bindings
-                 SET status = 'revoked', revoked_at = COALESCE(revoked_at, now())
-                 WHERE binding_id = $1 AND tenant_id = $2",
-            )
-            .bind(rotation_of)
-            .bind(challenge.tenant_id.0)
-            .execute(&mut *tx)
-            .await?;
         }
 
         sqlx::query(
@@ -821,5 +764,45 @@ impl ChatIdentityStore {
         }
         tx.commit().await?;
         Ok(result.rows_affected())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::PgPool;
+
+    #[tokio::test]
+    async fn legacy_replacement_is_rejected_before_storage_changes() {
+        let pool = PgPool::connect_lazy("postgres://unused:unused@127.0.0.1/unused").unwrap();
+        let store = ChatIdentityStore::new(pool);
+        let now = Utc::now();
+        let previous_binding = Uuid::new_v4();
+        let challenge = BindingChallenge::issue(
+            TenantId(Uuid::new_v4()),
+            PrincipalId(Uuid::new_v4()),
+            "12".repeat(32),
+            "wss://relay.example.test",
+            Some(previous_binding),
+            now,
+            chrono::Duration::minutes(5),
+        );
+        let replacement = ChatIdentityBinding {
+            binding_id: Uuid::new_v4(),
+            tenant_id: challenge.tenant_id,
+            principal_id: challenge.principal_id,
+            buzz_pubkey: challenge.buzz_pubkey.clone(),
+            status: BindingStatus::Active,
+            created_at: now,
+            verified_at: Some(now),
+            revoked_at: None,
+            rotation_of: Some(previous_binding),
+            audit_metadata: serde_json::json!({}),
+        };
+
+        assert!(!store
+            .consume_and_activate(&challenge, &replacement, now)
+            .await
+            .unwrap());
     }
 }

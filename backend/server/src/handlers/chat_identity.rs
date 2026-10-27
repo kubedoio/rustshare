@@ -458,6 +458,11 @@ pub async fn verify_binding(
             now,
         )
         .map_err(binding_error)?;
+    if challenge.rotation_of.is_some() {
+        return Err(AppError::conflict(
+            "identity replacement is unavailable until Buzz revocation and membership can be verified",
+        ));
+    }
 
     let binding = ChatIdentityBinding {
         binding_id: Uuid::new_v4(),
