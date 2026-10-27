@@ -55,24 +55,19 @@ pub async fn verify_buzz_membership(
         .map_err(|_| {
             BuzzAuthorityError::Transport("cannot set membership acceptance isolation".into())
         })?;
-    // Serialize acceptance for this authority/key, including concurrent reads.
+    // Relay pin rotation does not change the community/key revision history.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-        .bind(format!("{relay_pubkey}:{community_id}:{pubkey}"))
+        .bind(format!("{community_id}:{pubkey}"))
         .execute(&mut *acceptance)
         .await
         .map_err(|_| BuzzAuthorityError::Transport("cannot lock membership acceptance".into()))?;
-    if !observation.is_fresh_at(chrono::Utc::now().timestamp()) {
-        return Err(BuzzAuthorityError::InvalidResponse(
-            "membership response expired while waiting for acceptance".into(),
-        ));
-    }
     let accepted = sqlx::query(
         "UPDATE chat_buzz_membership_verifications AS pending \
         SET accepted_at=clock_timestamp(), accepted_revision=$2 WHERE request_id=$1 AND accepted_at IS NULL \
         AND requested_at >= clock_timestamp() - interval '30 seconds' AND NOT EXISTS \
         (SELECT 1 FROM chat_buzz_membership_verifications previous \
          WHERE previous.community_id=pending.community_id AND previous.pubkey=pending.pubkey \
-         AND previous.relay_pubkey=pending.relay_pubkey AND previous.accepted_at IS NOT NULL \
+         AND previous.accepted_at IS NOT NULL \
          AND previous.accepted_revision > $2)",
     )
     .bind(req.request_id)
@@ -80,7 +75,7 @@ pub async fn verify_buzz_membership(
     .execute(&mut *acceptance)
     .await
     .map_err(|_| BuzzAuthorityError::Transport("cannot persist membership acceptance".into()))?;
-    if accepted.rows_affected() != 1 {
+    if accepted.rows_affected() != 1 || !observation.is_fresh_at(chrono::Utc::now().timestamp()) {
         return Err(BuzzAuthorityError::InvalidResponse(
             "membership request expired or consumed".into(),
         ));
@@ -89,6 +84,11 @@ pub async fn verify_buzz_membership(
         .commit()
         .await
         .map_err(|_| BuzzAuthorityError::Transport("cannot commit membership acceptance".into()))?;
+    if !observation.is_fresh_at(chrono::Utc::now().timestamp()) {
+        return Err(BuzzAuthorityError::InvalidResponse(
+            "membership response expired during commit".into(),
+        ));
+    }
     Ok(observation)
 }
 
@@ -145,19 +145,31 @@ mod tests {
         let service_pubkey = service.public_key();
         let relay = Keys::generate();
         let relay_pubkey = relay.public_key().to_hex();
+        let signer = Arc::new(std::sync::Mutex::new(relay.clone()));
+        type ReplyGate = (
+            tokio::sync::oneshot::Sender<()>,
+            tokio::sync::oneshot::Receiver<()>,
+        );
+        let gate = Arc::new(tokio::sync::Mutex::new(None::<ReplyGate>));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let saved = Arc::new(tokio::sync::Mutex::new(None::<Value>));
         let offset = Arc::new(AtomicI64::new(0));
+        let version = Arc::new(AtomicI64::new(1));
         let app = axum::Router::new().route(
             "/api/v1/relay/membership/check",
             axum::routing::post({
                 let saved = saved.clone();
                 let offset = offset.clone();
+                let version = version.clone();
+                let signer = signer.clone();
+                let gate = gate.clone();
                 move |headers: axum::http::HeaderMap, body: axum::body::Bytes| {
-                    let relay = relay.clone();
+                    let signer = signer.clone();
+                    let gate = gate.clone();
                     let saved = saved.clone();
                     let offset = offset.clone();
+                    let version = version.clone();
                     async move {
                         let url = format!("http://{address}/api/v1/relay/membership/check");
                         let caller = verify_auth_header(
@@ -173,12 +185,19 @@ mod tests {
                         if let Some(old) = saved.as_ref() {
                             return axum::Json(old.clone());
                         }
+                        let reply_gate = gate.lock().await.take();
+                        if let Some((seen, release)) = reply_gate {
+                            seen.send(()).unwrap();
+                            release.await.unwrap();
+                        }
                         let mut content: Value = serde_json::from_slice(&body).unwrap();
                         content["membership"] = json!("active");
-                        content["membership_revision"] = json!(1);
+                        content["membership_revision"] = json!(version.load(Ordering::SeqCst));
                         content["evaluated_at"] =
                             json!(Utc::now().timestamp() + offset.load(Ordering::SeqCst));
-                        let response = serde_json::to_value(relay_19030(&relay, content)).unwrap();
+                        let response =
+                            serde_json::to_value(relay_19030(&signer.lock().unwrap(), content))
+                                .unwrap();
                         *saved = Some(response.clone());
                         axum::Json(response)
                     }
@@ -221,6 +240,36 @@ mod tests {
                 .await
                 .is_err()
         );
+        // Changing a trusted signing pin does not reset this community/key's revision.
+        let rotated = Keys::generate();
+        *signer.lock().unwrap() = rotated.clone();
+        *saved.lock().await = None;
+        let rotated_rejected = verify_buzz_membership(
+            &pool,
+            &client,
+            &url,
+            &rotated.public_key().to_hex(),
+            community,
+            &key,
+            0,
+        )
+        .await
+        .is_err();
+        version.store(2, Ordering::SeqCst);
+        *saved.lock().await = None;
+        let rotated_current_accepted = verify_buzz_membership(
+            &pool,
+            &client,
+            &url,
+            &rotated.public_key().to_hex(),
+            community,
+            &key,
+            0,
+        )
+        .await
+        .is_ok();
+        version.store(1, Ordering::SeqCst);
+        *signer.lock().unwrap() = relay;
         // A blocked acceptance must not use an old snapshot or an expired signature.
         let application = format!("membership-review-{}", Uuid::new_v4());
         let options: sqlx::postgres::PgConnectOptions = database_url.parse().unwrap();
@@ -243,7 +292,7 @@ mod tests {
             offset.store(if expires { -20 } else { 0 }, Ordering::SeqCst);
             let mut lock = pool.begin().await.unwrap();
             sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
-                .bind(format!("{relay_pubkey}:{community}:{subject}"))
+                .bind(format!("{community}:{subject}"))
                 .execute(&mut *lock)
                 .await
                 .unwrap();
@@ -280,6 +329,48 @@ mod tests {
             lock.commit().await.unwrap();
             rejected.push(pending.await.unwrap().is_err());
         }
+        // Hold a table lock after HTTP ingress so the UPDATE, not the advisory lock, waits.
+        let subject = Keys::generate().public_key().to_hex();
+        *saved.lock().await = None;
+        offset.store(-20, Ordering::SeqCst);
+        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        *gate.lock().await = Some((seen_tx, release_rx));
+        let (reader, client, url, pin, target) = (
+            repeatable.clone(),
+            test_client(service),
+            url.clone(),
+            relay_pubkey.clone(),
+            subject.clone(),
+        );
+        let pending = tokio::spawn(async move {
+            verify_buzz_membership(&reader, &client, &url, &pin, community, &target, 0).await
+        });
+        seen_rx.await.unwrap();
+        let mut maintenance = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE chat_buzz_membership_verifications IN SHARE MODE")
+            .execute(&mut *maintenance)
+            .await
+            .unwrap();
+        release_tx.send(()).unwrap();
+        let mut waiting = false;
+        for _ in 0..250 {
+            waiting = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock')")
+                .bind(&application).fetch_one(&pool).await.unwrap();
+            if waiting {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            waiting,
+            "acceptance UPDATE never reached the maintenance lock"
+        );
+        tokio::time::sleep(Duration::from_secs(11)).await;
+        maintenance.rollback().await.unwrap();
+        let table_wait_rejected = pending.await.unwrap().is_err();
+        let accepted_after_expiry:i64 = sqlx::query_scalar("SELECT count(*) FROM chat_buzz_membership_verifications WHERE community_id=$1 AND pubkey=$2 AND accepted_at IS NOT NULL")
+            .bind(community).bind(&subject).fetch_one(&pool).await.unwrap();
         repeatable.close().await;
         sqlx::query("DELETE FROM chat_buzz_membership_verifications WHERE community_id=$1")
             .bind(community)
@@ -291,6 +382,16 @@ mod tests {
             rejected,
             vec![true, true],
             "accepted a regressing or expired response after waiting for a lock"
+        );
+        assert_eq!(
+            (
+                rotated_rejected,
+                rotated_current_accepted,
+                table_wait_rejected,
+                accepted_after_expiry
+            ),
+            (true, true, true, 0),
+            "relay pin rotation or a delayed UPDATE bypassed verification"
         );
     }
 
