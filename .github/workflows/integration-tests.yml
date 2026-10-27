@@ -143,10 +143,12 @@ jobs:
           persist-credentials: false
 
       - name: Build disposable v1alpha2 relay
+        working-directory: .buzz-membership-source
         run: |
-          rustup toolchain install 1.95.0 --profile minimal
+          # The external checkout owns its toolchain; Elembra keeps its canonical one.
+          unset RUSTUP_TOOLCHAIN
           CARGO_TARGET_DIR="${RUNNER_TEMP}/buzz-membership-target" CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 \
-            cargo +1.95.0 build --manifest-path .buzz-membership-source/Cargo.toml -p buzz-relay --locked
+            cargo build -p buzz-relay --locked
           docker run -d --name buzz-membership-redis -p 127.0.0.1:6379:6379 redis:7-alpine
           echo "BUZZ_TEST_DATABASE_URL=${DATABASE_URL}" >> "$GITHUB_ENV"
           echo "BUZZ_TEST_REDIS_URL=redis://127.0.0.1:6379" >> "$GITHUB_ENV"
