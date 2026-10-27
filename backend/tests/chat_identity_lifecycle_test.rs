@@ -65,6 +65,7 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
     let foreign_tenant = Uuid::new_v4();
     let owner = Uuid::new_v4();
     let other = Uuid::new_v4();
+    let same_tenant_local = Uuid::new_v4();
     let foreign = Uuid::new_v4();
     let attempt: Result<()> = async {
     for id in [tenant, foreign_tenant] {
@@ -74,7 +75,12 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
             .execute(&pool)
             .await?;
     }
-    for (id, scope) in [(owner, tenant), (other, tenant), (foreign, foreign_tenant)] {
+    for (id, scope) in [
+        (owner, tenant),
+        (other, tenant),
+        (same_tenant_local, tenant),
+        (foreign, foreign_tenant),
+    ] {
         sqlx::query("INSERT INTO users (id, username, email, password_hash, display_name, storage_quota, tenant_id)
                      VALUES ($1, $2, $3, 'test-only', $2, 1024, $4)")
             .bind(id).bind(format!("chat_lifecycle_{}", id.simple()))
@@ -348,7 +354,8 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
         owner_succeeded, other_succeeded,
         "exactly one Principal can activate a public key"
     );
-    let (local_challenge, local_binding) = issue(&store, tenant, other, '8', None).await?;
+    let (local_challenge, local_binding) =
+        issue(&store, tenant, same_tenant_local, '8', None).await?;
     let (foreign_challenge, foreign_binding) =
         issue(&store, foreign_tenant, foreign, '8', None).await?;
     let mut key_blocker = pool.begin().await?;
@@ -398,7 +405,7 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
     .fetch_all(&pool)
     .await?;
     let expected = if local_succeeded {
-        (tenant, other)
+        (tenant, same_tenant_local)
     } else {
         (foreign_tenant, foreign)
     };
