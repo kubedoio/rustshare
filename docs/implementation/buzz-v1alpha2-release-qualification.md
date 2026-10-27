@@ -288,21 +288,26 @@ enablement is included.
 
 ## M4.1b2c follow-up dependency check (2026-10-27)
 
-The exact current Buzz PR #6 head was rechecked as
-`fda3a0c13668aecb5c56d744bab6541e4f29ca9f`. Its protected required check has no
-run/check result and the PR remains draft/blocked; the v1alpha1 production image
-pin remains unchanged. Source-only tests were run against that exact checkout:
-formatting, relay build, selected Clippy, Buzz DB unit/migration tests and the
-live authoritative-membership conformance test passed locally. Those results
-are test-source evidence only and do not qualify an immutable production image.
+At review time, Buzz PR #6 was open and draft at
+`fda3a0c13668aecb5c56d744bab6541e4f29ca9f`; its head had zero GitHub check runs
+and the PR reported a blocked merge state. The Elembra production pin still
+targets v1alpha1. These are point-in-time observations; recheck PR state, exact
+head checks and the pin before further implementation or release work.
+
+Source-only tests were run against that exact checkout: formatting, relay
+build, selected Clippy, Buzz DB unit/migration tests and the live
+authoritative-membership conformance test passed locally. Those results are
+test-source evidence only and do not qualify an immutable production image.
 
 Replacement implementation is blocked on two contract gaps in that Buzz head:
-its conditional membership mutation records `stale_revision` against the stable
-operation UUID, so replaying the exact command cannot re-evaluate a newer
-revision; and a key with a revoked tombstone cannot be re-admitted. Therefore an
+its `mutate_relay_membership` function persists the outcome by operation UUID
+and returns a prior receipt unchanged on exact replay. Thus a command whose
+first result is `stale_revision` cannot be retried with the same UUID at a new
+revision; a new UUID is required after a fresh observation. Its add path also
+returns `revoked` when the candidate's membership state has a tombstone, and
+the function contains no transition that clears that tombstone. Therefore an
 ABSENT replacement observation followed by conditional admission cannot reach
-ACTIVE. Elembra must not work around these semantics, treat relay OK as
-completion, or change stock Buzz behavior in this phase. The safe result for
-M4.1b2c is to retain the existing HTTP/storage replacement guards and await a
-Buzz contract/source revision plus exact-head protected checks and release
-qualification before implementing the worker.
+ACTIVE under this source. Elembra must not work around these semantics, treat
+relay OK as completion, or change stock Buzz behavior in this phase. Retain the
+existing HTTP/storage replacement guards until Buzz contract/source changes
+support the required lifecycle and the exact accepted release is qualified.
