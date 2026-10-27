@@ -9,7 +9,7 @@ describe('Chat device safety notice', () => {
 		expect(screen.getByRole('heading', { name: 'Chat devices and lost devices' })).toBeTruthy();
 		expect(screen.getByText(/device token does not prove.*Buzz signing key/i)).toBeTruthy();
 		expect(screen.getByText(/cannot erase a copied key or invalidate signatures/i)).toBeTruthy();
-		expect(screen.getByText(/this page does not perform that rotation/i)).toBeTruthy();
+		expect(screen.getByText(/identity replacement is currently unavailable/i)).toBeTruthy();
 		expect(screen.getByRole('link', { name: 'Review browser sessions' }).getAttribute('href')).toBe(
 			'/settings?tab=security'
 		);

@@ -147,6 +147,79 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
         .unwrap();
     assert_eq!(current.binding_id, replacement_binding.binding_id);
 
+    // Keep a real existing admission present while proving a rejected
+    // replacement leaves every durable authorization surface unchanged.
+    let mapping_id = Uuid::new_v4();
+    let workspace_id = Uuid::new_v4();
+    let community_id = format!("chat-lifecycle-{tenant}");
+    sqlx::query(
+        "INSERT INTO chat_workspace_communities
+            (mapping_id, tenant_id, workspace_id, community_id, relay_url)
+         VALUES ($1, $2, $3, $4, 'wss://relay.example.test')",
+    )
+    .bind(mapping_id)
+    .bind(tenant)
+    .bind(workspace_id)
+    .bind(&community_id)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO chat_buzz_admissions
+            (admission_id, tenant_id, mapping_id, binding_id, buzz_pubkey)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(tenant)
+    .bind(mapping_id)
+    .bind(current.binding_id)
+    .bind(&current.buzz_pubkey)
+    .execute(&pool)
+    .await?;
+    assert!(store
+        .active_admission(TenantId(tenant), &community_id, &current.buzz_pubkey)
+        .await?);
+    let durable_state_before: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+            (SELECT count(*) FROM chat_identity_bindings
+             WHERE tenant_id = $1 AND principal_id = $2),
+            (SELECT count(*) FROM chat_buzz_admissions WHERE tenant_id = $1),
+            (SELECT count(*) FROM integration_outbox WHERE tenant_id = $1
+             AND source = 'elembra://io.elembra.chat'),
+            (SELECT count(*) FROM user_security_events
+             WHERE user_id = $2 AND event_type LIKE 'chat.identity.%')",
+    )
+    .bind(tenant)
+    .bind(owner)
+    .fetch_one(&pool)
+    .await?;
+
+    let (mismatched_challenge, mismatched_binding) = issue(
+        &store,
+        tenant,
+        owner,
+        '7',
+        Some(current.binding_id),
+    )
+    .await?;
+    let mut wrong_tenant_binding = mismatched_binding.clone();
+    wrong_tenant_binding.tenant_id = TenantId(foreign_tenant);
+    let mut wrong_principal_binding = mismatched_binding.clone();
+    wrong_principal_binding.principal_id = PrincipalId(other);
+    let mut wrong_key_binding = mismatched_binding.clone();
+    wrong_key_binding.buzz_pubkey = '8'.to_string().repeat(64);
+    let mut missing_rotation_binding = mismatched_binding.clone();
+    missing_rotation_binding.rotation_of = None;
+    for binding in [
+        wrong_tenant_binding,
+        wrong_principal_binding,
+        wrong_key_binding,
+        missing_rotation_binding,
+    ] {
+        assert!(!store
+            .consume_and_activate(&mismatched_challenge, &binding, Utc::now())
+            .await?);
+    }
+
     for (scope, principal) in [(tenant, other), (foreign_tenant, foreign)] {
         let (challenge, binding) = issue(
             &store,
@@ -162,6 +235,13 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
                 .await?,
             "rotation cannot target another Principal or tenant"
         );
+        let consumed: bool = sqlx::query_scalar(
+            "SELECT consumed_at IS NOT NULL FROM chat_binding_challenges WHERE challenge_id = $1",
+        )
+        .bind(challenge.challenge_id)
+        .fetch_one(&pool)
+        .await?;
+        assert!(!consumed, "out-of-scope rotation challenges remain unconsumed");
     }
 
     let (left, left_binding) = issue(
@@ -202,6 +282,59 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
         .await?;
         assert!(!consumed, "rejected replacement challenges remain unconsumed");
     }
+    let consumed: bool = sqlx::query_scalar(
+        "SELECT consumed_at IS NOT NULL FROM chat_binding_challenges WHERE challenge_id = $1",
+    )
+    .bind(mismatched_challenge.challenge_id)
+    .fetch_one(&pool)
+    .await?;
+    assert!(!consumed, "binding-scope mismatches cannot consume a rotation challenge");
+    let durable_state_after: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT
+            (SELECT count(*) FROM chat_identity_bindings
+             WHERE tenant_id = $1 AND principal_id = $2),
+            (SELECT count(*) FROM chat_buzz_admissions WHERE tenant_id = $1),
+            (SELECT count(*) FROM integration_outbox WHERE tenant_id = $1
+             AND source = 'elembra://io.elembra.chat'),
+            (SELECT count(*) FROM user_security_events
+             WHERE user_id = $2 AND event_type LIKE 'chat.identity.%')",
+    )
+    .bind(tenant)
+    .bind(owner)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(durable_state_after, durable_state_before);
+    assert!(store
+        .active_admission(TenantId(tenant), &community_id, &current.buzz_pubkey)
+        .await?);
+    let replacement_admissions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM chat_buzz_admissions
+         WHERE tenant_id = $1 AND buzz_pubkey = ANY($2)",
+    )
+    .bind(tenant)
+    .bind(vec![
+        mismatched_challenge.buzz_pubkey.clone(),
+        left.buzz_pubkey.clone(),
+        right.buzz_pubkey.clone(),
+    ])
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(replacement_admissions, 0);
+    let replacement_outbox_events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM integration_outbox
+         WHERE tenant_id = $1
+           AND event_type = 'io.elembra.chat.buzz.admission.requested.v1'
+           AND event_json #>> '{data,buzz_pubkey}' = ANY($2)",
+    )
+    .bind(tenant)
+    .bind(vec![
+        mismatched_challenge.buzz_pubkey.clone(),
+        left.buzz_pubkey.clone(),
+        right.buzz_pubkey.clone(),
+    ])
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(replacement_outbox_events, 0);
 
     let (owner_challenge, owner_binding) =
         issue(&store, tenant, owner, '5', Some(current.binding_id)).await?;
@@ -323,6 +456,8 @@ async fn revoked_keys_stay_revoked_and_replacement_stays_fail_closed() -> Result
     let mut cleanup_errors = Vec::new();
     for statement in [
         "DELETE FROM chat_binding_challenges WHERE tenant_id = ANY($1)",
+        "DELETE FROM chat_buzz_admissions WHERE tenant_id = ANY($1)",
+        "DELETE FROM chat_workspace_communities WHERE tenant_id = ANY($1)",
         "DELETE FROM chat_identity_bindings WHERE tenant_id = ANY($1)",
         "DELETE FROM users WHERE tenant_id = ANY($1)",
         "DELETE FROM tenants WHERE id = ANY($1)",

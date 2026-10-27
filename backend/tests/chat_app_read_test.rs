@@ -2957,7 +2957,7 @@ async fn author_rotated_pubkey_resolves_active_binding() {
         "workspace",
         "created",
         true,
-        Some("after rotation"),
+        Some("after identity update"),
         base,
         &pubkey,
     )

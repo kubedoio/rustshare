@@ -338,7 +338,7 @@ export async function importChatKey(
 		// An unbound import must never replace a local identity silently.
 		if (!expectedPubkey && hasChatKey() && storedKeyPubkey() !== pubkey)
 			throw new Error(
-				'A different Chat identity is already stored. Export it before requesting an explicit rotation.'
+				'A different Chat identity is already stored. Export it before importing a different identity.'
 			);
 		await saveChatKey(secretKey, pubkey, passphrase, assertCurrent);
 		return secretKey;

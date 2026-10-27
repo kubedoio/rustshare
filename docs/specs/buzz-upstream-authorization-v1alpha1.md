@@ -31,6 +31,14 @@ while:
 - **creating no second ACL system** — the relay's existing channel/membership
   semantics remain the single source of truth.
 
+v1alpha1 does not expose authoritative current community membership for a
+specific `(community, pubkey)`. Its access checks and channel registry are
+channel-scoped and include open-channel access; its state endpoint pages event
+history. The proposed read-back and conditional NIP-43 command contract is
+documented separately in [Buzz authoritative membership contract
+v1alpha2](buzz-authoritative-membership-v1alpha2.md). That extension is not
+implemented by the current compatibility pin.
+
 ## Scope
 
 This document **proposes** the Buzz-side implementation. Buzz is a separate
