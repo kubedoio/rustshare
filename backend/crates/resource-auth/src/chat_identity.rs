@@ -277,7 +277,14 @@ pub struct WorkspaceCommunityMapping {
     /// key is missing.
     #[serde(default)]
     pub relay_pubkey: Option<String>,
+    /// Explicit Buzz relay membership command contract for this community.
+    #[serde(default = "default_membership_protocol_version")]
+    pub membership_protocol_version: String,
     pub active: bool,
+}
+
+fn default_membership_protocol_version() -> String {
+    "v1alpha1".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -441,6 +448,7 @@ mod tests {
             community_id: "c1".into(),
             relay_url: RELAY.into(),
             relay_pubkey: None,
+            membership_protocol_version: "v1alpha1".into(),
             active: true,
         };
         let admission = BuzzAdmission {
@@ -655,6 +663,7 @@ mod tests {
             community_id: "c1".into(),
             relay_url: RELAY.into(),
             relay_pubkey: None,
+            membership_protocol_version: "v1alpha1".into(),
             active: true,
         };
         let admission = BuzzAdmission {
@@ -682,6 +691,7 @@ mod tests {
                 community_id: "c1".into(),
                 relay_url: RELAY.into(),
                 relay_pubkey: None,
+                membership_protocol_version: "v1alpha1".into(),
                 active: true
             },
             &BuzzAdmission {
@@ -705,6 +715,7 @@ mod tests {
                 community_id: "c1".into(),
                 relay_url: RELAY.into(),
                 relay_pubkey: None,
+                membership_protocol_version: "v1alpha1".into(),
                 active: true
             },
             &BuzzAdmission {

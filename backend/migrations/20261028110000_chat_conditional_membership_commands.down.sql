@@ -1,0 +1,4 @@
+DROP TABLE chat_buzz_membership_command_attempts;
+DROP TABLE chat_buzz_membership_operations;
+ALTER TABLE chat_workspace_communities DROP CONSTRAINT chat_workspace_communities_v1alpha2_pin;
+ALTER TABLE chat_workspace_communities DROP COLUMN membership_protocol_version;

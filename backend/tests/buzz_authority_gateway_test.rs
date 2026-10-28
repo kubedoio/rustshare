@@ -3112,6 +3112,7 @@ async fn admin_can_rotate_mapping_relay_pin() {
             WorkspaceId(tenant.0),
             relay_url.clone(),
             Some(relay_keys_b.public_key().to_hex()),
+            "v1alpha1",
         )
         .await
         .expect("rotating the mapping relay pin must succeed");
@@ -3236,6 +3237,7 @@ async fn call_update_mapping(
         Json(UpdateCommunityMappingRequest {
             relay_url,
             relay_pubkey,
+            membership_protocol_version: None,
         }),
     )
     .await
