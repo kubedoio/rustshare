@@ -5,7 +5,8 @@ ALTER TABLE chat_workspace_communities
     CHECK (membership_protocol_version IN ('v1alpha1', 'v1alpha2'));
 ALTER TABLE chat_workspace_communities
     ADD CONSTRAINT chat_workspace_communities_v1alpha2_pin
-    CHECK (membership_protocol_version <> 'v1alpha2' OR relay_pubkey ~ '^[0-9a-f]{64}$');
+    CHECK (membership_protocol_version <> 'v1alpha2' OR
+           (relay_pubkey IS NOT NULL AND relay_pubkey ~ '^[0-9a-f]{64}$'));
 
 CREATE TABLE chat_buzz_membership_operations (
     source TEXT NOT NULL,

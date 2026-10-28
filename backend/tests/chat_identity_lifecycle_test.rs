@@ -885,6 +885,16 @@ async fn membership_protocol_transition_and_writers_are_versioned() -> Result<()
         let v1_event: (Uuid,serde_json::Value,serde_json::Value)=sqlx::query_as("SELECT event_id,event_json->'data',event_json FROM integration_outbox WHERE tenant_id=$1 AND event_type='io.elembra.chat.buzz.admission.requested.v1'")
             .bind(tenant).fetch_one(&pool).await?;
         anyhow::ensure!(v1_event.1.get("command_version").is_none(),"default mapping must retain the v1alpha1 payload");
+        let null_pin_mapping = WorkspaceCommunityMapping {
+            tenant_id: TenantId(tenant),
+            workspace_id: WorkspaceId(Uuid::new_v4()),
+            community_id: Uuid::new_v4().to_string(),
+            relay_url: "wss://relay.example.test".into(),
+            relay_pubkey: None,
+            membership_protocol_version: "v1alpha2".into(),
+            active: false,
+        };
+        anyhow::ensure!(store.insert_mapping(&null_pin_mapping).await.is_err(),"v1alpha2 mappings must require a relay identity pin");
         let (legacy_revoke_challenge,legacy_revoke_binding)=issue(&store,tenant,principal_v1_revoke,'4',None).await?;
         anyhow::ensure!(store.consume_and_activate(&legacy_revoke_challenge,&legacy_revoke_binding,Utc::now()).await?);
         anyhow::ensure!(store.admit_binding(TenantId(tenant),PrincipalId(principal_v1_revoke),WorkspaceId(workspace)).await?);
