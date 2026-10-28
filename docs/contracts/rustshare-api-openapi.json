@@ -117,6 +117,62 @@
         }
       }
     },
+    "/api/v1/admin/applications/chat/replacements/{operation_id}/recover": {
+      "post": {
+        "tags": [
+          "Chat (admin)"
+        ],
+        "summary": "Retry only a recoverable blocked replacement; the worker must reverify membership.",
+        "operationId": "recover_replacement",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "description": "Replacement operation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Replacement queued for fresh verification"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Operation unavailable or not recoverable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/applications/memory/files/orphans/retry": {
       "post": {
         "tags": [
