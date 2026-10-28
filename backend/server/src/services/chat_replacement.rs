@@ -733,7 +733,7 @@ mod tests {
         let pool = PgPool::connect(&url).await.unwrap();
         let tenant = Uuid::new_v4();
         let principal = Uuid::new_v4();
-        let workspace = Uuid::new_v4();
+        let workspace = tenant;
         let mapping = Uuid::new_v4();
         let community = Uuid::new_v4();
         let old_binding = Uuid::new_v4();
@@ -920,7 +920,7 @@ mod tests {
         sqlx::query("UPDATE chat_identity_replacements SET retry_at=clock_timestamp() WHERE operation_id=$1")
             .bind(operation).execute(&pool).await.unwrap();
         let mut retry_lease = store.claim_replacement().await.unwrap().unwrap();
-        for failure in 1..=MAX_TRANSIENT_FAILURES {
+        for failure in 2..=MAX_TRANSIENT_FAILURES {
             record_transient_failure(&pool, &retry_lease).await.unwrap();
             if failure < MAX_TRANSIENT_FAILURES {
                 sqlx::query("UPDATE chat_identity_replacements SET retry_at=clock_timestamp() WHERE operation_id=$1")
