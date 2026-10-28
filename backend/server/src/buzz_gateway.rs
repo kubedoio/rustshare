@@ -77,6 +77,8 @@ pub struct BuzzMembershipObservation {
     pub membership_revision: u64,
     pub evaluated_at: i64,
     #[serde(skip)]
+    pub(crate) event_id: String,
+    #[serde(skip)]
     event_created_at: i64,
 }
 
@@ -243,6 +245,7 @@ impl BuzzGatewayClient {
         result.event_created_at = i64::try_from(event.created_at.as_secs()).map_err(|_| {
             BuzzAuthorityError::InvalidResponse("invalid membership timestamp".into())
         })?;
+        result.event_id = event.id.to_hex();
         if result.request_id != req.request_id.to_string()
             || result.community_id != req.community_id.to_string()
             || result.pubkey != req.pubkey

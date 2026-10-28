@@ -6,8 +6,10 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_resource_auth::{
-    BindingChallenge, BindingStatus, ChatIdentityBinding, WorkspaceCommunityMapping,
+    BindingChallenge, BindingStatus, ChatIdentityBinding, VerifiedBindingProof,
+    WorkspaceCommunityMapping,
 };
+use sha2::Digest as _;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -43,6 +45,52 @@ pub struct ChatIdentityStore {
     pool: PgPool,
 }
 
+#[derive(Debug, Clone)]
+pub struct ReplacementStart {
+    pub operation_id: Uuid,
+    pub replacement_binding_id: Uuid,
+    pub tenant_id: TenantId,
+    pub principal_id: PrincipalId,
+    pub workspace_id: WorkspaceId,
+    pub actor_id: Uuid,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReplacementStatus {
+    pub operation_id: Uuid,
+    pub state: String,
+    pub generation: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub failure_code: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReplacementAuditEntry {
+    pub actor_id: Uuid,
+    pub from_state: Option<String>,
+    pub to_state: String,
+    pub reason_code: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReplacementLease {
+    pub operation_id: Uuid,
+    pub tenant_id: TenantId,
+    pub principal_id: PrincipalId,
+    pub workspace_id: WorkspaceId,
+    pub community_id: Uuid,
+    pub relay_url: String,
+    pub relay_pubkey: String,
+    pub old_pubkey: String,
+    pub replacement_pubkey: String,
+    pub state: String,
+    pub generation: i64,
+    pub token: Uuid,
+}
+
 /// Idempotent provisioning insert outcome (ADR-0036).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProvisionMappingOutcome {
@@ -67,6 +115,310 @@ pub enum ProvisionMappingError {
 impl ChatIdentityStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Begin replacement after the caller verified the candidate's NIP-42 proof.
+    pub async fn begin_replacement(
+        &self,
+        input: &ReplacementStart,
+        proof: &VerifiedBindingProof,
+    ) -> Result<bool> {
+        if input.actor_id != input.principal_id.0
+            || proof.tenant_id() != input.tenant_id
+            || proof.principal_id() != input.principal_id
+            || proof.challenge_id().is_nil()
+            || proof.event_id().len() != 64
+            || input.operation_id.is_nil()
+            || input.replacement_binding_id.is_nil()
+        {
+            return Ok(false);
+        }
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await?;
+        let principal = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM users WHERE id=$1 AND tenant_id=$2 AND disabled_at IS NULL FOR NO KEY UPDATE",
+        )
+        .bind(input.principal_id.0)
+        .bind(input.tenant_id.0)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if principal.is_none() {
+            return Ok(false);
+        }
+        let duplicate = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM chat_identity_replacements
+             WHERE tenant_id=$1 AND operation_id=$2 AND principal_id=$3
+               AND workspace_id=$4 AND actor_id=$5 AND challenge_id=$6
+               AND replacement_binding_id=$7 AND proof_event_id=$8)",
+        )
+        .bind(input.tenant_id.0)
+        .bind(input.operation_id)
+        .bind(input.principal_id.0)
+        .bind(input.workspace_id.0)
+        .bind(input.actor_id)
+        .bind(proof.challenge_id())
+        .bind(input.replacement_binding_id)
+        .bind(proof.event_id())
+        .fetch_one(&mut *tx)
+        .await?;
+        if duplicate {
+            tx.commit().await?;
+            return Ok(true);
+        }
+        let challenge = sqlx::query(
+            "SELECT buzz_pubkey,rotation_of,relay_url,nonce,expires_at,consumed_at
+             FROM chat_binding_challenges WHERE challenge_id=$1 AND tenant_id=$2
+               AND principal_id=$3 FOR UPDATE",
+        )
+        .bind(proof.challenge_id())
+        .bind(input.tenant_id.0)
+        .bind(input.principal_id.0)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(challenge) = challenge else {
+            return Ok(false);
+        };
+        let candidate: String = challenge.try_get("buzz_pubkey")?;
+        let nonce: String = challenge.try_get("nonce")?;
+        let expires_at: DateTime<Utc> = challenge.try_get("expires_at")?;
+        let consumed_at: Option<DateTime<Utc>> = challenge.try_get("consumed_at")?;
+        let challenge_relay: String = challenge.try_get("relay_url")?;
+        let Some(old_binding_id) = challenge.try_get::<Option<Uuid>, _>("rotation_of")? else {
+            return Ok(false);
+        };
+        let now = Utc::now();
+        if candidate != proof.buzz_pubkey()
+            || nonce != proof.nonce()
+            || challenge_relay != proof.relay_url()
+            || expires_at <= now
+            || consumed_at.is_some()
+            || (now - proof.verified_at()).num_seconds().abs() > 60
+        {
+            return Ok(false);
+        }
+        let mapping = sqlx::query(
+            "SELECT mapping_id,community_id,relay_url,relay_pubkey FROM chat_workspace_communities
+             WHERE tenant_id=$1 AND workspace_id=$2 AND active FOR SHARE",
+        )
+        .bind(input.tenant_id.0)
+        .bind(input.workspace_id.0)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(mapping) = mapping else {
+            return Ok(false);
+        };
+        let mapping_id: Uuid = mapping.try_get("mapping_id")?;
+        let community_text: String = mapping.try_get("community_id")?;
+        let Ok(community_id) = Uuid::parse_str(&community_text) else {
+            return Ok(false);
+        };
+        let relay_url: String = mapping.try_get("relay_url")?;
+        let relay_pubkey: Option<String> = mapping.try_get("relay_pubkey")?;
+        let Some(relay_pubkey) = relay_pubkey else {
+            return Ok(false);
+        };
+        if relay_url != challenge_relay
+            || relay_pubkey.len() != 64
+            || !relay_pubkey
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Ok(false);
+        }
+        let mut fences = [
+            format!("{community_id}:{candidate}"),
+            format!("{community_id}:old:{old_binding_id}"),
+        ];
+        fences.sort();
+        for fence in fences {
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+                .bind(fence)
+                .execute(&mut *tx)
+                .await?;
+        }
+        let old = sqlx::query(
+            "SELECT buzz_pubkey FROM chat_identity_bindings
+             WHERE tenant_id=$1 AND principal_id=$2 AND binding_id=$3
+               AND status='active' AND revoked_at IS NULL FOR UPDATE",
+        )
+        .bind(input.tenant_id.0)
+        .bind(input.principal_id.0)
+        .bind(old_binding_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(old) = old else { return Ok(false) };
+        let old_pubkey: String = old.try_get("buzz_pubkey")?;
+        let key_seen = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM chat_identity_bindings WHERE buzz_pubkey=$1)",
+        )
+        .bind(&candidate)
+        .fetch_one(&mut *tx)
+        .await?;
+        if key_seen {
+            return Ok(false);
+        }
+        let chat_enabled: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM application_enablements ae
+             LEFT JOIN application_user_preferences p ON p.user_id=$3 AND p.application_id='io.elembra.chat'
+             WHERE ae.tenant_id=$1 AND ae.workspace_id=$2 AND ae.application_id='io.elembra.chat'
+               AND ae.enabled AND COALESCE(p.enabled,true))",
+        )
+        .bind(input.tenant_id.0)
+        .bind(input.workspace_id.0)
+        .bind(input.principal_id.0)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !chat_enabled {
+            return Ok(false);
+        }
+        let digest = sha2::Sha256::digest(
+            format!("{mapping_id}\0{community_id}\0{relay_url}\0{relay_pubkey}").as_bytes(),
+        );
+        let consumed = sqlx::query(
+            "UPDATE chat_binding_challenges SET consumed_at=$2 WHERE challenge_id=$1 AND consumed_at IS NULL AND expires_at>$2",
+        )
+        .bind(proof.challenge_id())
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        if consumed.rows_affected() != 1 {
+            return Ok(false);
+        }
+        sqlx::query("UPDATE chat_identity_bindings SET status='revoked',revoked_at=$3 WHERE tenant_id=$1 AND binding_id=$2 AND status='active' AND revoked_at IS NULL")
+            .bind(input.tenant_id.0).bind(old_binding_id).bind(now).execute(&mut *tx).await?;
+        sqlx::query("UPDATE chat_buzz_admissions SET active=false,revoked_at=$3 WHERE tenant_id=$1 AND binding_id=$2 AND active")
+            .bind(input.tenant_id.0).bind(old_binding_id).bind(now).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status,rotation_of,audit_metadata) VALUES($1,$2,$3,$4,'pending',$5,'{\"proof\":\"nip-42\",\"operation\":\"durable-replacement\"}')")
+            .bind(input.replacement_binding_id).bind(input.tenant_id.0).bind(input.principal_id.0).bind(&candidate).bind(old_binding_id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO chat_identity_replacements(operation_id,tenant_id,principal_id,workspace_id,mapping_id,community_id,relay_url,relay_pubkey,mapping_fingerprint,old_binding_id,old_pubkey,replacement_binding_id,replacement_pubkey,challenge_id,proof_event_id,actor_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'pending_revocation')")
+            .bind(input.operation_id).bind(input.tenant_id.0).bind(input.principal_id.0).bind(input.workspace_id.0)
+            .bind(mapping_id).bind(community_id).bind(&relay_url).bind(&relay_pubkey).bind(digest.to_vec())
+            .bind(old_binding_id).bind(old_pubkey).bind(input.replacement_binding_id).bind(&candidate)
+            .bind(proof.challenge_id()).bind(proof.event_id()).bind(input.actor_id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO chat_identity_replacement_audit(audit_id,tenant_id,operation_id,actor_id,to_state) VALUES(gen_random_uuid(),$1,$2,$3,'pending_revocation')")
+            .bind(input.tenant_id.0).bind(input.operation_id).bind(input.actor_id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    pub async fn claim_replacement(&self) -> Result<Option<ReplacementLease>> {
+        let candidate = sqlx::query(
+            "SELECT operation_id,tenant_id,principal_id,workspace_id FROM chat_identity_replacements r
+             WHERE state IN ('pending_revocation','pending_revocation_verification','pending_membership_verification')
+               AND retry_at<=clock_timestamp() AND (lease_expires_at IS NULL OR lease_expires_at<=clock_timestamp())
+               AND NOT EXISTS (SELECT 1 FROM chat_identity_replacement_commands c WHERE c.operation_id=r.operation_id
+                 AND c.outcome IN ('pending','ambiguous') AND c.phase=CASE WHEN r.state='pending_revocation' THEN 'revoke' ELSE 'admit' END)
+             ORDER BY retry_at,created_at LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(candidate) = candidate else {
+            return Ok(None);
+        };
+        let operation_id: Uuid = candidate.try_get("operation_id")?;
+        let tenant_id = TenantId(candidate.try_get("tenant_id")?);
+        let principal_id = PrincipalId(candidate.try_get("principal_id")?);
+        let workspace_id = WorkspaceId(candidate.try_get("workspace_id")?);
+        let token = Uuid::new_v4();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await?;
+        if sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM users WHERE id=$1 AND tenant_id=$2 AND disabled_at IS NULL FOR NO KEY UPDATE",
+        )
+        .bind(principal_id.0)
+        .bind(tenant_id.0)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_none()
+        {
+            return Ok(None);
+        }
+        let row = sqlx::query(
+            "UPDATE chat_identity_replacements SET lease_token=$3,lease_expires_at=clock_timestamp()+interval '90 seconds',
+             generation=generation+1,updated_at=clock_timestamp()
+             WHERE tenant_id=$1 AND operation_id=$2 AND retry_at<=clock_timestamp()
+             AND state IN ('pending_revocation','pending_revocation_verification','pending_membership_verification')
+             AND (lease_expires_at IS NULL OR lease_expires_at<=clock_timestamp())
+             RETURNING community_id,relay_url,relay_pubkey,old_pubkey,replacement_pubkey,state,generation",
+        )
+        .bind(tenant_id.0)
+        .bind(operation_id)
+        .bind(token)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else { return Ok(None) };
+        let community_id: Uuid = row.try_get("community_id")?;
+        let relay_url: String = row.try_get("relay_url")?;
+        let relay_pubkey: String = row.try_get("relay_pubkey")?;
+        let old_pubkey: String = row.try_get("old_pubkey")?;
+        let replacement_pubkey: String = row.try_get("replacement_pubkey")?;
+        let state: String = row.try_get("state")?;
+        let generation: i64 = row.try_get("generation")?;
+        tx.commit().await?;
+        Ok(Some(ReplacementLease {
+            operation_id,
+            tenant_id,
+            principal_id,
+            workspace_id,
+            community_id,
+            relay_url,
+            relay_pubkey,
+            old_pubkey,
+            replacement_pubkey,
+            state,
+            generation,
+            token,
+        }))
+    }
+
+    pub async fn replacement_status(
+        &self,
+        tenant_id: TenantId,
+        principal_id: Uuid,
+        operation_id: Uuid,
+    ) -> Result<Option<ReplacementStatus>> {
+        let row = sqlx::query("SELECT operation_id,state,generation,created_at,updated_at,completed_at,failure_code
+            FROM chat_identity_replacements WHERE tenant_id=$1 AND principal_id=$2 AND operation_id=$3")
+            .bind(tenant_id.0).bind(principal_id).bind(operation_id).fetch_optional(&self.pool).await?;
+        row.map(|row| {
+            Ok(ReplacementStatus {
+                operation_id: row.try_get("operation_id")?,
+                state: row.try_get("state")?,
+                generation: row.try_get("generation")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+                completed_at: row.try_get("completed_at")?,
+                failure_code: row.try_get("failure_code")?,
+            })
+        })
+        .transpose()
+    }
+
+    pub async fn replacement_audit(
+        &self,
+        tenant_id: TenantId,
+        principal_id: Uuid,
+        operation_id: Uuid,
+    ) -> Result<Vec<ReplacementAuditEntry>> {
+        let rows = sqlx::query("SELECT a.actor_id,a.from_state,a.to_state,a.reason_code,a.created_at
+            FROM chat_identity_replacement_audit a JOIN chat_identity_replacements r USING(tenant_id,operation_id)
+            WHERE a.tenant_id=$1 AND r.principal_id=$2 AND a.operation_id=$3 ORDER BY a.created_at,a.audit_id")
+            .bind(tenant_id.0).bind(principal_id).bind(operation_id).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(ReplacementAuditEntry {
+                    actor_id: row.try_get("actor_id")?,
+                    from_state: row.try_get("from_state")?,
+                    to_state: row.try_get("to_state")?,
+                    reason_code: row.try_get("reason_code")?,
+                    created_at: row.try_get("created_at")?,
+                })
+            })
+            .collect()
     }
 
     pub async fn mapping(

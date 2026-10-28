@@ -1,7 +1,75 @@
 //! Durable Elembra verification receipts; Buzz membership is read only over HTTP.
 use crate::buzz_gateway::{BuzzGatewayClient, BuzzMembershipObservation, BuzzMembershipRequest};
 use rustshare_resource_auth::BuzzAuthorityError;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Row, Transaction};
+
+/// Persist one signature-verified membership response inside the caller transaction.
+pub async fn accept_buzz_membership_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    request_id: uuid::Uuid,
+    observation: &BuzzMembershipObservation,
+) -> Result<(), BuzzAuthorityError> {
+    let request = sqlx::query(
+        "SELECT community_id,pubkey,minimum_revision,expected_state FROM chat_buzz_membership_verifications WHERE request_id=$1 FOR UPDATE",
+    )
+    .bind(request_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|_| BuzzAuthorityError::Transport("cannot read membership request".into()))?;
+    let Some(request) = request else {
+        return Err(BuzzAuthorityError::InvalidResponse(
+            "membership request is unknown".into(),
+        ));
+    };
+    let community_id: uuid::Uuid = request.try_get("community_id").map_err(|_| {
+        BuzzAuthorityError::InvalidResponse("membership request is malformed".into())
+    })?;
+    let pubkey: String = request.try_get("pubkey").map_err(|_| {
+        BuzzAuthorityError::InvalidResponse("membership request is malformed".into())
+    })?;
+    let minimum_revision: i64 = request.try_get("minimum_revision").map_err(|_| {
+        BuzzAuthorityError::InvalidResponse("membership request is malformed".into())
+    })?;
+    let expected_state: Option<String> = request.try_get("expected_state").map_err(|_| {
+        BuzzAuthorityError::InvalidResponse("membership request is malformed".into())
+    })?;
+    let actual_state = match &observation.membership {
+        crate::buzz_gateway::BuzzMembership::Active => "active",
+        crate::buzz_gateway::BuzzMembership::Absent => "absent",
+        crate::buzz_gateway::BuzzMembership::Revoked => "revoked",
+    };
+    let revision = i64::try_from(observation.membership_revision)
+        .map_err(|_| BuzzAuthorityError::InvalidResponse("membership revision overflow".into()))?;
+    if observation.request_id != request_id.to_string()
+        || observation.community_id != community_id.to_string()
+        || observation.pubkey != pubkey
+        || revision < minimum_revision
+        || expected_state
+            .as_deref()
+            .is_some_and(|state| state != actual_state)
+    {
+        return Err(BuzzAuthorityError::InvalidResponse(
+            "membership response does not match its request".into(),
+        ));
+    }
+    let accepted = sqlx::query(
+        "UPDATE chat_buzz_membership_verifications AS pending SET accepted_at=clock_timestamp(),
+         accepted_revision=$2,accepted_event_id=$3,accepted_evaluated_at=$4,accepted_state=$5
+         WHERE request_id=$1 AND accepted_at IS NULL AND requested_at>=clock_timestamp()-interval '30 seconds'
+         AND NOT EXISTS (SELECT 1 FROM chat_buzz_membership_verifications previous
+         WHERE previous.community_id=pending.community_id AND previous.pubkey=pending.pubkey
+         AND previous.accepted_at IS NOT NULL AND previous.accepted_revision>$2)",
+    )
+    .bind(request_id).bind(revision).bind(&observation.event_id).bind(observation.evaluated_at).bind(actual_state)
+    .execute(&mut **tx).await
+    .map_err(|_| BuzzAuthorityError::Transport("cannot persist membership acceptance".into()))?;
+    if accepted.rows_affected() != 1 || !observation.is_fresh_at(chrono::Utc::now().timestamp()) {
+        return Err(BuzzAuthorityError::InvalidResponse(
+            "membership request expired, regressed, or was consumed".into(),
+        ));
+    }
+    Ok(())
+}
 
 /// Verify one fresh Buzz membership read and durably accept its nonce once.
 /// This records an observation, never activates a binding or grants membership.
@@ -61,25 +129,7 @@ pub async fn verify_buzz_membership(
         .execute(&mut *acceptance)
         .await
         .map_err(|_| BuzzAuthorityError::Transport("cannot lock membership acceptance".into()))?;
-    let accepted = sqlx::query(
-        "UPDATE chat_buzz_membership_verifications AS pending \
-        SET accepted_at=clock_timestamp(), accepted_revision=$2 WHERE request_id=$1 AND accepted_at IS NULL \
-        AND requested_at >= clock_timestamp() - interval '30 seconds' AND NOT EXISTS \
-        (SELECT 1 FROM chat_buzz_membership_verifications previous \
-         WHERE previous.community_id=pending.community_id AND previous.pubkey=pending.pubkey \
-         AND previous.accepted_at IS NOT NULL \
-         AND previous.accepted_revision > $2)",
-    )
-    .bind(req.request_id)
-    .bind(observation.membership_revision as i64)
-    .execute(&mut *acceptance)
-    .await
-    .map_err(|_| BuzzAuthorityError::Transport("cannot persist membership acceptance".into()))?;
-    if accepted.rows_affected() != 1 || !observation.is_fresh_at(chrono::Utc::now().timestamp()) {
-        return Err(BuzzAuthorityError::InvalidResponse(
-            "membership request expired or consumed".into(),
-        ));
-    }
+    accept_buzz_membership_in_tx(&mut acceptance, req.request_id, &observation).await?;
     acceptance
         .commit()
         .await
@@ -219,6 +269,14 @@ mod tests {
         let accepted:bool=sqlx::query_scalar("SELECT accepted_at IS NOT NULL FROM chat_buzz_membership_verifications WHERE request_id=$1")
             .bind(Uuid::parse_str(&observation.request_id).unwrap()).fetch_one(&pool).await.unwrap();
         assert!(accepted);
+        let accepted_state: String = sqlx::query_scalar(
+            "SELECT accepted_state FROM chat_buzz_membership_verifications WHERE request_id=$1",
+        )
+        .bind(Uuid::parse_str(&observation.request_id).unwrap())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(accepted_state, "active");
         assert_eq!(sqlx::query("UPDATE chat_buzz_membership_verifications SET accepted_at=now() WHERE request_id=$1 AND accepted_at IS NULL")
             .bind(Uuid::parse_str(&observation.request_id).unwrap()).execute(&pool).await.unwrap().rows_affected(),0);
         assert!(
