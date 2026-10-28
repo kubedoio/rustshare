@@ -130,6 +130,7 @@ use utoipa::OpenApi;
         crate::handlers::chat_resource::prepare_attachment,
         crate::handlers::chat_resource::preview_attachment,
         crate::handlers::chat_identity::revoke_principal,
+        crate::handlers::chat_identity::recover_replacement,
         crate::handlers::decisions::create_decision,
         crate::handlers::meeting_decisions::decision_meetings,
         crate::handlers::meeting_actions::list_meeting_actions,

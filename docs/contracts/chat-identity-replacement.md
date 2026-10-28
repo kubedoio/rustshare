@@ -76,11 +76,16 @@ command ID and then performs a fresh read; it does not infer completion from
 current membership alone. Stale-revision receipts may recover only after a
 fresh signed read and a new command ID. Replays return the persisted state.
 Blocked operations are never automatically retried after a long delay and
-cannot reactivate the old binding or reuse the consumed challenge. Any future
-operator recovery must be authenticated, audited, and retain all proof and
-membership checks; until implemented, operators must not clear block fields
-directly. Duplicate delivery and process restart must not create duplicate
-bindings, admissions, audit transitions, or a second rotation.
+cannot reactivate the old binding or reuse the consumed challenge. Tenant
+administrators may explicitly recover retry-exhausted operations or a rejected
+admission through the separately disabled recovery endpoint when the replacement
+worker is enabled. It records the
+operator and audit transition, fences stale workers by generation, and requires
+fresh old-key revocation and candidate-absence evidence before another admission
+command. It cannot clear revoked-candidate, invalid-evidence,
+rejected-revocation, or changed-mapping blocks. Operators must not clear block
+fields directly. Duplicate delivery and process restart must not create
+duplicate bindings, admissions, audit transitions, or a second rotation.
 
 Status is visible only to the owning authenticated Principal or an explicitly
 authorized tenant security administrator. Responses distinguish pending,

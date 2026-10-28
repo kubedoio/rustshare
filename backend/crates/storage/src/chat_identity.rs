@@ -407,6 +407,94 @@ impl ChatIdentityStore {
         .transpose()
     }
 
+    /// Requeue only recoverable blocked operations; the worker must gather fresh evidence.
+    pub async fn recover_blocked_replacement(
+        &self,
+        tenant_id: TenantId,
+        actor_id: Uuid,
+        operation_id: Uuid,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await?;
+        let actor = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM users WHERE id=$1 AND tenant_id=$2 AND disabled_at IS NULL FOR NO KEY UPDATE",
+        )
+        .bind(actor_id)
+        .bind(tenant_id.0)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if actor.is_none() {
+            return Ok(false);
+        }
+        let operation = sqlx::query(
+            "SELECT state,failure_code FROM chat_identity_replacements
+             WHERE tenant_id=$1 AND operation_id=$2 AND blocked_at IS NOT NULL FOR UPDATE",
+        )
+        .bind(tenant_id.0)
+        .bind(operation_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(operation) = operation else {
+            return Ok(false);
+        };
+        let state: String = operation.try_get("state")?;
+        let failure: String = operation.try_get("failure_code")?;
+        let retry_exhausted = failure == "replacement_retries_exhausted"
+            && matches!(
+                state.as_str(),
+                "pending_revocation"
+                    | "pending_revocation_verification"
+                    | "pending_membership_verification"
+            );
+        let rejected_admission = failure == "buzz_command_rejected"
+            && state == "pending_replacement_admission"
+            && sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM chat_identity_replacement_commands
+                 WHERE operation_id=$1 AND phase='admit' AND outcome='rejected')",
+            )
+            .bind(operation_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        if !retry_exhausted && !rejected_admission {
+            return Ok(false);
+        }
+        let next_state = if rejected_admission {
+            "pending_revocation_verification"
+        } else {
+            state.as_str()
+        };
+        let changed = sqlx::query(
+            "UPDATE chat_identity_replacements SET state=$3,generation=generation+1,
+             transient_failures=0,blocked_at=NULL,failure_code=NULL,retry_at=clock_timestamp(),
+             lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+             WHERE tenant_id=$1 AND operation_id=$2 AND blocked_at IS NOT NULL",
+        )
+        .bind(tenant_id.0)
+        .bind(operation_id)
+        .bind(next_state)
+        .execute(&mut *tx)
+        .await?;
+        if changed.rows_affected() != 1 {
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO chat_identity_replacement_audit
+             (audit_id,tenant_id,operation_id,actor_id,from_state,to_state,reason_code)
+             VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,'operator_recovery_fresh_verification')",
+        )
+        .bind(tenant_id.0)
+        .bind(operation_id)
+        .bind(actor_id)
+        .bind(&state)
+        .bind(next_state)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
     pub async fn replacement_audit(
         &self,
         tenant_id: TenantId,

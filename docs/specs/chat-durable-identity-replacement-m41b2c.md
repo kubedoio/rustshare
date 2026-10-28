@@ -90,17 +90,21 @@ Do not hold database locks across network I/O. Expired leases cannot commit.
 Outages get at most five lease-fenced retries with capped exponential backoff.
 Stale conditional revisions are recoverable only by recording the stale
 receipt, taking fresh signed observations and using a new command ID; these
-attempts share the same retry limit. Exhaustion, upstream rejection, a revoked
-candidate, invalid evidence, or a changed mapping permanently blocks the
-operation in its current state. Blocked operations are excluded from worker
-claims; there is no 365-day automatic retry, rollback to the old key,
-unrevocation, or alternate onboarding bypass. Mapping changes require explicit
-reconciliation rather than silently continuing on another community or relay.
-Re-activating a blocked operation needs an authenticated, audited recovery path
-that preserves the fresh-proof and membership checks; until that path exists,
-operators must not edit retry or block fields directly. Replacing/revoking the
-candidate during the operation invalidates completion under the same Principal
-lock.
+attempts share the same retry limit. Exhaustion and definitive rejection block
+the operation; a revoked candidate, invalid evidence, or changed mapping also
+blocks it. Blocked operations are excluded from worker claims; there is no
+365-day automatic retry, rollback to the old key, unrevocation, or alternate
+onboarding bypass. Tenant administrators may explicitly recover only retry
+exhaustion or a rejected admission through the separately disabled
+`RUSTSHARE_CHAT_REPLACEMENT_RECOVERY_ENABLED` endpoint, and only when the
+replacement worker is enabled. Recovery is audited and
+bumps the generation; rejected admission returns to old-key revocation and
+candidate-absence verification before a new command. Revoked-candidate,
+invalid-evidence, rejected-revocation, and mapping-change blocks are not
+recoverable through this path. Mapping changes require explicit reconciliation
+rather than silently continuing on another community or relay. Operators must
+not edit retry or block fields directly. Replacing/revoking the candidate
+during the operation invalidates completion under the same Principal lock.
 
 Status lookup is `(tenant_id, operation_id)` plus current actor authorization;
 cross-tenant IDs return the existing non-disclosing not-found behavior. Audit
