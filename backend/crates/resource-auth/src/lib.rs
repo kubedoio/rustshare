@@ -47,9 +47,10 @@ pub use buzz_authority::{
 };
 pub use chat_identity::{
     authorize_admission, build_buzz_admission_event, build_buzz_admission_event_at,
-    AdmissionDecision, BindingChallenge, BindingError, BindingStatus, BuzzAdmission,
-    BuzzAdmissionCommandError, BuzzAdmissionOperation, ChatIdentityBinding,
-    WorkspaceCommunityMapping, BUZZ_RELAY_ADD_MEMBER_KIND, BUZZ_RELAY_REMOVE_MEMBER_KIND,
+    build_buzz_conditional_admission_event_at, AdmissionDecision, BindingChallenge, BindingError,
+    BindingStatus, BuzzAdmission, BuzzAdmissionCommandError, BuzzAdmissionOperation,
+    ChatIdentityBinding, VerifiedBindingProof, WorkspaceCommunityMapping,
+    BUZZ_RELAY_ADD_MEMBER_KIND, BUZZ_RELAY_REMOVE_MEMBER_KIND,
 };
 pub use chat_resource::{
     buzz_resource_ref_tag, resource_ref_from_tags, ChatResourceAttachment, ChatResourceError,

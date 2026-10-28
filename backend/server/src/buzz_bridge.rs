@@ -7,14 +7,14 @@
 
 use futures_util::{SinkExt, StreamExt};
 use nostr::{EventBuilder, Keys, RelayUrl, Timestamp};
-use rustshare_core::domain::TenantId;
 use rustshare_integration_events::{ConsumerOutcome, IntegrationEvent, OutboxConsumer};
 use rustshare_resource_auth::{
-    build_buzz_admission_event_at, BuzzAdmissionOperation, BUZZ_RELAY_ADD_MEMBER_KIND,
-    BUZZ_RELAY_REMOVE_MEMBER_KIND,
+    build_buzz_admission_event_at, build_buzz_conditional_admission_event_at,
+    BuzzAdmissionOperation, BUZZ_RELAY_ADD_MEMBER_KIND, BUZZ_RELAY_REMOVE_MEMBER_KIND,
 };
 use serde::Deserialize;
 use serde_json::Value;
+use sqlx::{PgPool, Row};
 use std::time::Duration;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, warn};
@@ -30,12 +30,19 @@ struct AdmissionData {
     community_id: String,
     relay_url: String,
     buzz_pubkey: String,
+    #[serde(default)]
+    command_version: Option<u8>,
+    #[serde(default)]
+    command_id: Option<uuid::Uuid>,
+    #[serde(default)]
+    expected_revision: Option<u64>,
 }
 
 /// A Buzz service/admin identity that applies Elembra's durable membership
 /// decisions to the mapped relay.
 pub struct BuzzAdmissionBridge {
     keys: Keys,
+    pool: Option<PgPool>,
 }
 
 impl BuzzAdmissionBridge {
@@ -45,7 +52,7 @@ impl BuzzAdmissionBridge {
     pub fn from_env() -> Option<Self> {
         let secret = std::env::var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY").ok()?;
         match Keys::parse(&secret) {
-            Ok(keys) => Some(Self { keys }),
+            Ok(keys) => Some(Self { keys, pool: None }),
             Err(error) => {
                 warn!(error = %error, "invalid Chat bridge service key; bridge disabled");
                 None
@@ -53,18 +60,41 @@ impl BuzzAdmissionBridge {
         }
     }
 
-    async fn publish(&self, data: &AdmissionData, created_at: Timestamp) -> Result<(), String> {
+    pub fn from_env_with_pool(pool: PgPool) -> Option<Self> {
+        let mut bridge = Self::from_env()?;
+        bridge.pool = Some(pool);
+        Some(bridge)
+    }
+
+    async fn publish(
+        &self,
+        data: &AdmissionData,
+        created_at: Timestamp,
+    ) -> Result<Option<bool>, String> {
         let relay = RelayUrl::parse(&data.relay_url).map_err(|error| error.to_string())?;
         let operation_kind = match data.operation {
             BuzzAdmissionOperation::Admit => BUZZ_RELAY_ADD_MEMBER_KIND,
             BuzzAdmissionOperation::Revoke => BUZZ_RELAY_REMOVE_MEMBER_KIND,
         };
-        let command = build_buzz_admission_event_at(
-            data.operation,
-            &data.buzz_pubkey,
-            &self.keys,
-            created_at,
-        )
+        let command = match (data.command_id, data.expected_revision) {
+            (Some(command_id), Some(revision)) if data.command_version == Some(1) => {
+                build_buzz_conditional_admission_event_at(
+                    data.operation,
+                    &data.buzz_pubkey,
+                    &self.keys,
+                    created_at,
+                    command_id,
+                    revision,
+                )
+            }
+            (None, None) if data.command_version.is_none() => build_buzz_admission_event_at(
+                data.operation,
+                &data.buzz_pubkey,
+                &self.keys,
+                created_at,
+            ),
+            _ => return Err("incomplete conditional Buzz command".to_string()),
+        }
         .map_err(|error| error.to_string())?;
         if command.kind.as_u16() != operation_kind {
             return Err("constructed Buzz command kind mismatch".to_string());
@@ -121,11 +151,17 @@ impl BuzzAdmissionBridge {
                     }
                     let accepted = items.get(2).and_then(Value::as_bool).unwrap_or(false);
                     if accepted {
-                        return Ok(());
+                        return Ok(Some(true));
                     }
                     let reason = items.get(3).and_then(Value::as_str).unwrap_or("rejected");
                     if reason.to_ascii_lowercase().contains("auth") {
                         continue;
+                    }
+                    if data.command_version == Some(1) && reason == "stale_revision" {
+                        return Ok(Some(false));
+                    }
+                    if data.command_version == Some(1) {
+                        return Ok(None);
                     }
                     return Err(format!("Buzz relay rejected membership command: {reason}"));
                 }
@@ -150,11 +186,6 @@ impl OutboxConsumer for BuzzAdmissionBridge {
     }
 
     async fn process(&self, event: &IntegrationEvent) -> ConsumerOutcome {
-        if event.tenant_id != TenantId(event.workspace_id.0) {
-            return ConsumerOutcome::Permanent {
-                reason: "tenant/workspace scope mismatch".to_string(),
-            };
-        }
         let data: AdmissionData = match serde_json::from_value(event.data.clone()) {
             Ok(data) => data,
             Err(_) => {
@@ -180,18 +211,210 @@ impl OutboxConsumer for BuzzAdmissionBridge {
                 reason: "invalid Chat admission command".to_string(),
             };
         }
+        let conditional = data.command_version.is_some()
+            || data.command_id.is_some()
+            || data.expected_revision.is_some();
+        if conditional
+            && (data.command_version != Some(1)
+                || data.command_id.is_none()
+                || data.expected_revision.is_none())
+        {
+            return ConsumerOutcome::Permanent {
+                reason: "invalid conditional Chat command".to_string(),
+            };
+        }
+        if conditional && self.pool.is_none() {
+            return ConsumerOutcome::Retryable {
+                reason: "durable conditional command handler is unavailable".to_string(),
+            };
+        }
+        if conditional {
+            let actor_pubkey = self.keys.public_key().to_hex();
+            let valid = validate_conditional_command(
+                self.pool.as_ref().expect("checked above"),
+                event,
+                &data,
+                &actor_pubkey,
+            )
+            .await;
+            if !matches!(valid, Ok(true)) {
+                return ConsumerOutcome::Permanent {
+                    reason: "conditional command does not match its durable record".to_string(),
+                };
+            }
+        }
         let created_at = Timestamp::from_secs(event.time.timestamp().max(0) as u64);
         match self.publish(&data, created_at).await {
-            Ok(()) => ConsumerOutcome::Processed,
+            Ok(accepted) if conditional => {
+                let pool = self.pool.as_ref().expect("checked above");
+                match record_conditional_outcome(pool, event, &data, accepted).await {
+                    Ok(()) => ConsumerOutcome::Processed,
+                    Err(_) => ConsumerOutcome::Retryable {
+                        reason: "cannot persist conditional Buzz result".to_string(),
+                    },
+                }
+            }
+            Ok(Some(_)) => ConsumerOutcome::Processed,
+            Ok(None) => ConsumerOutcome::Retryable {
+                reason: "legacy Buzz command was rejected".to_string(),
+            },
             Err(reason) => ConsumerOutcome::Retryable { reason },
         }
     }
 }
 
+async fn validate_conditional_command(
+    pool: &PgPool,
+    event: &IntegrationEvent,
+    data: &AdmissionData,
+    actor_pubkey: &str,
+) -> Result<bool, sqlx::Error> {
+    let Some(command_id) = data.command_id else {
+        return Ok(false);
+    };
+    let Some(revision) = data.expected_revision else {
+        return Ok(false);
+    };
+    let Ok(revision) = i64::try_from(revision) else {
+        return Ok(false);
+    };
+    let row = sqlx::query("SELECT c.phase,c.community_id,c.pubkey,c.kind,c.expected_revision,c.actor_pubkey,
+        r.tenant_id,r.workspace_id,r.replacement_binding_id,r.community_id AS operation_community,r.relay_url
+        FROM chat_identity_replacement_commands c JOIN chat_identity_replacements r USING(operation_id)
+        WHERE c.command_id=$1 AND c.outbox_event_id=$2")
+        .bind(command_id)
+        .bind(event.id)
+        .fetch_optional(pool)
+        .await?;
+    let Some(row) = row else { return Ok(false) };
+    let phase: String = row.try_get("phase")?;
+    let kind: i32 = row.try_get("kind")?;
+    let expected_kind = match data.operation {
+        BuzzAdmissionOperation::Admit => BUZZ_RELAY_ADD_MEMBER_KIND as i32,
+        BuzzAdmissionOperation::Revoke => BUZZ_RELAY_REMOVE_MEMBER_KIND as i32,
+    };
+    Ok(
+        row.try_get::<String, _>("community_id")? == data.community_id
+            && row.try_get::<String, _>("operation_community")? == data.community_id
+            && row.try_get::<String, _>("relay_url")? == data.relay_url
+            && row.try_get::<String, _>("pubkey")? == data.buzz_pubkey
+            && row.try_get::<i64, _>("expected_revision")? == revision
+            && row.try_get::<String, _>("actor_pubkey")? == actor_pubkey
+            && row.try_get::<uuid::Uuid, _>("replacement_binding_id")? == data.admission_id
+            && row.try_get::<uuid::Uuid, _>("tenant_id")? == event.tenant_id.0
+            && row.try_get::<uuid::Uuid, _>("workspace_id")? == event.workspace_id.0
+            && kind == expected_kind
+            && ((phase == "revoke" && data.operation == BuzzAdmissionOperation::Revoke)
+                || (phase == "admit" && data.operation == BuzzAdmissionOperation::Admit)),
+    )
+}
+
+async fn record_conditional_outcome(
+    pool: &PgPool,
+    event: &IntegrationEvent,
+    data: &AdmissionData,
+    accepted: Option<bool>,
+) -> Result<(), sqlx::Error> {
+    let command_id = data.command_id.expect("conditional command validated");
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        .execute(&mut *tx)
+        .await?;
+    let owner = sqlx::query(
+        "SELECT r.tenant_id,r.principal_id FROM chat_identity_replacement_commands c
+        JOIN chat_identity_replacements r USING(operation_id)
+        WHERE c.command_id=$1 AND c.outbox_event_id=$2",
+    )
+    .bind(command_id)
+    .bind(event.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(owner) = owner else {
+        tx.rollback().await?;
+        return Err(sqlx::Error::RowNotFound);
+    };
+    let tenant_id: uuid::Uuid = owner.try_get("tenant_id")?;
+    let principal_id: uuid::Uuid = owner.try_get("principal_id")?;
+    if sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT id FROM users WHERE id=$1 AND tenant_id=$2 FOR NO KEY UPDATE",
+    )
+    .bind(principal_id)
+    .bind(tenant_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .is_none()
+    {
+        tx.rollback().await?;
+        return Err(sqlx::Error::RowNotFound);
+    }
+    let command = sqlx::query("SELECT c.operation_id,c.phase,c.outcome,c.operation_generation,
+        r.tenant_id,r.principal_id,r.state,r.actor_id,r.generation
+        FROM chat_identity_replacement_commands c JOIN chat_identity_replacements r USING(operation_id)
+        WHERE c.command_id=$1 AND c.outbox_event_id=$2 FOR UPDATE OF r,c")
+        .bind(command_id).bind(event.id).fetch_optional(&mut *tx).await?;
+    let Some(command) = command else {
+        tx.rollback().await?;
+        return Err(sqlx::Error::RowNotFound);
+    };
+    let phase: String = command.try_get("phase")?;
+    let previous_outcome: String = command.try_get("outcome")?;
+    if !matches!(previous_outcome.as_str(), "pending" | "ambiguous") {
+        tx.commit().await?;
+        return Ok(());
+    }
+    let state: String = command.try_get("state")?;
+    let command_generation: i64 = command.try_get("operation_generation")?;
+    let generation: i64 = command.try_get("generation")?;
+    let from = if phase == "revoke" {
+        "pending_revocation"
+    } else {
+        "pending_replacement_admission"
+    };
+    let next = if phase == "revoke" {
+        "pending_revocation_verification"
+    } else {
+        "pending_membership_verification"
+    };
+    let outcome = match accepted {
+        Some(true) => "delivered",
+        Some(false) => "stale",
+        None => "rejected",
+    };
+    sqlx::query("UPDATE chat_identity_replacement_commands SET outcome=$2 WHERE command_id=$1 AND outcome IN ('pending','ambiguous')")
+        .bind(command_id).bind(outcome).execute(&mut *tx).await?;
+    if accepted == Some(true) && state == from && generation == command_generation + 1 {
+        sqlx::query("UPDATE chat_identity_replacements SET state=$3,generation=generation+1,lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+            WHERE operation_id=$1 AND tenant_id=$2 AND state=$4 AND generation=$5")
+            .bind(command.try_get::<uuid::Uuid,_>("operation_id")?).bind(command.try_get::<uuid::Uuid,_>("tenant_id")?).bind(next).bind(from).bind(generation).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO chat_identity_replacement_audit(audit_id,tenant_id,operation_id,actor_id,from_state,to_state)
+            VALUES(gen_random_uuid(),$1,$2,$3,$4,$5)")
+            .bind(command.try_get::<uuid::Uuid,_>("tenant_id")?).bind(command.try_get::<uuid::Uuid,_>("operation_id")?)
+            .bind(command.try_get::<uuid::Uuid,_>("actor_id")?).bind(from).bind(next).execute(&mut *tx).await?;
+    } else if accepted.is_none() && state == from && generation == command_generation + 1 {
+        sqlx::query("UPDATE chat_identity_replacements SET failure_code='buzz_command_rejected',retry_at=clock_timestamp()+interval '365 days',lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+            WHERE operation_id=$1 AND tenant_id=$2 AND state=$3 AND generation=$4")
+            .bind(command.try_get::<uuid::Uuid, _>("operation_id")?)
+            .bind(command.try_get::<uuid::Uuid, _>("tenant_id")?)
+            .bind(from)
+            .bind(generation)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO chat_identity_replacement_audit(audit_id,tenant_id,operation_id,actor_id,from_state,to_state,reason_code)
+            VALUES(gen_random_uuid(),$1,$2,$3,$4,$4,'buzz_command_rejected')")
+            .bind(command.try_get::<uuid::Uuid, _>("tenant_id")?)
+            .bind(command.try_get::<uuid::Uuid, _>("operation_id")?)
+            .bind(command.try_get::<uuid::Uuid, _>("actor_id")?)
+            .bind(from)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustshare_core::domain::WorkspaceId;
+    use rustshare_core::domain::{TenantId, WorkspaceId};
     use rustshare_integration_events::ConsumerOutcome;
     use uuid::Uuid;
 
@@ -210,6 +433,7 @@ mod tests {
     async fn bridge_rejects_operation_type_mismatch_without_contacting_buzz() {
         let bridge = BuzzAdmissionBridge {
             keys: Keys::generate(),
+            pool: None,
         };
         let result = bridge
             .process(&event(
@@ -228,9 +452,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bridge_rejects_cross_scope_envelopes_before_relay_access() {
+    async fn conditional_command_requires_a_database_record_even_with_distinct_tenant_and_workspace_ids(
+    ) {
         let bridge = BuzzAdmissionBridge {
             keys: Keys::generate(),
+            pool: None,
         };
         let tenant = Uuid::new_v4();
         let mut event = event(
@@ -241,11 +467,14 @@ mod tests {
                 "admission_id": Uuid::new_v4(),
                 "community_id": "community",
                 "relay_url": "wss://relay.example.test",
-                "buzz_pubkey": "00".repeat(32)
+                "buzz_pubkey": "00".repeat(32),
+                "command_version": 1,
+                "command_id": Uuid::new_v4(),
+                "expected_revision": 0
             }),
         );
         event.workspace_id = WorkspaceId(Uuid::new_v4());
         let result = bridge.process(&event).await;
-        assert!(matches!(result, ConsumerOutcome::Permanent { .. }));
+        assert!(matches!(result, ConsumerOutcome::Retryable { .. }));
     }
 }
