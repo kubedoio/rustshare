@@ -371,61 +371,64 @@ pub async fn process_next_replacement(
     else {
         return Ok(false);
     };
-    let result = match lease.state.as_str() {
-        "pending_revocation" => {
-            let old = read_membership(pool, client, &lease, &lease.old_pubkey, None).await?;
-            queue_command(pool, outbox, &lease, bridge_pubkey, "revoke", &[&old]).await
-        }
-        "pending_revocation_verification" => {
-            let old =
-                read_membership(pool, client, &lease, &lease.old_pubkey, Some("revoked")).await?;
-            let candidate = read_membership(
-                pool,
-                client,
-                &lease,
-                &lease.replacement_pubkey,
-                Some("absent"),
-            )
-            .await?;
-            queue_command(
-                pool,
-                outbox,
-                &lease,
-                bridge_pubkey,
-                "admit",
-                &[&old, &candidate],
-            )
-            .await
-        }
-        "pending_membership_verification" => {
-            let old =
-                read_membership(pool, client, &lease, &lease.old_pubkey, Some("revoked")).await?;
-            let candidate =
-                read_membership(pool, client, &lease, &lease.replacement_pubkey, None).await?;
-            if old.observation.membership != BuzzMembership::Revoked {
-                return Ok(false);
+    let result = async {
+        match lease.state.as_str() {
+            "pending_revocation" => {
+                let old = read_membership(pool, client, &lease, &lease.old_pubkey, None).await?;
+                queue_command(pool, outbox, &lease, bridge_pubkey, "revoke", &[&old]).await
             }
-            match candidate.observation.membership {
-                BuzzMembership::Absent => {
-                    queue_command(
-                        pool,
-                        outbox,
-                        &lease,
-                        bridge_pubkey,
-                        "admit",
-                        &[&old, &candidate],
-                    )
-                    .await
-                }
-                BuzzMembership::Revoked => {
-                    record_blocked_failure(pool, &lease, "replacement_revoked").await?;
-                    Ok(false)
-                }
-                BuzzMembership::Active => complete(pool, &lease, &old, &candidate).await,
+            "pending_revocation_verification" => {
+                let old = read_membership(pool, client, &lease, &lease.old_pubkey, Some("revoked"))
+                    .await?;
+                let candidate = read_membership(
+                    pool,
+                    client,
+                    &lease,
+                    &lease.replacement_pubkey,
+                    Some("absent"),
+                )
+                .await?;
+                queue_command(
+                    pool,
+                    outbox,
+                    &lease,
+                    bridge_pubkey,
+                    "admit",
+                    &[&old, &candidate],
+                )
+                .await
             }
+            "pending_membership_verification" => {
+                let old = read_membership(pool, client, &lease, &lease.old_pubkey, Some("revoked"))
+                    .await?;
+                let candidate =
+                    read_membership(pool, client, &lease, &lease.replacement_pubkey, None).await?;
+                if old.observation.membership != BuzzMembership::Revoked {
+                    return Ok(false);
+                }
+                match candidate.observation.membership {
+                    BuzzMembership::Absent => {
+                        queue_command(
+                            pool,
+                            outbox,
+                            &lease,
+                            bridge_pubkey,
+                            "admit",
+                            &[&old, &candidate],
+                        )
+                        .await
+                    }
+                    BuzzMembership::Revoked => {
+                        record_blocked_failure(pool, &lease, "replacement_revoked").await?;
+                        Ok(false)
+                    }
+                    BuzzMembership::Active => complete(pool, &lease, &old, &candidate).await,
+                }
+            }
+            _ => Ok(false),
         }
-        _ => Ok(false),
-    };
+    }
+    .await;
     if let Err(error) = &result {
         if matches!(error, BuzzAuthorityError::Transport(_)) {
             record_transient_failure(pool, &lease).await?;
@@ -740,9 +743,16 @@ mod tests {
         let new_binding = Uuid::new_v4();
         let operation = Uuid::new_v4();
         let challenge = Uuid::new_v4();
+        let disabled_principal = Uuid::new_v4();
+        let disabled_old_binding = Uuid::new_v4();
+        let disabled_new_binding = Uuid::new_v4();
+        let disabled_operation = Uuid::new_v4();
+        let disabled_challenge = Uuid::new_v4();
         let request_id = Uuid::new_v4();
         let old_key = Keys::generate().public_key().to_hex();
         let new_key = Keys::generate().public_key().to_hex();
+        let disabled_old_key = Keys::generate().public_key().to_hex();
+        let disabled_new_key = Keys::generate().public_key().to_hex();
         let relay = Keys::generate();
         let relay_pubkey = relay.public_key().to_hex();
         sqlx::query("INSERT INTO users(id,username,email,password_hash,tenant_id,display_name,storage_quota)
@@ -768,6 +778,30 @@ mod tests {
             .bind(operation).bind(tenant).bind(principal).bind(workspace).bind(mapping).bind(community)
             .bind("wss://relay.example.test").bind(&relay_pubkey).bind(digest(mapping,community,"wss://relay.example.test",&relay_pubkey))
             .bind(old_binding).bind(&old_key).bind(new_binding).bind(&new_key).bind(challenge).bind("ab".repeat(32)).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO users(id,username,email,password_hash,tenant_id,display_name,storage_quota,disabled_at)
+            VALUES($1,$2,$3,'test-hash',$4,'disabled replacement test',1048576,clock_timestamp())")
+            .bind(disabled_principal)
+            .bind(format!("replacement-disabled-{disabled_principal}"))
+            .bind(format!("replacement-disabled-{disabled_principal}@example.test"))
+            .bind(tenant)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status,rotation_of,revoked_at)
+            VALUES($1,$2,$3,$4,'revoked',NULL,clock_timestamp()),($5,$2,$3,$6,'pending',$1,NULL)")
+            .bind(disabled_old_binding).bind(tenant).bind(disabled_principal).bind(&disabled_old_key)
+            .bind(disabled_new_binding).bind(&disabled_new_key).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO chat_binding_challenges(challenge_id,tenant_id,principal_id,buzz_pubkey,rotation_of,relay_url,nonce,expires_at)
+            VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+interval '5 minutes')")
+            .bind(disabled_challenge).bind(tenant).bind(disabled_principal).bind(&disabled_new_key)
+            .bind(disabled_old_binding).bind("wss://relay.example.test").bind(Uuid::new_v4().to_string())
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO chat_identity_replacements(operation_id,tenant_id,principal_id,workspace_id,mapping_id,community_id,relay_url,relay_pubkey,mapping_fingerprint,old_binding_id,old_pubkey,replacement_binding_id,replacement_pubkey,challenge_id,proof_event_id,actor_id,state,created_at,retry_at)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$3,'pending_revocation',clock_timestamp()-interval '1 hour',clock_timestamp()-interval '1 hour')")
+            .bind(disabled_operation).bind(tenant).bind(disabled_principal).bind(workspace).bind(mapping).bind(community)
+            .bind("wss://relay.example.test").bind(&relay_pubkey).bind(digest(mapping,community,"wss://relay.example.test",&relay_pubkey))
+            .bind(disabled_old_binding).bind(&disabled_old_key).bind(disabled_new_binding).bind(&disabled_new_key)
+            .bind(disabled_challenge).bind("cd".repeat(32)).execute(&pool).await.unwrap();
 
         let request = BuzzMembershipRequest {
             request_id,
@@ -855,6 +889,7 @@ mod tests {
             "only one concurrent claimant owns the operation"
         );
         let claimed = &leases[0];
+        assert_eq!(claimed.operation_id, operation);
         sqlx::query("UPDATE chat_identity_replacements SET lease_expires_at=clock_timestamp()-interval '1 second'
             WHERE tenant_id=$1 AND operation_id=$2 AND lease_token=$3")
             .bind(tenant)
@@ -882,19 +917,28 @@ mod tests {
             .build()
             .unwrap();
         ack_event.id = stale_event;
+        let admission_data = crate::buzz_bridge::AdmissionData {
+            operation: BuzzAdmissionOperation::Admit,
+            admission_id: new_binding,
+            community_id: community.to_string(),
+            relay_url: "wss://relay.example.test".into(),
+            buzz_pubkey: new_key.clone(),
+            command_version: Some(1),
+            command_id: Some(stale_command),
+            expected_revision: Some(0),
+        };
+        assert!(crate::buzz_bridge::validate_conditional_command(
+            &pool,
+            &ack_event,
+            &admission_data,
+            &relay_pubkey,
+        )
+        .await
+        .unwrap());
         crate::buzz_bridge::record_conditional_outcome(
             &pool,
             &ack_event,
-            &crate::buzz_bridge::AdmissionData {
-                operation: BuzzAdmissionOperation::Admit,
-                admission_id: new_binding,
-                community_id: community.to_string(),
-                relay_url: "wss://relay.example.test".into(),
-                buzz_pubkey: new_key.clone(),
-                command_version: Some(1),
-                command_id: Some(stale_command),
-                expected_revision: Some(0),
-            },
+            &admission_data,
             Some(false),
         )
         .await
@@ -1004,8 +1048,70 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(recovered_rejection, "pending_revocation_verification");
-        sqlx::query("DELETE FROM chat_buzz_membership_verifications WHERE request_id=$1")
-            .bind(request_id)
+        let unauthorized = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/api/v1/relay/membership/check",
+            axum::routing::post({
+                let unauthorized = unauthorized.clone();
+                move || async move {
+                    if unauthorized.load(std::sync::atomic::Ordering::SeqCst) {
+                        axum::http::StatusCode::UNAUTHORIZED
+                    } else {
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE
+                    }
+                }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let local_relay = format!("ws://{address}");
+        sqlx::query("UPDATE chat_identity_replacements SET state='pending_revocation',retry_at=clock_timestamp(),blocked_at=NULL,transient_failures=0,failure_code=NULL,lease_token=NULL,lease_expires_at=NULL,relay_url=$2 WHERE operation_id=$1")
+            .bind(operation).bind(&local_relay).execute(&pool).await.unwrap();
+        let outbox = OutboxStore::new(
+            pool.clone(),
+            std::sync::Arc::new(
+                rustshare_core::domain::ApplicationRegistry::first_party().unwrap(),
+            ),
+        );
+        let client =
+            BuzzGatewayClient::new_for_test(Keys::generate(), reqwest::Client::builder()).unwrap();
+        assert!(matches!(
+            process_next_replacement(&pool, &store, &outbox, &client, &relay_pubkey).await,
+            Err(BuzzAuthorityError::Transport(_))
+        ));
+        let retry: (i16, Option<chrono::DateTime<chrono::Utc>>, String) = sqlx::query_as(
+            "SELECT transient_failures,blocked_at,failure_code FROM chat_identity_replacements WHERE operation_id=$1",
+        )
+        .bind(operation)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(retry.0, 1);
+        assert!(retry.1.is_none());
+        assert_eq!(retry.2, "replacement_transport_retry");
+        unauthorized.store(true, std::sync::atomic::Ordering::SeqCst);
+        sqlx::query("UPDATE chat_identity_replacements SET retry_at=clock_timestamp() WHERE operation_id=$1")
+            .bind(operation).execute(&pool).await.unwrap();
+        assert!(matches!(
+            process_next_replacement(&pool, &store, &outbox, &client, &relay_pubkey).await,
+            Err(BuzzAuthorityError::Unauthorized)
+        ));
+        let rejected: (i16, Option<chrono::DateTime<chrono::Utc>>, String) = sqlx::query_as(
+            "SELECT transient_failures,blocked_at,failure_code FROM chat_identity_replacements WHERE operation_id=$1",
+        )
+        .bind(operation)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rejected.0, 1);
+        assert!(rejected.1.is_some());
+        assert_eq!(rejected.2, "replacement_upstream_unauthorized");
+        server.abort();
+        sqlx::query("DELETE FROM chat_buzz_membership_verifications WHERE operation_id=$1")
+            .bind(operation)
             .execute(&pool)
             .await
             .unwrap();
@@ -1024,8 +1130,18 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query("DELETE FROM chat_identity_replacements WHERE operation_id=$1")
+            .bind(disabled_operation)
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM chat_binding_challenges WHERE challenge_id=$1")
             .bind(challenge)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM chat_binding_challenges WHERE challenge_id=$1")
+            .bind(disabled_challenge)
             .execute(&pool)
             .await
             .unwrap();
@@ -1038,6 +1154,15 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        sqlx::query(
+            "DELETE FROM chat_identity_bindings WHERE tenant_id=$1 AND binding_id IN ($2,$3)",
+        )
+        .bind(tenant)
+        .bind(disabled_old_binding)
+        .bind(disabled_new_binding)
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query("DELETE FROM chat_workspace_communities WHERE mapping_id=$1")
             .bind(mapping)
             .execute(&pool)
@@ -1045,6 +1170,12 @@ mod tests {
             .unwrap();
         sqlx::query("DELETE FROM users WHERE id=$1 AND tenant_id=$2")
             .bind(principal)
+            .bind(tenant)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM users WHERE id=$1 AND tenant_id=$2")
+            .bind(disabled_principal)
             .bind(tenant)
             .execute(&pool)
             .await
