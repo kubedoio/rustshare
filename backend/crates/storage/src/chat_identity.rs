@@ -315,6 +315,7 @@ impl ChatIdentityStore {
             "SELECT operation_id,tenant_id,principal_id,workspace_id FROM chat_identity_replacements r
              WHERE state IN ('pending_revocation','pending_revocation_verification','pending_membership_verification')
                AND blocked_at IS NULL AND retry_at<=clock_timestamp() AND (lease_expires_at IS NULL OR lease_expires_at<=clock_timestamp())
+               AND EXISTS (SELECT 1 FROM users u WHERE u.id=r.principal_id AND u.tenant_id=r.tenant_id AND u.disabled_at IS NULL)
                AND NOT EXISTS (SELECT 1 FROM chat_identity_replacement_commands c WHERE c.operation_id=r.operation_id
                  AND c.outcome IN ('pending','ambiguous') AND c.phase=CASE WHEN r.state='pending_revocation' THEN 'revoke' ELSE 'admit' END)
              ORDER BY retry_at,created_at LIMIT 1",

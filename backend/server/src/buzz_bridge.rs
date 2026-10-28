@@ -263,7 +263,7 @@ impl OutboxConsumer for BuzzAdmissionBridge {
     }
 }
 
-async fn validate_conditional_command(
+pub(crate) async fn validate_conditional_command(
     pool: &PgPool,
     event: &IntegrationEvent,
     data: &AdmissionData,
@@ -273,6 +273,9 @@ async fn validate_conditional_command(
         return Ok(false);
     };
     let Some(revision) = data.expected_revision else {
+        return Ok(false);
+    };
+    let Ok(community_id) = uuid::Uuid::parse_str(&data.community_id) else {
         return Ok(false);
     };
     let Ok(revision) = i64::try_from(revision) else {
@@ -294,8 +297,8 @@ async fn validate_conditional_command(
         BuzzAdmissionOperation::Revoke => BUZZ_RELAY_REMOVE_MEMBER_KIND as i32,
     };
     Ok(
-        row.try_get::<String, _>("community_id")? == data.community_id
-            && row.try_get::<String, _>("operation_community")? == data.community_id
+        row.try_get::<uuid::Uuid, _>("community_id")? == community_id
+            && row.try_get::<uuid::Uuid, _>("operation_community")? == community_id
             && row.try_get::<String, _>("relay_url")? == data.relay_url
             && row.try_get::<String, _>("pubkey")? == data.buzz_pubkey
             && row.try_get::<i64, _>("expected_revision")? == revision
