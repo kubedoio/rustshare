@@ -64,6 +64,8 @@ pub struct ReplacementStatus {
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub failure_code: Option<String>,
+    pub blocked_at: Option<DateTime<Utc>>,
+    pub transient_failures: i16,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +91,10 @@ pub struct ReplacementLease {
     pub state: String,
     pub generation: i64,
     pub token: Uuid,
+}
+
+fn chat_binding_history_fence(pubkey: &str) -> String {
+    format!("chat-binding:{pubkey}")
 }
 
 /// Idempotent provisioning insert outcome (ADR-0036).
@@ -228,6 +234,7 @@ impl ChatIdentityStore {
             return Ok(false);
         }
         let mut fences = [
+            chat_binding_history_fence(&candidate),
             format!("{community_id}:{candidate}"),
             format!("{community_id}:old:{old_binding_id}"),
         ];
@@ -307,7 +314,7 @@ impl ChatIdentityStore {
         let candidate = sqlx::query(
             "SELECT operation_id,tenant_id,principal_id,workspace_id FROM chat_identity_replacements r
              WHERE state IN ('pending_revocation','pending_revocation_verification','pending_membership_verification')
-               AND retry_at<=clock_timestamp() AND (lease_expires_at IS NULL OR lease_expires_at<=clock_timestamp())
+               AND blocked_at IS NULL AND retry_at<=clock_timestamp() AND (lease_expires_at IS NULL OR lease_expires_at<=clock_timestamp())
                AND NOT EXISTS (SELECT 1 FROM chat_identity_replacement_commands c WHERE c.operation_id=r.operation_id
                  AND c.outcome IN ('pending','ambiguous') AND c.phase=CASE WHEN r.state='pending_revocation' THEN 'revoke' ELSE 'admit' END)
              ORDER BY retry_at,created_at LIMIT 1",
@@ -340,7 +347,7 @@ impl ChatIdentityStore {
         let row = sqlx::query(
             "UPDATE chat_identity_replacements SET lease_token=$3,lease_expires_at=clock_timestamp()+interval '90 seconds',
              generation=generation+1,updated_at=clock_timestamp()
-             WHERE tenant_id=$1 AND operation_id=$2 AND retry_at<=clock_timestamp()
+             WHERE tenant_id=$1 AND operation_id=$2 AND blocked_at IS NULL AND retry_at<=clock_timestamp()
              AND state IN ('pending_revocation','pending_revocation_verification','pending_membership_verification')
              AND (lease_expires_at IS NULL OR lease_expires_at<=clock_timestamp())
              RETURNING community_id,relay_url,relay_pubkey,old_pubkey,replacement_pubkey,state,generation",
@@ -381,7 +388,7 @@ impl ChatIdentityStore {
         principal_id: Uuid,
         operation_id: Uuid,
     ) -> Result<Option<ReplacementStatus>> {
-        let row = sqlx::query("SELECT operation_id,state,generation,created_at,updated_at,completed_at,failure_code
+        let row = sqlx::query("SELECT operation_id,state,generation,created_at,updated_at,completed_at,failure_code,blocked_at,transient_failures
             FROM chat_identity_replacements WHERE tenant_id=$1 AND principal_id=$2 AND operation_id=$3")
             .bind(tenant_id.0).bind(principal_id).bind(operation_id).fetch_optional(&self.pool).await?;
         row.map(|row| {
@@ -393,6 +400,8 @@ impl ChatIdentityStore {
                 updated_at: row.try_get("updated_at")?,
                 completed_at: row.try_get("completed_at")?,
                 failure_code: row.try_get("failure_code")?,
+                blocked_at: row.try_get("blocked_at")?,
+                transient_failures: row.try_get("transient_failures")?,
             })
         })
         .transpose()
@@ -813,7 +822,7 @@ impl ChatIdentityStore {
         }
         // Principals in different tenants must not race the same key's history check.
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(format!("chat-binding:{}", challenge.buzz_pubkey))
+            .bind(chat_binding_history_fence(&challenge.buzz_pubkey))
             .execute(&mut *tx)
             .await?;
         let key_seen = sqlx::query_scalar::<_, bool>(
@@ -1120,6 +1129,15 @@ impl ChatIdentityStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacement_and_first_binding_share_global_history_fence() {
+        let candidate = "ab".repeat(32);
+        assert_eq!(
+            chat_binding_history_fence(&candidate),
+            format!("chat-binding:{candidate}")
+        );
+    }
     use sqlx::PgPool;
 
     #[tokio::test]

@@ -23,6 +23,8 @@ CREATE TABLE chat_identity_replacements (
     lease_token UUID,
     lease_expires_at TIMESTAMPTZ,
     retry_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    transient_failures SMALLINT NOT NULL DEFAULT 0 CHECK (transient_failures BETWEEN 0 AND 5),
+    blocked_at TIMESTAMPTZ,
     failure_code TEXT CHECK (failure_code IS NULL OR length(failure_code)<=80),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -36,7 +38,7 @@ CREATE UNIQUE INDEX chat_identity_replacements_one_live_principal
     ON chat_identity_replacements(tenant_id,principal_id) WHERE state <> 'completed';
 CREATE INDEX chat_identity_replacements_work
     ON chat_identity_replacements(retry_at,lease_expires_at,created_at)
-    WHERE state <> 'completed';
+    WHERE state <> 'completed' AND blocked_at IS NULL;
 
 CREATE TABLE chat_identity_replacement_commands (
     command_id UUID PRIMARY KEY,

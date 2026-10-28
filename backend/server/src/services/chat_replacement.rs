@@ -14,6 +14,8 @@ use sha2::Digest as _;
 use sqlx::{PgPool, Row, Transaction};
 use uuid::Uuid;
 
+const MAX_TRANSIENT_FAILURES: i16 = 5;
+
 pub struct MembershipRead {
     pub request_id: Uuid,
     pub observation: BuzzMembershipObservation,
@@ -188,6 +190,7 @@ async fn queue_command(
         && (reads[0].observation.membership != BuzzMembership::Revoked
             || reads[1].observation.membership != BuzzMembership::Absent)
     {
+        record_blocked_failure(pool, lease, "replacement_precondition_failed").await?;
         return Ok(false);
     }
     if phase == "revoke" && reads[0].observation.community_id != lease.community_id.to_string() {
@@ -258,6 +261,10 @@ async fn queue_command(
     .await
     .map_err(|_| BuzzAuthorityError::Transport("cannot verify replacement mapping".into()))?;
     let Some(mapped) = mapped else {
+        tx.rollback().await.map_err(|_| {
+            BuzzAuthorityError::Transport("cannot release invalid replacement mapping".into())
+        })?;
+        record_blocked_failure(pool, lease, "replacement_mapping_changed").await?;
         return Ok(false);
     };
     if mapped.try_get::<String, _>("community_id").ok().as_deref()
@@ -271,6 +278,10 @@ async fn queue_command(
             != Some(relay_pubkey.as_str())
         || stored != digest(mapping_id, community_id, &relay_url, &relay_pubkey)
     {
+        tx.rollback().await.map_err(|_| {
+            BuzzAuthorityError::Transport("cannot release invalid replacement mapping".into())
+        })?;
+        record_blocked_failure(pool, lease, "replacement_mapping_changed").await?;
         return Ok(false);
     }
     let mut fences: Vec<_> = reads
@@ -360,7 +371,7 @@ pub async fn process_next_replacement(
     else {
         return Ok(false);
     };
-    match lease.state.as_str() {
+    let result = match lease.state.as_str() {
         "pending_revocation" => {
             let old = read_membership(pool, client, &lease, &lease.old_pubkey, None).await?;
             queue_command(pool, outbox, &lease, bridge_pubkey, "revoke", &[&old]).await
@@ -407,14 +418,28 @@ pub async fn process_next_replacement(
                     .await
                 }
                 BuzzMembership::Revoked => {
-                    record_failure(pool, &lease, "replacement_revoked").await?;
+                    record_blocked_failure(pool, &lease, "replacement_revoked").await?;
                     Ok(false)
                 }
                 BuzzMembership::Active => complete(pool, &lease, &old, &candidate).await,
             }
         }
         _ => Ok(false),
+    };
+    if let Err(error) = &result {
+        if matches!(error, BuzzAuthorityError::Transport(_)) {
+            record_transient_failure(pool, &lease).await?;
+        } else {
+            let code = match error {
+                BuzzAuthorityError::Unauthorized => "replacement_upstream_unauthorized",
+                BuzzAuthorityError::InvalidResponse(_) => "replacement_evidence_rejected",
+                BuzzAuthorityError::Config(_) => "replacement_configuration_invalid",
+                BuzzAuthorityError::Transport(_) => unreachable!(),
+            };
+            record_blocked_failure(pool, &lease, code).await?;
+        }
     }
+    result
 }
 
 pub fn spawn_replacement_worker(
@@ -442,7 +467,7 @@ pub fn spawn_replacement_worker(
     });
 }
 
-async fn record_failure(
+async fn record_blocked_failure(
     pool: &PgPool,
     lease: &ReplacementLease,
     code: &str,
@@ -458,7 +483,7 @@ async fn record_failure(
     if !lock_principal(&mut tx, lease).await? {
         return Ok(());
     }
-    let row = sqlx::query("UPDATE chat_identity_replacements SET failure_code=$4,retry_at=clock_timestamp()+interval '365 days',lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+    let row = sqlx::query("UPDATE chat_identity_replacements SET failure_code=$4,blocked_at=clock_timestamp(),retry_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
         WHERE tenant_id=$1 AND operation_id=$2 AND lease_token=$3 AND generation=$5 AND lease_expires_at>clock_timestamp()
         RETURNING actor_id,state")
         .bind(lease.tenant_id.0)
@@ -485,6 +510,61 @@ async fn record_failure(
         .await
         .map_err(|_| BuzzAuthorityError::Transport("cannot commit replacement failure".into()))?;
     Ok(())
+}
+
+async fn record_transient_failure(
+    pool: &PgPool,
+    lease: &ReplacementLease,
+) -> Result<(), BuzzAuthorityError> {
+    let mut tx = pool.begin().await.map_err(|_| {
+        BuzzAuthorityError::Transport("cannot begin replacement retry record".into())
+    })?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| BuzzAuthorityError::Transport("cannot set retry isolation".into()))?;
+    if !lock_principal(&mut tx, lease).await? {
+        return Ok(());
+    }
+    let row = sqlx::query("UPDATE chat_identity_replacements SET
+        transient_failures=transient_failures+1,
+        blocked_at=CASE WHEN transient_failures+1 >= $5 THEN clock_timestamp() ELSE NULL END,
+        retry_at=CASE WHEN transient_failures+1 >= $5 THEN clock_timestamp()
+                      ELSE clock_timestamp()+LEAST(300,5*power(2,transient_failures)::integer)*interval '1 second' END,
+        failure_code=CASE WHEN transient_failures+1 >= $5 THEN 'replacement_retries_exhausted' ELSE 'replacement_transport_retry' END,
+        lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+        WHERE tenant_id=$1 AND operation_id=$2 AND lease_token=$3 AND generation=$4
+          AND lease_expires_at>clock_timestamp()
+        RETURNING actor_id,state,failure_code")
+        .bind(lease.tenant_id.0)
+        .bind(lease.operation_id)
+        .bind(lease.token)
+        .bind(lease.generation)
+        .bind(MAX_TRANSIENT_FAILURES)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|_| BuzzAuthorityError::Transport("cannot record replacement retry".into()))?;
+    if let Some(row) = row {
+        sqlx::query("INSERT INTO chat_identity_replacement_audit(audit_id,tenant_id,operation_id,actor_id,from_state,to_state,reason_code)
+            VALUES(gen_random_uuid(),$1,$2,$3,$4,$4,$5)")
+            .bind(lease.tenant_id.0)
+            .bind(lease.operation_id)
+            .bind(row.try_get::<Uuid, _>("actor_id").map_err(|_| {
+                BuzzAuthorityError::InvalidResponse("malformed retry audit".into())
+            })?)
+            .bind(row.try_get::<String, _>("state").map_err(|_| {
+                BuzzAuthorityError::InvalidResponse("malformed retry audit".into())
+            })?)
+            .bind(row.try_get::<String, _>("failure_code").map_err(|_| {
+                BuzzAuthorityError::InvalidResponse("malformed retry audit".into())
+            })?)
+            .execute(&mut *tx)
+            .await
+            .map_err(|_| BuzzAuthorityError::Transport("cannot audit replacement retry".into()))?;
+    }
+    tx.commit()
+        .await
+        .map_err(|_| BuzzAuthorityError::Transport("cannot commit replacement retry".into()))
 }
 
 async fn complete(
@@ -550,12 +630,20 @@ async fn complete(
         || old.observation.pubkey != lease.old_pubkey
         || candidate.observation.pubkey != lease.replacement_pubkey
     {
+        tx.rollback().await.map_err(|_| {
+            BuzzAuthorityError::Transport("cannot release invalid replacement evidence".into())
+        })?;
+        record_blocked_failure(pool, lease, "replacement_evidence_rejected").await?;
         return Ok(false);
     }
     let mapped=sqlx::query("SELECT community_id,relay_url,relay_pubkey FROM chat_workspace_communities WHERE tenant_id=$1 AND workspace_id=$2 AND mapping_id=$3 AND active FOR SHARE")
         .bind(lease.tenant_id.0).bind(lease.workspace_id.0).bind(mapping_id).fetch_optional(&mut *tx).await
         .map_err(|_|BuzzAuthorityError::Transport("cannot check mapping".into()))?;
     let Some(mapped) = mapped else {
+        tx.rollback().await.map_err(|_| {
+            BuzzAuthorityError::Transport("cannot release invalid replacement mapping".into())
+        })?;
+        record_blocked_failure(pool, lease, "replacement_mapping_changed").await?;
         return Ok(false);
     };
     if mapped.try_get::<String, _>("community_id").ok().as_deref()
@@ -573,6 +661,10 @@ async fn complete(
             .as_deref()
             != Some(digest(mapping_id, community, &relay_url, &relay_pubkey).as_slice())
     {
+        tx.rollback().await.map_err(|_| {
+            BuzzAuthorityError::Transport("cannot release invalid replacement mapping".into())
+        })?;
+        record_blocked_failure(pool, lease, "replacement_mapping_changed").await?;
         return Ok(false);
     }
     let mut keys = [
@@ -714,9 +806,9 @@ mod tests {
             workspace_id: WorkspaceId(workspace),
             community_id: community,
             relay_url: "wss://relay.example.test".into(),
-            relay_pubkey,
+            relay_pubkey: relay_pubkey.clone(),
             old_pubkey: old_key,
-            replacement_pubkey: new_key,
+            replacement_pubkey: new_key.clone(),
             state: "pending_revocation".into(),
             generation: 1,
             token: Uuid::new_v4(),
@@ -774,12 +866,95 @@ mod tests {
         let reclaimed = store.claim_replacement().await.unwrap().unwrap();
         assert_eq!(reclaimed.operation_id, operation);
         assert!(reclaimed.generation > claimed.generation);
+        let stale_command = Uuid::new_v4();
+        let stale_event = Uuid::new_v4();
+        sqlx::query("UPDATE chat_identity_replacements SET state='pending_replacement_admission',generation=4,transient_failures=0,lease_token=NULL,lease_expires_at=NULL WHERE operation_id=$1")
+            .bind(operation).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO chat_identity_replacement_commands(command_id,operation_id,phase,attempt,operation_generation,community_id,pubkey,kind,expected_revision,actor_pubkey,outbox_event_id)
+            VALUES($1,$2,'admit',1,3,$3,$4,9030,0,$5,$6)")
+            .bind(stale_command).bind(operation).bind(community).bind(&new_key).bind(&relay_pubkey).bind(stale_event)
+            .execute(&pool).await.unwrap();
+        let mut ack_event = IntegrationEvent::builder()
+            .source("elembra://io.elembra.chat")
+            .r#type("io.elembra.chat.buzz.admission.requested.v1")
+            .tenant_id(TenantId(tenant))
+            .workspace_id(WorkspaceId(workspace))
+            .build()
+            .unwrap();
+        ack_event.id = stale_event;
+        crate::buzz_bridge::record_conditional_outcome(
+            &pool,
+            &ack_event,
+            &crate::buzz_bridge::AdmissionData {
+                operation: BuzzAdmissionOperation::Admit,
+                admission_id: new_binding,
+                community_id: community.to_string(),
+                relay_url: "wss://relay.example.test".into(),
+                buzz_pubkey: new_key.clone(),
+                command_version: Some(1),
+                command_id: Some(stale_command),
+                expected_revision: Some(0),
+            },
+            Some(false),
+        )
+        .await
+        .unwrap();
+        let stale_state: (String, i16) = sqlx::query_as(
+            "SELECT state,transient_failures FROM chat_identity_replacements WHERE operation_id=$1",
+        )
+        .bind(operation)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stale_state, ("pending_revocation_verification".into(), 1));
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT outcome FROM chat_identity_replacement_commands WHERE command_id=$1"
+            )
+            .bind(stale_command)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "stale"
+        );
+        sqlx::query("UPDATE chat_identity_replacements SET retry_at=clock_timestamp() WHERE operation_id=$1")
+            .bind(operation).execute(&pool).await.unwrap();
+        let mut retry_lease = store.claim_replacement().await.unwrap().unwrap();
+        for failure in 1..=MAX_TRANSIENT_FAILURES {
+            record_transient_failure(&pool, &retry_lease).await.unwrap();
+            if failure < MAX_TRANSIENT_FAILURES {
+                sqlx::query("UPDATE chat_identity_replacements SET retry_at=clock_timestamp() WHERE operation_id=$1")
+                    .bind(operation).execute(&pool).await.unwrap();
+                retry_lease = store.claim_replacement().await.unwrap().unwrap();
+            }
+        }
+        let blocked: (i16, Option<chrono::DateTime<chrono::Utc>>, String) = sqlx::query_as(
+            "SELECT transient_failures,blocked_at,failure_code FROM chat_identity_replacements WHERE operation_id=$1",
+        )
+        .bind(operation)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(blocked.0, MAX_TRANSIENT_FAILURES);
+        assert!(blocked.1.is_some());
+        assert_eq!(blocked.2, "replacement_retries_exhausted");
+        assert!(store.claim_replacement().await.unwrap().is_none());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM chat_identity_replacement_audit WHERE operation_id=$1 AND reason_code='replacement_retries_exhausted'")
+                .bind(operation).fetch_one(&pool).await.unwrap(),
+            1
+        );
         sqlx::query("DELETE FROM chat_buzz_membership_verifications WHERE request_id=$1")
             .bind(request_id)
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query("DELETE FROM chat_identity_replacement_audit WHERE operation_id=$1")
+            .bind(operation)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM chat_identity_replacement_commands WHERE operation_id=$1")
             .bind(operation)
             .execute(&pool)
             .await
