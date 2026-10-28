@@ -5,7 +5,7 @@ ALTER TABLE chat_workspace_communities
     CHECK (membership_protocol_version IN ('v1alpha1', 'v1alpha2'));
 ALTER TABLE chat_workspace_communities
     ADD CONSTRAINT chat_workspace_communities_v1alpha2_pin
-    CHECK (membership_protocol_version <> 'v1alpha2' OR relay_pubkey IS NOT NULL);
+    CHECK (membership_protocol_version <> 'v1alpha2' OR relay_pubkey ~ '^[0-9a-f]{64}$');
 
 CREATE TABLE chat_buzz_membership_operations (
     source TEXT NOT NULL,
@@ -67,7 +67,8 @@ BEGIN
                  'data',jsonb_build_object('operation','revoke','admission_id',a.admission_id,
                    'community_id',m.community_id,'relay_url',m.relay_url,'buzz_pubkey',a.buzz_pubkey)
                    || CASE WHEN m.membership_protocol_version='v1alpha2' THEN
-                     jsonb_build_object('command_version',1,'command_id',e.event_id)
+                     jsonb_build_object('command_version',1,'command_id',e.event_id,
+                       'relay_pubkey',m.relay_pubkey)
                      ELSE '{}'::jsonb END)
         FROM chat_buzz_admissions a
         JOIN chat_identity_bindings b ON b.tenant_id=a.tenant_id AND b.binding_id=a.binding_id
@@ -109,7 +110,8 @@ BEGIN
              'data',jsonb_build_object('operation','revoke','admission_id',a.admission_id,
                'community_id',m.community_id,'relay_url',m.relay_url,'buzz_pubkey',a.buzz_pubkey)
                || CASE WHEN m.membership_protocol_version='v1alpha2' THEN
-                 jsonb_build_object('command_version',1,'command_id',e.event_id)
+                 jsonb_build_object('command_version',1,'command_id',e.event_id,
+                   'relay_pubkey',m.relay_pubkey)
                  ELSE '{}'::jsonb END)
     FROM chat_buzz_admissions a
     JOIN chat_identity_bindings b ON b.tenant_id=a.tenant_id AND b.binding_id=a.binding_id

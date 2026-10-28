@@ -319,7 +319,9 @@ pub async fn update_community_mapping(
         .await
         .map_err(internal_db)?
     {
-        return Err(AppError::not_found("Chat workspace mapping not found"));
+        return Err(AppError::conflict(
+            "protocol changes or relay rotation are unsafe while legacy mutations or Buzz operations remain outstanding",
+        ));
     }
     Ok((StatusCode::OK, Json(updated)))
 }

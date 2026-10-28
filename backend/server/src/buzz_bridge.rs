@@ -31,6 +31,8 @@ pub(crate) struct AdmissionData {
     pub(crate) admission_id: uuid::Uuid,
     pub(crate) community_id: String,
     pub(crate) relay_url: String,
+    #[serde(default)]
+    pub(crate) relay_pubkey: Option<String>,
     pub(crate) buzz_pubkey: String,
     #[serde(default)]
     pub(crate) command_version: Option<u8>,
@@ -349,18 +351,24 @@ impl BuzzAdmissionBridge {
                 }
             }
         };
-        if data.operation == BuzzAdmissionOperation::Admit && !mapping.admission_current {
-            return ConsumerOutcome::Permanent {
-                reason: "stale Chat admission cannot activate a revoked binding".into(),
-            };
-        }
-        if ensure_lifecycle_operation(pool, event, &data, &mapping)
-            .await
-            .is_err()
-        {
-            return ConsumerOutcome::Retryable {
-                reason: "cannot persist durable v1alpha2 membership operation".into(),
-            };
+        match ensure_lifecycle_operation(pool, event, &data, &mapping).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return match block_lifecycle_operation(pool, event, None).await {
+                    Ok(true) => ConsumerOutcome::Permanent {
+                        reason: "v1alpha2 operation mapping changed after it was recorded".into(),
+                    },
+                    Ok(false) => ConsumerOutcome::Processed,
+                    Err(_) => ConsumerOutcome::Retryable {
+                        reason: "cannot persist changed v1alpha2 mapping state".into(),
+                    },
+                }
+            }
+            Err(_) => {
+                return ConsumerOutcome::Retryable {
+                    reason: "cannot persist durable v1alpha2 membership operation".into(),
+                }
+            }
         }
         match lifecycle_operation_state(pool, event).await {
             Ok(Some(state)) if state == "completed" => return ConsumerOutcome::Processed,
@@ -427,13 +435,20 @@ impl BuzzAdmissionBridge {
                         };
                     }
                     Ok(None) => {
-                        let _ =
-                            mark_lifecycle_attempt(pool, event, attempt.attempt, "rejected").await;
-                        let _ = block_lifecycle_operation(pool, event).await;
-                        return ConsumerOutcome::Permanent {
-                            reason:
-                                "Buzz relay definitively rejected conditional membership command"
-                                    .into(),
+                        return match block_lifecycle_operation(
+                            pool,
+                            event,
+                            Some(attempt.attempt),
+                        )
+                        .await
+                        {
+                            Ok(true) => ConsumerOutcome::Permanent {
+                                reason: "Buzz relay definitively rejected conditional membership command".into(),
+                            },
+                            Ok(false) => ConsumerOutcome::Processed,
+                            Err(_) => ConsumerOutcome::Retryable {
+                                reason: "cannot persist definitive Buzz rejection".into(),
+                            },
                         };
                     }
                     Err(_) => {
@@ -463,6 +478,18 @@ impl BuzzAdmissionBridge {
                     )
                     .await;
             }
+        }
+
+        if data.operation == BuzzAdmissionOperation::Admit && !mapping.admission_current {
+            return match block_lifecycle_operation(pool, event, None).await {
+                Ok(true) => ConsumerOutcome::Permanent {
+                    reason: "stale Chat admission cannot activate a revoked binding".into(),
+                },
+                Ok(false) => ConsumerOutcome::Processed,
+                Err(_) => ConsumerOutcome::Retryable {
+                    reason: "cannot persist stale Chat admission rejection".into(),
+                },
+            };
         }
 
         let minimum_revision = current
@@ -501,9 +528,14 @@ impl BuzzAdmissionBridge {
         if data.operation == BuzzAdmissionOperation::Admit
             && observation.membership == BuzzMembership::Revoked
         {
-            let _ = block_lifecycle_operation(pool, event).await;
-            return ConsumerOutcome::Permanent {
-                reason: "Buzz revocation tombstone prevents readmission".into(),
+            return match block_lifecycle_operation(pool, event, None).await {
+                Ok(true) => ConsumerOutcome::Permanent {
+                    reason: "Buzz revocation tombstone prevents readmission".into(),
+                },
+                Ok(false) => ConsumerOutcome::Processed,
+                Err(_) => ConsumerOutcome::Retryable {
+                    reason: "cannot persist Buzz revocation tombstone rejection".into(),
+                },
             };
         }
         let attempt_no = match next_lifecycle_attempt(pool, event).await {
@@ -632,14 +664,13 @@ async fn mapping_protocol(
         "SELECT m.membership_protocol_version FROM chat_workspace_communities m
          JOIN chat_buzz_admissions a ON a.tenant_id=m.tenant_id AND a.mapping_id=m.mapping_id
          WHERE a.tenant_id=$1 AND a.admission_id=$2 AND a.buzz_pubkey=$3
-           AND m.workspace_id=$4 AND m.community_id=$5 AND m.relay_url=$6",
+           AND m.workspace_id=$4 AND m.community_id=$5",
     )
     .bind(event.tenant_id.0)
     .bind(data.admission_id)
     .bind(&data.buzz_pubkey)
     .bind(event.workspace_id.0)
     .bind(&data.community_id)
-    .bind(&data.relay_url)
     .fetch_optional(pool)
     .await
 }
@@ -650,21 +681,25 @@ async fn lifecycle_mapping(
     data: &AdmissionData,
 ) -> Result<Option<LifecycleMapping>, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT m.mapping_id,m.relay_pubkey,
+        "SELECT m.mapping_id,m.relay_url AS current_relay_url,m.relay_pubkey AS current_relay_pubkey,
            (a.active AND b.status='active' AND b.revoked_at IS NULL
-             AND COALESCE(u.disabled_at IS NULL,false)) AS admission_current
+             AND COALESCE(u.disabled_at IS NULL,false) AND m.active
+             AND COALESCE(ae.enabled,false) AND COALESCE(aup.enabled,true)) AS admission_current
          FROM chat_workspace_communities m
          JOIN chat_buzz_admissions a ON a.tenant_id=m.tenant_id AND a.mapping_id=m.mapping_id
          JOIN chat_identity_bindings b ON b.tenant_id=a.tenant_id AND b.binding_id=a.binding_id
          LEFT JOIN users u ON u.tenant_id=b.tenant_id AND u.id=b.principal_id
-         WHERE m.tenant_id=$1 AND m.workspace_id=$2 AND m.community_id=$3 AND m.relay_url=$4
+         LEFT JOIN application_enablements ae ON ae.tenant_id=m.tenant_id
+           AND ae.workspace_id=m.workspace_id AND ae.application_id='io.elembra.chat'
+         LEFT JOIN application_user_preferences aup ON aup.user_id=b.principal_id
+           AND aup.application_id='io.elembra.chat'
+         WHERE m.tenant_id=$1 AND m.workspace_id=$2 AND m.community_id=$3
            AND m.membership_protocol_version='v1alpha2' AND m.relay_pubkey IS NOT NULL
-           AND a.admission_id=$5 AND a.buzz_pubkey=$6",
+           AND a.admission_id=$4 AND a.buzz_pubkey=$5",
     )
     .bind(event.tenant_id.0)
     .bind(event.workspace_id.0)
     .bind(&data.community_id)
-    .bind(&data.relay_url)
     .bind(data.admission_id)
     .bind(&data.buzz_pubkey)
     .fetch_optional(pool)
@@ -673,16 +708,24 @@ async fn lifecycle_mapping(
     let Ok(community_id) = uuid::Uuid::parse_str(&data.community_id) else {
         return Ok(None);
     };
-    let relay_pubkey: Option<String> = row.try_get("relay_pubkey")?;
-    let Some(relay_pubkey) = relay_pubkey else {
+    let Some(relay_pubkey) = data.relay_pubkey.as_deref() else {
         return Ok(None);
     };
+    if relay_pubkey.len() != 64 || !relay_pubkey.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(None);
+    }
+    let admission_current: bool = row.try_get("admission_current")?
+        && row.try_get::<String, _>("current_relay_url")? == data.relay_url
+        && row
+            .try_get::<Option<String>, _>("current_relay_pubkey")?
+            .as_deref()
+            == Some(relay_pubkey);
     Ok(Some(LifecycleMapping {
         mapping_id: row.try_get("mapping_id")?,
         community_id,
         relay_url: data.relay_url.clone(),
-        relay_pubkey,
-        admission_current: row.try_get("admission_current")?,
+        relay_pubkey: relay_pubkey.to_ascii_lowercase(),
+        admission_current,
     }))
 }
 
@@ -691,12 +734,42 @@ async fn ensure_lifecycle_operation(
     event: &IntegrationEvent,
     data: &AdmissionData,
     mapping: &LifecycleMapping,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query(
+        "SELECT community_id,relay_url,relay_pubkey,membership_protocol_version
+         FROM chat_workspace_communities
+         WHERE tenant_id=$1 AND mapping_id=$2 FOR UPDATE",
+    )
+    .bind(event.tenant_id.0)
+    .bind(mapping.mapping_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(row) = row else {
+        tx.rollback().await?;
+        return Ok(false);
+    };
+    let mapped_community: String = row.try_get("community_id")?;
+    let mapped_relay: String = row.try_get("relay_url")?;
+    let mapped_pin: Option<String> = row.try_get("relay_pubkey")?;
+    let protocol: String = row.try_get("membership_protocol_version")?;
+    let protocol_valid = protocol == "v1alpha2" && mapped_community == data.community_id;
+    let admission_valid = protocol_valid
+        && mapping.admission_current
+        && mapped_relay == mapping.relay_url
+        && mapped_pin.as_deref() == Some(mapping.relay_pubkey.as_str());
+    let state = if (data.operation == BuzzAdmissionOperation::Admit && !admission_valid)
+        || !protocol_valid
+    {
+        "blocked"
+    } else {
+        "pending"
+    };
     sqlx::query(
         "INSERT INTO chat_buzz_membership_operations
            (source,event_id,tenant_id,workspace_id,mapping_id,admission_id,operation,
             community_id,relay_url,relay_pubkey,pubkey,state)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending')
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          ON CONFLICT (source,event_id) DO NOTHING",
     )
     .bind(&event.source)
@@ -713,9 +786,35 @@ async fn ensure_lifecycle_operation(
     .bind(&mapping.relay_url)
     .bind(&mapping.relay_pubkey)
     .bind(&data.buzz_pubkey)
-    .execute(pool)
+    .bind(state)
+    .execute(&mut *tx)
     .await?;
-    Ok(())
+    let matches = sqlx::query_scalar(
+        "SELECT EXISTS (
+           SELECT 1 FROM chat_buzz_membership_operations
+           WHERE source=$1 AND event_id=$2 AND tenant_id=$3 AND workspace_id=$4
+             AND mapping_id=$5 AND admission_id=$6 AND operation=$7
+             AND community_id=$8 AND relay_url=$9 AND relay_pubkey=$10 AND pubkey=$11
+         )",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .bind(event.tenant_id.0)
+    .bind(event.workspace_id.0)
+    .bind(mapping.mapping_id)
+    .bind(data.admission_id)
+    .bind(match data.operation {
+        BuzzAdmissionOperation::Admit => "admit",
+        BuzzAdmissionOperation::Revoke => "revoke",
+    })
+    .bind(mapping.community_id)
+    .bind(&mapping.relay_url)
+    .bind(&mapping.relay_pubkey)
+    .bind(&data.buzz_pubkey)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(matches)
 }
 
 async fn latest_lifecycle_attempt(
@@ -781,6 +880,19 @@ async fn create_lifecycle_attempt(
 ) -> Result<(), sqlx::Error> {
     let expected_revision = i64::try_from(expected_revision)
         .map_err(|_| sqlx::Error::Protocol("membership revision overflow".into()))?;
+    let mut tx = pool.begin().await?;
+    let operation_state: Option<String> = sqlx::query_scalar(
+        "SELECT state FROM chat_buzz_membership_operations
+         WHERE source=$1 AND event_id=$2 FOR UPDATE",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if operation_state.as_deref() != Some("pending") {
+        tx.rollback().await?;
+        return Ok(());
+    }
     sqlx::query(
         "INSERT INTO chat_buzz_membership_command_attempts
            (source,event_id,attempt,command_id,expected_revision,signed_event,outcome)
@@ -792,8 +904,9 @@ async fn create_lifecycle_attempt(
     .bind(command_id)
     .bind(expected_revision)
     .bind(signed_event)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -822,21 +935,49 @@ async fn complete_lifecycle_operation(
     event: &IntegrationEvent,
     observation: &crate::buzz_gateway::BuzzMembershipObservation,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE chat_buzz_membership_operations SET state='completed',verification_request_id=$1,accepted_revision=$2,accepted_state=$3,completed_at=clock_timestamp() WHERE source=$4 AND event_id=$5 AND state='pending'")
+    let result = sqlx::query("UPDATE chat_buzz_membership_operations SET state='completed',verification_request_id=$1,accepted_revision=$2,accepted_state=$3,completed_at=clock_timestamp() WHERE source=$4 AND event_id=$5 AND state='pending'")
         .bind(uuid::Uuid::parse_str(&observation.request_id).map_err(|_| sqlx::Error::Protocol("invalid verification request id".into()))?)
         .bind(i64::try_from(observation.membership_revision).map_err(|_| sqlx::Error::Protocol("membership revision overflow".into()))?)
         .bind(match observation.membership { BuzzMembership::Active => "active", BuzzMembership::Absent => "absent", BuzzMembership::Revoked => "revoked" })
         .bind(&event.source).bind(event.id).execute(pool).await?;
-    Ok(())
+    if result.rows_affected() == 1
+        || lifecycle_operation_state(pool, event).await?.as_deref() == Some("completed")
+    {
+        Ok(())
+    } else {
+        Err(sqlx::Error::Protocol(
+            "v1alpha2 membership operation was not pending".into(),
+        ))
+    }
 }
 
 async fn block_lifecycle_operation(
     pool: &PgPool,
     event: &IntegrationEvent,
-) -> Result<(), sqlx::Error> {
+    attempt: Option<i32>,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    if let Some(attempt) = attempt {
+        sqlx::query("UPDATE chat_buzz_membership_command_attempts SET outcome='rejected' WHERE source=$1 AND event_id=$2 AND attempt=$3 AND outcome IN ('pending','ambiguous')")
+            .bind(&event.source).bind(event.id).bind(attempt).execute(&mut *tx).await?;
+    }
     sqlx::query("UPDATE chat_buzz_membership_operations SET state='blocked' WHERE source=$1 AND event_id=$2 AND state='pending'")
-        .bind(&event.source).bind(event.id).execute(pool).await?;
-    Ok(())
+        .bind(&event.source).bind(event.id).execute(&mut *tx).await?;
+    let state: Option<String> = sqlx::query_scalar(
+        "SELECT state FROM chat_buzz_membership_operations WHERE source=$1 AND event_id=$2",
+    )
+    .bind(&event.source)
+    .bind(event.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    match state.as_deref() {
+        Some("blocked") => Ok(true),
+        Some("completed") => Ok(false),
+        _ => Err(sqlx::Error::Protocol(
+            "v1alpha2 membership operation cannot be blocked".into(),
+        )),
+    }
 }
 
 pub(crate) async fn validate_conditional_command(

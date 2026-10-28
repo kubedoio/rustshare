@@ -1054,6 +1054,7 @@ mod tests {
             admission_id: new_binding,
             community_id: community.to_string(),
             relay_url: "wss://relay.example.test".into(),
+            relay_pubkey: None,
             buzz_pubkey: new_key.clone(),
             command_version: Some(1),
             command_id: Some(stale_command),

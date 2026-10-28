@@ -2,7 +2,9 @@ use anyhow::{anyhow, Result};
 use chrono::{Duration, Utc};
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_integration_events::{ConsumerOutcome, IntegrationEvent, OutboxConsumer};
-use rustshare_resource_auth::{BindingChallenge, BindingStatus, ChatIdentityBinding};
+use rustshare_resource_auth::{
+    BindingChallenge, BindingStatus, ChatIdentityBinding, WorkspaceCommunityMapping,
+};
 use rustshare_storage::ChatIdentityStore;
 use sqlx::{postgres::PgConnectOptions, PgPool};
 use uuid::Uuid;
@@ -861,13 +863,14 @@ async fn membership_protocol_transition_and_writers_are_versioned() -> Result<()
     .await?;
     let tenant = Uuid::new_v4();
     let principal_v1 = Uuid::new_v4();
+    let principal_v1_revoke = Uuid::new_v4();
     let principal_v2 = Uuid::new_v4();
     let principal_deleted = Uuid::new_v4();
     let workspace = Uuid::new_v4();
     let community = Uuid::new_v4();
     let result: Result<()> = async {
         sqlx::query("INSERT INTO tenants (id,name) VALUES ($1,$2)").bind(tenant).bind(format!("membership protocol {tenant}")).execute(&pool).await?;
-        for principal in [principal_v1, principal_v2, principal_deleted] {
+        for principal in [principal_v1, principal_v1_revoke, principal_v2, principal_deleted] {
             sqlx::query("INSERT INTO users (id,username,email,password_hash,display_name,storage_quota,tenant_id) VALUES ($1,$2,$3,'test-only',$2,1024,$4)")
                 .bind(principal).bind(format!("chat_protocol_{}",principal.simple())).bind(format!("{principal}@test.local")).bind(tenant).execute(&pool).await?;
         }
@@ -882,11 +885,28 @@ async fn membership_protocol_transition_and_writers_are_versioned() -> Result<()
         let v1_event: (Uuid,serde_json::Value,serde_json::Value)=sqlx::query_as("SELECT event_id,event_json->'data',event_json FROM integration_outbox WHERE tenant_id=$1 AND event_type='io.elembra.chat.buzz.admission.requested.v1'")
             .bind(tenant).fetch_one(&pool).await?;
         anyhow::ensure!(v1_event.1.get("command_version").is_none(),"default mapping must retain the v1alpha1 payload");
+        let (legacy_revoke_challenge,legacy_revoke_binding)=issue(&store,tenant,principal_v1_revoke,'4',None).await?;
+        anyhow::ensure!(store.consume_and_activate(&legacy_revoke_challenge,&legacy_revoke_binding,Utc::now()).await?);
+        anyhow::ensure!(store.admit_binding(TenantId(tenant),PrincipalId(principal_v1_revoke),WorkspaceId(workspace)).await?);
+        store.revoke_principal(TenantId(tenant),PrincipalId(principal_v1_revoke)).await?;
+        let legacy_revoke_event: (Uuid,serde_json::Value,serde_json::Value)=sqlx::query_as("SELECT event_id,event_json->'data',event_json FROM integration_outbox WHERE tenant_id=$1 AND event_type='io.elembra.chat.buzz.admission.revoked.v1' ORDER BY created_at LIMIT 1")
+            .bind(tenant).fetch_one(&pool).await?;
+        anyhow::ensure!(legacy_revoke_event.1.get("command_version").is_none(),"default mapping must retain the v1alpha1 revocation payload");
+        let attempted_v2 = WorkspaceCommunityMapping {
+            tenant_id: TenantId(tenant),
+            workspace_id: WorkspaceId(Uuid::new_v4()),
+            community_id: community.to_string(),
+            relay_url: "wss://relay.example.test".into(),
+            relay_pubkey: Some("1".repeat(64)),
+            membership_protocol_version: "v1alpha2".into(),
+            active: false,
+        };
+        anyhow::ensure!(store.insert_mapping(&attempted_v2).await.is_err(),"a previously mapped community must not bypass reconciliation through a new v1alpha2 mapping");
         anyhow::ensure!(!store.update_mapping_relay(TenantId(tenant),WorkspaceId(workspace),"wss://changed.example.test".into(),Some("1".repeat(64)),"v1alpha2").await?,"unprocessed legacy event must prevent opt-in");
         let unchanged: (String,String)=sqlx::query_as("SELECT relay_url,membership_protocol_version FROM chat_workspace_communities WHERE tenant_id=$1 AND workspace_id=$2").bind(tenant).bind(workspace).fetch_one(&pool).await?;
         anyhow::ensure!(unchanged == ("wss://relay.example.test".to_string(),"v1alpha1".to_string()),"rejected opt-in must not partially update the mapping");
-        sqlx::query("INSERT INTO integration_deliveries (consumer_id,source,event_id,event_type,tenant_id,workspace_id,state,processed_at) SELECT 'io.elembra.chat.buzz-bridge.v1',source,event_id,event_type,tenant_id,workspace_id,'processed',now() FROM integration_outbox WHERE event_id=$1")
-            .bind(v1_event.0).execute(&pool).await?;
+        sqlx::query("INSERT INTO integration_deliveries (consumer_id,source,event_id,event_type,tenant_id,workspace_id,state,processed_at) SELECT 'io.elembra.chat.buzz-bridge.v1',source,event_id,event_type,tenant_id,workspace_id,'processed',now() FROM integration_outbox WHERE tenant_id=$1 AND event_json->'data'->>'community_id'=$2 AND event_json->'data'->>'command_version' IS NULL")
+            .bind(tenant).bind(community.to_string()).execute(&pool).await?;
         anyhow::ensure!(store.update_mapping_relay(TenantId(tenant),WorkspaceId(workspace),"wss://relay.example.test".into(),Some("1".repeat(64)),"v1alpha2").await?,"drained legacy event should allow explicit opt-in");
         let delayed_legacy: IntegrationEvent = serde_json::from_value(v1_event.2.clone())?;
         let service_keys = nostr::Keys::generate();
@@ -900,22 +920,37 @@ async fn membership_protocol_transition_and_writers_are_versioned() -> Result<()
             std::env::remove_var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY");
         }
         anyhow::ensure!(matches!(delayed_result, ConsumerOutcome::Permanent { .. }),"delayed unversioned event must be rejected after v1alpha2 opt-in");
+        let delayed_revoke: IntegrationEvent = serde_json::from_value(legacy_revoke_event.2.clone())?;
+        let delayed_revoke_result = bridge.process(&delayed_revoke).await;
+        anyhow::ensure!(matches!(delayed_revoke_result, ConsumerOutcome::Permanent { .. }),"delayed unversioned revocation must be rejected after v1alpha2 opt-in");
         let (v2_challenge,v2_binding)=issue(&store,tenant,principal_v2,'2',None).await?;
         anyhow::ensure!(store.consume_and_activate(&v2_challenge,&v2_binding,Utc::now()).await?);
         anyhow::ensure!(store.admit_binding(TenantId(tenant),PrincipalId(principal_v2),WorkspaceId(workspace)).await?);
-        let v2_event: (Uuid,serde_json::Value)=sqlx::query_as("SELECT event_id,event_json->'data' FROM integration_outbox WHERE tenant_id=$1 AND event_type='io.elembra.chat.buzz.admission.requested.v1' AND event_id<>$2")
-            .bind(tenant).bind(v1_event.0).fetch_one(&pool).await?;
+        let v2_event: (Uuid,serde_json::Value,serde_json::Value)=sqlx::query_as("SELECT event_id,event_json->'data',event_json FROM integration_outbox WHERE tenant_id=$1 AND event_type='io.elembra.chat.buzz.admission.requested.v1' AND event_json->'data'->>'command_version'='1'")
+            .bind(tenant).fetch_one(&pool).await?;
         anyhow::ensure!(v2_event.1.get("command_version").and_then(|v|v.as_i64())==Some(1));
         anyhow::ensure!(v2_event.1.get("command_id").and_then(|v|v.as_str())==Some(v2_event.0.to_string().as_str()));
+        anyhow::ensure!(v2_event.1.get("relay_pubkey").and_then(|v|v.as_str())==Some("1".repeat(64).as_str()),"v1alpha2 outbox intent snapshots its relay identity pin");
+        let pending_admission: IntegrationEvent = serde_json::from_value(v2_event.2.clone())?;
+        let v2_admission_id = Uuid::parse_str(v2_event.1.get("admission_id").and_then(|v|v.as_str()).unwrap())?;
+        sqlx::query("INSERT INTO chat_buzz_membership_operations (source,event_id,tenant_id,workspace_id,mapping_id,admission_id,operation,community_id,relay_url,relay_pubkey,pubkey,state) SELECT 'elembra://io.elembra.chat',$1,$2,$3,mapping_id,$4,'admit',$5,'wss://relay.example.test',$6,$7,'pending' FROM chat_workspace_communities WHERE tenant_id=$2 AND workspace_id=$3")
+            .bind(v2_event.0).bind(tenant).bind(workspace).bind(v2_admission_id).bind(community).bind("1".repeat(64)).bind(&v2_binding.buzz_pubkey).execute(&pool).await?;
+        anyhow::ensure!(!store.update_mapping_relay(TenantId(tenant),WorkspaceId(workspace),"wss://rotated.example.test".into(),Some("1".repeat(64)),"v1alpha2").await?,"relay mapping changes must wait for durable v1alpha2 operations to finish");
+        sqlx::query("UPDATE chat_workspace_communities SET active=false WHERE tenant_id=$1 AND workspace_id=$2").bind(tenant).bind(workspace).execute(&pool).await?;
+        let inactive_result = bridge.process(&pending_admission).await;
+        anyhow::ensure!(matches!(inactive_result,ConsumerOutcome::Permanent { .. }),"queued v1alpha2 admission must not activate against a disabled mapping");
+        sqlx::query("UPDATE chat_workspace_communities SET active=true WHERE tenant_id=$1 AND workspace_id=$2").bind(tenant).bind(workspace).execute(&pool).await?;
         store.revoke_principal(TenantId(tenant),PrincipalId(principal_v2)).await?;
         let revoked: serde_json::Value=sqlx::query_scalar("SELECT event_json->'data' FROM integration_outbox WHERE tenant_id=$1 AND event_type='io.elembra.chat.buzz.admission.revoked.v1' AND event_json->'data'->>'admission_id'=(SELECT admission_id::text FROM chat_buzz_admissions WHERE tenant_id=$1 AND binding_id=$2)")
             .bind(tenant).bind(v2_binding.binding_id).fetch_one(&pool).await?;
         anyhow::ensure!(revoked.get("command_version").and_then(|v|v.as_i64())==Some(1),"admin revocation uses the selected v1alpha2 contract");
+        anyhow::ensure!(revoked.get("relay_pubkey").and_then(|v|v.as_str())==Some("1".repeat(64).as_str()),"admin revocation retains the relay identity pin");
         sqlx::query("UPDATE users SET disabled_at=now() WHERE id=$1 AND tenant_id=$2")
             .bind(principal_v1).bind(tenant).execute(&pool).await?;
         let offboarded: serde_json::Value=sqlx::query_scalar("SELECT event_json->'data' FROM integration_outbox WHERE tenant_id=$1 AND event_type='io.elembra.chat.buzz.admission.revoked.v1' AND event_json->'data'->>'admission_id'=(SELECT admission_id::text FROM chat_buzz_admissions WHERE tenant_id=$1 AND binding_id=(SELECT binding_id FROM chat_identity_bindings WHERE principal_id=$2))")
             .bind(tenant).bind(principal_v1).fetch_one(&pool).await?;
         anyhow::ensure!(offboarded.get("command_version").and_then(|v|v.as_i64())==Some(1),"Principal offboarding uses the selected v1alpha2 contract");
+        anyhow::ensure!(offboarded.get("relay_pubkey").and_then(|v|v.as_str())==Some("1".repeat(64).as_str()),"offboarding retains the relay identity pin");
         let (deleted_challenge,deleted_binding)=issue(&store,tenant,principal_deleted,'3',None).await?;
         anyhow::ensure!(store.consume_and_activate(&deleted_challenge,&deleted_binding,Utc::now()).await?);
         anyhow::ensure!(store.admit_binding(TenantId(tenant),PrincipalId(principal_deleted),WorkspaceId(workspace)).await?);
@@ -926,6 +961,14 @@ async fn membership_protocol_transition_and_writers_are_versioned() -> Result<()
     }.await;
     let cleanup = async {
         sqlx::query("DELETE FROM integration_outbox WHERE tenant_id=$1")
+            .bind(tenant)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM chat_buzz_membership_command_attempts WHERE (source,event_id) IN (SELECT source,event_id FROM chat_buzz_membership_operations WHERE tenant_id=$1)")
+            .bind(tenant)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM chat_buzz_membership_operations WHERE tenant_id=$1")
             .bind(tenant)
             .execute(&pool)
             .await?;

@@ -648,6 +648,26 @@ impl ChatIdentityStore {
     }
 
     pub async fn insert_mapping(&self, mapping: &WorkspaceCommunityMapping) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        if mapping.membership_protocol_version == "v1alpha2" {
+            let previous_mapping = sqlx::query_scalar::<_, Uuid>(
+                "SELECT mapping_id FROM chat_workspace_communities
+                 WHERE community_id=$1 FOR UPDATE",
+            )
+            .bind(&mapping.community_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if previous_mapping.is_some() {
+                return Err(anyhow::anyhow!(
+                    "a previously mapped community must be reconciled before v1alpha2 opt-in"
+                ));
+            }
+            if Self::legacy_membership_commands_outstanding(&mut tx, &mapping.community_id).await? {
+                return Err(anyhow::anyhow!(
+                    "legacy membership commands must drain before v1alpha2 opt-in"
+                ));
+            }
+        }
         sqlx::query(
             "INSERT INTO chat_workspace_communities
                 (mapping_id, tenant_id, workspace_id, community_id, relay_url, relay_pubkey, membership_protocol_version, active)
@@ -661,8 +681,9 @@ impl ChatIdentityStore {
         .bind(&mapping.relay_pubkey)
         .bind(&mapping.membership_protocol_version)
         .bind(mapping.active)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -676,6 +697,35 @@ impl ChatIdentityStore {
         &self,
         mapping: &WorkspaceCommunityMapping,
     ) -> Result<ProvisionMappingOutcome, ProvisionMappingError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| ProvisionMappingError::Other(error.to_string()))?;
+        if mapping.membership_protocol_version == "v1alpha2" {
+            let previous_mapping = sqlx::query_scalar::<_, Uuid>(
+                "SELECT mapping_id FROM chat_workspace_communities
+                 WHERE community_id=$1 FOR UPDATE",
+            )
+            .bind(&mapping.community_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| ProvisionMappingError::Other(error.to_string()))?;
+            if previous_mapping.is_some() {
+                return Err(ProvisionMappingError::Other(
+                    "a previously mapped community must be reconciled before v1alpha2 opt-in"
+                        .into(),
+                ));
+            }
+            if Self::legacy_membership_commands_outstanding(&mut tx, &mapping.community_id)
+                .await
+                .map_err(|error| ProvisionMappingError::Other(error.to_string()))?
+            {
+                return Err(ProvisionMappingError::Other(
+                    "legacy membership commands must drain before v1alpha2 opt-in".into(),
+                ));
+            }
+        }
         let result = sqlx::query(
             "INSERT INTO chat_workspace_communities
                 (mapping_id, tenant_id, workspace_id, community_id, relay_url, relay_pubkey, membership_protocol_version, active)
@@ -689,11 +739,19 @@ impl ChatIdentityStore {
         .bind(&mapping.relay_pubkey)
         .bind(&mapping.membership_protocol_version)
         .bind(mapping.active)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await;
         match result {
-            Ok(_) => Ok(ProvisionMappingOutcome::Inserted),
+            Ok(_) => {
+                tx.commit()
+                    .await
+                    .map_err(|error| ProvisionMappingError::Other(error.to_string()))?;
+                Ok(ProvisionMappingOutcome::Inserted)
+            }
             Err(error) => {
+                tx.rollback()
+                    .await
+                    .map_err(|rollback| ProvisionMappingError::Other(rollback.to_string()))?;
                 let constraint = error
                     .as_database_error()
                     .and_then(|db| db.constraint())
@@ -743,7 +801,7 @@ impl ChatIdentityStore {
         }
         let mut tx = self.pool.begin().await?;
         let row = sqlx::query(
-            "SELECT community_id,membership_protocol_version
+            "SELECT mapping_id,community_id,relay_url,relay_pubkey,membership_protocol_version
              FROM chat_workspace_communities WHERE tenant_id=$1 AND workspace_id=$2 FOR UPDATE",
         )
         .bind(tenant_id.0)
@@ -756,6 +814,9 @@ impl ChatIdentityStore {
         };
         let current: String = row.try_get("membership_protocol_version")?;
         let community_id: String = row.try_get("community_id")?;
+        let mapping_id: Uuid = row.try_get("mapping_id")?;
+        let endpoint_changed = row.try_get::<String, _>("relay_url")? != relay_url
+            || row.try_get::<Option<String>, _>("relay_pubkey")? != relay_pubkey;
         if current == "v1alpha2" && membership_protocol_version != current {
             tx.rollback().await?;
             return Ok(false);
@@ -764,32 +825,52 @@ impl ChatIdentityStore {
             tx.rollback().await?;
             return Ok(false);
         }
-        if membership_protocol_version == "v1alpha2" && current != "v1alpha2" {
-            let outstanding: bool = sqlx::query_scalar(
-                "SELECT EXISTS (
-                   SELECT 1 FROM integration_outbox o
-                   LEFT JOIN integration_deliveries d
-                     ON d.source=o.source AND d.event_id=o.event_id
-                    AND d.consumer_id='io.elembra.chat.buzz-bridge.v1'
-                   WHERE o.event_type IN (
-                     'io.elembra.chat.buzz.admission.requested.v1',
-                     'io.elembra.chat.buzz.admission.revoked.v1')
-                     AND o.event_json->'data'->>'community_id'=$1
-                     AND COALESCE(d.state,'pending') <> 'processed'
-                 )",
+        if membership_protocol_version == "v1alpha2"
+            && current != "v1alpha2"
+            && Self::legacy_membership_commands_outstanding(&mut tx, &community_id).await?
+        {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        if endpoint_changed
+            && sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM chat_buzz_membership_operations
+                 WHERE tenant_id=$1 AND mapping_id=$2 AND state='pending')",
             )
-            .bind(&community_id)
+            .bind(tenant_id.0)
+            .bind(mapping_id)
             .fetch_one(&mut *tx)
-            .await?;
-            if outstanding {
-                tx.rollback().await?;
-                return Ok(false);
-            }
+            .await?
+        {
+            tx.rollback().await?;
+            return Ok(false);
         }
         sqlx::query("UPDATE chat_workspace_communities SET relay_url=$1,relay_pubkey=$2,membership_protocol_version=$3 WHERE tenant_id=$4 AND workspace_id=$5")
             .bind(&relay_url).bind(&relay_pubkey).bind(membership_protocol_version).bind(tenant_id.0).bind(workspace_id.0).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(true)
+    }
+
+    async fn legacy_membership_commands_outstanding(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        community_id: &str,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT EXISTS (
+           SELECT 1 FROM integration_outbox o
+           LEFT JOIN integration_deliveries d
+             ON d.source=o.source AND d.event_id=o.event_id
+            AND d.consumer_id='io.elembra.chat.buzz-bridge.v1'
+           WHERE o.event_type IN (
+             'io.elembra.chat.buzz.admission.requested.v1',
+             'io.elembra.chat.buzz.admission.revoked.v1')
+             AND o.event_json->'data'->>'community_id'=$1
+             AND COALESCE(d.state,'pending') <> 'processed'
+         )",
+        )
+        .bind(community_id)
+        .fetch_one(&mut **tx)
+        .await
     }
 
     pub async fn insert_challenge(&self, challenge: &BindingChallenge) -> Result<()> {
@@ -834,6 +915,7 @@ impl ChatIdentityStore {
         }
         let row = sqlx::query(
             "SELECT b.binding_id, b.buzz_pubkey, m.mapping_id, m.community_id, m.relay_url,
+                    m.relay_pubkey,
                     m.membership_protocol_version
              FROM chat_identity_bindings b
              JOIN users u
@@ -862,6 +944,7 @@ impl ChatIdentityStore {
         let mapping_id: Uuid = row.try_get("mapping_id")?;
         let community_id: String = row.try_get("community_id")?;
         let relay_url: String = row.try_get("relay_url")?;
+        let relay_pubkey: Option<String> = row.try_get("relay_pubkey")?;
         let buzz_pubkey: String = row.try_get("buzz_pubkey")?;
         sqlx::query(
             "INSERT INTO chat_buzz_admissions
@@ -892,7 +975,8 @@ impl ChatIdentityStore {
                                                   'community_id', $4, 'relay_url', $5,
                                                   'buzz_pubkey', $6)
                        || CASE WHEN $7 = 'v1alpha2' THEN jsonb_build_object(
-                           'command_version', 1, 'command_id', outbox_event.event_id)
+                           'command_version', 1, 'command_id', outbox_event.event_id,
+                           'relay_pubkey', $8)
                            ELSE '{}'::jsonb END)
             FROM outbox_event",
         )
@@ -903,6 +987,7 @@ impl ChatIdentityStore {
         .bind(relay_url)
         .bind(buzz_pubkey)
         .bind(row.try_get::<String, _>("membership_protocol_version")?)
+        .bind(relay_pubkey)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -1227,7 +1312,8 @@ impl ChatIdentityStore {
                                                    'relay_url', m.relay_url,
                                                    'buzz_pubkey', a.buzz_pubkey)
                        || CASE WHEN m.membership_protocol_version = 'v1alpha2' THEN jsonb_build_object(
-                           'command_version', 1, 'command_id', outbox_event.event_id)
+                           'command_version', 1, 'command_id', outbox_event.event_id,
+                           'relay_pubkey', m.relay_pubkey)
                            ELSE '{}'::jsonb END)
              FROM chat_buzz_admissions a
              JOIN chat_identity_bindings b
