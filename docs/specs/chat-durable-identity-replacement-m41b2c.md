@@ -87,15 +87,20 @@ Do not hold database locks across network I/O. Expired leases cannot commit.
 
 ## Failure and authorization rules
 
-Outage, unknown state, malformed/tampered/stale/replayed evidence, revision
-regression/overflow, mapping/pin/config change, revoked Principal authority,
-concurrent cancellation or exhausted retries never enable sending. Keep local
-old revocation sticky. A blocked operation retains its phase and bounded
-failure reason for operator diagnosis; there is no automatic rollback to the
-old key, no unrevocation, and no alternate onboarding bypass. Mapping changes
-require explicit reconciliation rather than silently continuing on another
-community or relay. Replacing/revoking the candidate during the operation
-invalidates completion under the same Principal lock.
+Outages get at most five lease-fenced retries with capped exponential backoff.
+Stale conditional revisions are recoverable only by recording the stale
+receipt, taking fresh signed observations and using a new command ID; these
+attempts share the same retry limit. Exhaustion, upstream rejection, a revoked
+candidate, invalid evidence, or a changed mapping permanently blocks the
+operation in its current state. Blocked operations are excluded from worker
+claims; there is no 365-day automatic retry, rollback to the old key,
+unrevocation, or alternate onboarding bypass. Mapping changes require explicit
+reconciliation rather than silently continuing on another community or relay.
+Re-activating a blocked operation needs an authenticated, audited recovery path
+that preserves the fresh-proof and membership checks; until that path exists,
+operators must not edit retry or block fields directly. Replacing/revoking the
+candidate during the operation invalidates completion under the same Principal
+lock.
 
 Status lookup is `(tenant_id, operation_id)` plus current actor authorization;
 cross-tenant IDs return the existing non-disclosing not-found behavior. Audit

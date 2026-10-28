@@ -24,18 +24,18 @@ const REVOKE_EVENT: &str = "io.elembra.chat.buzz.admission.revoked.v1";
 const CONSUMER_ID: &str = "io.elembra.chat.buzz-bridge.v1";
 
 #[derive(Debug, Deserialize)]
-struct AdmissionData {
-    operation: BuzzAdmissionOperation,
-    admission_id: uuid::Uuid,
-    community_id: String,
-    relay_url: String,
-    buzz_pubkey: String,
+pub(crate) struct AdmissionData {
+    pub(crate) operation: BuzzAdmissionOperation,
+    pub(crate) admission_id: uuid::Uuid,
+    pub(crate) community_id: String,
+    pub(crate) relay_url: String,
+    pub(crate) buzz_pubkey: String,
     #[serde(default)]
-    command_version: Option<u8>,
+    pub(crate) command_version: Option<u8>,
     #[serde(default)]
-    command_id: Option<uuid::Uuid>,
+    pub(crate) command_id: Option<uuid::Uuid>,
     #[serde(default)]
-    expected_revision: Option<u64>,
+    pub(crate) expected_revision: Option<u64>,
 }
 
 /// A Buzz service/admin identity that applies Elembra's durable membership
@@ -309,7 +309,7 @@ async fn validate_conditional_command(
     )
 }
 
-async fn record_conditional_outcome(
+pub(crate) async fn record_conditional_outcome(
     pool: &PgPool,
     event: &IntegrationEvent,
     data: &AdmissionData,
@@ -348,7 +348,7 @@ async fn record_conditional_outcome(
         return Err(sqlx::Error::RowNotFound);
     }
     let command = sqlx::query("SELECT c.operation_id,c.phase,c.outcome,c.operation_generation,
-        r.tenant_id,r.principal_id,r.state,r.actor_id,r.generation
+        r.tenant_id,r.principal_id,r.state,r.actor_id,r.generation,r.transient_failures
         FROM chat_identity_replacement_commands c JOIN chat_identity_replacements r USING(operation_id)
         WHERE c.command_id=$1 AND c.outbox_event_id=$2 FOR UPDATE OF r,c")
         .bind(command_id).bind(event.id).fetch_optional(&mut *tx).await?;
@@ -365,6 +365,7 @@ async fn record_conditional_outcome(
     let state: String = command.try_get("state")?;
     let command_generation: i64 = command.try_get("operation_generation")?;
     let generation: i64 = command.try_get("generation")?;
+    let transient_failures: i16 = command.try_get("transient_failures")?;
     let from = if phase == "revoke" {
         "pending_revocation"
     } else {
@@ -383,15 +384,52 @@ async fn record_conditional_outcome(
     sqlx::query("UPDATE chat_identity_replacement_commands SET outcome=$2 WHERE command_id=$1 AND outcome IN ('pending','ambiguous')")
         .bind(command_id).bind(outcome).execute(&mut *tx).await?;
     if accepted == Some(true) && state == from && generation == command_generation + 1 {
-        sqlx::query("UPDATE chat_identity_replacements SET state=$3,generation=generation+1,lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+        sqlx::query("UPDATE chat_identity_replacements SET state=$3,generation=generation+1,transient_failures=0,failure_code=NULL,blocked_at=NULL,retry_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
             WHERE operation_id=$1 AND tenant_id=$2 AND state=$4 AND generation=$5")
             .bind(command.try_get::<uuid::Uuid,_>("operation_id")?).bind(command.try_get::<uuid::Uuid,_>("tenant_id")?).bind(next).bind(from).bind(generation).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO chat_identity_replacement_audit(audit_id,tenant_id,operation_id,actor_id,from_state,to_state)
             VALUES(gen_random_uuid(),$1,$2,$3,$4,$5)")
             .bind(command.try_get::<uuid::Uuid,_>("tenant_id")?).bind(command.try_get::<uuid::Uuid,_>("operation_id")?)
             .bind(command.try_get::<uuid::Uuid,_>("actor_id")?).bind(from).bind(next).execute(&mut *tx).await?;
+    } else if accepted == Some(false) && state == from && generation == command_generation + 1 {
+        let next = if phase == "revoke" {
+            "pending_revocation"
+        } else {
+            "pending_revocation_verification"
+        };
+        let exhausted = transient_failures + 1 >= 5;
+        let reason = if exhausted {
+            "replacement_retries_exhausted"
+        } else {
+            "replacement_stale_revision_retry"
+        };
+        sqlx::query("UPDATE chat_identity_replacements SET state=$3,generation=generation+1,
+            transient_failures=transient_failures+1,
+            blocked_at=CASE WHEN transient_failures+1 >= 5 THEN clock_timestamp() ELSE NULL END,
+            retry_at=CASE WHEN transient_failures+1 >= 5 THEN clock_timestamp()
+                          ELSE clock_timestamp()+LEAST(300,5*power(2,transient_failures)::integer)*interval '1 second' END,
+            failure_code=$6,lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+            WHERE operation_id=$1 AND tenant_id=$2 AND state=$4 AND generation=$5")
+            .bind(command.try_get::<uuid::Uuid, _>("operation_id")?)
+            .bind(command.try_get::<uuid::Uuid, _>("tenant_id")?)
+            .bind(next)
+            .bind(from)
+            .bind(generation)
+            .bind(reason)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO chat_identity_replacement_audit(audit_id,tenant_id,operation_id,actor_id,from_state,to_state,reason_code)
+            VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6)")
+            .bind(command.try_get::<uuid::Uuid, _>("tenant_id")?)
+            .bind(command.try_get::<uuid::Uuid, _>("operation_id")?)
+            .bind(command.try_get::<uuid::Uuid, _>("actor_id")?)
+            .bind(from)
+            .bind(next)
+            .bind(reason)
+            .execute(&mut *tx)
+            .await?;
     } else if accepted.is_none() && state == from && generation == command_generation + 1 {
-        sqlx::query("UPDATE chat_identity_replacements SET failure_code='buzz_command_rejected',retry_at=clock_timestamp()+interval '365 days',lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+        sqlx::query("UPDATE chat_identity_replacements SET failure_code='buzz_command_rejected',blocked_at=clock_timestamp(),retry_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
             WHERE operation_id=$1 AND tenant_id=$2 AND state=$3 AND generation=$4")
             .bind(command.try_get::<uuid::Uuid, _>("operation_id")?)
             .bind(command.try_get::<uuid::Uuid, _>("tenant_id")?)

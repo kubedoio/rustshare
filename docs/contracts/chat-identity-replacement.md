@@ -52,7 +52,8 @@ pending_revocation
   -> pending_membership_verification
   -> completed
 
-Any bridge or verification error -> failed (retryable, old local authority stays revoked)
+Transient errors -> at most five lease-fenced retries with backoff
+Definitive rejection or exhausted retries -> blocked in the current state
 ```
 
 At challenge consumption Elembra revokes the old binding and local admissions
@@ -64,19 +65,22 @@ Only the final verified state may atomically activate the replacement binding
 and its local admission. Failure, timeout, restart, dead-letter, or an
 unavailable relay leaves replacement sending denied.
 
-Retries use a stable operation ID for each mutation step. The old key's
-revocation step is complete only after Buzz reports its durable `revoked`
+Each conditional mutation attempt has a stable command ID and payload. The old
+key's revocation step advances only after Buzz reports its durable `revoked`
 tombstone; `absent` alone is insufficient because the key could otherwise be
 admitted later. Before adding the replacement key, Buzz must report it as
 `absent` with no tombstone. If it is already `active` before this operation's
 add has a recorded outcome, the operation fails closed instead of adopting
 that membership. After an ambiguous delivery, the bridge retries the same
-operation ID and then performs a fresh read; it does not infer completion from
-current membership alone. Replays return the persisted state. A failed
-operation can resume from the last verified step; it cannot reactivate the old
-binding or reuse the consumed challenge. Duplicate delivery and process
-restart must not create duplicate bindings, admissions, audit transitions,
-or a second rotation.
+command ID and then performs a fresh read; it does not infer completion from
+current membership alone. Stale-revision receipts may recover only after a
+fresh signed read and a new command ID. Replays return the persisted state.
+Blocked operations are never automatically retried after a long delay and
+cannot reactivate the old binding or reuse the consumed challenge. Any future
+operator recovery must be authenticated, audited, and retain all proof and
+membership checks; until implemented, operators must not clear block fields
+directly. Duplicate delivery and process restart must not create duplicate
+bindings, admissions, audit transitions, or a second rotation.
 
 Status is visible only to the owning authenticated Principal or an explicitly
 authorized tenant security administrator. Responses distinguish pending,
