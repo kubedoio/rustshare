@@ -110,6 +110,54 @@ pub async fn revoke_principal(
     }))
 }
 
+/// Retry only a recoverable blocked replacement; the worker must reverify membership.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/applications/chat/replacements/{operation_id}/recover",
+    tag = "Chat (admin)",
+    params(("operation_id" = Uuid, Path, description = "Replacement operation id")),
+    responses(
+        (status = 204, description = "Replacement queued for fresh verification"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Operation unavailable or not recoverable", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn recover_replacement(
+    AdminUser { user_id: admin_id }: AdminUser,
+    auth: AuthenticatedUser,
+    State(db): State<DatabaseState>,
+    Path(operation_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    if std::env::var("RUSTSHARE_CHAT_REPLACEMENT_RECOVERY_ENABLED").as_deref() != Ok("1")
+        || std::env::var("RUSTSHARE_CHAT_REPLACEMENT_WORKER_ENABLED").as_deref() != Ok("1")
+    {
+        return Err(AppError::not_found("Chat replacement recovery is disabled"));
+    }
+    let admin_tenant = sqlx::query_scalar::<_, Uuid>(
+        "SELECT tenant_id FROM users WHERE id=$1 AND disabled_at IS NULL",
+    )
+    .bind(admin_id)
+    .fetch_optional(&db.db_pool)
+    .await
+    .map_err(internal_db)?
+    .ok_or(AppError::Unauthorized)?;
+    if admin_tenant != auth.tenant_id {
+        return Err(AppError::Forbidden("tenant scope mismatch".into()));
+    }
+    let recovered = db
+        .chat_identity_store
+        .recover_blocked_replacement(TenantId(admin_tenant), admin_id, operation_id)
+        .await
+        .map_err(internal_db)?;
+    if !recovered {
+        return Err(AppError::not_found(
+            "blocked Chat replacement is not recoverable",
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Configure an explicit tenant/workspace → Buzz community mapping.
 pub async fn configure_mapping(
     AdminUser { user_id: admin_id }: AdminUser,

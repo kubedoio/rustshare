@@ -757,8 +757,8 @@ mod tests {
         sqlx::query("INSERT INTO chat_workspace_communities(mapping_id,tenant_id,workspace_id,community_id,relay_url,relay_pubkey,active)
             VALUES($1,$2,$3,$4,$5,$6,true)")
             .bind(mapping).bind(tenant).bind(workspace).bind(community.to_string()).bind("wss://relay.example.test").bind(&relay_pubkey).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status,rotation_of)
-            VALUES($1,$2,$3,$4,'active',NULL),($5,$2,$3,$6,'pending',$1)")
+        sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status,rotation_of,revoked_at)
+            VALUES($1,$2,$3,$4,'revoked',NULL,clock_timestamp()),($5,$2,$3,$6,'pending',$1,NULL)")
             .bind(old_binding).bind(tenant).bind(principal).bind(&old_key).bind(new_binding).bind(&new_key).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO chat_binding_challenges(challenge_id,tenant_id,principal_id,buzz_pubkey,rotation_of,relay_url,nonce,expires_at)
             VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+interval '5 minutes')")
@@ -944,6 +944,66 @@ mod tests {
                 .bind(operation).fetch_one(&pool).await.unwrap(),
             1
         );
+        assert!(!store
+            .recover_blocked_replacement(TenantId(Uuid::new_v4()), Uuid::new_v4(), operation)
+            .await
+            .unwrap());
+        assert!(store
+            .recover_blocked_replacement(TenantId(tenant), principal, operation)
+            .await
+            .unwrap());
+        let recovered: (String, i16, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+            "SELECT state,transient_failures,blocked_at FROM chat_identity_replacements WHERE operation_id=$1",
+        )
+        .bind(operation)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(recovered.0, "pending_revocation_verification");
+        assert_eq!(recovered.1, 0);
+        assert!(recovered.2.is_none());
+        let binding_states: Vec<String> = sqlx::query_scalar(
+            "SELECT status FROM chat_identity_bindings WHERE tenant_id=$1 AND binding_id IN ($2,$3) ORDER BY status",
+        )
+        .bind(tenant)
+        .bind(old_binding)
+        .bind(new_binding)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(binding_states, vec!["pending", "revoked"]);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM chat_identity_replacement_audit WHERE operation_id=$1 AND actor_id=$2 AND reason_code='operator_recovery_fresh_verification'")
+                .bind(operation).bind(principal).fetch_one(&pool).await.unwrap(),
+            1
+        );
+        assert!(store.claim_replacement().await.unwrap().is_some());
+        sqlx::query("UPDATE chat_identity_replacements SET state='pending_membership_verification',blocked_at=clock_timestamp(),failure_code='replacement_revoked',lease_token=NULL,lease_expires_at=NULL WHERE operation_id=$1")
+            .bind(operation).execute(&pool).await.unwrap();
+        assert!(!store
+            .recover_blocked_replacement(TenantId(tenant), principal, operation)
+            .await
+            .unwrap());
+        let rejected_command = Uuid::new_v4();
+        let rejected_event = Uuid::new_v4();
+        sqlx::query("UPDATE chat_identity_replacements SET state='pending_replacement_admission',blocked_at=clock_timestamp(),failure_code='buzz_command_rejected',lease_token=NULL,lease_expires_at=NULL WHERE operation_id=$1")
+            .bind(operation).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO chat_identity_replacement_commands(command_id,operation_id,phase,attempt,operation_generation,community_id,pubkey,kind,expected_revision,actor_pubkey,outbox_event_id,outcome)
+            VALUES($1,$2,'admit',2,7,$3,$4,9030,1,$5,$6,'rejected')")
+            .bind(rejected_command).bind(operation).bind(community).bind(&new_key).bind(&relay_pubkey).bind(rejected_event)
+            .execute(&pool).await.unwrap();
+        assert!(store
+            .recover_blocked_replacement(TenantId(tenant), principal, operation)
+            .await
+            .unwrap());
+        let recovered_rejection: String = sqlx::query_scalar(
+            "SELECT state FROM chat_identity_replacements WHERE operation_id=$1",
+        )
+        .bind(operation)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(recovered_rejection, "pending_revocation_verification");
         sqlx::query("DELETE FROM chat_buzz_membership_verifications WHERE request_id=$1")
             .bind(request_id)
             .execute(&pool)
