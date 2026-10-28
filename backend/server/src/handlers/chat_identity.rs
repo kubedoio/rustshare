@@ -14,7 +14,7 @@ use rustshare_resource_auth::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{AdminUser, AppError, AuthenticatedUser};
+use super::{AdminUser, AppError, AuthenticatedUser, OrganizationAdmin};
 use crate::services::chat_bootstrap::{ChatBootstrapError, ProvisionOutcome};
 use crate::state::{AppState, DatabaseState};
 
@@ -124,8 +124,10 @@ pub async fn revoke_principal(
     ),
 )]
 pub async fn recover_replacement(
-    AdminUser { user_id: admin_id }: AdminUser,
-    auth: AuthenticatedUser,
+    OrganizationAdmin {
+        user_id: admin_id,
+        tenant_id,
+    }: OrganizationAdmin,
     State(db): State<DatabaseState>,
     Path(operation_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
@@ -134,20 +136,9 @@ pub async fn recover_replacement(
     {
         return Err(AppError::not_found("Chat replacement recovery is disabled"));
     }
-    let admin_tenant = sqlx::query_scalar::<_, Uuid>(
-        "SELECT tenant_id FROM users WHERE id=$1 AND disabled_at IS NULL",
-    )
-    .bind(admin_id)
-    .fetch_optional(&db.db_pool)
-    .await
-    .map_err(internal_db)?
-    .ok_or(AppError::Unauthorized)?;
-    if admin_tenant != auth.tenant_id {
-        return Err(AppError::Forbidden("tenant scope mismatch".into()));
-    }
     let recovered = db
         .chat_identity_store
-        .recover_blocked_replacement(TenantId(admin_tenant), admin_id, operation_id)
+        .recover_blocked_replacement(TenantId(tenant_id), admin_id, operation_id)
         .await
         .map_err(internal_db)?;
     if !recovered {
