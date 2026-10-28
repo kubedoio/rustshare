@@ -404,7 +404,9 @@ pub async fn process_next_replacement(
                 let candidate =
                     read_membership(pool, client, &lease, &lease.replacement_pubkey, None).await?;
                 if old.observation.membership != BuzzMembership::Revoked {
-                    return Ok(false);
+                    return Err(BuzzAuthorityError::InvalidResponse(
+                        "old replacement key is not revoked".into(),
+                    ));
                 }
                 match candidate.observation.membership {
                     BuzzMembership::Absent => {
@@ -770,6 +772,106 @@ mod tests {
         sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status,rotation_of,revoked_at)
             VALUES($1,$2,$3,$4,'revoked',NULL,clock_timestamp()),($5,$2,$3,$6,'pending',$1,NULL)")
             .bind(old_binding).bind(tenant).bind(principal).bind(&old_key).bind(new_binding).bind(&new_key).execute(&pool).await.unwrap();
+        let candidate_keys = Keys::generate();
+        let expiring = rustshare_resource_auth::BindingChallenge::issue(
+            TenantId(tenant),
+            PrincipalId(principal),
+            candidate_keys.public_key().to_hex(),
+            "wss://relay.example.test",
+            Some(old_binding),
+            chrono::Utc::now(),
+            chrono::Duration::seconds(2),
+        );
+        let proof_event = EventBuilder::new(Kind::Authentication, "")
+            .tags([
+                nostr::Tag::parse(["relay", "wss://relay.example.test"]).unwrap(),
+                nostr::Tag::parse(["challenge", expiring.nonce.as_str()]).unwrap(),
+            ])
+            .sign_with_keys(&candidate_keys)
+            .unwrap();
+        let proof = expiring
+            .verify_proof(
+                TenantId(tenant),
+                PrincipalId(principal),
+                &proof_event,
+                chrono::Utc::now(),
+            )
+            .unwrap();
+        let start_store = ChatIdentityStore::new(pool.clone());
+        start_store.insert_challenge(&expiring).await.unwrap();
+        sqlx::query(
+            "UPDATE chat_identity_bindings SET status='active',revoked_at=NULL WHERE binding_id=$1",
+        )
+        .bind(old_binding)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO application_enablements(tenant_id,workspace_id,application_id,enabled) VALUES($1,$1,'io.elembra.chat',true)")
+            .bind(tenant).execute(&pool).await.unwrap();
+        let mut mapping_lock = pool.begin().await.unwrap();
+        sqlx::query(
+            "SELECT mapping_id FROM chat_workspace_communities WHERE mapping_id=$1 FOR UPDATE",
+        )
+        .bind(mapping)
+        .execute(&mut *mapping_lock)
+        .await
+        .unwrap();
+        let starter = tokio::spawn(async move {
+            start_store
+                .begin_replacement(
+                    &rustshare_storage::ReplacementStart {
+                        operation_id: Uuid::new_v4(),
+                        replacement_binding_id: Uuid::new_v4(),
+                        tenant_id: TenantId(tenant),
+                        principal_id: PrincipalId(principal),
+                        workspace_id: WorkspaceId(workspace),
+                        actor_id: principal,
+                    },
+                    &proof,
+                )
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT mapping_id,community_id%')")
+                    .fetch_one(&pool).await.unwrap();
+                if waiting { break; }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        mapping_lock.commit().await.unwrap();
+        assert!(
+            !starter.await.unwrap().unwrap(),
+            "a challenge expiring during the mapping lock wait must not start replacement"
+        );
+        let untouched: bool = sqlx::query_scalar(
+            "SELECT consumed_at IS NULL FROM chat_binding_challenges WHERE challenge_id=$1",
+        )
+        .bind(expiring.challenge_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(untouched);
+        let old_status: String =
+            sqlx::query_scalar("SELECT status FROM chat_identity_bindings WHERE binding_id=$1")
+                .bind(old_binding)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(old_status, "active");
+        sqlx::query("DELETE FROM chat_binding_challenges WHERE challenge_id=$1")
+            .bind(expiring.challenge_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM application_enablements WHERE tenant_id=$1")
+            .bind(tenant)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE chat_identity_bindings SET status='revoked',revoked_at=clock_timestamp() WHERE binding_id=$1")
+            .bind(old_binding).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO chat_binding_challenges(challenge_id,tenant_id,principal_id,buzz_pubkey,rotation_of,relay_url,nonce,expires_at)
             VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+interval '5 minutes')")
             .bind(challenge).bind(tenant).bind(principal).bind(&new_key).bind(old_binding).bind("wss://relay.example.test").bind(Uuid::new_v4().to_string()).execute(&pool).await.unwrap();
@@ -878,6 +980,36 @@ mod tests {
         assert!(committed.0.is_some());
         assert_eq!(committed.1, "pending_revocation_verification");
         let store = ChatIdentityStore::new(pool.clone());
+        let mut command_tx = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
+            .bind(principal)
+            .execute(&mut *command_tx)
+            .await
+            .unwrap();
+        let waiting_store = store.clone();
+        let waiter = tokio::spawn(async move { waiting_store.claim_replacement().await });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM users%')")
+                    .fetch_one(&pool).await.unwrap();
+                if waiting { break; }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        let racing_command = Uuid::new_v4();
+        sqlx::query("INSERT INTO chat_identity_replacement_commands(command_id,operation_id,phase,attempt,operation_generation,community_id,pubkey,kind,expected_revision,actor_pubkey,outbox_event_id) VALUES($1,$2,'admit',1,1,$3,$4,9030,0,$5,$6)")
+            .bind(racing_command).bind(operation).bind(community).bind(&new_key).bind(&relay_pubkey).bind(Uuid::new_v4())
+            .execute(&mut *command_tx).await.unwrap();
+        command_tx.commit().await.unwrap();
+        assert!(
+            waiter.await.unwrap().unwrap().is_none(),
+            "a command queued during the Principal lock wait must fence the claim"
+        );
+        sqlx::query("DELETE FROM chat_identity_replacement_commands WHERE command_id=$1")
+            .bind(racing_command)
+            .execute(&pool)
+            .await
+            .unwrap();
         let (first, second) = tokio::join!(store.claim_replacement(), store.claim_replacement());
         let leases: Vec<_> = [first.unwrap(), second.unwrap()]
             .into_iter()
@@ -1109,6 +1241,45 @@ mod tests {
         assert_eq!(rejected.0, 1);
         assert!(rejected.1.is_some());
         assert_eq!(rejected.2, "replacement_upstream_unauthorized");
+        server.abort();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/api/v1/relay/membership/check",
+            axum::routing::post(move |axum::Json(mut body): axum::Json<serde_json::Value>| {
+                let relay = relay.clone();
+                async move {
+                    body["membership"] = serde_json::json!("active");
+                    body["membership_revision"] = serde_json::json!(100);
+                    body["evaluated_at"] = serde_json::json!(chrono::Utc::now().timestamp());
+                    let signed = EventBuilder::new(Kind::Custom(19_030), body.to_string())
+                        .sign_with_keys(&relay)
+                        .unwrap();
+                    axum::Json(serde_json::to_value(signed).unwrap())
+                }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        sqlx::query("UPDATE chat_identity_replacements SET state='pending_membership_verification',retry_at=clock_timestamp(),blocked_at=NULL,failure_code=NULL,lease_token=NULL,lease_expires_at=NULL,relay_url=$2 WHERE operation_id=$1")
+            .bind(operation).bind(format!("ws://{address}")).execute(&pool).await.unwrap();
+        assert!(matches!(
+            process_next_replacement(&pool, &store, &outbox, &client, &relay_pubkey).await,
+            Err(BuzzAuthorityError::InvalidResponse(_))
+        ));
+        let blocked: (bool, String) = sqlx::query_as("SELECT blocked_at IS NOT NULL,failure_code FROM chat_identity_replacements WHERE operation_id=$1")
+            .bind(operation).fetch_one(&pool).await.unwrap();
+        assert_eq!(blocked, (true, "replacement_evidence_rejected".into()));
+        let bindings: Vec<String> = sqlx::query_scalar(
+            "SELECT status FROM chat_identity_bindings WHERE binding_id=ANY($1) ORDER BY status",
+        )
+        .bind(vec![old_binding, new_binding])
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(bindings, vec!["pending", "revoked"]);
+        assert!(store.claim_replacement().await.unwrap().is_none());
         server.abort();
         sqlx::query("DELETE FROM chat_buzz_membership_verifications WHERE operation_id=$1")
             .bind(operation)

@@ -283,8 +283,13 @@ impl ChatIdentityStore {
         let digest = sha2::Sha256::digest(
             format!("{mapping_id}\0{community_id}\0{relay_url}\0{relay_pubkey}").as_bytes(),
         );
+        // Mapping and history locks may outlive the possession proof.
+        let now = Utc::now();
+        if expires_at <= now || (now - proof.verified_at()).num_seconds().abs() > 60 {
+            return Ok(false);
+        }
         let consumed = sqlx::query(
-            "UPDATE chat_binding_challenges SET consumed_at=$2 WHERE challenge_id=$1 AND consumed_at IS NULL AND expires_at>$2",
+            "UPDATE chat_binding_challenges SET consumed_at=$2 WHERE challenge_id=$1 AND consumed_at IS NULL AND expires_at>clock_timestamp()",
         )
         .bind(proof.challenge_id())
         .bind(now)
@@ -351,6 +356,10 @@ impl ChatIdentityStore {
              WHERE tenant_id=$1 AND operation_id=$2 AND blocked_at IS NULL AND retry_at<=clock_timestamp()
              AND state IN ('pending_revocation','pending_revocation_verification','pending_membership_verification')
              AND (lease_expires_at IS NULL OR lease_expires_at<=clock_timestamp())
+             AND NOT EXISTS (SELECT 1 FROM chat_identity_replacement_commands c
+                 WHERE c.operation_id=chat_identity_replacements.operation_id
+                   AND c.outcome IN ('pending','ambiguous')
+                   AND c.phase=CASE WHEN chat_identity_replacements.state='pending_revocation' THEN 'revoke' ELSE 'admit' END)
              RETURNING community_id,relay_url,relay_pubkey,old_pubkey,replacement_pubkey,state,generation",
         )
         .bind(tenant_id.0)
