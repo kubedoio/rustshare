@@ -94,10 +94,12 @@ const QUALIFIED_BUZZ_V1ALPHA2_BUILDS: &[(&str, &str)] = &[];
 
 fn buzz_runtime_qualified(config: &str, approved_builds: &[(&str, &str)]) -> bool {
     let field = |name: &str| {
-        config.lines().find_map(|line| {
+        let mut values = config.lines().filter_map(|line| {
             line.strip_prefix(name)
                 .and_then(|value| value.strip_prefix('='))
-        })
+        });
+        let value = values.next()?;
+        values.next().is_none().then_some(value)
     };
     let (Some(commit), Some(image), Some(tag), Some(digest), Some(relay_image)) = (
         field("BUZZ_SUPPORTED_COMMIT"),
@@ -1016,6 +1018,10 @@ mod tests {
         ));
         assert!(!buzz_runtime_qualified(
             &config.replace(&digest, "sha256:invalid"),
+            &approved
+        ));
+        assert!(!buzz_runtime_qualified(
+            &format!("{config}BUZZ_RELAY_IMAGE=ghcr.io/example/other@{digest}\n"),
             &approved
         ));
     }
