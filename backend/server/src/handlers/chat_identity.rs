@@ -166,19 +166,12 @@ fn test_buzz_fixture_qualified() -> bool {
     ) else {
         return false;
     };
-    if !binary.starts_with(target_dir.join("debug"))
-        || binary.file_name().is_none_or(|name| name != "buzz-relay")
-    {
+    if binary != target_dir.join("debug/buzz-relay") {
         return false;
     }
     let source = std::process::Command::new("git")
-        .args([
-            "-C",
-            source_dir.to_string_lossy().as_ref(),
-            "rev-parse",
-            "HEAD",
-            "HEAD^{tree}",
-        ])
+        .current_dir(&source_dir)
+        .args(["rev-parse", "HEAD", "HEAD^{tree}"])
         .output();
     let Ok(source) = source else {
         return false;
@@ -190,13 +183,8 @@ fn test_buzz_fixture_qualified() -> bool {
         return false;
     };
     let clean = std::process::Command::new("git")
-        .args([
-            "-C",
-            source_dir.to_string_lossy().as_ref(),
-            "status",
-            "--porcelain",
-            "--untracked-files=all",
-        ])
+        .current_dir(&source_dir)
+        .args(["status", "--porcelain", "--untracked-files=all"])
         .output();
     let Ok(clean) = clean else {
         return false;
