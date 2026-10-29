@@ -4,8 +4,10 @@ Status: partial. Production replacement remains disabled.
 
 The acceptance build adds a debug-only qualification fixture for the pinned
 Buzz source revision `2a4a8d926d79b406b7058419ef84c319a0c107fd`. It reads the
-checkout SHA from the supplied source directory, restricts the executable to
-the supplied build target directory, and hashes that executable at runtime.
+checkout SHA and tree from the supplied source directory, requires a clean
+checkout, restricts the executable to its Cargo debug target directory, embeds
+the build digest at compile time, and rechecks that digest against the relay
+executable at runtime.
 Release builds compile the fixture out. The
 committed production compatibility manifest still sets
 `BUZZ_REPLACEMENT_V1ALPHA2_QUALIFIED=0`, and the production approved-build
@@ -25,8 +27,9 @@ Local evidence so far:
 - Debug relay SHA-256: `02ad0ceaac00d8c20ef49e98e702227711209d16ff168eb04cd57b0b9ad398a3`.
 - Buzz `membership_v1alpha2` migration/receipt/restart acceptance passed
   against disposable PostgreSQL (1 test).
-- Acceptance fixture source/digest checks and default-disabled policy checks
-  passed.
+- Acceptance fixture source/tree/cleanliness/digest checks and
+  default-disabled production-policy checks passed, including a positive
+  runtime gate check with the pinned relay build hash embedded at compile time.
 - Elembra migrations through `20261029100000` applied to disposable
   PostgreSQL; the Chat identity lifecycle regression suite passed (3 tests),
   as did the replacement evidence/transaction rollback test.

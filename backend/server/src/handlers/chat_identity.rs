@@ -144,17 +144,19 @@ fn buzz_replacement_runtime_qualified() -> bool {
 }
 
 /// Acceptance-only qualification for the one immutable Buzz source revision.
-/// The harness hashes the executable it built and supplies its path and digest;
+/// The harness embeds the built executable's digest and supplies its paths;
 /// this path is compiled out of ordinary production builds.
 #[cfg(all(feature = "test-buzz-replacement-qualification", debug_assertions))]
 fn test_buzz_fixture_qualified() -> bool {
     use sha2::{Digest, Sha256};
-    let (Ok(source_dir), Ok(target_dir), Ok(binary), Ok(expected_digest)) = (
+    let (Ok(source_dir), Ok(target_dir), Ok(binary)) = (
         std::env::var("RUSTSHARE_TEST_BUZZ_SOURCE_DIR"),
         std::env::var("RUSTSHARE_TEST_BUZZ_TARGET_DIR"),
         std::env::var("RUSTSHARE_TEST_BUZZ_BINARY"),
-        std::env::var("RUSTSHARE_TEST_BUZZ_BINARY_SHA256"),
     ) else {
+        return false;
+    };
+    let Some(expected_digest) = option_env!("RUSTSHARE_TEST_BUZZ_BINARY_SHA256") else {
         return false;
     };
     let (Ok(source_dir), Ok(target_dir), Ok(binary)) = (
@@ -164,45 +166,72 @@ fn test_buzz_fixture_qualified() -> bool {
     ) else {
         return false;
     };
-    if !binary.starts_with(&target_dir) {
+    if !binary.starts_with(target_dir.join("debug"))
+        || binary.file_name().is_none_or(|name| name != "buzz-relay")
+    {
         return false;
     }
-    let Ok(source_sha) = std::process::Command::new("git")
+    let source = std::process::Command::new("git")
         .args([
             "-C",
             source_dir.to_string_lossy().as_ref(),
             "rev-parse",
             "HEAD",
+            "HEAD^{tree}",
         ])
-        .output()
-    else {
+        .output();
+    let Ok(source) = source else {
         return false;
     };
-    if !source_sha.status.success() {
+    if !source.status.success() {
         return false;
     }
-    let Ok(source_sha) = std::str::from_utf8(&source_sha.stdout) else {
+    let Ok(source_identity) = std::str::from_utf8(&source.stdout) else {
         return false;
     };
+    let clean = std::process::Command::new("git")
+        .args([
+            "-C",
+            source_dir.to_string_lossy().as_ref(),
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ])
+        .output();
+    let Ok(clean) = clean else {
+        return false;
+    };
+    if !clean.status.success() || !clean.stdout.is_empty() {
+        return false;
+    }
     let Ok(contents) = std::fs::read(binary) else {
         return false;
     };
     let actual_digest = hex::encode(Sha256::digest(contents));
+    let mut source_identity = source_identity.lines();
     test_buzz_fixture_matches(
-        Some(source_sha.trim()),
-        Some(&expected_digest),
-        Some(&actual_digest),
+        source_identity.next(),
+        source_identity.next(),
+        true,
+        expected_digest,
+        &actual_digest,
     )
 }
 
 #[cfg(all(feature = "test-buzz-replacement-qualification", debug_assertions))]
 fn test_buzz_fixture_matches(
     source_sha: Option<&str>,
-    expected_digest: Option<&str>,
-    actual_digest: Option<&str>,
+    source_tree: Option<&str>,
+    source_is_clean: bool,
+    expected_digest: &str,
+    actual_digest: &str,
 ) -> bool {
     const SOURCE_SHA: &str = "2a4a8d926d79b406b7058419ef84c319a0c107fd";
-    source_sha == Some(SOURCE_SHA) && expected_digest.is_some() && expected_digest == actual_digest
+    const SOURCE_TREE: &str = "a5cc0b56d6235ce800a515e7298aea155118a322";
+    source_sha == Some(SOURCE_SHA)
+        && source_tree == Some(SOURCE_TREE)
+        && source_is_clean
+        && expected_digest == actual_digest
 }
 
 fn explicit_replacement_flag(value: Option<&str>) -> bool {
@@ -1063,7 +1092,11 @@ mod tests {
 
     #[test]
     fn unqualified_pinned_buzz_runtime_cannot_enable_replacement() {
-        assert!(!buzz_replacement_runtime_qualified());
+        assert!(!buzz_runtime_qualified(
+            BUZZ_COMPATIBILITY,
+            QUALIFIED_BUZZ_V1ALPHA2_BUILDS
+        ));
+        assert!(QUALIFIED_BUZZ_V1ALPHA2_BUILDS.is_empty());
         assert_eq!(
             include_str!("../../../../config/buzz-compatibility.env")
                 .lines()
@@ -1077,21 +1110,42 @@ mod tests {
     #[test]
     fn test_fixture_qualification_is_bound_to_pinned_source_and_binary_digest() {
         let source = "2a4a8d926d79b406b7058419ef84c319a0c107fd";
+        let source_tree = "a5cc0b56d6235ce800a515e7298aea155118a322";
         let digest = "f".repeat(64);
         assert!(test_buzz_fixture_matches(
             Some(source),
-            Some(&digest),
-            Some(&digest)
+            Some(source_tree),
+            true,
+            &digest,
+            &digest
         ));
         assert!(!test_buzz_fixture_matches(
             Some("arbitrary-source"),
-            Some(&digest),
-            Some(&digest)
+            Some(source_tree),
+            true,
+            &digest,
+            &digest
         ));
         assert!(!test_buzz_fixture_matches(
             Some(source),
-            Some("arbitrary-digest"),
-            Some(&digest)
+            Some("arbitrary-tree"),
+            true,
+            &digest,
+            &digest
+        ));
+        assert!(!test_buzz_fixture_matches(
+            Some(source),
+            Some(source_tree),
+            false,
+            &digest,
+            &digest
+        ));
+        assert!(!test_buzz_fixture_matches(
+            Some(source),
+            Some(source_tree),
+            true,
+            "arbitrary-digest",
+            &digest
         ));
     }
 
@@ -1099,7 +1153,11 @@ mod tests {
     #[test]
     #[ignore = "requires the pinned disposable Buzz relay build"]
     fn test_fixture_accepts_the_pinned_buzz_build() {
-        assert!(test_buzz_fixture_qualified());
+        assert!(!buzz_runtime_qualified(
+            BUZZ_COMPATIBILITY,
+            QUALIFIED_BUZZ_V1ALPHA2_BUILDS
+        ));
+        assert!(buzz_replacement_runtime_qualified());
     }
 
     #[test]
