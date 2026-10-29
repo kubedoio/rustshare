@@ -675,9 +675,13 @@ pub async fn verify_binding(
     request_body = ReplacementRequest,
     responses(
         (status = 202, description = "Replacement queued for revocation", body = ReplacementInitiationResponse),
+        (status = 400, description = "Invalid replacement request or proof", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
         (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Replacement initiation is disabled or challenge unavailable", body = crate::handlers::ErrorResponse),
+        (status = 410, description = "Challenge expired", body = crate::handlers::ErrorResponse),
         (status = 409, description = "Invalid or conflicting replacement", body = crate::handlers::ErrorResponse),
+        (status = 500, description = "Storage failure", body = crate::handlers::ErrorResponse),
     ),
 )]
 pub async fn initiate_replacement(
@@ -801,6 +805,7 @@ pub async fn initiate_replacement(
         (status = 200, description = "Replacement status", body = ReplacementStatusResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
         (status = 404, description = "Operation unavailable", body = crate::handlers::ErrorResponse),
+        (status = 500, description = "Storage failure", body = crate::handlers::ErrorResponse),
     ),
 )]
 pub async fn replacement_status(

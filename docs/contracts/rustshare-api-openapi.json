@@ -2580,6 +2580,16 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid replacement request or proof",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -2600,8 +2610,38 @@
               }
             }
           },
+          "404": {
+            "description": "Replacement initiation is disabled or challenge unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Invalid or conflicting replacement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Challenge expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage failure",
             "content": {
               "application/json": {
                 "schema": {
@@ -2655,6 +2695,16 @@
           },
           "404": {
             "description": "Operation unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage failure",
             "content": {
               "application/json": {
                 "schema": {
