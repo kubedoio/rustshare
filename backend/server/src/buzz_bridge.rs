@@ -8,7 +8,7 @@
 use crate::buzz_gateway::{BuzzGatewayClient, BuzzMembership};
 use crate::services::chat_membership::verify_buzz_membership;
 use futures_util::{SinkExt, StreamExt};
-use nostr::{EventBuilder, JsonUtil, Keys, RelayUrl, Timestamp};
+use nostr::{Event, EventBuilder, JsonUtil, Keys, RelayUrl, Timestamp};
 use rustshare_integration_events::{ConsumerOutcome, IntegrationEvent, OutboxConsumer};
 use rustshare_resource_auth::{
     build_buzz_admission_event_at, build_buzz_conditional_admission_event_at,
@@ -399,8 +399,7 @@ impl BuzzAdmissionBridge {
             if attempt.outcome != "accepted" {
                 let command = match nostr::Event::from_json(attempt.signed_event.to_string()) {
                     Ok(command)
-                        if command.id.to_hex() == attempt.command_id.to_string()
-                            && command.pubkey.to_hex() == self.keys.public_key().to_hex() =>
+                        if valid_lifecycle_command(&command, attempt, &data, &self.keys) =>
                     {
                         command
                     }
@@ -653,6 +652,36 @@ struct LifecycleAttempt {
     expected_revision: u64,
     signed_event: Value,
     outcome: String,
+}
+
+fn signed_tag_value<'a>(command: &'a Event, name: &str) -> Option<&'a str> {
+    let mut matching = command
+        .tags
+        .iter()
+        .filter(|tag| tag.as_slice().first().map(String::as_str) == Some(name));
+    let tag = matching.next()?;
+    if matching.next().is_some() {
+        return None;
+    }
+    let fields = tag.as_slice();
+    (fields.len() == 2).then(|| fields[1].as_str())
+}
+
+fn valid_lifecycle_command(
+    command: &Event,
+    attempt: &LifecycleAttempt,
+    data: &AdmissionData,
+    keys: &Keys,
+) -> bool {
+    let command_id = attempt.command_id.to_string();
+    let expected_revision = attempt.expected_revision.to_string();
+    command.verify().is_ok()
+        && command.pubkey.to_hex() == keys.public_key().to_hex()
+        && command.kind.as_u16() == data.operation.buzz_kind()
+        && signed_tag_value(command, "elembra-op") == Some(command_id.as_str())
+        && signed_tag_value(command, "elembra-expected-revision")
+            == Some(expected_revision.as_str())
+        && signed_tag_value(command, "p") == Some(data.buzz_pubkey.as_str())
 }
 
 async fn mapping_protocol(
@@ -1185,6 +1214,59 @@ mod tests {
             .data(data)
             .build()
             .unwrap()
+    }
+
+    #[test]
+    fn persisted_lifecycle_command_matches_its_signed_operation_tag() {
+        let keys = Keys::generate();
+        let target = Keys::generate().public_key().to_hex();
+        let command_id = Uuid::new_v4();
+        let attempt = LifecycleAttempt {
+            attempt: 1,
+            command_id,
+            expected_revision: 3,
+            signed_event: Value::Null,
+            outcome: "pending".into(),
+        };
+        let data = AdmissionData {
+            operation: BuzzAdmissionOperation::Admit,
+            admission_id: Uuid::new_v4(),
+            community_id: Uuid::new_v4().to_string(),
+            relay_url: "wss://relay.example.test".into(),
+            relay_pubkey: Some("1".repeat(64)),
+            buzz_pubkey: target.clone(),
+            command_version: Some(1),
+            command_id: Some(command_id),
+            expected_revision: Some(3),
+        };
+        let command = build_buzz_conditional_admission_event_at(
+            BuzzAdmissionOperation::Admit,
+            &target,
+            &keys,
+            Timestamp::from_secs(1_700_000_000),
+            command_id,
+            3,
+        )
+        .unwrap();
+
+        assert_ne!(command.id.to_hex(), command_id.to_string());
+        assert!(valid_lifecycle_command(&command, &attempt, &data, &keys));
+
+        let wrong_id_command = build_buzz_conditional_admission_event_at(
+            BuzzAdmissionOperation::Admit,
+            &target,
+            &keys,
+            Timestamp::from_secs(1_700_000_000),
+            Uuid::new_v4(),
+            3,
+        )
+        .unwrap();
+        assert!(!valid_lifecycle_command(
+            &wrong_id_command,
+            &attempt,
+            &data,
+            &keys
+        ));
     }
 
     #[tokio::test]
