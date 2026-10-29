@@ -130,7 +130,79 @@ fn buzz_runtime_qualified(config: &str, approved_builds: &[(&str, &str)]) -> boo
 }
 
 fn buzz_replacement_runtime_qualified() -> bool {
-    buzz_runtime_qualified(BUZZ_COMPATIBILITY, QUALIFIED_BUZZ_V1ALPHA2_BUILDS)
+    if buzz_runtime_qualified(BUZZ_COMPATIBILITY, QUALIFIED_BUZZ_V1ALPHA2_BUILDS) {
+        return true;
+    }
+    #[cfg(all(feature = "test-buzz-replacement-qualification", debug_assertions))]
+    {
+        test_buzz_fixture_qualified()
+    }
+    #[cfg(not(all(feature = "test-buzz-replacement-qualification", debug_assertions)))]
+    {
+        false
+    }
+}
+
+/// Acceptance-only qualification for the one immutable Buzz source revision.
+/// The harness hashes the executable it built and supplies its path and digest;
+/// this path is compiled out of ordinary production builds.
+#[cfg(all(feature = "test-buzz-replacement-qualification", debug_assertions))]
+fn test_buzz_fixture_qualified() -> bool {
+    use sha2::{Digest, Sha256};
+    let (Ok(source_dir), Ok(target_dir), Ok(binary), Ok(expected_digest)) = (
+        std::env::var("RUSTSHARE_TEST_BUZZ_SOURCE_DIR"),
+        std::env::var("RUSTSHARE_TEST_BUZZ_TARGET_DIR"),
+        std::env::var("RUSTSHARE_TEST_BUZZ_BINARY"),
+        std::env::var("RUSTSHARE_TEST_BUZZ_BINARY_SHA256"),
+    ) else {
+        return false;
+    };
+    let (Ok(source_dir), Ok(target_dir), Ok(binary)) = (
+        std::fs::canonicalize(source_dir),
+        std::fs::canonicalize(target_dir),
+        std::fs::canonicalize(binary),
+    ) else {
+        return false;
+    };
+    if !binary.starts_with(&target_dir) {
+        return false;
+    }
+    let Ok(source_sha) = std::process::Command::new("git")
+        .args([
+            "-C",
+            source_dir.to_string_lossy().as_ref(),
+            "rev-parse",
+            "HEAD",
+        ])
+        .output()
+    else {
+        return false;
+    };
+    if !source_sha.status.success() {
+        return false;
+    }
+    let Ok(source_sha) = std::str::from_utf8(&source_sha.stdout) else {
+        return false;
+    };
+    let Ok(contents) = std::fs::read(binary) else {
+        return false;
+    };
+    let actual_digest = hex::encode(Sha256::digest(contents));
+    test_buzz_fixture_matches(
+        Some(source_sha.trim()),
+        Some(&expected_digest),
+        Some(&actual_digest),
+    )
+}
+
+#[cfg(all(feature = "test-buzz-replacement-qualification", debug_assertions))]
+fn test_buzz_fixture_matches(
+    source_sha: Option<&str>,
+    expected_digest: Option<&str>,
+    actual_digest: Option<&str>,
+) -> bool {
+    const SOURCE_SHA: &str = "2a4a8d926d79b406b7058419ef84c319a0c107fd";
+    source_sha == Some(SOURCE_SHA) && expected_digest.is_some() && expected_digest == actual_digest
 }
 
 fn explicit_replacement_flag(value: Option<&str>) -> bool {
@@ -992,6 +1064,42 @@ mod tests {
     #[test]
     fn unqualified_pinned_buzz_runtime_cannot_enable_replacement() {
         assert!(!buzz_replacement_runtime_qualified());
+        assert_eq!(
+            include_str!("../../../../config/buzz-compatibility.env")
+                .lines()
+                .find_map(|line| line.strip_prefix("BUZZ_REPLACEMENT_V1ALPHA2_QUALIFIED=")),
+            Some("0"),
+            "production compatibility policy must remain explicitly disabled"
+        );
+    }
+
+    #[cfg(all(feature = "test-buzz-replacement-qualification", debug_assertions))]
+    #[test]
+    fn test_fixture_qualification_is_bound_to_pinned_source_and_binary_digest() {
+        let source = "2a4a8d926d79b406b7058419ef84c319a0c107fd";
+        let digest = "f".repeat(64);
+        assert!(test_buzz_fixture_matches(
+            Some(source),
+            Some(&digest),
+            Some(&digest)
+        ));
+        assert!(!test_buzz_fixture_matches(
+            Some("arbitrary-source"),
+            Some(&digest),
+            Some(&digest)
+        ));
+        assert!(!test_buzz_fixture_matches(
+            Some(source),
+            Some("arbitrary-digest"),
+            Some(&digest)
+        ));
+    }
+
+    #[cfg(all(feature = "test-buzz-replacement-qualification", debug_assertions))]
+    #[test]
+    #[ignore = "requires the pinned disposable Buzz relay build"]
+    fn test_fixture_accepts_the_pinned_buzz_build() {
+        assert!(test_buzz_fixture_qualified());
     }
 
     #[test]

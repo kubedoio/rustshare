@@ -15,6 +15,9 @@ path = "../tests/meeting_decisions_test.rs"
 
 [features]
 test-recording-provider = []
+# Non-distributable debug acceptance build. Fixture code is also gated on
+# debug_assertions, so release binaries cannot enable it.
+test-buzz-replacement-qualification = []
 
 [[bin]]
 name = "rustshare-server"
