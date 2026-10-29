@@ -766,8 +766,8 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO chat_workspace_communities(mapping_id,tenant_id,workspace_id,community_id,relay_url,relay_pubkey,active)
-            VALUES($1,$2,$3,$4,$5,$6,true)")
+        sqlx::query("INSERT INTO chat_workspace_communities(mapping_id,tenant_id,workspace_id,community_id,relay_url,relay_pubkey,membership_protocol_version,active)
+            VALUES($1,$2,$3,$4,$5,$6,'v1alpha2',true)")
             .bind(mapping).bind(tenant).bind(workspace).bind(community.to_string()).bind("wss://relay.example.test").bind(&relay_pubkey).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status,rotation_of,revoked_at)
             VALUES($1,$2,$3,$4,'revoked',NULL,clock_timestamp()),($5,$2,$3,$6,'pending',$1,NULL)")
@@ -798,7 +798,10 @@ mod tests {
             )
             .unwrap();
         let start_store = ChatIdentityStore::new(pool.clone());
-        start_store.insert_challenge(&expiring).await.unwrap();
+        assert!(start_store
+            .insert_challenge_for_mapping(&expiring, WorkspaceId(workspace))
+            .await
+            .unwrap());
         sqlx::query(
             "UPDATE chat_identity_bindings SET status='active',revoked_at=NULL WHERE binding_id=$1",
         )
@@ -808,6 +811,222 @@ mod tests {
         .unwrap();
         sqlx::query("INSERT INTO application_enablements(tenant_id,workspace_id,application_id,enabled) VALUES($1,$1,'io.elembra.chat',true)")
             .bind(tenant).execute(&pool).await.unwrap();
+        let valid_principal = Uuid::new_v4();
+        let valid_old_binding = Uuid::new_v4();
+        let valid_operation = Uuid::new_v4();
+        let valid_keys = Keys::generate();
+        let valid_old_key = Keys::generate().public_key().to_hex();
+        sqlx::query("INSERT INTO users(id,username,email,password_hash,tenant_id,display_name,storage_quota)
+            VALUES($1,$2,$3,'test-hash',$4,'valid replacement test',1048576)")
+            .bind(valid_principal)
+            .bind(format!("replacement-valid-{valid_principal}"))
+            .bind(format!("replacement-valid-{valid_principal}@example.test"))
+            .bind(tenant)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status)
+            VALUES($1,$2,$3,$4,'active')")
+            .bind(valid_old_binding)
+            .bind(tenant)
+            .bind(valid_principal)
+            .bind(valid_old_key)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let valid_challenge = rustshare_resource_auth::BindingChallenge::issue(
+            TenantId(tenant),
+            PrincipalId(valid_principal),
+            valid_keys.public_key().to_hex(),
+            "wss://relay.example.test",
+            Some(valid_old_binding),
+            chrono::Utc::now(),
+            chrono::Duration::minutes(5),
+        );
+        let valid_event = EventBuilder::new(Kind::Authentication, "")
+            .tags([
+                nostr::Tag::parse(["relay", "wss://relay.example.test"]).unwrap(),
+                nostr::Tag::parse(["challenge", valid_challenge.nonce.as_str()]).unwrap(),
+            ])
+            .sign_with_keys(&valid_keys)
+            .unwrap();
+        let valid_proof = valid_challenge
+            .verify_proof(
+                TenantId(tenant),
+                PrincipalId(valid_principal),
+                &valid_event,
+                chrono::Utc::now(),
+            )
+            .unwrap();
+        assert!(start_store
+            .insert_challenge_for_mapping(&valid_challenge, WorkspaceId(workspace))
+            .await
+            .unwrap());
+        let valid_start = rustshare_storage::ReplacementStart {
+            operation_id: valid_operation,
+            replacement_binding_id: valid_operation,
+            old_binding_id: valid_old_binding,
+            tenant_id: TenantId(tenant),
+            principal_id: PrincipalId(valid_principal),
+            workspace_id: WorkspaceId(workspace),
+            actor_id: valid_principal,
+        };
+        assert!(start_store
+            .begin_replacement(&valid_start, &valid_proof)
+            .await
+            .unwrap());
+        assert!(start_store
+            .begin_replacement(&valid_start, &valid_proof)
+            .await
+            .unwrap());
+        assert_eq!(
+            start_store
+                .replacement_request_matches(
+                    &valid_start,
+                    valid_challenge.challenge_id,
+                    valid_proof.event_id(),
+                )
+                .await
+                .unwrap(),
+            Some(true)
+        );
+        let mut conflict_start = valid_start.clone();
+        conflict_start.workspace_id = WorkspaceId(Uuid::new_v4());
+        assert_eq!(
+            start_store
+                .replacement_request_matches(
+                    &conflict_start,
+                    valid_challenge.challenge_id,
+                    valid_proof.event_id(),
+                )
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        let started: (bool, String, String, String, i64) = sqlx::query_as(
+            "SELECT c.consumed_at IS NOT NULL,old.status,new.status,r.state,
+                (SELECT count(*) FROM chat_identity_replacement_audit WHERE operation_id=r.operation_id)
+             FROM chat_identity_replacements r
+             JOIN chat_binding_challenges c ON c.challenge_id=r.challenge_id
+             JOIN chat_identity_bindings old ON old.binding_id=r.old_binding_id
+             JOIN chat_identity_bindings new ON new.binding_id=r.replacement_binding_id
+             WHERE r.operation_id=$1",
+        )
+        .bind(valid_operation)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            started,
+            (
+                true,
+                "revoked".into(),
+                "pending".into(),
+                "pending_revocation".into(),
+                1
+            )
+        );
+        let visible = start_store
+            .replacement_status(TenantId(tenant), valid_principal, valid_operation)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(visible.state, "pending_revocation");
+        assert!(start_store
+            .replacement_status(TenantId(tenant), principal, valid_operation)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(start_store
+            .replacement_status(TenantId(Uuid::new_v4()), valid_principal, valid_operation)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            start_store
+                .replacement_audit(TenantId(tenant), valid_principal, valid_operation)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(start_store
+            .replacement_audit(TenantId(tenant), principal, valid_operation)
+            .await
+            .unwrap()
+            .is_empty());
+        sqlx::query("DELETE FROM chat_identity_replacement_audit WHERE operation_id=$1")
+            .bind(valid_operation)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM chat_identity_replacements WHERE operation_id=$1")
+            .bind(valid_operation)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM chat_binding_challenges WHERE challenge_id=$1")
+            .bind(valid_challenge.challenge_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM chat_identity_bindings WHERE binding_id=ANY($1)")
+            .bind(vec![valid_operation, valid_old_binding])
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM users WHERE id=$1 AND tenant_id=$2")
+            .bind(valid_principal)
+            .bind(tenant)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let start = rustshare_storage::ReplacementStart {
+            operation_id: Uuid::new_v4(),
+            replacement_binding_id: Uuid::new_v4(),
+            old_binding_id: old_binding,
+            tenant_id: TenantId(tenant),
+            principal_id: PrincipalId(principal),
+            workspace_id: WorkspaceId(workspace),
+            actor_id: principal,
+        };
+        let mut wrong_old = start.clone();
+        wrong_old.old_binding_id = Uuid::new_v4();
+        assert!(!start_store
+            .begin_replacement(&wrong_old, &proof)
+            .await
+            .unwrap());
+        sqlx::query("UPDATE chat_workspace_communities SET relay_pubkey=$2 WHERE mapping_id=$1")
+            .bind(mapping)
+            .bind("a".repeat(64))
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(!start_store.begin_replacement(&start, &proof).await.unwrap());
+        sqlx::query("UPDATE chat_workspace_communities SET relay_pubkey=$2 WHERE mapping_id=$1")
+            .bind(mapping)
+            .bind(&relay_pubkey)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE chat_workspace_communities SET membership_protocol_version='v1alpha1' WHERE mapping_id=$1")
+            .bind(mapping).execute(&pool).await.unwrap();
+        assert!(!start_store.begin_replacement(&start, &proof).await.unwrap());
+        sqlx::query("UPDATE chat_workspace_communities SET membership_protocol_version='v1alpha2' WHERE mapping_id=$1")
+            .bind(mapping).execute(&pool).await.unwrap();
+        let untouched: (bool, String, i64) = sqlx::query_as(
+            "SELECT c.consumed_at IS NULL,b.status,
+                (SELECT count(*) FROM chat_identity_replacements WHERE operation_id=$2)
+             FROM chat_binding_challenges c JOIN chat_identity_bindings b ON b.binding_id=$3
+             WHERE c.challenge_id=$1",
+        )
+        .bind(expiring.challenge_id)
+        .bind(start.operation_id)
+        .bind(old_binding)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(untouched, (true, "active".into(), 0));
         let mut mapping_lock = pool.begin().await.unwrap();
         sqlx::query(
             "SELECT mapping_id FROM chat_workspace_communities WHERE mapping_id=$1 FOR UPDATE",
@@ -816,21 +1035,9 @@ mod tests {
         .execute(&mut *mapping_lock)
         .await
         .unwrap();
-        let starter = tokio::spawn(async move {
-            start_store
-                .begin_replacement(
-                    &rustshare_storage::ReplacementStart {
-                        operation_id: Uuid::new_v4(),
-                        replacement_binding_id: Uuid::new_v4(),
-                        tenant_id: TenantId(tenant),
-                        principal_id: PrincipalId(principal),
-                        workspace_id: WorkspaceId(workspace),
-                        actor_id: principal,
-                    },
-                    &proof,
-                )
-                .await
-        });
+        let start_operation_id = start.operation_id;
+        let starter =
+            tokio::spawn(async move { start_store.begin_replacement(&start, &proof).await });
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT mapping_id,community_id%')")
@@ -845,21 +1052,21 @@ mod tests {
             !starter.await.unwrap().unwrap(),
             "a challenge expiring during the mapping lock wait must not start replacement"
         );
-        let untouched: bool = sqlx::query_scalar(
-            "SELECT consumed_at IS NULL FROM chat_binding_challenges WHERE challenge_id=$1",
+        let rolled_back: (bool, String, i64, i64, i64) = sqlx::query_as(
+            "SELECT c.consumed_at IS NULL,b.status,
+                (SELECT count(*) FROM chat_identity_replacements WHERE operation_id=$2),
+                (SELECT count(*) FROM chat_identity_bindings WHERE buzz_pubkey=c.buzz_pubkey),
+                (SELECT count(*) FROM chat_identity_replacement_audit WHERE operation_id=$2)
+             FROM chat_binding_challenges c JOIN chat_identity_bindings b ON b.binding_id=$3
+             WHERE c.challenge_id=$1",
         )
         .bind(expiring.challenge_id)
+        .bind(start_operation_id)
+        .bind(old_binding)
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert!(untouched);
-        let old_status: String =
-            sqlx::query_scalar("SELECT status FROM chat_identity_bindings WHERE binding_id=$1")
-                .bind(old_binding)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(old_status, "active");
+        assert_eq!(rolled_back, (true, "active".into(), 0, 0, 0));
         sqlx::query("DELETE FROM chat_binding_challenges WHERE challenge_id=$1")
             .bind(expiring.challenge_id)
             .execute(&pool)

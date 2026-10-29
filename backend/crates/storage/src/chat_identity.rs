@@ -9,7 +9,7 @@ use rustshare_resource_auth::{
     BindingChallenge, BindingStatus, ChatIdentityBinding, VerifiedBindingProof,
     WorkspaceCommunityMapping,
 };
-use sha2::Digest as _;
+use sha2::{Digest as _, Sha256};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -49,6 +49,7 @@ pub struct ChatIdentityStore {
 pub struct ReplacementStart {
     pub operation_id: Uuid,
     pub replacement_binding_id: Uuid,
+    pub old_binding_id: Uuid,
     pub tenant_id: TenantId,
     pub principal_id: PrincipalId,
     pub workspace_id: WorkspaceId,
@@ -97,6 +98,23 @@ fn chat_binding_history_fence(pubkey: &str) -> String {
     format!("chat-binding:{pubkey}")
 }
 
+fn replacement_challenge_mapping_fingerprint(
+    mapping_id: Uuid,
+    community_id: &str,
+    relay_url: &str,
+    relay_pubkey: Option<&str>,
+    protocol: &str,
+) -> Vec<u8> {
+    Sha256::digest(
+        format!(
+            "{mapping_id}\0{community_id}\0{relay_url}\0{}\0{protocol}",
+            relay_pubkey.unwrap_or_default()
+        )
+        .as_bytes(),
+    )
+    .to_vec()
+}
+
 /// Idempotent provisioning insert outcome (ADR-0036).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProvisionMappingOutcome {
@@ -121,6 +139,34 @@ pub enum ProvisionMappingError {
 impl ChatIdentityStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// `Some(true)` is an exact retry; `Some(false)` is an operation ID collision.
+    pub async fn replacement_request_matches(
+        &self,
+        input: &ReplacementStart,
+        challenge_id: Uuid,
+        proof_event_id: &str,
+    ) -> Result<Option<bool>> {
+        let row = sqlx::query(
+            "SELECT workspace_id,old_binding_id,challenge_id,proof_event_id
+             FROM chat_identity_replacements
+             WHERE tenant_id=$1 AND principal_id=$2 AND operation_id=$3",
+        )
+        .bind(input.tenant_id.0)
+        .bind(input.principal_id.0)
+        .bind(input.operation_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| {
+            Ok(
+                row.try_get::<Uuid, _>("workspace_id")? == input.workspace_id.0
+                    && row.try_get::<Uuid, _>("old_binding_id")? == input.old_binding_id
+                    && row.try_get::<Uuid, _>("challenge_id")? == challenge_id
+                    && row.try_get::<String, _>("proof_event_id")? == proof_event_id,
+            )
+        })
+        .transpose()
     }
 
     /// Begin replacement after the caller verified the candidate's NIP-42 proof.
@@ -157,7 +203,7 @@ impl ChatIdentityStore {
             "SELECT EXISTS(SELECT 1 FROM chat_identity_replacements
              WHERE tenant_id=$1 AND operation_id=$2 AND principal_id=$3
                AND workspace_id=$4 AND actor_id=$5 AND challenge_id=$6
-               AND replacement_binding_id=$7 AND proof_event_id=$8)",
+               AND old_binding_id=$7 AND replacement_binding_id=$8 AND proof_event_id=$9)",
         )
         .bind(input.tenant_id.0)
         .bind(input.operation_id)
@@ -165,6 +211,7 @@ impl ChatIdentityStore {
         .bind(input.workspace_id.0)
         .bind(input.actor_id)
         .bind(proof.challenge_id())
+        .bind(input.old_binding_id)
         .bind(input.replacement_binding_id)
         .bind(proof.event_id())
         .fetch_one(&mut *tx)
@@ -174,7 +221,7 @@ impl ChatIdentityStore {
             return Ok(true);
         }
         let challenge = sqlx::query(
-            "SELECT buzz_pubkey,rotation_of,relay_url,nonce,expires_at,consumed_at
+            "SELECT buzz_pubkey,rotation_of,relay_url,nonce,expires_at,consumed_at,mapping_fingerprint
              FROM chat_binding_challenges WHERE challenge_id=$1 AND tenant_id=$2
                AND principal_id=$3 FOR UPDATE",
         )
@@ -190,10 +237,15 @@ impl ChatIdentityStore {
         let nonce: String = challenge.try_get("nonce")?;
         let expires_at: DateTime<Utc> = challenge.try_get("expires_at")?;
         let consumed_at: Option<DateTime<Utc>> = challenge.try_get("consumed_at")?;
+        let challenge_mapping_fingerprint: Option<Vec<u8>> =
+            challenge.try_get("mapping_fingerprint")?;
         let challenge_relay: String = challenge.try_get("relay_url")?;
         let Some(old_binding_id) = challenge.try_get::<Option<Uuid>, _>("rotation_of")? else {
             return Ok(false);
         };
+        if old_binding_id != input.old_binding_id {
+            return Ok(false);
+        }
         let now = Utc::now();
         if candidate != proof.buzz_pubkey()
             || nonce != proof.nonce()
@@ -205,7 +257,7 @@ impl ChatIdentityStore {
             return Ok(false);
         }
         let mapping = sqlx::query(
-            "SELECT mapping_id,community_id,relay_url,relay_pubkey FROM chat_workspace_communities
+            "SELECT mapping_id,community_id,relay_url,relay_pubkey,membership_protocol_version FROM chat_workspace_communities
              WHERE tenant_id=$1 AND workspace_id=$2 AND active FOR SHARE",
         )
         .bind(input.tenant_id.0)
@@ -222,14 +274,30 @@ impl ChatIdentityStore {
         };
         let relay_url: String = mapping.try_get("relay_url")?;
         let relay_pubkey: Option<String> = mapping.try_get("relay_pubkey")?;
+        let protocol: String = mapping.try_get("membership_protocol_version")?;
         let Some(relay_pubkey) = relay_pubkey else {
             return Ok(false);
         };
         if relay_url != challenge_relay
+            || protocol != "v1alpha2"
+            || community_id.is_nil()
+            || community_text != community_id.to_string()
             || relay_pubkey.len() != 64
             || !relay_pubkey
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Ok(false);
+        }
+        let expected_challenge_fingerprint = replacement_challenge_mapping_fingerprint(
+            mapping_id,
+            &community_text,
+            &relay_url,
+            Some(&relay_pubkey),
+            &protocol,
+        );
+        if challenge_mapping_fingerprint.as_deref()
+            != Some(expected_challenge_fingerprint.as_slice())
         {
             return Ok(false);
         }
@@ -257,6 +325,20 @@ impl ChatIdentityStore {
         .await?;
         let Some(old) = old else { return Ok(false) };
         let old_pubkey: String = old.try_get("buzz_pubkey")?;
+        if old_pubkey == candidate {
+            return Ok(false);
+        }
+        let live_operation: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM chat_identity_replacements
+             WHERE tenant_id=$1 AND principal_id=$2 AND state <> 'completed')",
+        )
+        .bind(input.tenant_id.0)
+        .bind(input.principal_id.0)
+        .fetch_one(&mut *tx)
+        .await?;
+        if live_operation {
+            return Ok(false);
+        }
         let key_seen = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM chat_identity_bindings WHERE buzz_pubkey=$1)",
         )
@@ -302,13 +384,19 @@ impl ChatIdentityStore {
             .bind(input.tenant_id.0).bind(old_binding_id).bind(now).execute(&mut *tx).await?;
         sqlx::query("UPDATE chat_buzz_admissions SET active=false,revoked_at=$3 WHERE tenant_id=$1 AND binding_id=$2 AND active")
             .bind(input.tenant_id.0).bind(old_binding_id).bind(now).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status,rotation_of,audit_metadata) VALUES($1,$2,$3,$4,'pending',$5,'{\"proof\":\"nip-42\",\"operation\":\"durable-replacement\"}')")
+        let binding = sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status,rotation_of,audit_metadata) VALUES($1,$2,$3,$4,'pending',$5,'{\"proof\":\"nip-42\",\"operation\":\"durable-replacement\"}') ON CONFLICT (binding_id) DO NOTHING")
             .bind(input.replacement_binding_id).bind(input.tenant_id.0).bind(input.principal_id.0).bind(&candidate).bind(old_binding_id).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO chat_identity_replacements(operation_id,tenant_id,principal_id,workspace_id,mapping_id,community_id,relay_url,relay_pubkey,mapping_fingerprint,old_binding_id,old_pubkey,replacement_binding_id,replacement_pubkey,challenge_id,proof_event_id,actor_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'pending_revocation')")
+        if binding.rows_affected() != 1 {
+            return Ok(false);
+        }
+        let operation = sqlx::query("INSERT INTO chat_identity_replacements(operation_id,tenant_id,principal_id,workspace_id,mapping_id,community_id,relay_url,relay_pubkey,mapping_fingerprint,old_binding_id,old_pubkey,replacement_binding_id,replacement_pubkey,challenge_id,proof_event_id,actor_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'pending_revocation') ON CONFLICT (operation_id) DO NOTHING")
             .bind(input.operation_id).bind(input.tenant_id.0).bind(input.principal_id.0).bind(input.workspace_id.0)
             .bind(mapping_id).bind(community_id).bind(&relay_url).bind(&relay_pubkey).bind(digest.to_vec())
             .bind(old_binding_id).bind(old_pubkey).bind(input.replacement_binding_id).bind(&candidate)
             .bind(proof.challenge_id()).bind(proof.event_id()).bind(input.actor_id).execute(&mut *tx).await?;
+        if operation.rows_affected() != 1 {
+            return Ok(false);
+        }
         sqlx::query("INSERT INTO chat_identity_replacement_audit(audit_id,tenant_id,operation_id,actor_id,to_state) VALUES(gen_random_uuid(),$1,$2,$3,'pending_revocation')")
             .bind(input.tenant_id.0).bind(input.operation_id).bind(input.actor_id).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -891,6 +979,60 @@ impl ChatIdentityStore {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Issue a challenge bound to the exact active workspace mapping snapshot.
+    pub async fn insert_challenge_for_mapping(
+        &self,
+        challenge: &BindingChallenge,
+        workspace_id: WorkspaceId,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let mapping = sqlx::query(
+            "SELECT mapping_id,community_id,relay_url,relay_pubkey,membership_protocol_version
+             FROM chat_workspace_communities
+             WHERE tenant_id=$1 AND workspace_id=$2 AND active FOR SHARE",
+        )
+        .bind(challenge.tenant_id.0)
+        .bind(workspace_id.0)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(mapping) = mapping else {
+            return Ok(false);
+        };
+        let mapping_id: Uuid = mapping.try_get("mapping_id")?;
+        let community_id: String = mapping.try_get("community_id")?;
+        let relay_url: String = mapping.try_get("relay_url")?;
+        let relay_pubkey: Option<String> = mapping.try_get("relay_pubkey")?;
+        let protocol: String = mapping.try_get("membership_protocol_version")?;
+        if relay_url != challenge.relay_url {
+            return Ok(false);
+        }
+        let fingerprint = replacement_challenge_mapping_fingerprint(
+            mapping_id,
+            &community_id,
+            &relay_url,
+            relay_pubkey.as_deref(),
+            &protocol,
+        );
+        sqlx::query(
+            "INSERT INTO chat_binding_challenges
+                (challenge_id,tenant_id,principal_id,buzz_pubkey,relay_url,rotation_of,nonce,expires_at,mapping_fingerprint)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        )
+        .bind(challenge.challenge_id)
+        .bind(challenge.tenant_id.0)
+        .bind(challenge.principal_id.0)
+        .bind(&challenge.buzz_pubkey)
+        .bind(&challenge.relay_url)
+        .bind(challenge.rotation_of)
+        .bind(&challenge.nonce)
+        .bind(challenge.expires_at)
+        .bind(fingerprint)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
     }
 
     /// Record an admission and enqueue the generic Buzz bridge operation.

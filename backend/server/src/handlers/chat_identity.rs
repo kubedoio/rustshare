@@ -6,7 +6,7 @@ use axum::{
     Json,
 };
 use chrono::{Duration, Utc};
-use nostr::Event;
+use nostr::{Event, Kind};
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_resource_auth::{
     BindingChallenge, BindingError, BindingStatus, ChatIdentityBinding, WorkspaceCommunityMapping,
@@ -58,6 +58,74 @@ pub struct BindingResponse {
     pub binding_id: Uuid,
     pub buzz_pubkey: String,
     pub status: BindingStatus,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ReplacementRequest {
+    pub workspace_id: Uuid,
+    pub challenge_id: Uuid,
+    pub old_binding_id: Uuid,
+    #[schema(value_type = Object)]
+    pub event: Event,
+    pub operation_id: Uuid,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ReplacementInitiationResponse {
+    pub operation_id: Uuid,
+    pub state: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ReplacementStatusResponse {
+    pub operation_id: Uuid,
+    pub state: String,
+    pub generation: i64,
+    pub created_at: chrono::DateTime<Utc>,
+    pub updated_at: chrono::DateTime<Utc>,
+    pub completed_at: Option<chrono::DateTime<Utc>>,
+    pub error_category: Option<String>,
+}
+
+const BUZZ_COMPATIBILITY: &str = include_str!("../../../../config/buzz-compatibility.env");
+// This PR has no qualified v1alpha2 production Buzz build. Populate only in a
+// reviewed compatibility update after live acceptance and security approval.
+const QUALIFIED_BUZZ_V1ALPHA2_COMMITS: &[&str] = &[];
+
+fn buzz_replacement_runtime_qualified() -> bool {
+    let field = |name: &str| {
+        BUZZ_COMPATIBILITY.lines().find_map(|line| {
+            line.strip_prefix(name)
+                .and_then(|value| value.strip_prefix('='))
+        })
+    };
+    field("BUZZ_CONTRACT_VERSION") == Some("v1alpha2")
+        && field("BUZZ_REPLACEMENT_V1ALPHA2_QUALIFIED") == Some("1")
+        && field("BUZZ_SUPPORTED_COMMIT")
+            .is_some_and(|commit| QUALIFIED_BUZZ_V1ALPHA2_COMMITS.contains(&commit))
+        && field("BUZZ_SUPPORTED_IMAGE_DIGEST")
+            .is_some_and(|digest| digest.starts_with("sha256:") && digest.len() == 71)
+}
+
+fn explicit_replacement_flag(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+fn replacement_initiation_enabled(db: &AppState) -> bool {
+    explicit_replacement_flag(
+        std::env::var("RUSTSHARE_CHAT_REPLACEMENT_INITIATION_ENABLED")
+            .ok()
+            .as_deref(),
+    ) && explicit_replacement_flag(
+        std::env::var("RUSTSHARE_CHAT_REPLACEMENT_WORKER_ENABLED")
+            .ok()
+            .as_deref(),
+    ) && db.outbox_worker_enabled
+        && std::env::var("RUSTSHARE_CHAT_AUTHORITY").as_deref() == Ok("buzz")
+        && std::env::var("RUSTSHARE_CHAT_BRIDGE_SECRET_KEY")
+            .ok()
+            .is_some_and(|key| nostr::Keys::parse(&key).is_ok())
+        && buzz_replacement_runtime_qualified()
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -515,10 +583,16 @@ pub async fn create_challenge(
         Utc::now(),
         Duration::minutes(5),
     );
-    db.chat_identity_store
-        .insert_challenge(&challenge)
+    if !db
+        .chat_identity_store
+        .insert_challenge_for_mapping(&challenge, WorkspaceId(input.workspace_id))
         .await
-        .map_err(internal_db)?;
+        .map_err(internal_db)?
+    {
+        return Err(AppError::conflict(
+            "Chat workspace mapping changed while issuing the challenge",
+        ));
+    }
     Ok((
         StatusCode::CREATED,
         Json(ChallengeResponse {
@@ -591,6 +665,171 @@ pub async fn verify_binding(
             status: binding.status,
         }),
     ))
+}
+
+/// Start the durable, two-sided Buzz identity replacement operation.
+#[utoipa::path(
+    post,
+    path = "/api/v1/applications/chat/identity-replacements",
+    tag = "Chat",
+    request_body = ReplacementRequest,
+    responses(
+        (status = 202, description = "Replacement queued for revocation", body = ReplacementInitiationResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 409, description = "Invalid or conflicting replacement", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn initiate_replacement(
+    auth: AuthenticatedUser,
+    State(app): State<AppState>,
+    State(db): State<DatabaseState>,
+    Json(input): Json<ReplacementRequest>,
+) -> Result<(StatusCode, Json<ReplacementInitiationResponse>), AppError> {
+    if !replacement_initiation_enabled(&app) {
+        return Err(AppError::not_found("Chat identity replacement is disabled"));
+    }
+    ensure_workspace_scope(auth.tenant_id, input.workspace_id)?;
+    let active = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND tenant_id=$2 AND disabled_at IS NULL)",
+    )
+    .bind(auth.user_id)
+    .bind(auth.tenant_id)
+    .fetch_one(&db.db_pool)
+    .await
+    .map_err(internal_db)?;
+    if !active {
+        return Err(AppError::Unauthorized);
+    }
+    if input.operation_id.is_nil() || input.challenge_id.is_nil() || input.old_binding_id.is_nil() {
+        return Err(AppError::bad_request(
+            "replacement identifiers must be non-nil",
+        ));
+    }
+    let start = rustshare_storage::ReplacementStart {
+        operation_id: input.operation_id,
+        replacement_binding_id: input.operation_id,
+        old_binding_id: input.old_binding_id,
+        tenant_id: TenantId(auth.tenant_id),
+        principal_id: PrincipalId(auth.user_id),
+        workspace_id: WorkspaceId(input.workspace_id),
+        actor_id: auth.user_id,
+    };
+    let proof_event_id = if input.event.kind == Kind::Authentication && input.event.verify().is_ok()
+    {
+        input.event.id.to_hex()
+    } else {
+        return Err(AppError::bad_request("invalid NIP-42 proof"));
+    };
+    if let Some(matches) = db
+        .chat_identity_store
+        .replacement_request_matches(&start, input.challenge_id, &proof_event_id)
+        .await
+        .map_err(internal_db)?
+    {
+        if matches {
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(ReplacementInitiationResponse {
+                    operation_id: input.operation_id,
+                    state: "pending_revocation".into(),
+                }),
+            ));
+        }
+        return Err(AppError::conflict("operation ID is already in use"));
+    }
+
+    let challenge = db
+        .chat_identity_store
+        .challenge(input.challenge_id)
+        .await
+        .map_err(internal_db)?
+        .ok_or_else(|| AppError::not_found("binding challenge not found"))?;
+    if challenge.rotation_of != Some(input.old_binding_id) {
+        return Err(AppError::conflict(
+            "challenge does not authorize replacement of this binding",
+        ));
+    }
+    let proof = challenge
+        .verify_proof(
+            TenantId(auth.tenant_id),
+            PrincipalId(auth.user_id),
+            &input.event,
+            Utc::now(),
+        )
+        .map_err(binding_error)?;
+    if !db
+        .chat_identity_store
+        .chat_access(
+            TenantId(auth.tenant_id),
+            WorkspaceId(input.workspace_id),
+            PrincipalId(auth.user_id),
+        )
+        .await
+        .map_err(internal_db)?
+    {
+        return Err(AppError::Forbidden(
+            "Chat is not enabled for this Principal/workspace".into(),
+        ));
+    }
+    let started = db
+        .chat_identity_store
+        .begin_replacement(&start, &proof)
+        .await
+        .map_err(internal_db)?;
+    if !started {
+        return Err(AppError::conflict(
+            "replacement request is no longer eligible",
+        ));
+    }
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ReplacementInitiationResponse {
+            operation_id: input.operation_id,
+            state: "pending_revocation".into(),
+        }),
+    ))
+}
+
+/// Read operation status within the authenticated Principal's tenant scope.
+#[utoipa::path(
+    get,
+    path = "/api/v1/applications/chat/identity-replacements/{operation_id}",
+    tag = "Chat",
+    params(("operation_id" = Uuid, Path, description = "Replacement operation id")),
+    responses(
+        (status = 200, description = "Replacement status", body = ReplacementStatusResponse),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Operation unavailable", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn replacement_status(
+    auth: AuthenticatedUser,
+    State(db): State<DatabaseState>,
+    Path(operation_id): Path<Uuid>,
+) -> Result<Json<ReplacementStatusResponse>, AppError> {
+    ensure_active_principal(&db, &auth).await?;
+    let status = db
+        .chat_identity_store
+        .replacement_status(TenantId(auth.tenant_id), auth.user_id, operation_id)
+        .await
+        .map_err(internal_db)?
+        .ok_or_else(|| AppError::not_found("replacement operation not found"))?;
+    Ok(Json(ReplacementStatusResponse {
+        operation_id: status.operation_id,
+        state: if status.completed_at.is_some() {
+            "completed".into()
+        } else if status.blocked_at.is_some() {
+            "blocked".into()
+        } else {
+            status.state
+        },
+        generation: status.generation,
+        created_at: status.created_at,
+        updated_at: status.updated_at,
+        completed_at: status.completed_at,
+        error_category: status.failure_code.map(|_| "operation_blocked".into()),
+    }))
 }
 
 /// Persist the Elembra-side admission and enqueue the Buzz bridge operation.
@@ -720,6 +959,19 @@ fn internal_db(error: impl std::fmt::Display) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacement_feature_flags_require_explicit_one() {
+        assert!(!explicit_replacement_flag(None));
+        assert!(!explicit_replacement_flag(Some("0")));
+        assert!(!explicit_replacement_flag(Some("true")));
+        assert!(explicit_replacement_flag(Some("1")));
+    }
+
+    #[test]
+    fn unqualified_pinned_buzz_runtime_cannot_enable_replacement() {
+        assert!(!buzz_replacement_runtime_qualified());
+    }
 
     #[test]
     fn relay_pubkey_accepts_64_lowercase_hex() {
