@@ -35,7 +35,8 @@ Local evidence so far:
 - OpenAPI export tests passed (3 tests); SQLx workspace metadata check passed
   with the repository's existing unused-query warning.
 - No integrated Elembra/Buzz replacement scenario, normal Chat product
-  acceptance, or protected CI run has been executed.
+  acceptance, or dedicated required acceptance check has been executed. PR
+  checks are still pending.
 
 ## Required evidence still outstanding
 
