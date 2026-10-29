@@ -162,7 +162,7 @@ against an in-test fake relay (in-memory, no database) and a real dev database:
 | 13 | Reconcile idempotent | second run `created == 0` (conflict rows count as `updated`), one row per message |
 | 14 | Reconcile over public HTTP only | fake's `state_requests > 0`; fake has no database by construction |
 | N1 | Deleted message not_found | `mark_deleted` at the fake → not_found → NotFound end-to-end |
-| N2 | Binding rotation asks the new pubkey | old binding revoked + new bound/admitted → Allow; recorded request carries the NEW pubkey; direct check with the old pubkey → Deny |
+| N2 | Access check uses current binding key (mock only) | the test fixture manually changes its local binding and fake membership; recorded request uses the new current key. This does not exercise identity replacement or Buzz revocation. |
 | N3 | Unknown channel not_found | message known, channel never registered → not_found → NotFound |
 | N4 | Tenant-scope guard | shared relay pages a foreign-community entry → skipped; no row written into either tenant's index |
 | N5 | Admin relay-pin rotation | PATCH the mapping to pin relay key B while the fake still signs with A → stale pin Denies; swap the fake's key to B → Allow again (`admin_can_rotate_mapping_relay_pin`) |

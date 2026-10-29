@@ -14,7 +14,7 @@ use rustshare_resource_auth::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{AdminUser, AppError, AuthenticatedUser};
+use super::{AdminUser, AppError, AuthenticatedUser, OrganizationAdmin};
 use crate::services::chat_bootstrap::{ChatBootstrapError, ProvisionOutcome};
 use crate::state::{AppState, DatabaseState};
 
@@ -73,6 +73,14 @@ pub struct MappingRequest {
     /// are trusted when asking the community's authoritative relay.
     #[serde(default)]
     pub relay_pubkey: Option<String>,
+    /// Admin-selected Buzz wire contract. Existing clients and mappings stay
+    /// on v1alpha1 unless an administrator explicitly opts in.
+    #[serde(default = "default_membership_protocol")]
+    pub membership_protocol_version: String,
+}
+
+fn default_membership_protocol() -> String {
+    "v1alpha1".to_string()
 }
 
 /// Revoke a user's Chat binding and active admissions in the admin's tenant.
@@ -110,6 +118,45 @@ pub async fn revoke_principal(
     }))
 }
 
+/// Retry only a recoverable blocked replacement; the worker must reverify membership.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/applications/chat/replacements/{operation_id}/recover",
+    tag = "Chat (admin)",
+    params(("operation_id" = Uuid, Path, description = "Replacement operation id")),
+    responses(
+        (status = 204, description = "Replacement queued for fresh verification"),
+        (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 403, description = "Forbidden", body = crate::handlers::ErrorResponse),
+        (status = 404, description = "Operation unavailable or not recoverable", body = crate::handlers::ErrorResponse),
+    ),
+)]
+pub async fn recover_replacement(
+    OrganizationAdmin {
+        user_id: admin_id,
+        tenant_id,
+    }: OrganizationAdmin,
+    State(db): State<DatabaseState>,
+    Path(operation_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    if std::env::var("RUSTSHARE_CHAT_REPLACEMENT_RECOVERY_ENABLED").as_deref() != Ok("1")
+        || std::env::var("RUSTSHARE_CHAT_REPLACEMENT_WORKER_ENABLED").as_deref() != Ok("1")
+    {
+        return Err(AppError::not_found("Chat replacement recovery is disabled"));
+    }
+    let recovered = db
+        .chat_identity_store
+        .recover_blocked_replacement(TenantId(tenant_id), admin_id, operation_id)
+        .await
+        .map_err(internal_db)?;
+    if !recovered {
+        return Err(AppError::not_found(
+            "blocked Chat replacement is not recoverable",
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Configure an explicit tenant/workspace → Buzz community mapping.
 pub async fn configure_mapping(
     AdminUser { user_id: admin_id }: AdminUser,
@@ -139,12 +186,31 @@ pub async fn configure_mapping(
     if let Some(relay_pubkey) = &input.relay_pubkey {
         validate_relay_pubkey(relay_pubkey)?;
     }
+    if !matches!(
+        input.membership_protocol_version.as_str(),
+        "v1alpha1" | "v1alpha2"
+    ) || (input.membership_protocol_version == "v1alpha2" && input.relay_pubkey.is_none())
+    {
+        return Err(AppError::bad_request(
+            "v1alpha2 requires an explicit pinned relay public key",
+        ));
+    }
+    if input.membership_protocol_version == "v1alpha2"
+        && Uuid::parse_str(&input.community_id).map_or(true, |community| {
+            community.to_string() != input.community_id
+        })
+    {
+        return Err(AppError::bad_request(
+            "v1alpha2 community_id must be a canonical UUID",
+        ));
+    }
     let mapping = WorkspaceCommunityMapping {
         tenant_id: TenantId(auth.tenant_id),
         workspace_id: WorkspaceId(workspace_id),
         community_id: input.community_id,
         relay_url: input.relay_url,
         relay_pubkey: input.relay_pubkey,
+        membership_protocol_version: input.membership_protocol_version,
         active: true,
     };
     db.chat_identity_store
@@ -165,6 +231,8 @@ pub struct UpdateCommunityMappingRequest {
     /// current pin) for the side you are not rotating.
     #[serde(default)]
     pub relay_pubkey: Option<String>,
+    #[serde(default)]
+    pub membership_protocol_version: Option<String>,
 }
 
 /// Rotate the mapping's relay endpoint and/or pinned pubkey WITHOUT changing
@@ -205,12 +273,38 @@ pub async fn update_community_mapping(
         .await
         .map_err(internal_db)?
         .ok_or_else(|| AppError::not_found("Chat workspace mapping not found"))?;
+    let requested_protocol = input
+        .membership_protocol_version
+        .as_deref()
+        .unwrap_or(&existing.membership_protocol_version);
+    if requested_protocol == "v1alpha2" && input.relay_pubkey.is_none() {
+        return Err(AppError::bad_request(
+            "v1alpha2 mappings require the pinned relay public key on updates",
+        ));
+    }
+    if requested_protocol == "v1alpha2"
+        && Uuid::parse_str(&existing.community_id).map_or(true, |community| {
+            community.to_string() != existing.community_id
+        })
+    {
+        return Err(AppError::bad_request(
+            "v1alpha2 community_id must be a canonical UUID",
+        ));
+    }
+    if let Some(version) = &input.membership_protocol_version {
+        if !matches!(version.as_str(), "v1alpha1" | "v1alpha2") {
+            return Err(AppError::bad_request("unsupported membership protocol"));
+        }
+    }
     let updated = WorkspaceCommunityMapping {
         tenant_id: existing.tenant_id,
         workspace_id: existing.workspace_id,
         community_id: existing.community_id,
         relay_url: input.relay_url,
         relay_pubkey: input.relay_pubkey,
+        membership_protocol_version: input
+            .membership_protocol_version
+            .unwrap_or(existing.membership_protocol_version.clone()),
         active: existing.active,
     };
     if !db
@@ -220,11 +314,14 @@ pub async fn update_community_mapping(
             workspace_id,
             updated.relay_url.clone(),
             updated.relay_pubkey.clone(),
+            &updated.membership_protocol_version,
         )
         .await
         .map_err(internal_db)?
     {
-        return Err(AppError::not_found("Chat workspace mapping not found"));
+        return Err(AppError::conflict(
+            "protocol changes or relay rotation are unsafe while legacy mutations or Buzz operations remain outstanding",
+        ));
     }
     Ok((StatusCode::OK, Json(updated)))
 }
@@ -458,6 +555,11 @@ pub async fn verify_binding(
             now,
         )
         .map_err(binding_error)?;
+    if challenge.rotation_of.is_some() {
+        return Err(AppError::conflict(
+            "identity replacement is unavailable until Buzz revocation and membership can be verified",
+        ));
+    }
 
     let binding = ChatIdentityBinding {
         binding_id: Uuid::new_v4(),

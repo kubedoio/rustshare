@@ -5,6 +5,12 @@ Issues: [#215](https://github.com/kubedoio/rustshare/issues/215),
 [#196](https://github.com/kubedoio/rustshare/issues/196),
 [#323](https://github.com/kubedoio/rustshare/issues/323).
 
+> Historical report for the M4.1b review head. PR #426 supersedes its
+> replacement behavior: `rotation_of` verification now fails closed until
+> Buzz revocation and membership can be authoritatively verified. The
+> rotation success and race results below describe the earlier implementation,
+> not the current behavior.
+
 ## Audit
 
 Already present at baseline:
@@ -14,8 +20,9 @@ Already present at baseline:
   Buzz key; private signing material remains client-side.
 - Encrypted local key export/import, in-memory lock/unlock, account-bound
   envelope metadata and logout/account-switch cleanup.
-- Explicit `rotation_of` backend semantics, admission revocation outbox,
-  Principal offboarding and audited browser-session revocation.
+- At this baseline, explicit `rotation_of` backend semantics and an admission
+  revocation outbox existed alongside Principal offboarding and audited
+  browser-session revocation. PR #426 disables that unsafe rotation path.
 - `GET/DELETE /api/v1/me/sessions` for browser sessions and
   `GET/DELETE /api/v1/user/devices` for Elembra device tokens.
 
@@ -30,7 +37,7 @@ explicit threat model, supported revocation guarantees and M4.1b2 boundary.
 
 ## Review and validation on the review head
 
-The first full Vitest run during cold Rust compilation had one intermittent
+At this baseline, the first full Vitest run during cold Rust compilation had one intermittent
 Mail inline-image failure. The focused Mail test then passed, and the complete
 suite passed on an idle frontend run. A review of the activation transaction
 found that a previously revoked Buzz key could be rebound or reassigned after
@@ -38,14 +45,15 @@ revocation. Activation now rejects any public key with prior binding history
 across tenants and serializes activation with Principal revocation/disablement and
 other attempts for the same key. The storage boundary requires binding scope,
 key and rotation fields to match the verified challenge. The PostgreSQL
-regression proves revoked-key history, ownership, wrong-key binding, replay,
-competing rotation and deterministic cross-tenant same-key activation. It also
+regression at this baseline proved revoked-key history, ownership, wrong-key
+binding, replay, competing rotation and deterministic cross-tenant same-key activation. It also
 exercises same-tenant same-key assignment and explicit revocation concurrently
 without forced overlap, and checks disabled-Principal rejection sequentially.
 Comprehensive review also closed an admission lifecycle race: admission now
-holds the same Principal lock as activation and revocation. Deterministic
-PostgreSQL barriers prove admission cannot commit after explicit revocation,
-disablement or rotation. A second unrotated key is rejected without consuming
+holds the same Principal lock as activation and revocation. At this baseline,
+deterministic PostgreSQL barriers proved admission could not commit after
+explicit revocation, disablement or rotation. PR #426 removes rotation as a
+supported activation path. A second unrotated key is rejected without consuming
 its challenge. The OpenAPI contract distinguishes account-device and Vault Sync
 revocation routes and operation IDs. Failed sign-out retains platform
 authentication and real-time state while clearing Chat state and reporting that

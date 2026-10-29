@@ -884,6 +884,10 @@ pub fn chat_integration_routes() -> Router<AppState> {
             post(crate::handlers::chat_identity::revoke_principal),
         )
         .route(
+            "/api/v1/admin/applications/chat/replacements/{operation_id}/recover",
+            post(crate::handlers::chat_identity::recover_replacement),
+        )
+        .route(
             "/api/v1/admin/applications/memory/chat/reconcile",
             post(crate::handlers::memory_reconcile::reconcile_chat_memory),
         )

@@ -56,6 +56,46 @@ const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 /// splits larger batches into sequential round-trips of at most this many).
 const MAX_BATCH_CHECKS: usize = 64;
 
+/// Exact community membership, distinct from channel readability.
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BuzzMembership {
+    Active,
+    Absent,
+    Revoked,
+}
+
+/// Verified observation from one fresh, single-use membership request.
+/// This observation does not activate a binding or authorize replacement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuzzMembershipObservation {
+    pub request_id: String,
+    pub community_id: String,
+    pub pubkey: String,
+    pub membership: BuzzMembership,
+    pub membership_revision: u64,
+    pub evaluated_at: i64,
+    #[serde(skip)]
+    pub(crate) event_id: String,
+    #[serde(skip)]
+    event_created_at: i64,
+}
+
+impl BuzzMembershipObservation {
+    pub(crate) fn is_fresh_at(&self, now: i64) -> bool {
+        (now - 30..=now + 5).contains(&self.evaluated_at)
+            && (now - 30..=now + 5).contains(&self.event_created_at)
+    }
+}
+
+#[derive(Serialize)]
+pub(crate) struct BuzzMembershipRequest<'a> {
+    pub(crate) request_id: uuid::Uuid,
+    pub(crate) community_id: uuid::Uuid,
+    pub(crate) pubkey: &'a str,
+}
+
 /// Access-check request sent to `POST /api/v1/relay/access/check`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuzzAccessCheckRequest {
@@ -160,6 +200,67 @@ pub struct BuzzGatewayClient {
 }
 
 impl BuzzGatewayClient {
+    /// Read a previously persisted request over the authenticated public contract.
+    /// Durable nonce consumption belongs to services::chat_membership.
+    pub(crate) async fn check_membership(
+        &self,
+        relay_url: &str,
+        relay_pubkey: &str,
+        req: &BuzzMembershipRequest<'_>,
+        minimum_revision: u64,
+    ) -> Result<BuzzMembershipObservation, BuzzAuthorityError> {
+        let (base, http) = self.validated_http(relay_url).await?;
+        let url = base
+            .join("/api/v1/relay/membership/check")
+            .map_err(|e| BuzzAuthorityError::Config(e.to_string()))?;
+        let body =
+            serde_json::to_vec(&req).map_err(|e| BuzzAuthorityError::Config(e.to_string()))?;
+        let header = self.nip98_header("POST", &url, Some(&body)).await?;
+        let response = http
+            .post(url)
+            .timeout(self.timeout)
+            .header("Authorization", header)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| BuzzAuthorityError::Transport(e.to_string()))?;
+        let raw = read_response_json(response).await?;
+        self.membership_from_19030(&raw, relay_pubkey, req, minimum_revision)
+    }
+
+    pub(crate) fn membership_from_19030(
+        &self,
+        raw: &Value,
+        relay_pubkey: &str,
+        req: &BuzzMembershipRequest<'_>,
+        minimum_revision: u64,
+    ) -> Result<BuzzMembershipObservation, BuzzAuthorityError> {
+        let event = self.verify_19030(raw, relay_pubkey)?;
+        let mut result: BuzzMembershipObservation =
+            serde_json::from_str(&event.content).map_err(|_| {
+                BuzzAuthorityError::InvalidResponse("invalid membership response".into())
+            })?;
+        let now = Utc::now().timestamp();
+        result.event_created_at = i64::try_from(event.created_at.as_secs()).map_err(|_| {
+            BuzzAuthorityError::InvalidResponse("invalid membership timestamp".into())
+        })?;
+        result.event_id = event.id.to_hex();
+        if result.request_id != req.request_id.to_string()
+            || result.community_id != req.community_id.to_string()
+            || result.pubkey != req.pubkey
+            || !result.is_fresh_at(now)
+            || result.membership_revision < minimum_revision
+            || result.membership_revision > i64::MAX as u64
+            || (result.membership == BuzzMembership::Absent) != (result.membership_revision == 0)
+        {
+            return Err(BuzzAuthorityError::InvalidResponse(
+                "membership response does not match fresh request/revision".into(),
+            ));
+        }
+        Ok(result)
+    }
+
     /// Build a client with the default [`DEFAULT_TIMEOUT`].
     ///
     /// The `http` builder is used with redirects disabled: a hostile relay
@@ -1032,6 +1133,74 @@ mod tests {
 
     /// A 64-char lowercase hex string (pubkey/event-id shaped).
     const HEX64: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn membership_verification_binds_nonce_scope_freshness_and_revision() {
+        let relay = Keys::generate();
+        let gateway = client(Keys::generate());
+        let subject = Keys::generate().public_key().to_hex();
+        let req = BuzzMembershipRequest {
+            request_id: Uuid::new_v4(),
+            community_id: Uuid::new_v4(),
+            pubkey: &subject,
+        };
+        let good = json!({"request_id":req.request_id,"community_id":req.community_id,"pubkey":subject,
+            "membership":"active","membership_revision":2,"evaluated_at":Utc::now().timestamp()});
+        let signed = |content: Value| serde_json::to_value(relay_19030(&relay, content)).unwrap();
+        assert_eq!(
+            gateway
+                .membership_from_19030(&signed(good.clone()), &relay.public_key().to_hex(), &req, 2)
+                .unwrap()
+                .membership,
+            BuzzMembership::Active
+        );
+        for (field, value) in [
+            ("request_id", json!(Uuid::new_v4())),
+            ("community_id", json!(Uuid::new_v4())),
+            ("pubkey", json!(Keys::generate().public_key().to_hex())),
+            ("evaluated_at", json!(Utc::now().timestamp() - 31)),
+            ("evaluated_at", json!(Utc::now().timestamp() + 6)),
+            ("membership_revision", json!(1)),
+            ("membership_revision", json!(-1)),
+            ("membership_revision", json!(0)),
+            ("membership_revision", json!(u64::MAX)),
+            ("membership", json!("unknown")),
+            ("membership", json!("absent")),
+        ] {
+            let mut invalid = good.clone();
+            invalid[field] = value;
+            assert!(
+                gateway
+                    .membership_from_19030(&signed(invalid), &relay.public_key().to_hex(), &req, 2)
+                    .is_err(),
+                "accepted invalid {field}"
+            );
+        }
+        let old = signed(good.clone());
+        let new_request = BuzzMembershipRequest {
+            request_id: Uuid::new_v4(),
+            ..req
+        };
+        assert!(gateway
+            .membership_from_19030(&old, &relay.public_key().to_hex(), &new_request, 0)
+            .is_err());
+        assert!(gateway
+            .membership_from_19030(&old, &Keys::generate().public_key().to_hex(), &req, 0)
+            .is_err());
+        let mut tampered = old;
+        tampered["content"] = json!("{}");
+        assert!(gateway
+            .membership_from_19030(&tampered, &relay.public_key().to_hex(), &req, 0)
+            .is_err());
+        for (membership, revision) in [("absent", 0), ("revoked", 3)] {
+            let mut content = good.clone();
+            content["membership"] = json!(membership);
+            content["membership_revision"] = json!(revision);
+            assert!(gateway
+                .membership_from_19030(&signed(content), &relay.public_key().to_hex(), &req, 0)
+                .is_ok());
+        }
+    }
 
     fn client(keys: Keys) -> BuzzGatewayClient {
         BuzzGatewayClient::new(keys, Client::builder()).expect("build test client")

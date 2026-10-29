@@ -813,7 +813,7 @@ pub async fn init_app() -> Result<AppState> {
             (*memory_catalog_store).clone(),
         ));
     let outbox_consumers: Vec<Arc<dyn rustshare_integration_events::OutboxConsumer>> =
-        crate::buzz_bridge::BuzzAdmissionBridge::from_env()
+        crate::buzz_bridge::BuzzAdmissionBridge::from_env_with_pool(db_pool.clone())
             .map(|consumer| {
                 Arc::new(consumer) as Arc<dyn rustshare_integration_events::OutboxConsumer>
             })
@@ -1036,6 +1036,32 @@ pub async fn init_app() -> Result<AppState> {
         info!("Chat authority mode: local (coarse workspace-only gate)");
         (None, Box::new(LocalFallbackAuthority), None)
     };
+
+    if std::env::var("RUSTSHARE_CHAT_REPLACEMENT_WORKER_ENABLED").as_deref() == Ok("1") {
+        if !outbox_worker_config.enabled {
+            anyhow::bail!("Chat identity replacement worker requires the outbox worker");
+        }
+        let gateway = buzz_gateway.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Chat identity replacement worker requires Buzz authority mode")
+        })?;
+        let bridge_key = config
+            .rustshare_chat_bridge_secret_key
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Chat bridge identity is not configured"))?;
+        let bridge_pubkey = nostr::Keys::parse(bridge_key)
+            .map_err(|_| anyhow::anyhow!("Chat bridge identity is invalid"))?
+            .public_key()
+            .to_hex();
+        crate::services::chat_replacement::spawn_replacement_worker(
+            db_pool.clone(),
+            (*chat_identity_store).clone(),
+            Arc::clone(&services.outbox_store),
+            Arc::clone(gateway),
+            bridge_pubkey,
+            shutdown_tx.subscribe(),
+        );
+        info!("Chat identity replacement worker enabled by explicit operator setting");
+    }
 
     let (source_authorizer, chat_owner) = authz::build_source_authorizer(
         Arc::clone(&services.application_registry),

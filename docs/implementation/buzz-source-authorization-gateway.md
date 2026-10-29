@@ -214,7 +214,8 @@ because the handler runs against the full `DatabaseState` (DATABASE_URL is requi
 - the production path signs only with the service key (the relay records the authenticated
   signer); a forged user-key-signed request → 401; `chat_identity_bindings` has no
   private-key column;
-- deleted messages → `NotFound`; binding rotation asks the relay for the new pubkey; unknown
+- deleted messages → `NotFound`; access checks ask about the current binding's public key
+  (the mock fixture changes bindings directly and is not a replacement test); unknown
   channels → `NotFound`;
 - reconcile-from-Buzz repairs a missing projection (no outbox writes), repairs a missing
   observation index via replay, is idempotent, and flows over the public HTTP contract (the

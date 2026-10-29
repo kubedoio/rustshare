@@ -13,8 +13,9 @@
 		<p class="mt-2">
 			If a missing device may have had Chat unlocked, or an encrypted backup and its passphrase may
 			both be exposed, treat the shared Buzz key as compromised. Locking Chat here only clears this
-			browser's in-memory key. Controlled identity rotation needs administrator-coordinated Buzz
-			admission revocation and replacement; this page does not perform that rotation.
+			browser's in-memory key. Contact your workspace administrator to coordinate revocation of the
+			old Buzz admission. Identity replacement is currently unavailable; this page cannot replace
+			it.
 		</p>
 		<div class="mt-3 flex flex-wrap gap-4">
 			<a class="font-medium text-brand-500 hover:underline" href="/settings?tab=security">

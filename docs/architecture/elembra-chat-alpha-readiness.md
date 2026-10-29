@@ -238,7 +238,7 @@ All four are small, behavior-preserving beyond the intended change, and covered 
 |---|---|---|
 | #196 | [Epic] Evolve RustShare into Elembra… | KEEP (roadmap tracker) |
 | #214 | [Application][Chat] Build Elembra Chat bridge around Buzz… | UPDATE — v1 delivered by #238; channel registry + batch authorization delivered in the production-authority pass; remaining: Buzz bridge outbox consumer (9030/9031 live), RustChat retain/migrate/drop |
-| #215 | [Application][Chat][Identity] SSO ↔ Buzz key binding, recovery, revocation | UPDATE — binding/admission/rotation/revocation foundation delivered; remaining: import/export UX (partially delivered here), revocation admin endpoint, multi-device story |
+| #215 | [Application][Chat][Identity] SSO ↔ Buzz key binding, recovery, revocation | UPDATE — binding, admission and Principal revocation delivered; unsafe `rotation_of` activation is fail-closed; per-device enrollment and relay-confirmed replacement remain under #424 pending Buzz membership read-back |
 | #119 | [Application][Memory] Catalog, search, cited RAG | KEEP |
 | #120 | [Application][Deferred] Object Spaces | DEFER (self-declared) |
 | #213, #99, #117, #173 | Connector foundation + use cases | KEEP (out of Chat scope) |

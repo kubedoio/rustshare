@@ -6,8 +6,10 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_resource_auth::{
-    BindingChallenge, BindingStatus, ChatIdentityBinding, WorkspaceCommunityMapping,
+    BindingChallenge, BindingStatus, ChatIdentityBinding, VerifiedBindingProof,
+    WorkspaceCommunityMapping,
 };
+use sha2::Digest as _;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -43,6 +45,58 @@ pub struct ChatIdentityStore {
     pool: PgPool,
 }
 
+#[derive(Debug, Clone)]
+pub struct ReplacementStart {
+    pub operation_id: Uuid,
+    pub replacement_binding_id: Uuid,
+    pub tenant_id: TenantId,
+    pub principal_id: PrincipalId,
+    pub workspace_id: WorkspaceId,
+    pub actor_id: Uuid,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReplacementStatus {
+    pub operation_id: Uuid,
+    pub state: String,
+    pub generation: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub failure_code: Option<String>,
+    pub blocked_at: Option<DateTime<Utc>>,
+    pub transient_failures: i16,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReplacementAuditEntry {
+    pub actor_id: Uuid,
+    pub from_state: Option<String>,
+    pub to_state: String,
+    pub reason_code: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReplacementLease {
+    pub operation_id: Uuid,
+    pub tenant_id: TenantId,
+    pub principal_id: PrincipalId,
+    pub workspace_id: WorkspaceId,
+    pub community_id: Uuid,
+    pub relay_url: String,
+    pub relay_pubkey: String,
+    pub old_pubkey: String,
+    pub replacement_pubkey: String,
+    pub state: String,
+    pub generation: i64,
+    pub token: Uuid,
+}
+
+fn chat_binding_history_fence(pubkey: &str) -> String {
+    format!("chat-binding:{pubkey}")
+}
+
 /// Idempotent provisioning insert outcome (ADR-0036).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProvisionMappingOutcome {
@@ -69,13 +123,418 @@ impl ChatIdentityStore {
         Self { pool }
     }
 
+    /// Begin replacement after the caller verified the candidate's NIP-42 proof.
+    pub async fn begin_replacement(
+        &self,
+        input: &ReplacementStart,
+        proof: &VerifiedBindingProof,
+    ) -> Result<bool> {
+        if input.actor_id != input.principal_id.0
+            || proof.tenant_id() != input.tenant_id
+            || proof.principal_id() != input.principal_id
+            || proof.challenge_id().is_nil()
+            || proof.event_id().len() != 64
+            || input.operation_id.is_nil()
+            || input.replacement_binding_id.is_nil()
+        {
+            return Ok(false);
+        }
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await?;
+        let principal = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM users WHERE id=$1 AND tenant_id=$2 AND disabled_at IS NULL FOR NO KEY UPDATE",
+        )
+        .bind(input.principal_id.0)
+        .bind(input.tenant_id.0)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if principal.is_none() {
+            return Ok(false);
+        }
+        let duplicate = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM chat_identity_replacements
+             WHERE tenant_id=$1 AND operation_id=$2 AND principal_id=$3
+               AND workspace_id=$4 AND actor_id=$5 AND challenge_id=$6
+               AND replacement_binding_id=$7 AND proof_event_id=$8)",
+        )
+        .bind(input.tenant_id.0)
+        .bind(input.operation_id)
+        .bind(input.principal_id.0)
+        .bind(input.workspace_id.0)
+        .bind(input.actor_id)
+        .bind(proof.challenge_id())
+        .bind(input.replacement_binding_id)
+        .bind(proof.event_id())
+        .fetch_one(&mut *tx)
+        .await?;
+        if duplicate {
+            tx.commit().await?;
+            return Ok(true);
+        }
+        let challenge = sqlx::query(
+            "SELECT buzz_pubkey,rotation_of,relay_url,nonce,expires_at,consumed_at
+             FROM chat_binding_challenges WHERE challenge_id=$1 AND tenant_id=$2
+               AND principal_id=$3 FOR UPDATE",
+        )
+        .bind(proof.challenge_id())
+        .bind(input.tenant_id.0)
+        .bind(input.principal_id.0)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(challenge) = challenge else {
+            return Ok(false);
+        };
+        let candidate: String = challenge.try_get("buzz_pubkey")?;
+        let nonce: String = challenge.try_get("nonce")?;
+        let expires_at: DateTime<Utc> = challenge.try_get("expires_at")?;
+        let consumed_at: Option<DateTime<Utc>> = challenge.try_get("consumed_at")?;
+        let challenge_relay: String = challenge.try_get("relay_url")?;
+        let Some(old_binding_id) = challenge.try_get::<Option<Uuid>, _>("rotation_of")? else {
+            return Ok(false);
+        };
+        let now = Utc::now();
+        if candidate != proof.buzz_pubkey()
+            || nonce != proof.nonce()
+            || challenge_relay != proof.relay_url()
+            || expires_at <= now
+            || consumed_at.is_some()
+            || (now - proof.verified_at()).num_seconds().abs() > 60
+        {
+            return Ok(false);
+        }
+        let mapping = sqlx::query(
+            "SELECT mapping_id,community_id,relay_url,relay_pubkey FROM chat_workspace_communities
+             WHERE tenant_id=$1 AND workspace_id=$2 AND active FOR SHARE",
+        )
+        .bind(input.tenant_id.0)
+        .bind(input.workspace_id.0)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(mapping) = mapping else {
+            return Ok(false);
+        };
+        let mapping_id: Uuid = mapping.try_get("mapping_id")?;
+        let community_text: String = mapping.try_get("community_id")?;
+        let Ok(community_id) = Uuid::parse_str(&community_text) else {
+            return Ok(false);
+        };
+        let relay_url: String = mapping.try_get("relay_url")?;
+        let relay_pubkey: Option<String> = mapping.try_get("relay_pubkey")?;
+        let Some(relay_pubkey) = relay_pubkey else {
+            return Ok(false);
+        };
+        if relay_url != challenge_relay
+            || relay_pubkey.len() != 64
+            || !relay_pubkey
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Ok(false);
+        }
+        let mut fences = [
+            chat_binding_history_fence(&candidate),
+            format!("{community_id}:{candidate}"),
+            format!("{community_id}:old:{old_binding_id}"),
+        ];
+        fences.sort();
+        for fence in fences {
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+                .bind(fence)
+                .execute(&mut *tx)
+                .await?;
+        }
+        let old = sqlx::query(
+            "SELECT buzz_pubkey FROM chat_identity_bindings
+             WHERE tenant_id=$1 AND principal_id=$2 AND binding_id=$3
+               AND status='active' AND revoked_at IS NULL FOR UPDATE",
+        )
+        .bind(input.tenant_id.0)
+        .bind(input.principal_id.0)
+        .bind(old_binding_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(old) = old else { return Ok(false) };
+        let old_pubkey: String = old.try_get("buzz_pubkey")?;
+        let key_seen = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM chat_identity_bindings WHERE buzz_pubkey=$1)",
+        )
+        .bind(&candidate)
+        .fetch_one(&mut *tx)
+        .await?;
+        if key_seen {
+            return Ok(false);
+        }
+        let chat_enabled: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM application_enablements ae
+             LEFT JOIN application_user_preferences p ON p.user_id=$3 AND p.application_id='io.elembra.chat'
+             WHERE ae.tenant_id=$1 AND ae.workspace_id=$2 AND ae.application_id='io.elembra.chat'
+               AND ae.enabled AND COALESCE(p.enabled,true))",
+        )
+        .bind(input.tenant_id.0)
+        .bind(input.workspace_id.0)
+        .bind(input.principal_id.0)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !chat_enabled {
+            return Ok(false);
+        }
+        let digest = sha2::Sha256::digest(
+            format!("{mapping_id}\0{community_id}\0{relay_url}\0{relay_pubkey}").as_bytes(),
+        );
+        // Mapping and history locks may outlive the possession proof.
+        let now = Utc::now();
+        if expires_at <= now || (now - proof.verified_at()).num_seconds().abs() > 60 {
+            return Ok(false);
+        }
+        let consumed = sqlx::query(
+            "UPDATE chat_binding_challenges SET consumed_at=$2 WHERE challenge_id=$1 AND consumed_at IS NULL AND expires_at>clock_timestamp()",
+        )
+        .bind(proof.challenge_id())
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        if consumed.rows_affected() != 1 {
+            return Ok(false);
+        }
+        sqlx::query("UPDATE chat_identity_bindings SET status='revoked',revoked_at=$3 WHERE tenant_id=$1 AND binding_id=$2 AND status='active' AND revoked_at IS NULL")
+            .bind(input.tenant_id.0).bind(old_binding_id).bind(now).execute(&mut *tx).await?;
+        sqlx::query("UPDATE chat_buzz_admissions SET active=false,revoked_at=$3 WHERE tenant_id=$1 AND binding_id=$2 AND active")
+            .bind(input.tenant_id.0).bind(old_binding_id).bind(now).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status,rotation_of,audit_metadata) VALUES($1,$2,$3,$4,'pending',$5,'{\"proof\":\"nip-42\",\"operation\":\"durable-replacement\"}')")
+            .bind(input.replacement_binding_id).bind(input.tenant_id.0).bind(input.principal_id.0).bind(&candidate).bind(old_binding_id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO chat_identity_replacements(operation_id,tenant_id,principal_id,workspace_id,mapping_id,community_id,relay_url,relay_pubkey,mapping_fingerprint,old_binding_id,old_pubkey,replacement_binding_id,replacement_pubkey,challenge_id,proof_event_id,actor_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'pending_revocation')")
+            .bind(input.operation_id).bind(input.tenant_id.0).bind(input.principal_id.0).bind(input.workspace_id.0)
+            .bind(mapping_id).bind(community_id).bind(&relay_url).bind(&relay_pubkey).bind(digest.to_vec())
+            .bind(old_binding_id).bind(old_pubkey).bind(input.replacement_binding_id).bind(&candidate)
+            .bind(proof.challenge_id()).bind(proof.event_id()).bind(input.actor_id).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO chat_identity_replacement_audit(audit_id,tenant_id,operation_id,actor_id,to_state) VALUES(gen_random_uuid(),$1,$2,$3,'pending_revocation')")
+            .bind(input.tenant_id.0).bind(input.operation_id).bind(input.actor_id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    pub async fn claim_replacement(&self) -> Result<Option<ReplacementLease>> {
+        let candidate = sqlx::query(
+            "SELECT operation_id,tenant_id,principal_id,workspace_id FROM chat_identity_replacements r
+             WHERE state IN ('pending_revocation','pending_revocation_verification','pending_membership_verification')
+               AND blocked_at IS NULL AND retry_at<=clock_timestamp() AND (lease_expires_at IS NULL OR lease_expires_at<=clock_timestamp())
+               AND EXISTS (SELECT 1 FROM users u WHERE u.id=r.principal_id AND u.tenant_id=r.tenant_id AND u.disabled_at IS NULL)
+               AND NOT EXISTS (SELECT 1 FROM chat_identity_replacement_commands c WHERE c.operation_id=r.operation_id
+                 AND c.outcome IN ('pending','ambiguous') AND c.phase=CASE WHEN r.state='pending_revocation' THEN 'revoke' ELSE 'admit' END)
+             ORDER BY retry_at,created_at LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(candidate) = candidate else {
+            return Ok(None);
+        };
+        let operation_id: Uuid = candidate.try_get("operation_id")?;
+        let tenant_id = TenantId(candidate.try_get("tenant_id")?);
+        let principal_id = PrincipalId(candidate.try_get("principal_id")?);
+        let workspace_id = WorkspaceId(candidate.try_get("workspace_id")?);
+        let token = Uuid::new_v4();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await?;
+        if sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM users WHERE id=$1 AND tenant_id=$2 AND disabled_at IS NULL FOR NO KEY UPDATE",
+        )
+        .bind(principal_id.0)
+        .bind(tenant_id.0)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_none()
+        {
+            return Ok(None);
+        }
+        let row = sqlx::query(
+            "UPDATE chat_identity_replacements SET lease_token=$3,lease_expires_at=clock_timestamp()+interval '90 seconds',
+             generation=generation+1,updated_at=clock_timestamp()
+             WHERE tenant_id=$1 AND operation_id=$2 AND blocked_at IS NULL AND retry_at<=clock_timestamp()
+             AND state IN ('pending_revocation','pending_revocation_verification','pending_membership_verification')
+             AND (lease_expires_at IS NULL OR lease_expires_at<=clock_timestamp())
+             AND NOT EXISTS (SELECT 1 FROM chat_identity_replacement_commands c
+                 WHERE c.operation_id=chat_identity_replacements.operation_id
+                   AND c.outcome IN ('pending','ambiguous')
+                   AND c.phase=CASE WHEN chat_identity_replacements.state='pending_revocation' THEN 'revoke' ELSE 'admit' END)
+             RETURNING community_id,relay_url,relay_pubkey,old_pubkey,replacement_pubkey,state,generation",
+        )
+        .bind(tenant_id.0)
+        .bind(operation_id)
+        .bind(token)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else { return Ok(None) };
+        let community_id: Uuid = row.try_get("community_id")?;
+        let relay_url: String = row.try_get("relay_url")?;
+        let relay_pubkey: String = row.try_get("relay_pubkey")?;
+        let old_pubkey: String = row.try_get("old_pubkey")?;
+        let replacement_pubkey: String = row.try_get("replacement_pubkey")?;
+        let state: String = row.try_get("state")?;
+        let generation: i64 = row.try_get("generation")?;
+        tx.commit().await?;
+        Ok(Some(ReplacementLease {
+            operation_id,
+            tenant_id,
+            principal_id,
+            workspace_id,
+            community_id,
+            relay_url,
+            relay_pubkey,
+            old_pubkey,
+            replacement_pubkey,
+            state,
+            generation,
+            token,
+        }))
+    }
+
+    pub async fn replacement_status(
+        &self,
+        tenant_id: TenantId,
+        principal_id: Uuid,
+        operation_id: Uuid,
+    ) -> Result<Option<ReplacementStatus>> {
+        let row = sqlx::query("SELECT operation_id,state,generation,created_at,updated_at,completed_at,failure_code,blocked_at,transient_failures
+            FROM chat_identity_replacements WHERE tenant_id=$1 AND principal_id=$2 AND operation_id=$3")
+            .bind(tenant_id.0).bind(principal_id).bind(operation_id).fetch_optional(&self.pool).await?;
+        row.map(|row| {
+            Ok(ReplacementStatus {
+                operation_id: row.try_get("operation_id")?,
+                state: row.try_get("state")?,
+                generation: row.try_get("generation")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+                completed_at: row.try_get("completed_at")?,
+                failure_code: row.try_get("failure_code")?,
+                blocked_at: row.try_get("blocked_at")?,
+                transient_failures: row.try_get("transient_failures")?,
+            })
+        })
+        .transpose()
+    }
+
+    /// Requeue only recoverable blocked operations; the worker must gather fresh evidence.
+    pub async fn recover_blocked_replacement(
+        &self,
+        tenant_id: TenantId,
+        actor_id: Uuid,
+        operation_id: Uuid,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await?;
+        let actor = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM users WHERE id=$1 AND tenant_id=$2 AND disabled_at IS NULL FOR NO KEY UPDATE",
+        )
+        .bind(actor_id)
+        .bind(tenant_id.0)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if actor.is_none() {
+            return Ok(false);
+        }
+        let operation = sqlx::query(
+            "SELECT state,failure_code FROM chat_identity_replacements
+             WHERE tenant_id=$1 AND operation_id=$2 AND blocked_at IS NOT NULL FOR UPDATE",
+        )
+        .bind(tenant_id.0)
+        .bind(operation_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(operation) = operation else {
+            return Ok(false);
+        };
+        let state: String = operation.try_get("state")?;
+        let failure: String = operation.try_get("failure_code")?;
+        let retry_exhausted = failure == "replacement_retries_exhausted"
+            && matches!(
+                state.as_str(),
+                "pending_revocation"
+                    | "pending_revocation_verification"
+                    | "pending_membership_verification"
+            );
+        let rejected_admission = failure == "buzz_command_rejected"
+            && state == "pending_replacement_admission"
+            && sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM chat_identity_replacement_commands
+                 WHERE operation_id=$1 AND phase='admit' AND outcome='rejected')",
+            )
+            .bind(operation_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        if !retry_exhausted && !rejected_admission {
+            return Ok(false);
+        }
+        let next_state = if rejected_admission {
+            "pending_revocation_verification"
+        } else {
+            state.as_str()
+        };
+        let changed = sqlx::query(
+            "UPDATE chat_identity_replacements SET state=$3,generation=generation+1,
+             transient_failures=0,blocked_at=NULL,failure_code=NULL,retry_at=clock_timestamp(),
+             lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+             WHERE tenant_id=$1 AND operation_id=$2 AND blocked_at IS NOT NULL",
+        )
+        .bind(tenant_id.0)
+        .bind(operation_id)
+        .bind(next_state)
+        .execute(&mut *tx)
+        .await?;
+        if changed.rows_affected() != 1 {
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO chat_identity_replacement_audit
+             (audit_id,tenant_id,operation_id,actor_id,from_state,to_state,reason_code)
+             VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,'operator_recovery_fresh_verification')",
+        )
+        .bind(tenant_id.0)
+        .bind(operation_id)
+        .bind(actor_id)
+        .bind(&state)
+        .bind(next_state)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    pub async fn replacement_audit(
+        &self,
+        tenant_id: TenantId,
+        principal_id: Uuid,
+        operation_id: Uuid,
+    ) -> Result<Vec<ReplacementAuditEntry>> {
+        let rows = sqlx::query("SELECT a.actor_id,a.from_state,a.to_state,a.reason_code,a.created_at
+            FROM chat_identity_replacement_audit a JOIN chat_identity_replacements r USING(tenant_id,operation_id)
+            WHERE a.tenant_id=$1 AND r.principal_id=$2 AND a.operation_id=$3 ORDER BY a.created_at,a.audit_id")
+            .bind(tenant_id.0).bind(principal_id).bind(operation_id).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(ReplacementAuditEntry {
+                    actor_id: row.try_get("actor_id")?,
+                    from_state: row.try_get("from_state")?,
+                    to_state: row.try_get("to_state")?,
+                    reason_code: row.try_get("reason_code")?,
+                    created_at: row.try_get("created_at")?,
+                })
+            })
+            .collect()
+    }
+
     pub async fn mapping(
         &self,
         tenant_id: TenantId,
         workspace_id: WorkspaceId,
     ) -> Result<Option<WorkspaceCommunityMapping>> {
         let row = sqlx::query(
-            "SELECT tenant_id, workspace_id, community_id, relay_url, relay_pubkey, active
+            "SELECT tenant_id, workspace_id, community_id, relay_url, relay_pubkey, membership_protocol_version, active
              FROM chat_workspace_communities
              WHERE tenant_id = $1 AND workspace_id = $2",
         )
@@ -91,6 +550,7 @@ impl ChatIdentityStore {
                 community_id: row.try_get("community_id")?,
                 relay_url: row.try_get("relay_url")?,
                 relay_pubkey: row.try_get("relay_pubkey")?,
+                membership_protocol_version: row.try_get("membership_protocol_version")?,
                 active: row.try_get("active")?,
             })
         })
@@ -110,7 +570,7 @@ impl ChatIdentityStore {
         community_id: &str,
     ) -> Result<Option<WorkspaceCommunityMapping>, CommunityMappingError> {
         let rows = sqlx::query(
-            "SELECT tenant_id, workspace_id, community_id, relay_url, relay_pubkey, active
+            "SELECT tenant_id, workspace_id, community_id, relay_url, relay_pubkey, membership_protocol_version, active
              FROM chat_workspace_communities
              WHERE community_id = $1 AND active",
         )
@@ -133,6 +593,7 @@ impl ChatIdentityStore {
             community_id: row.try_get("community_id")?,
             relay_url: row.try_get("relay_url")?,
             relay_pubkey: row.try_get("relay_pubkey")?,
+            membership_protocol_version: row.try_get("membership_protocol_version")?,
             active: row.try_get("active")?,
         }))
     }
@@ -187,10 +648,30 @@ impl ChatIdentityStore {
     }
 
     pub async fn insert_mapping(&self, mapping: &WorkspaceCommunityMapping) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        if mapping.membership_protocol_version == "v1alpha2" {
+            let previous_mapping = sqlx::query_scalar::<_, Uuid>(
+                "SELECT mapping_id FROM chat_workspace_communities
+                 WHERE community_id=$1 FOR UPDATE",
+            )
+            .bind(&mapping.community_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if previous_mapping.is_some() {
+                return Err(anyhow::anyhow!(
+                    "a previously mapped community must be reconciled before v1alpha2 opt-in"
+                ));
+            }
+            if Self::legacy_membership_commands_outstanding(&mut tx, &mapping.community_id).await? {
+                return Err(anyhow::anyhow!(
+                    "legacy membership commands must drain before v1alpha2 opt-in"
+                ));
+            }
+        }
         sqlx::query(
             "INSERT INTO chat_workspace_communities
-                (mapping_id, tenant_id, workspace_id, community_id, relay_url, relay_pubkey, active)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                (mapping_id, tenant_id, workspace_id, community_id, relay_url, relay_pubkey, membership_protocol_version, active)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(Uuid::new_v4())
         .bind(mapping.tenant_id.0)
@@ -198,9 +679,11 @@ impl ChatIdentityStore {
         .bind(&mapping.community_id)
         .bind(&mapping.relay_url)
         .bind(&mapping.relay_pubkey)
+        .bind(&mapping.membership_protocol_version)
         .bind(mapping.active)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -214,10 +697,39 @@ impl ChatIdentityStore {
         &self,
         mapping: &WorkspaceCommunityMapping,
     ) -> Result<ProvisionMappingOutcome, ProvisionMappingError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| ProvisionMappingError::Other(error.to_string()))?;
+        if mapping.membership_protocol_version == "v1alpha2" {
+            let previous_mapping = sqlx::query_scalar::<_, Uuid>(
+                "SELECT mapping_id FROM chat_workspace_communities
+                 WHERE community_id=$1 FOR UPDATE",
+            )
+            .bind(&mapping.community_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| ProvisionMappingError::Other(error.to_string()))?;
+            if previous_mapping.is_some() {
+                return Err(ProvisionMappingError::Other(
+                    "a previously mapped community must be reconciled before v1alpha2 opt-in"
+                        .into(),
+                ));
+            }
+            if Self::legacy_membership_commands_outstanding(&mut tx, &mapping.community_id)
+                .await
+                .map_err(|error| ProvisionMappingError::Other(error.to_string()))?
+            {
+                return Err(ProvisionMappingError::Other(
+                    "legacy membership commands must drain before v1alpha2 opt-in".into(),
+                ));
+            }
+        }
         let result = sqlx::query(
             "INSERT INTO chat_workspace_communities
-                (mapping_id, tenant_id, workspace_id, community_id, relay_url, relay_pubkey, active)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                (mapping_id, tenant_id, workspace_id, community_id, relay_url, relay_pubkey, membership_protocol_version, active)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(Uuid::new_v4())
         .bind(mapping.tenant_id.0)
@@ -225,12 +737,21 @@ impl ChatIdentityStore {
         .bind(&mapping.community_id)
         .bind(&mapping.relay_url)
         .bind(&mapping.relay_pubkey)
+        .bind(&mapping.membership_protocol_version)
         .bind(mapping.active)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await;
         match result {
-            Ok(_) => Ok(ProvisionMappingOutcome::Inserted),
+            Ok(_) => {
+                tx.commit()
+                    .await
+                    .map_err(|error| ProvisionMappingError::Other(error.to_string()))?;
+                Ok(ProvisionMappingOutcome::Inserted)
+            }
             Err(error) => {
+                tx.rollback()
+                    .await
+                    .map_err(|rollback| ProvisionMappingError::Other(rollback.to_string()))?;
                 let constraint = error
                     .as_database_error()
                     .and_then(|db| db.constraint())
@@ -273,19 +794,83 @@ impl ChatIdentityStore {
         workspace_id: WorkspaceId,
         relay_url: String,
         relay_pubkey: Option<String>,
+        membership_protocol_version: &str,
     ) -> Result<bool, sqlx::Error> {
-        let result = sqlx::query(
-            "UPDATE chat_workspace_communities
-             SET relay_url = $1, relay_pubkey = $2
-             WHERE tenant_id = $3 AND workspace_id = $4",
+        if !matches!(membership_protocol_version, "v1alpha1" | "v1alpha2") {
+            return Ok(false);
+        }
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query(
+            "SELECT mapping_id,community_id,relay_url,relay_pubkey,membership_protocol_version
+             FROM chat_workspace_communities WHERE tenant_id=$1 AND workspace_id=$2 FOR UPDATE",
         )
-        .bind(&relay_url)
-        .bind(&relay_pubkey)
         .bind(tenant_id.0)
         .bind(workspace_id.0)
-        .execute(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
-        Ok(result.rows_affected() == 1)
+        let Some(row) = row else {
+            tx.rollback().await?;
+            return Ok(false);
+        };
+        let current: String = row.try_get("membership_protocol_version")?;
+        let community_id: String = row.try_get("community_id")?;
+        let mapping_id: Uuid = row.try_get("mapping_id")?;
+        let endpoint_changed = row.try_get::<String, _>("relay_url")? != relay_url
+            || row.try_get::<Option<String>, _>("relay_pubkey")? != relay_pubkey;
+        if current == "v1alpha2" && membership_protocol_version != current {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        if membership_protocol_version == "v1alpha2" && relay_pubkey.is_none() {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        if membership_protocol_version == "v1alpha2"
+            && current != "v1alpha2"
+            && Self::legacy_membership_commands_outstanding(&mut tx, &community_id).await?
+        {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        if endpoint_changed
+            && sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM chat_buzz_membership_operations
+                 WHERE tenant_id=$1 AND mapping_id=$2 AND state='pending')",
+            )
+            .bind(tenant_id.0)
+            .bind(mapping_id)
+            .fetch_one(&mut *tx)
+            .await?
+        {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        sqlx::query("UPDATE chat_workspace_communities SET relay_url=$1,relay_pubkey=$2,membership_protocol_version=$3 WHERE tenant_id=$4 AND workspace_id=$5")
+            .bind(&relay_url).bind(&relay_pubkey).bind(membership_protocol_version).bind(tenant_id.0).bind(workspace_id.0).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    async fn legacy_membership_commands_outstanding(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        community_id: &str,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT EXISTS (
+           SELECT 1 FROM integration_outbox o
+           LEFT JOIN integration_deliveries d
+             ON d.source=o.source AND d.event_id=o.event_id
+            AND d.consumer_id='io.elembra.chat.buzz-bridge.v1'
+           WHERE o.event_type IN (
+             'io.elembra.chat.buzz.admission.requested.v1',
+             'io.elembra.chat.buzz.admission.revoked.v1')
+             AND o.event_json->'data'->>'community_id'=$1
+             AND COALESCE(d.state,'pending') <> 'processed'
+         )",
+        )
+        .bind(community_id)
+        .fetch_one(&mut **tx)
+        .await
     }
 
     pub async fn insert_challenge(&self, challenge: &BindingChallenge) -> Result<()> {
@@ -329,7 +914,9 @@ impl ChatIdentityStore {
             return Ok(false);
         }
         let row = sqlx::query(
-            "SELECT b.binding_id, b.buzz_pubkey, m.mapping_id, m.community_id, m.relay_url
+            "SELECT b.binding_id, b.buzz_pubkey, m.mapping_id, m.community_id, m.relay_url,
+                    m.relay_pubkey,
+                    m.membership_protocol_version
              FROM chat_identity_bindings b
              JOIN users u
                ON u.tenant_id = b.tenant_id AND u.id = b.principal_id
@@ -343,7 +930,7 @@ impl ChatIdentityStore {
                ON aup.user_id = $3 AND aup.application_id = 'io.elembra.chat'
              WHERE b.tenant_id = $1 AND b.principal_id = $3 AND b.status = 'active'
                AND b.revoked_at IS NULL AND COALESCE(aup.enabled, true)
-             LIMIT 1",
+             LIMIT 1 FOR UPDATE OF m",
         )
         .bind(tenant_id.0)
         .bind(workspace_id.0)
@@ -357,6 +944,7 @@ impl ChatIdentityStore {
         let mapping_id: Uuid = row.try_get("mapping_id")?;
         let community_id: String = row.try_get("community_id")?;
         let relay_url: String = row.try_get("relay_url")?;
+        let relay_pubkey: Option<String> = row.try_get("relay_pubkey")?;
         let buzz_pubkey: String = row.try_get("buzz_pubkey")?;
         sqlx::query(
             "INSERT INTO chat_buzz_admissions
@@ -385,7 +973,11 @@ impl ChatIdentityStore {
                        'elembraTenant', $1, 'elembraWorkspace', $2,
                        'data', jsonb_build_object('operation', 'admit', 'admission_id', $3,
                                                   'community_id', $4, 'relay_url', $5,
-                                                  'buzz_pubkey', $6))
+                                                  'buzz_pubkey', $6)
+                       || CASE WHEN $7 = 'v1alpha2' THEN jsonb_build_object(
+                           'command_version', 1, 'command_id', outbox_event.event_id,
+                           'relay_pubkey', $8)
+                           ELSE '{}'::jsonb END)
             FROM outbox_event",
         )
         .bind(tenant_id.0)
@@ -394,6 +986,8 @@ impl ChatIdentityStore {
         .bind(community_id)
         .bind(relay_url)
         .bind(buzz_pubkey)
+        .bind(row.try_get::<String, _>("membership_protocol_version")?)
+        .bind(relay_pubkey)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -426,13 +1020,19 @@ impl ChatIdentityStore {
         .transpose()
     }
 
-    /// Consume a challenge and activate a previously unused key atomically.
+    /// Consume a challenge and activate a Principal's first binding atomically.
     pub async fn consume_and_activate(
         &self,
         challenge: &BindingChallenge,
         binding: &ChatIdentityBinding,
         now: DateTime<Utc>,
     ) -> Result<bool> {
+        // The legacy rotation path activates the replacement before Buzz
+        // confirms revocation. Keep it closed until the replacement protocol
+        // has durable operation state and authoritative relay read-back.
+        if challenge.rotation_of.is_some() {
+            return Ok(false);
+        }
         let mut tx = self.pool.begin().await?;
         if binding.tenant_id != challenge.tenant_id
             || binding.principal_id != challenge.principal_id
@@ -441,7 +1041,7 @@ impl ChatIdentityStore {
         {
             return Ok(false);
         }
-        // Serialize activation with rotation, explicit revocation and account disablement.
+        // Serialize activation with explicit revocation and account disablement.
         let principal = sqlx::query_scalar::<_, Uuid>(
             "SELECT id FROM users WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL
              FOR NO KEY UPDATE",
@@ -455,7 +1055,7 @@ impl ChatIdentityStore {
         }
         // Principals in different tenants must not race the same key's history check.
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind(format!("chat-binding:{}", challenge.buzz_pubkey))
+            .bind(chat_binding_history_fence(&challenge.buzz_pubkey))
             .execute(&mut *tx)
             .await?;
         let key_seen = sqlx::query_scalar::<_, bool>(
@@ -468,21 +1068,19 @@ impl ChatIdentityStore {
         if key_seen {
             return Ok(false);
         }
-        if challenge.rotation_of.is_none() {
-            let already_active = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(
-                    SELECT 1 FROM chat_identity_bindings
-                    WHERE tenant_id = $1 AND principal_id = $2
-                      AND status = 'active' AND revoked_at IS NULL
-                )",
-            )
-            .bind(challenge.tenant_id.0)
-            .bind(challenge.principal_id.0)
-            .fetch_one(&mut *tx)
-            .await?;
-            if already_active {
-                return Ok(false);
-            }
+        // Omitting rotation_of after revocation must not bypass replacement verification.
+        let previously_bound = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                SELECT 1 FROM chat_identity_bindings
+                WHERE tenant_id = $1 AND principal_id = $2
+            )",
+        )
+        .bind(challenge.tenant_id.0)
+        .bind(challenge.principal_id.0)
+        .fetch_one(&mut *tx)
+        .await?;
+        if previously_bound {
+            return Ok(false);
         }
         let consumed = sqlx::query(
             "UPDATE chat_binding_challenges
@@ -496,69 +1094,6 @@ impl ChatIdentityStore {
         .rows_affected();
         if consumed != 1 {
             return Ok(false);
-        }
-
-        if let Some(rotation_of) = challenge.rotation_of {
-            let previous_active = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(
-                    SELECT 1 FROM chat_identity_bindings
-                    WHERE binding_id = $1 AND tenant_id = $2 AND principal_id = $3
-                      AND status = 'active' AND revoked_at IS NULL
-                )",
-            )
-            .bind(rotation_of)
-            .bind(challenge.tenant_id.0)
-            .bind(challenge.principal_id.0)
-            .fetch_one(&mut *tx)
-            .await?;
-            if !previous_active {
-                return Ok(false);
-            }
-            sqlx::query(
-                "INSERT INTO integration_outbox
-                    (source, event_id, event_type, application_id, tenant_id, workspace_id, event_json)
-                 SELECT 'elembra://io.elembra.chat', outbox_event.event_id,
-                        'io.elembra.chat.buzz.admission.revoked.v1', 'io.elembra.chat',
-                        a.tenant_id, m.workspace_id,
-                        jsonb_build_object(
-                            'specversion', '1.0', 'id', outbox_event.event_id,
-                            'source', 'elembra://io.elembra.chat',
-                            'type', 'io.elembra.chat.buzz.admission.revoked.v1',
-                            'time', now(), 'datacontenttype', 'application/json',
-                            'elembraTenant', a.tenant_id, 'elembraWorkspace', m.workspace_id,
-                            'data', jsonb_build_object('operation', 'revoke',
-                                                       'admission_id', a.admission_id,
-                                                       'community_id', m.community_id,
-                                                       'relay_url', m.relay_url,
-                                                       'buzz_pubkey', a.buzz_pubkey))
-                 FROM chat_buzz_admissions a
-                 JOIN chat_workspace_communities m
-                   ON m.tenant_id = a.tenant_id AND m.mapping_id = a.mapping_id
-                 CROSS JOIN LATERAL (SELECT gen_random_uuid() AS event_id) outbox_event
-                 WHERE a.tenant_id = $1 AND a.binding_id = $2 AND a.active",
-            )
-            .bind(challenge.tenant_id.0)
-            .bind(rotation_of)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(
-                "UPDATE chat_buzz_admissions
-                 SET active = false, revoked_at = COALESCE(revoked_at, now())
-                 WHERE tenant_id = $1 AND binding_id = $2 AND active",
-            )
-            .bind(challenge.tenant_id.0)
-            .bind(rotation_of)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(
-                "UPDATE chat_identity_bindings
-                 SET status = 'revoked', revoked_at = COALESCE(revoked_at, now())
-                 WHERE binding_id = $1 AND tenant_id = $2",
-            )
-            .bind(rotation_of)
-            .bind(challenge.tenant_id.0)
-            .execute(&mut *tx)
-            .await?;
         }
 
         sqlx::query(
@@ -771,18 +1306,23 @@ impl ChatIdentityStore {
                         'type', 'io.elembra.chat.buzz.admission.revoked.v1',
                         'time', now(), 'datacontenttype', 'application/json',
                         'elembraTenant', a.tenant_id, 'elembraWorkspace', m.workspace_id,
-                        'data', jsonb_build_object('operation', 'revoke',
+                    'data', jsonb_build_object('operation', 'revoke',
                                                    'admission_id', a.admission_id,
                                                    'community_id', m.community_id,
                                                    'relay_url', m.relay_url,
-                                                   'buzz_pubkey', a.buzz_pubkey))
+                                                   'buzz_pubkey', a.buzz_pubkey)
+                       || CASE WHEN m.membership_protocol_version = 'v1alpha2' THEN jsonb_build_object(
+                           'command_version', 1, 'command_id', outbox_event.event_id,
+                           'relay_pubkey', m.relay_pubkey)
+                           ELSE '{}'::jsonb END)
              FROM chat_buzz_admissions a
              JOIN chat_identity_bindings b
                ON b.tenant_id = a.tenant_id AND b.binding_id = a.binding_id
              JOIN chat_workspace_communities m
                ON m.tenant_id = a.tenant_id AND m.mapping_id = a.mapping_id
              CROSS JOIN LATERAL (SELECT gen_random_uuid() AS event_id) outbox_event
-             WHERE a.tenant_id = $1 AND b.principal_id = $2 AND a.active",
+             WHERE a.tenant_id = $1 AND b.principal_id = $2 AND a.active
+             FOR UPDATE OF m",
         )
         .bind(tenant_id.0)
         .bind(principal_id.0)
@@ -821,5 +1361,54 @@ impl ChatIdentityStore {
         }
         tx.commit().await?;
         Ok(result.rows_affected())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replacement_and_first_binding_share_global_history_fence() {
+        let candidate = "ab".repeat(32);
+        assert_eq!(
+            chat_binding_history_fence(&candidate),
+            format!("chat-binding:{candidate}")
+        );
+    }
+    use sqlx::PgPool;
+
+    #[tokio::test]
+    async fn legacy_replacement_is_rejected_before_storage_changes() {
+        let pool = PgPool::connect_lazy("postgres://unused:unused@127.0.0.1/unused").unwrap();
+        let store = ChatIdentityStore::new(pool);
+        let now = Utc::now();
+        let previous_binding = Uuid::new_v4();
+        let challenge = BindingChallenge::issue(
+            TenantId(Uuid::new_v4()),
+            PrincipalId(Uuid::new_v4()),
+            "12".repeat(32),
+            "wss://relay.example.test",
+            Some(previous_binding),
+            now,
+            chrono::Duration::minutes(5),
+        );
+        let replacement = ChatIdentityBinding {
+            binding_id: Uuid::new_v4(),
+            tenant_id: challenge.tenant_id,
+            principal_id: challenge.principal_id,
+            buzz_pubkey: challenge.buzz_pubkey.clone(),
+            status: BindingStatus::Active,
+            created_at: now,
+            verified_at: Some(now),
+            revoked_at: None,
+            rotation_of: Some(previous_binding),
+            audit_metadata: serde_json::json!({}),
+        };
+
+        assert!(!store
+            .consume_and_activate(&challenge, &replacement, now)
+            .await
+            .unwrap());
     }
 }

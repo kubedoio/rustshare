@@ -117,8 +117,8 @@ Until those gates pass, the correct decision remains **NO-GO**.
 
 - Obsidian/vault sync is excluded from the first Customer Alpha while #236 is open.
 - Per-device Buzz key administration and safe membership migration remain
-  deferred under #424; platform credential revocation does not revoke a
-  copied signing key.
+  deferred under #424. The unsafe legacy `rotation_of` activation path is now
+  fail-closed; replacement needs Buzz-authoritative membership read-back.
 - Reply/thread composer UI remains deferred under #243.
 - Connector/Agent expansion, Object Spaces, HA/Kubernetes and broad architecture
   refactors (#286/#287) do not block the controlled Alpha.

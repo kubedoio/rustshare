@@ -182,12 +182,13 @@ Rotating `JWT_SECRET` invalidates all bearer-token and cookie-based sessions. Se
    public-key identifiers, signed event IDs and credential IDs needed for
    incident review. Do not collect private signing keys, backups or passphrases.
 3. Have an authorized administrator coordinate old Elembra binding and Buzz
-   community-admission revocation. Verify the Buzz bridge has applied the
-   revocation before enabling a replacement identity. Historical signed events
-   remain attributed to the old public key.
-4. Use controlled replacement only after M4.1b2's confirmation, replacement-key
-   proof, bridge-ordering and membership-reconciliation flow is available. The
-   current backend `rotation_of` endpoint is not an end-user recovery workflow.
+   community-admission revocation. Do not enable a replacement until Buzz
+   membership is authoritatively verified. Historical signed events remain
+   attributed to the old public key.
+4. Controlled replacement is currently unavailable: the backend rejects
+   `rotation_of` until the durable operation and Buzz read-back contract in the
+   [Chat identity replacement protocol](../contracts/chat-identity-replacement.md)
+   is implemented and reviewed.
 5. If SSO is suspected, disable/reset the account and revoke its sessions and
    device tokens, then review security events. SSO compromise alone does not
    prove the Buzz private key was exposed, but account-authorized identity

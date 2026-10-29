@@ -3,6 +3,10 @@
 Repository: kubedoio/rustshare. Issues: #215, #196, #323.
 Protected-main baseline: `315ad4127c1fcd05e02e4416651e26437d7766c8`.
 
+> Historical audit of that baseline. Its explicit rotation backend path was
+> disabled by PR #426 because Buzz membership completion cannot yet be
+> authoritatively verified.
+
 ## Audit and scope
 
 Audited `BindingPanel.svelte`, `ChatIdentityUnlock.svelte`,
@@ -10,10 +14,11 @@ Audited `BindingPanel.svelte`, `ChatIdentityUnlock.svelte`,
 existing key/session/UI tests, identity challenge/verify handlers,
 resource-auth challenge tests, ADR-0034, issue #215, and the maturity roadmap.
 
-Already implemented: client-held PBKDF2/AES-GCM keys, local encrypted export,
-bound-device recovery UI, in-memory signing sessions, NIP-42 challenge/verify,
-atomic binding/admission, explicit rotation, Principal offboarding and relay
-revocation infrastructure. These backend mechanisms were reused; the challenge
+Already implemented at this baseline: client-held PBKDF2/AES-GCM keys, local
+encrypted export, bound-device recovery UI, in-memory signing sessions, NIP-42
+challenge/verify, atomic binding/admission, an explicit rotation backend path,
+Principal offboarding and relay revocation infrastructure. PR #426 disabled
+the rotation path; the other backend mechanisms were reused. The challenge
 response now additionally exposes its tenant and Principal for client checks.
 
 Gaps addressed: no pre-bind import choice; import trusted a claimed public
