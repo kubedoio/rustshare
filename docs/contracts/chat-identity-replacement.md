@@ -1,8 +1,8 @@
 # Chat identity replacement protocol
 
-Status: M4.1b2a protocol foundation; replacement remains disabled until the
-Buzz read-back contract and implementation land. Pairing and replacement UX
-are not enabled.
+Status: guarded initiation API implemented; production replacement remains
+disabled until Buzz v1alpha2 is qualified and independently reviewed. Pairing
+and replacement UX are not enabled.
 
 Authority is split as follows:
 
@@ -36,12 +36,32 @@ Principal, workspace/community, the exact previous binding, and one unconsumed
 challenge. OIDC or an administrator action alone never proves possession of
 the replacement private key.
 
+The persisted NIP-42 challenge is bound to a fingerprint of the exact active
+workspace mapping (community, relay, relay pin, and protocol version). The
+replacement transaction rechecks that fingerprint while holding the mapping
+lock, so a mapping update after challenge issuance invalidates the request.
+
 The operation record must retain the previous and replacement binding IDs,
 workspace/mapping, challenge ID, audit actor, state, timestamps, and redacted
 failure reason. A unique live operation per tenant/Principal and a transaction
 lock on the Principal serialize attempts. Challenge consumption, old local
 revocation, replacement-pending creation, operation creation, and the first
 outbox event commit atomically. A consumed challenge is never restored.
+
+The authenticated initiation endpoint is
+`POST /api/v1/applications/chat/identity-replacements`; it requires an explicit
+old binding ID, a replacement challenge, a signed NIP-42 event, and a stable
+operation ID. The owning Principal can read redacted status at
+`GET /api/v1/applications/chat/identity-replacements/{operation_id}`. Exact
+retries are idempotent; an operation ID reused with different request data is
+rejected.
+
+Initiation requires `RUSTSHARE_CHAT_REPLACEMENT_INITIATION_ENABLED=1`, the
+replacement and outbox workers, Buzz authority mode, a valid bridge identity,
+an active v1alpha2 community mapping, and a qualified immutable Buzz runtime.
+The current compatibility manifest is v1alpha1 and the qualified-build
+allowlist is empty, so the API fails closed even when the environment opt-in
+is set. Updating the mapping protocol alone cannot enable replacement.
 
 ## State machine
 

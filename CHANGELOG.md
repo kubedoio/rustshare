@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Add authenticated durable Chat identity replacement initiation and scoped redacted status; initiation stays disabled until a separately qualified Buzz v1alpha2 runtime is pinned.
 - Add a service-authenticated, signed Buzz v1alpha2 membership read client with durable single-use verification receipts; identity replacement remains disabled.
 
 - Reject Buzz identity replacement, including fresh-key binding after local revocation with omitted rotation intent, before consuming its challenge or changing bindings and admissions until authoritative Buzz verification is available.

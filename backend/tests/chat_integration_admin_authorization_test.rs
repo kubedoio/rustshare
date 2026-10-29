@@ -9,6 +9,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use axum::{body::Body, extract::State, http::Request, Json, Router};
+use nostr::{EventBuilder, Keys, Kind, Tag};
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{
     ChatIntegrationService, FileService, FolderService, HttpWebhookDispatcher, NotificationService,
@@ -18,6 +19,7 @@ use rustshare_infrastructure::repositories::{
     FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
     ShareRepository, UserRepository,
 };
+use rustshare_resource_auth::BindingChallenge;
 use rustshare_server::{
     config::ChatProvisioningMode,
     handlers::{
@@ -524,4 +526,97 @@ async fn admin_chat_webhook_endpoints_allow_admin() {
     );
 
     cleanup_users(&pool, &[admin_id]).await;
+}
+
+#[tokio::test]
+#[ignore = "requires migrated disposable PostgreSQL and S3-compatible object store"]
+async fn replacement_initiation_http_gate_leaves_challenge_and_old_binding_untouched() {
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB").as_deref(),
+        Ok("1")
+    );
+    let pool = test_pool().await;
+    let state = setup_app_state(pool.clone()).await;
+    let router = chat_admin_router().with_state(state.clone());
+    let principal = create_test_user(
+        &pool,
+        &format!("replacement_{}", Uuid::new_v4().simple()),
+        &format!("{}@test.local", Uuid::new_v4()),
+        false,
+    )
+    .await;
+    let old_binding_id = Uuid::new_v4();
+    let old_keys = Keys::generate();
+    let candidate_keys = Keys::generate();
+    let challenge = BindingChallenge::issue(
+        rustshare_core::domain::TenantId(Uuid::nil()),
+        rustshare_core::domain::PrincipalId(principal),
+        candidate_keys.public_key().to_hex(),
+        "wss://relay.example.test",
+        Some(old_binding_id),
+        chrono::Utc::now(),
+        chrono::Duration::minutes(5),
+    );
+    sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status) VALUES($1,$2,$3,$4,'active')")
+        .bind(old_binding_id)
+        .bind(Uuid::nil())
+        .bind(principal)
+        .bind(old_keys.public_key().to_hex())
+        .execute(&pool)
+        .await
+        .unwrap();
+    rustshare_storage::ChatIdentityStore::new(pool.clone())
+        .insert_challenge(&challenge)
+        .await
+        .unwrap();
+    let event = EventBuilder::new(Kind::Authentication, "")
+        .tags([
+            Tag::parse(["relay", "wss://relay.example.test"]).unwrap(),
+            Tag::parse(["challenge", challenge.nonce.as_str()]).unwrap(),
+        ])
+        .sign_with_keys(&candidate_keys)
+        .unwrap();
+    let body = serde_json::json!({
+        "workspace_id": Uuid::nil(),
+        "challenge_id": challenge.challenge_id,
+        "old_binding_id": old_binding_id,
+        "event": event,
+        "operation_id": Uuid::new_v4(),
+    });
+    let token = bearer_token(&state, principal);
+    let response = router
+        .oneshot(
+            Request::post("/api/v1/applications/chat/identity-replacements")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+    let untouched: (bool, String, i64) = sqlx::query_as(
+        "SELECT c.consumed_at IS NULL,b.status,
+            (SELECT count(*) FROM chat_identity_replacements WHERE principal_id=$2)
+         FROM chat_binding_challenges c JOIN chat_identity_bindings b ON b.binding_id=$3
+         WHERE c.challenge_id=$1",
+    )
+    .bind(challenge.challenge_id)
+    .bind(principal)
+    .bind(old_binding_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(untouched, (true, "active".into(), 0));
+    sqlx::query("DELETE FROM chat_binding_challenges WHERE challenge_id=$1")
+        .bind(challenge.challenge_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM chat_identity_bindings WHERE binding_id=$1")
+        .bind(old_binding_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    cleanup_users(&pool, &[principal]).await;
 }
