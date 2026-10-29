@@ -90,21 +90,45 @@ pub struct ReplacementStatusResponse {
 const BUZZ_COMPATIBILITY: &str = include_str!("../../../../config/buzz-compatibility.env");
 // This PR has no qualified v1alpha2 production Buzz build. Populate only in a
 // reviewed compatibility update after live acceptance and security approval.
-const QUALIFIED_BUZZ_V1ALPHA2_COMMITS: &[&str] = &[];
+const QUALIFIED_BUZZ_V1ALPHA2_BUILDS: &[(&str, &str)] = &[];
 
-fn buzz_replacement_runtime_qualified() -> bool {
+fn buzz_runtime_qualified(config: &str, approved_builds: &[(&str, &str)]) -> bool {
     let field = |name: &str| {
-        BUZZ_COMPATIBILITY.lines().find_map(|line| {
+        config.lines().find_map(|line| {
             line.strip_prefix(name)
                 .and_then(|value| value.strip_prefix('='))
         })
     };
-    field("BUZZ_CONTRACT_VERSION") == Some("v1alpha2")
+    let (Some(commit), Some(image), Some(tag), Some(digest), Some(relay_image)) = (
+        field("BUZZ_SUPPORTED_COMMIT"),
+        field("BUZZ_SUPPORTED_IMAGE"),
+        field("BUZZ_SUPPORTED_IMAGE_TAG"),
+        field("BUZZ_SUPPORTED_IMAGE_DIGEST"),
+        field("BUZZ_RELAY_IMAGE"),
+    ) else {
+        return false;
+    };
+    let commit_is_canonical = commit.len() == 40
+        && commit
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    let digest_is_canonical = digest.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    });
+    commit_is_canonical
+        && digest_is_canonical
+        && field("BUZZ_CONTRACT_VERSION") == Some("v1alpha2")
         && field("BUZZ_REPLACEMENT_V1ALPHA2_QUALIFIED") == Some("1")
-        && field("BUZZ_SUPPORTED_COMMIT")
-            .is_some_and(|commit| QUALIFIED_BUZZ_V1ALPHA2_COMMITS.contains(&commit))
-        && field("BUZZ_SUPPORTED_IMAGE_DIGEST")
-            .is_some_and(|digest| digest.starts_with("sha256:") && digest.len() == 71)
+        && tag == format!("sha-{}", &commit[..7])
+        && relay_image == format!("{image}@{digest}")
+        && approved_builds.contains(&(commit, digest))
+}
+
+fn buzz_replacement_runtime_qualified() -> bool {
+    buzz_runtime_qualified(BUZZ_COMPATIBILITY, QUALIFIED_BUZZ_V1ALPHA2_BUILDS)
 }
 
 fn explicit_replacement_flag(value: Option<&str>) -> bool {
@@ -966,6 +990,34 @@ mod tests {
     #[test]
     fn unqualified_pinned_buzz_runtime_cannot_enable_replacement() {
         assert!(!buzz_replacement_runtime_qualified());
+    }
+
+    #[test]
+    fn replacement_runtime_requires_the_approved_commit_digest_image_tuple() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let image = "ghcr.io/example/buzz";
+        let config = format!(
+            "BUZZ_SUPPORTED_COMMIT={commit}\nBUZZ_SUPPORTED_IMAGE={image}\nBUZZ_SUPPORTED_IMAGE_TAG=sha-{}\nBUZZ_SUPPORTED_IMAGE_DIGEST={digest}\nBUZZ_RELAY_IMAGE={image}@{digest}\nBUZZ_CONTRACT_VERSION=v1alpha2\nBUZZ_REPLACEMENT_V1ALPHA2_QUALIFIED=1\n",
+            &commit[..7]
+        );
+        let approved = [(commit, digest.as_str())];
+        assert!(buzz_runtime_qualified(&config, &approved));
+        assert!(!buzz_runtime_qualified(
+            &config.replace(&digest, &format!("sha256:{}", "b".repeat(64))),
+            &approved
+        ));
+        assert!(!buzz_runtime_qualified(
+            &config.replace(
+                &format!("{image}@{digest}"),
+                &format!("ghcr.io/example/other@{digest}")
+            ),
+            &approved
+        ));
+        assert!(!buzz_runtime_qualified(
+            &config.replace(&digest, "sha256:invalid"),
+            &approved
+        ));
     }
 
     #[test]
