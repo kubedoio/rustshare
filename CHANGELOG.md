@@ -8,6 +8,14 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Add a service-authenticated, signed Buzz v1alpha2 membership read client with durable single-use verification receipts; identity replacement remains disabled.
+
+- Reject Buzz identity replacement, including fresh-key binding after local revocation with omitted rotation intent, before consuming its challenge or changing bindings and admissions until authoritative Buzz verification is available.
+- Prevent Chat keys with binding history from being rebound or reassigned globally across tenants, and serialize competing identity activations and Principal revocation.
+- Label browser sessions and device tokens separately in Settings, confirm revocation with lost-Chat-key guidance, and report unavailable inventory and expired sessions accurately.
+- Add explicit Chat identity creation and pre-bind encrypted backup import, transactional account-bound recovery, and shared passphrase retry delays without server key custody.
+- Reject Chat binding challenges for a different displayed account, cancel setup after navigation, and clear cached query data and mounted private views when session refresh changes the Principal or tenant.
+
 - Add an opt-in, resumable Files-backed Memory reconciliation worker with tenant-scoped status and retry.
 
 - Cancel active or queued file explorer uploads individually or as a queue; chunked uploads also abort their server-side upload session.
@@ -911,6 +919,8 @@ Stable release for the `0.3.0` release line.
 ## [0.2.0] - 2026-05-26
 
 ### Added
+
+- Add opt-in, dry-run-first cleanup for tenant-scoped orphaned Files-backed Memory chunks, with durable cursors, fenced leases, retries, and admin status.
 
 - Real-time WebSocket sync for module edits, with collaborative cursor support and conflict resolution.
 - Note bundle architecture: notes now store as folders with `index.md`, `.rustshare.json`, and `events.jsonl`, enabling richer metadata and attachment handling.

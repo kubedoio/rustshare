@@ -810,6 +810,7 @@ async fn existing_manual_mapping_is_never_overwritten() {
         community_id: community_m.clone(),
         relay_url: manual_relay_url.clone(),
         relay_pubkey: Some(manual_pubkey.clone()),
+        membership_protocol_version: "v1alpha1".into(),
         active: true,
     };
     env.store
@@ -1351,6 +1352,8 @@ async fn setup_app_state(pool: PgPool, bootstrap: Option<Arc<ChatBootstrapServic
         outbox_readiness_staleness_secs: 60,
         shutdown_tx: tokio::sync::broadcast::channel(1).0,
         memory_files_reconcile_worker: None,
+        memory_orphan_cleanup_worker: None,
+        memory_orphan_cleanup_dry_run: true,
         prometheus_handle: rustshare_server::metrics::init_metrics(),
     }
 }

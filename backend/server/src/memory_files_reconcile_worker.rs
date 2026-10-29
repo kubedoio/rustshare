@@ -454,7 +454,13 @@ mod tests {
         }))
         .unwrap();
         assert!(!config.memory_files_reconcile_enabled);
+        assert!(!config.memory_files_orphan_cleanup_enabled);
+        assert!(config.memory_files_orphan_cleanup_dry_run);
         assert!(MemoryFilesReconcileConfig::from_config(&config).is_ok());
+        assert!(
+            crate::memory_orphan_cleanup_worker::MemoryOrphanCleanupConfig::from_config(&config)
+                .is_ok()
+        );
         config.memory_files_reconcile_page_timeout_secs = 0;
         assert!(MemoryFilesReconcileConfig::from_config(&config).is_err());
         config.memory_files_reconcile_page_timeout_secs = 3_601;

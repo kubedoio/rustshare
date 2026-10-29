@@ -56,12 +56,14 @@ function createAuthStore() {
 		return ++sessionGeneration;
 	}
 
-	function setChatUser(userId: string): void {
-		if (activeChatUserId !== null && activeChatUserId !== userId) {
+	function setChatUser(userId: string, tenantId?: string): void {
+		const identity = `${tenantId}:${userId}`;
+		if (activeChatUserId !== identity) {
 			clearChatSession();
+			queryClient.clear();
 		}
-		activeChatUserId = userId;
-		setChatKeyUser(userId);
+		activeChatUserId = identity;
+		setChatKeyUser(userId, tenantId ?? null);
 	}
 
 	async function bootstrapSession() {
@@ -72,7 +74,7 @@ function createAuthStore() {
 
 			const user = toAuthUser(profile);
 
-			setChatUser(profile.id);
+			setChatUser(profile.id, profile.tenant_id);
 			set({
 				user,
 				isAuthenticated: true,
@@ -122,15 +124,13 @@ function createAuthStore() {
 				clearLegacyWebSocketToken();
 
 				if (myGeneration !== sessionGeneration) return;
-				queryClient.clear();
+				setChatUser(user.id, user.tenant_id);
 
 				set({
 					user,
 					isAuthenticated: true,
 					isLoading: false
 				});
-
-				setChatUser(user.id);
 
 				try {
 					await initializeWebSocket(null, user.id);
@@ -142,6 +142,7 @@ function createAuthStore() {
 					const profile = await getUserProfile();
 					themeStore.loadFromBackend(profile.theme);
 					if (myGeneration !== sessionGeneration) return;
+					setChatUser(profile.id, profile.tenant_id);
 					update((state) => ({
 						...state,
 						user: toAuthUser(profile)
@@ -157,13 +158,14 @@ function createAuthStore() {
 		},
 		logout: async () => {
 			const myGeneration = nextGeneration();
+			clearChatSession();
+			activeChatUserId = null;
+			setChatKeyUser(null);
+			await logoutRequest();
+			if (myGeneration !== sessionGeneration) return;
 			cleanupWebSocket();
 			replicationStore.reset();
 			clearLegacyWebSocketToken();
-			clearChatSession();
-			activeChatUserId = null;
-			await logoutRequest();
-			if (myGeneration !== sessionGeneration) return;
 			setChatKeyUser(null);
 			set({
 				user: null,

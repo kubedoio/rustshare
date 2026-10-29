@@ -929,6 +929,8 @@ async fn setup_app_state(pool: PgPool) -> (AppState, ChatIdentityStore, Arc<Chat
         outbox_readiness_staleness_secs: 60,
         shutdown_tx: tokio::sync::broadcast::channel(1).0,
         memory_files_reconcile_worker: None,
+        memory_orphan_cleanup_worker: None,
+        memory_orphan_cleanup_dry_run: true,
         prometheus_handle: rustshare_server::metrics::init_metrics(),
     };
 
@@ -2955,7 +2957,7 @@ async fn author_rotated_pubkey_resolves_active_binding() {
         "workspace",
         "created",
         true,
-        Some("after rotation"),
+        Some("after identity update"),
         base,
         &pubkey,
     )

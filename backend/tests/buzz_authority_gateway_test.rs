@@ -40,7 +40,7 @@
 //! 13. reconcile-from-Buzz is idempotent;
 //! 14. the repair flows over the public HTTP contract (no relay DB exists);
 //!     N1. deleted messages are not_found (tombstone semantics end-to-end);
-//!     N2. binding rotation asks the relay for the NEW pubkey;
+//!     N2. access checks use the current binding pubkey (mock state only);
 //!     N3. unknown channels are not_found;
 //!     N4. the tenant-scope guard skips foreign-community entries during a
 //!     shared-relay reconcile.
@@ -2717,12 +2717,12 @@ async fn deleted_message_is_not_found() {
 }
 
 // ---------------------------------------------------------------------------
-// N2. Binding rotation asks the relay for the NEW pubkey
+// N2. Access checks use the current binding's pubkey (mock state only)
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires DATABASE_URL"]
-async fn binding_rotation_asks_new_pubkey() {
+async fn current_binding_access_check_asks_new_pubkey() {
     let _guard = SERIAL.lock().await;
     let pool = pool().await;
     let tenant = TenantId::from(Uuid::new_v4());
@@ -2736,6 +2736,10 @@ async fn binding_rotation_asks_new_pubkey() {
     let fake = start_fake_buzz(relay_keys.clone(), service_keys.public_key().to_hex());
     let relay_url = format!("ws://127.0.0.1:{}", fake.addr.port());
     let relay_pubkey = relay_keys.public_key().to_hex();
+    fake.state
+        .lock()
+        .unwrap()
+        .add_member(CHANNEL_ID, &old_keys.public_key().to_hex());
 
     // Initial state: the principal is bound + admitted with the OLD pubkey.
     let principal = PrincipalId::from(Uuid::new_v4());
@@ -2759,10 +2763,14 @@ async fn binding_rotation_asks_new_pubkey() {
     )
     .await;
 
-    // Rotate: revoke the old binding, bind the SAME principal to the new
-    // pubkey, admit the new pubkey. The relay's channel membership now
-    // contains the NEW pubkey only — the OLD pubkey is not a member.
+    // Seed the fixture's current state after a hypothetical administrative
+    // change. This test covers access lookup only; it does not exercise or
+    // claim support for identity replacement.
     revoke_bindings(&pool, tenant).await;
+    fake.state
+        .lock()
+        .unwrap()
+        .remove_member(CHANNEL_ID, &old_keys.public_key().to_hex());
     let new_binding =
         insert_binding_for_principal(&pool, tenant, principal, &new_keys.public_key().to_hex())
             .await;
@@ -2782,7 +2790,7 @@ async fn binding_rotation_asks_new_pubkey() {
     let service = service(pool.clone());
     let (buzz_push, event) = created_push(
         &new_keys,
-        "after rotation",
+        "using the current binding",
         &community,
         ChatChannelKind::Workspace,
     );
@@ -2810,7 +2818,7 @@ async fn binding_rotation_asks_new_pubkey() {
             .authorize(&ctx, &chat_read_action(), &reference)
             .await,
         Decision::Allow,
-        "after rotation the principal is allowed via the NEW pubkey"
+        "the current binding's pubkey is used for the access check"
     );
     let recorded = fake
         .state
@@ -2824,11 +2832,11 @@ async fn binding_rotation_asks_new_pubkey() {
     assert_eq!(
         recorded["request"]["pubkey"].as_str(),
         Some(new_pubkey.as_str()),
-        "the relay was asked about the NEW pubkey, never the revoked old one"
+        "the relay was asked about the current binding, not the old one"
     );
 
-    // The fake allows the new pubkey and denies the old one: ask it directly
-    // with the revoked pubkey to prove the old key carries no channel rights.
+    // The fake starts with the old key admitted, then the fixture removes it.
+    // This only checks current access lookup, not actual Buzz revocation.
     let denied = gateway
         .check_access(
             &relay_url,
@@ -3104,6 +3112,7 @@ async fn admin_can_rotate_mapping_relay_pin() {
             WorkspaceId(tenant.0),
             relay_url.clone(),
             Some(relay_keys_b.public_key().to_hex()),
+            "v1alpha1",
         )
         .await
         .expect("rotating the mapping relay pin must succeed");
@@ -3228,6 +3237,7 @@ async fn call_update_mapping(
         Json(UpdateCommunityMappingRequest {
             relay_url,
             relay_pubkey,
+            membership_protocol_version: None,
         }),
     )
     .await
@@ -4867,6 +4877,8 @@ async fn setup_app_state(
         outbox_readiness_staleness_secs: 60,
         shutdown_tx: tokio::sync::broadcast::channel(1).0,
         memory_files_reconcile_worker: None,
+        memory_orphan_cleanup_worker: None,
+        memory_orphan_cleanup_dry_run: true,
         prometheus_handle: rustshare_server::metrics::init_metrics(),
     };
 

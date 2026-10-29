@@ -72,7 +72,10 @@ coverage remain roadmap work; issue #119 tracks those remaining gaps.
 - 13 live Buzz conformance proofs plus a separate no-ACL/direct-Buzz-DB guard;
 - hardened dedicated `buzz-elembra` runtime with Git disabled.
 
-Identity/device UX still has limited remaining scope under #215.
+The M4.1b slice adds session/device-token visibility and lost-device warnings
+using existing Elembra credentials. Individual Buzz-key enrollment, pairing,
+and controlled replacement remain M4.1b2 under [#424](https://github.com/kubedoio/rustshare/issues/424); see the
+[device lifecycle contract](contracts/chat-device-lifecycle.md).
 
 ## Release and supply-chain state
 
@@ -113,7 +116,9 @@ Until those gates pass, the correct decision remains **NO-GO**.
 ## Known exclusions / deferred work
 
 - Obsidian/vault sync is excluded from the first Customer Alpha while #236 is open.
-- Full account-managed Chat device administration remains deferred under #215.
+- Per-device Buzz key administration and safe membership migration remain
+  deferred under #424. The unsafe legacy `rotation_of` activation path is now
+  fail-closed; replacement needs Buzz-authoritative membership read-back.
 - Reply/thread composer UI remains deferred under #243.
 - Connector/Agent expansion, Object Spaces, HA/Kubernetes and broad architecture
   refactors (#286/#287) do not block the controlled Alpha.

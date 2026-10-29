@@ -128,6 +128,7 @@ impl ChatBootstrapService {
             community_id: identity.community_id.clone(),
             relay_url: self.bootstrap_relay_url.clone(),
             relay_pubkey: Some(identity.relay_pubkey.clone()),
+            membership_protocol_version: "v1alpha1".into(),
             active: true,
         };
         match self.store.provision_mapping(&mapping).await {

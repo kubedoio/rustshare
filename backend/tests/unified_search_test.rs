@@ -2772,6 +2772,90 @@ async fn keyword_search_works_without_embeddings() {
     cleanup(&pool, tenant).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn hard_deleted_files_index_candidates_are_not_returned_by_search() {
+    let _guard = SERIAL.lock().await;
+    let harness = harness_with_scripted_authority(pool().await, false).await;
+    let pool = harness.pool.clone();
+    let tenant = TenantId::from(harness.tenant);
+    cleanup(&pool, tenant).await;
+
+    let owner = create_user(&harness.metadata_store, "hard_delete_search", tenant.0).await;
+    let mut file = create_file_with_content(
+        &harness,
+        owner.id,
+        "private-orphan.md",
+        "/docs/private-orphan.md",
+        b"m34-orphan-secret-7319",
+    )
+    .await;
+    sqlx::query("UPDATE files SET mime_type='text/markdown' WHERE id=$1")
+        .bind(file.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    file.mime_type = "text/markdown".into();
+    harness
+        .keyword_indexer
+        .index_note(
+            file.id,
+            file.name.clone(),
+            file.path.clone(),
+            "m34-orphan-secret-7319".into(),
+            file.mime_type.clone(),
+            owner.id,
+            owner_acl(tenant.0, file.id, owner.id),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM note_index_chunks WHERE source_file_id=$1"
+        )
+        .bind(file.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1
+    );
+    harness
+        .metadata_store
+        .delete_file(file.id, owner.id)
+        .await
+        .unwrap();
+    assert!(harness
+        .metadata_store
+        .permanently_delete_file(file.id, owner.id)
+        .await
+        .unwrap());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM note_index_chunks WHERE source_file_id=$1"
+        )
+        .bind(file.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1,
+        "simulate failed best-effort cleanup and keep the orphan candidate"
+    );
+
+    let response = harness
+        .service()
+        .search(
+            &user_ctx(PrincipalId::from(owner.id), tenant),
+            "m34-orphan-secret-7319",
+            &[SearchSource::Files],
+            10,
+        )
+        .await
+        .unwrap();
+    assert!(response.results.is_empty());
+    assert!(!render_response(&response).contains("m34-orphan-secret-7319"));
+    cleanup(&pool, tenant).await;
+}
+
 // ---------------------------------------------------------------------------
 // 12. Ranking is deterministic and matches the documented order
 // ---------------------------------------------------------------------------

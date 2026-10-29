@@ -1,0 +1,20 @@
+import { render, screen } from '@testing-library/svelte';
+import { describe, expect, it } from 'vitest';
+import ChatDeviceSafetyNotice from './ChatDeviceSafetyNotice.svelte';
+
+describe('Chat device safety notice', () => {
+	it('distinguishes platform credential revocation from shared Buzz key revocation', () => {
+		render(ChatDeviceSafetyNotice);
+
+		expect(screen.getByRole('heading', { name: 'Chat devices and lost devices' })).toBeTruthy();
+		expect(screen.getByText(/device token does not prove.*Buzz signing key/i)).toBeTruthy();
+		expect(screen.getByText(/cannot erase a copied key or invalidate signatures/i)).toBeTruthy();
+		expect(screen.getByText(/identity replacement is currently unavailable/i)).toBeTruthy();
+		expect(screen.getByRole('link', { name: 'Review browser sessions' }).getAttribute('href')).toBe(
+			'/settings?tab=security'
+		);
+		expect(screen.getByRole('link', { name: 'Review device tokens' }).getAttribute('href')).toBe(
+			'/settings?tab=devices'
+		);
+	});
+});

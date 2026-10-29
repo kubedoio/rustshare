@@ -68,6 +68,33 @@ pub fn build_buzz_admission_event_at(
         .map_err(|error| BuzzAdmissionCommandError::Signing(error.to_string()))
 }
 
+/// Build a v1alpha2 conditional membership command. The operation UUID and
+/// observed revision are signed into the NIP-43 event so retries are stable.
+pub fn build_buzz_conditional_admission_event_at(
+    operation: BuzzAdmissionOperation,
+    buzz_pubkey: &str,
+    bridge_keys: &Keys,
+    created_at: Timestamp,
+    command_id: Uuid,
+    expected_revision: u64,
+) -> Result<Event, BuzzAdmissionCommandError> {
+    let pubkey = PublicKey::from_hex(buzz_pubkey)
+        .map_err(|error| BuzzAdmissionCommandError::InvalidPubkey(error.to_string()))?;
+    EventBuilder::new(Kind::from(operation.buzz_kind()), "")
+        .tag(Tag::public_key(pubkey))
+        .tag(Tag::parse(vec!["elembra-op".into(), command_id.to_string()]).expect("static tag"))
+        .tag(
+            Tag::parse(vec![
+                "elembra-expected-revision".into(),
+                expected_revision.to_string(),
+            ])
+            .expect("static tag"),
+        )
+        .custom_created_at(created_at)
+        .sign_with_keys(bridge_keys)
+        .map_err(|error| BuzzAdmissionCommandError::Signing(error.to_string()))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BindingStatus {
@@ -105,6 +132,46 @@ pub struct BindingChallenge {
     pub consumed_at: Option<DateTime<Utc>>,
 }
 
+/// Proof that a NIP-42 event was verified against one binding challenge.
+#[derive(Debug, Clone)]
+pub struct VerifiedBindingProof {
+    challenge_id: Uuid,
+    tenant_id: TenantId,
+    principal_id: PrincipalId,
+    buzz_pubkey: String,
+    relay_url: String,
+    nonce: String,
+    event_id: String,
+    verified_at: DateTime<Utc>,
+}
+
+impl VerifiedBindingProof {
+    pub fn challenge_id(&self) -> Uuid {
+        self.challenge_id
+    }
+    pub fn tenant_id(&self) -> TenantId {
+        self.tenant_id
+    }
+    pub fn principal_id(&self) -> PrincipalId {
+        self.principal_id
+    }
+    pub fn buzz_pubkey(&self) -> &str {
+        &self.buzz_pubkey
+    }
+    pub fn relay_url(&self) -> &str {
+        &self.relay_url
+    }
+    pub fn nonce(&self) -> &str {
+        &self.nonce
+    }
+    pub fn event_id(&self) -> &str {
+        &self.event_id
+    }
+    pub fn verified_at(&self) -> DateTime<Utc> {
+        self.verified_at
+    }
+}
+
 impl BindingChallenge {
     pub fn issue(
         tenant_id: TenantId,
@@ -136,6 +203,19 @@ impl BindingChallenge {
         event: &Event,
         now: DateTime<Utc>,
     ) -> Result<(), BindingError> {
+        self.verify_proof(expected_tenant_id, expected_principal_id, event, now)?;
+        self.consumed_at = Some(now);
+        Ok(())
+    }
+
+    /// Verify NIP-42 possession without consuming the persisted challenge.
+    pub fn verify_proof(
+        &self,
+        expected_tenant_id: TenantId,
+        expected_principal_id: PrincipalId,
+        event: &Event,
+        now: DateTime<Utc>,
+    ) -> Result<VerifiedBindingProof, BindingError> {
         if self.tenant_id != expected_tenant_id || self.principal_id != expected_principal_id {
             return Err(BindingError::ChallengeScopeMismatch);
         }
@@ -172,8 +252,16 @@ impl BindingChallenge {
         if delta > NIP42_TOLERANCE_SECS {
             return Err(BindingError::InvalidProof);
         }
-        self.consumed_at = Some(now);
-        Ok(())
+        Ok(VerifiedBindingProof {
+            challenge_id: self.challenge_id,
+            tenant_id: self.tenant_id,
+            principal_id: self.principal_id,
+            buzz_pubkey: self.buzz_pubkey.clone(),
+            relay_url: self.relay_url.clone(),
+            nonce: self.nonce.clone(),
+            event_id: event.id.to_hex(),
+            verified_at: now,
+        })
     }
 }
 
@@ -189,7 +277,14 @@ pub struct WorkspaceCommunityMapping {
     /// key is missing.
     #[serde(default)]
     pub relay_pubkey: Option<String>,
+    /// Explicit Buzz relay membership command contract for this community.
+    #[serde(default = "default_membership_protocol_version")]
+    pub membership_protocol_version: String,
     pub active: bool,
+}
+
+fn default_membership_protocol_version() -> String {
+    "v1alpha1".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,6 +448,7 @@ mod tests {
             community_id: "c1".into(),
             relay_url: RELAY.into(),
             relay_pubkey: None,
+            membership_protocol_version: "v1alpha1".into(),
             active: true,
         };
         let admission = BuzzAdmission {
@@ -376,6 +472,42 @@ mod tests {
     fn bridge_commands_use_generic_nip43_membership_kinds() {
         assert_eq!(BuzzAdmissionOperation::Admit.buzz_kind(), 9030);
         assert_eq!(BuzzAdmissionOperation::Revoke.buzz_kind(), 9031);
+    }
+
+    #[test]
+    fn conditional_command_signs_stable_operation_and_revision_tags() {
+        let bridge = Keys::generate();
+        let target = Keys::generate().public_key().to_hex();
+        let operation = Uuid::new_v4();
+        let created_at = Timestamp::from_secs(1_700_000_000);
+        let first = build_buzz_conditional_admission_event_at(
+            BuzzAdmissionOperation::Revoke,
+            &target,
+            &bridge,
+            created_at,
+            operation,
+            42,
+        )
+        .unwrap();
+        let retry = build_buzz_conditional_admission_event_at(
+            BuzzAdmissionOperation::Revoke,
+            &target,
+            &bridge,
+            created_at,
+            operation,
+            42,
+        )
+        .unwrap();
+        assert_eq!(first.id, retry.id);
+        assert!(first.verify().is_ok());
+        let json = serde_json::to_value(first).unwrap();
+        let tags = json["tags"].as_array().unwrap();
+        assert!(tags
+            .iter()
+            .any(|tag| tag == &serde_json::json!(["elembra-op", operation.to_string()])));
+        assert!(tags
+            .iter()
+            .any(|tag| tag == &serde_json::json!(["elembra-expected-revision", "42"])));
     }
 
     #[test]
@@ -531,6 +663,7 @@ mod tests {
             community_id: "c1".into(),
             relay_url: RELAY.into(),
             relay_pubkey: None,
+            membership_protocol_version: "v1alpha1".into(),
             active: true,
         };
         let admission = BuzzAdmission {
@@ -558,6 +691,7 @@ mod tests {
                 community_id: "c1".into(),
                 relay_url: RELAY.into(),
                 relay_pubkey: None,
+                membership_protocol_version: "v1alpha1".into(),
                 active: true
             },
             &BuzzAdmission {
@@ -581,6 +715,7 @@ mod tests {
                 community_id: "c1".into(),
                 relay_url: RELAY.into(),
                 relay_pubkey: None,
+                membership_protocol_version: "v1alpha1".into(),
                 active: true
             },
             &BuzzAdmission {

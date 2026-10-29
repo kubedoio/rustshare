@@ -2,7 +2,7 @@
 // localStorage envelope once per session and retained only in module memory;
 // the passphrase itself is never stored.
 import { writable, type Readable } from 'svelte/store';
-import { hasChatKey, loadChatKey } from './keys';
+import { hasChatKey, loadChatKey, ChatKeyRetryError } from './keys';
 import { publicKeyOf } from './nostr';
 
 export type ChatSessionState =
@@ -11,7 +11,12 @@ export type ChatSessionState =
 export class ChatSessionError extends Error {
 	constructor(
 		public readonly code:
-			'NO_KEY' | 'WRONG_PASSPHRASE' | 'CORRUPT_KEY' | 'PUBKEY_MISMATCH' | 'SESSION_CHANGED',
+			| 'NO_KEY'
+			| 'WRONG_PASSPHRASE'
+			| 'CORRUPT_KEY'
+			| 'PUBKEY_MISMATCH'
+			| 'SESSION_CHANGED'
+			| 'RETRY',
 		message: string
 	) {
 		super(message);
@@ -36,7 +41,11 @@ export function getSigningKey(): string | null {
 	return memorySecretKey;
 }
 
-export async function unlock(passphrase: string, boundPubkey: string): Promise<void> {
+export async function unlock(
+	passphrase: string,
+	boundPubkey: string,
+	assertCurrent?: () => void
+): Promise<void> {
 	const generation = sessionGeneration;
 	if (!hasChatKey()) {
 		throw new ChatSessionError(
@@ -49,6 +58,7 @@ export async function unlock(passphrase: string, boundPubkey: string): Promise<v
 	try {
 		secretKey = await loadChatKey(passphrase);
 	} catch (err) {
+		if (err instanceof ChatKeyRetryError) throw new ChatSessionError('RETRY', err.message);
 		if (generation !== sessionGeneration) {
 			throw new ChatSessionError(
 				'SESSION_CHANGED',
@@ -88,6 +98,7 @@ export async function unlock(passphrase: string, boundPubkey: string): Promise<v
 		);
 	}
 
+	assertCurrent?.();
 	memorySecretKey = secretKey;
 	internal.set({ state: 'unlocked', pubkey });
 }

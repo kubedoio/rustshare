@@ -233,7 +233,7 @@ pub async fn update_user_password(
         .into_response())
 }
 
-/// List active browser sessions for the authenticated user.
+/// List stored browser sessions, including expired sessions, for the authenticated user.
 #[utoipa::path(
     get,
     path = "/api/v1/me/sessions",

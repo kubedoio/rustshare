@@ -2138,7 +2138,7 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// List active browser sessions for a user.
+    /// List stored browser sessions for a user, including expired sessions.
     pub async fn list_user_sessions(&self, user_id: Uuid) -> Result<Vec<UserSession>> {
         let rows = sqlx::query!(
             r#"

@@ -104,6 +104,10 @@ name = "user_disable_credential_revocation_test"
 path = "../tests/user_disable_credential_revocation_test.rs"
 
 [[test]]
+name = "chat_identity_lifecycle_test"
+path = "../tests/chat_identity_lifecycle_test.rs"
+
+[[test]]
 name = "admin_groups_test"
 path = "../tests/admin_groups_test.rs"
 
@@ -362,6 +366,10 @@ path = "../tests/memory_projection_test.rs"
 [[test]]
 name = "memory_reconcile_test"
 path = "../tests/memory_reconcile_test.rs"
+
+[[test]]
+name = "memory_orphan_cleanup_test"
+path = "../tests/memory_orphan_cleanup_test.rs"
 
 [[test]]
 name = "chat_owner_authorization_test"
