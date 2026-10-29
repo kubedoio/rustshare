@@ -810,6 +810,7 @@ async fn existing_manual_mapping_is_never_overwritten() {
         community_id: community_m.clone(),
         relay_url: manual_relay_url.clone(),
         relay_pubkey: Some(manual_pubkey.clone()),
+        membership_protocol_version: "v1alpha1".into(),
         active: true,
     };
     env.store
