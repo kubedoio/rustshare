@@ -694,17 +694,7 @@ pub async fn initiate_replacement(
         return Err(AppError::not_found("Chat identity replacement is disabled"));
     }
     ensure_workspace_scope(auth.tenant_id, input.workspace_id)?;
-    let active = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND tenant_id=$2 AND disabled_at IS NULL)",
-    )
-    .bind(auth.user_id)
-    .bind(auth.tenant_id)
-    .fetch_one(&db.db_pool)
-    .await
-    .map_err(internal_db)?;
-    if !active {
-        return Err(AppError::Unauthorized);
-    }
+    ensure_active_principal(&db, &auth).await?;
     if input.operation_id.is_nil() || input.challenge_id.is_nil() || input.old_binding_id.is_nil() {
         return Err(AppError::bad_request(
             "replacement identifiers must be non-nil",
