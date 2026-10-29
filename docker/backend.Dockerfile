@@ -55,6 +55,7 @@ COPY rust-toolchain.toml ./
 COPY backend ./backend/
 COPY apps ./apps/
 COPY crates ./crates/
+COPY config/buzz-compatibility.env ./config/buzz-compatibility.env
 COPY .sqlx ./.sqlx/
 
 # Build the application or select precompiled binaries
