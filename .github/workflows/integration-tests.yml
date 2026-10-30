@@ -278,6 +278,8 @@ jobs:
           ref: e22ba1ed44822fd47a6c31362eea5087a8730d74
           path: .buzz-membership-source
           persist-credentials: false
+      - name: Intentional required-check enforcement probe
+        run: exit 1
       - name: Replacement against disposable services
         env:
           RUSTSHARE_TEST_BUZZ_SOURCE_DIR: ${{ github.workspace }}/.buzz-membership-source
