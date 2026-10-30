@@ -593,7 +593,11 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
                 subscribes: Vec::new(),
             },
             "chat" => IntegrationEvents {
-                publishes: vec!["io.elembra.chat.buzz.event.observed.v1".into()],
+                publishes: vec![
+                    "io.elembra.chat.buzz.event.observed.v1".into(),
+                    "io.elembra.chat.buzz.admission.requested.v1".into(),
+                    "io.elembra.chat.buzz.admission.revoked.v1".into(),
+                ],
                 subscribes: Vec::new(),
             },
             "calendar" => IntegrationEvents {
@@ -1053,6 +1057,9 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
         let buzz_event = "io.elembra.chat.buzz.event.observed.v1";
 
         assert!(registry.owns_event_type(&chat, buzz_event));
+        assert!(registry.owns_event_type(&chat, "io.elembra.chat.buzz.admission.requested.v1"));
+        assert!(registry.owns_event_type(&chat, "io.elembra.chat.buzz.admission.revoked.v1"));
+        assert!(!registry.owns_event_type(&chat, "io.elembra.chat.buzz.admission.restored.v1"));
         assert!(!registry.owns_event_type(&chat, "io.elembra.files.file.created.v1"));
 
         let chat_manifest = registry.manifest(&chat).unwrap();
