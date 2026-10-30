@@ -253,8 +253,48 @@ the driver log is `/tmp/m41b2e-integrated-committed-driver.log`.
   Buzz pin and allowlist are unchanged, and the #433 fixture is still debug
   only. This source-built runtime is test evidence, not a production release.
 
-**Updated disposition: PARTIAL / merge NO-GO / production release NO-GO.** The
-specific pre-completion send defect is resolved and the integrated lifecycle now
-passes locally. Close M4.1b2e only after the remaining required fault coverage,
-green protected CI, verified required-check enforcement, and independent human
-security review are complete. M4.1b2f remains deferred.
+**Checkpoint disposition before final protected acceptance: PARTIAL / merge
+NO-GO / production release NO-GO.** At that checkpoint, the specific
+pre-completion send defect was resolved and the integrated lifecycle passed
+locally. The final CI and required-check probe results are recorded below;
+remaining fault coverage and independent human security review still gate
+closure. M4.1b2f remains deferred.
+
+## Final protected acceptance — 2026-10-30
+
+On PR head `f7ab026b109ac7d12f2500b643a1add3dca71f3d`, GitHub workflow
+[41088100029](https://github.com/kubedoio/rustshare/actions/runs/41088100029)
+passed all required checks:
+
+- `Buzz Identity Replacement E2E` job `124174500687`: 22/22 acceptance checks
+  passed. The retained artifact is `buzz-identity-replacement-e2e`; its Buzz
+  source was `e22ba1ed44822fd47a6c31362eea5087a8730d74`, schema 30, and actual
+  executable SHA-256
+  `372f1b1eb551afc4d73746fabcca09de3a1fd0d800829d61b4da67fa827a5674`.
+- `Buzz Live Conformance`, `Chat Product Acceptance`, and `integration-tests`
+  passed. The integration job ran 1,151 tests with zero failures; its broad
+  ignored-test sweep now includes the repaired membership mock and the two
+  repeated Ask Workspace security matrix executions.
+- Rust Clippy, Format, Cargo Deny, frontend, DCO, CodeQL, OpenAPI, plugin tests,
+  compose contracts, and terminology scan passed. SQLx Prepare Check, general
+  unit-test job, Build Release, and Code Coverage were skipped by the workflow's
+  conditions. Equivalent SQLx metadata, workspace libraries, formatting,
+  fixture-enabled release compile, and relevant Clippy checks passed locally.
+
+Main protection now requires `Buzz Identity Replacement E2E`. The safe
+failure-blocking probe used temporary PR #435 with one intentional failure in
+that exact job. GitHub reported the required job `fail` and PR `BLOCKED`; the
+probe PR was closed without merging and its branch deleted. Main's existing
+required contexts were preserved.
+
+Buzz PR #7 remains a draft and has no reported upstream checks. GitHub rejected
+manual workflow dispatch with “Actions has been disabled for this repository.”
+The RustShare acceptance job nevertheless built and exercised the exact
+immutable Buzz source. Do not treat this as a Buzz PR CI pass.
+
+**Final disposition: PARTIAL / merge NO-GO / production release NO-GO.** The
+integrated happy path, currently implemented fault cases, normal Chat checks,
+protected CI, and required-check failure enforcement are verified. The
+remaining requested fault cases listed above and independent human security
+review are still release gates. PR #434 remains draft; only Senol was requested
+because Zoorpha authored it. Production qualification remains disabled.
