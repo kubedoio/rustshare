@@ -260,7 +260,7 @@ locally. The final CI and required-check probe results are recorded below;
 remaining fault coverage and independent human security review still gate
 closure. M4.1b2f remains deferred.
 
-## Final protected acceptance — 2026-10-30
+## Protected acceptance at f7ab checkpoint — 2026-10-30
 
 On PR head `f7ab026b109ac7d12f2500b643a1add3dca71f3d`, GitHub workflow
 [41088100029](https://github.com/kubedoio/rustshare/actions/runs/41088100029)
@@ -292,9 +292,9 @@ manual workflow dispatch with “Actions has been disabled for this repository.�
 The RustShare acceptance job nevertheless built and exercised the exact
 immutable Buzz source. Do not treat this as a Buzz PR CI pass.
 
-**Final disposition: PARTIAL / merge NO-GO / production release NO-GO.** The
-integrated happy path, currently implemented fault cases, normal Chat checks,
-protected CI, and required-check failure enforcement are verified. The
+**Disposition at the f7ab checkpoint: PARTIAL / merge NO-GO / production
+release NO-GO.** The integrated happy path, currently implemented fault cases,
+normal Chat checks, protected CI, and required-check failure enforcement are verified. The
 remaining requested fault cases listed above and independent human security
 review are still release gates. PR #434 remains draft; only Senol was requested
 because Zoorpha authored it. Production qualification remains disabled.
@@ -310,4 +310,25 @@ at startup. The ignored database regression test reproduced the prior
 registration, applied the migration, and verified the bridge's current
 registration succeeds. It passed against a disposable PostgreSQL 16/pgvector
 database after all migrations; scoped storage Clippy and formatting passed.
-GitHub CI for this review fix is pending on the new commit.
+At the time this review note was written, CI for the fix had just started. The
+later current-head run is recorded below.
+
+## Final PR review cycle — 2026-10-30
+
+On PR head `c859c8b36009cbdd97561a98251acac452e6c07b`, GitHub workflow
+[41095597665](https://github.com/kubedoio/rustshare/actions/runs/41095597665)
+passed `Buzz Identity Replacement E2E` (job `124200831066`, 22/22 checks),
+Buzz Live Conformance, Chat Product Acceptance, and integration-tests. The
+E2E artifact records Buzz source
+`e22ba1ed44822fd47a6c31362eea5087a8730d74`, schema 30, and executable
+SHA-256 `372f1b1eb551afc4d73746fabcca09de3a1fd0d800829d61b4da67fa827a5674`.
+CodeQL, Clippy, Format, OpenAPI, frontend, Cargo Deny, and DCO also passed.
+SQLx Prepare Check, generic Test, Build Release, and Coverage were skipped by
+workflow conditions.
+
+The durable-subscription review thread is resolved; the disposable migration
+regression passed 1/1, with scoped storage Clippy and formatting passing.
+Senol approved this head and no review threads remain unresolved. M4.1b2e is
+still **PARTIAL / merge NO-GO / production release NO-GO** because the
+remaining requested fault/recovery cases have not been implemented. The PR
+remains draft and production qualification remains disabled.
