@@ -322,7 +322,8 @@ async fn queue_command(
         .data(serde_json::json!({"operation":if phase=="revoke"{"revoke"}else{"admit"},
             "admission_id":op.try_get::<Uuid,_>("replacement_binding_id").map_err(|_|BuzzAuthorityError::InvalidResponse("malformed replacement".into()))?,
             "community_id":community_id.to_string(),"relay_url":relay_url,"buzz_pubkey":target.pubkey,
-            "command_version":1,"command_id":command_id,"expected_revision":expected_revision}))
+            "command_version":1,"command_id":command_id,"expected_revision":expected_revision,
+            "staged":phase == "admit"}))
         .build().map_err(|_|BuzzAuthorityError::InvalidResponse("cannot create replacement event".into()))?;
     let mut event = event;
     event.id = outbox_event_id;
@@ -424,7 +425,9 @@ pub async fn process_next_replacement(
                         record_blocked_failure(pool, &lease, "replacement_revoked").await?;
                         Ok(false)
                     }
-                    BuzzMembership::Active => complete(pool, &lease, &old, &candidate).await,
+                    BuzzMembership::Active => {
+                        complete(pool, outbox, &lease, &old, &candidate).await
+                    }
                 }
             }
             _ => Ok(false),
@@ -574,6 +577,7 @@ async fn record_transient_failure(
 
 async fn complete(
     pool: &PgPool,
+    outbox: &OutboxStore,
     lease: &ReplacementLease,
     old: &MembershipRead,
     candidate: &MembershipRead,
@@ -630,6 +634,8 @@ async fn complete(
         .map_err(|_| BuzzAuthorityError::InvalidResponse("malformed operation".into()))?;
     if old.observation.membership != BuzzMembership::Revoked
         || candidate.observation.membership != BuzzMembership::Active
+        || candidate.observation.send_enabled
+        || candidate.observation.staged_operation_id.is_none()
         || old.observation.community_id != community.to_string()
         || candidate.observation.community_id != community.to_string()
         || old.observation.pubkey != lease.old_pubkey
@@ -686,6 +692,42 @@ async fn complete(
     }
     accept_read(&mut tx, lease, old).await?;
     accept_read(&mut tx, lease, candidate).await?;
+    let staged_command = candidate
+        .observation
+        .staged_operation_id
+        .ok_or_else(|| BuzzAuthorityError::InvalidResponse("candidate is not staged".into()))?;
+    let add_expected_revision = candidate
+        .observation
+        .membership_revision
+        .checked_sub(1)
+        .ok_or_else(|| {
+            BuzzAuthorityError::InvalidResponse("invalid staged membership revision".into())
+        })?;
+    let staged_command_matches: bool =
+        sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM chat_identity_replacement_commands
+         WHERE operation_id=$1 AND phase='admit' AND command_id=$2 AND community_id=$3
+           AND pubkey=$4 AND expected_revision=$5)",
+        )
+        .bind(lease.operation_id)
+        .bind(staged_command)
+        .bind(community)
+        .bind(&lease.replacement_pubkey)
+        .bind(i64::try_from(add_expected_revision).map_err(|_| {
+            BuzzAuthorityError::InvalidResponse("membership revision overflow".into())
+        })?)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|_| {
+            BuzzAuthorityError::Transport("cannot validate staged admission command".into())
+        })?;
+    if !staged_command_matches {
+        tx.rollback().await.map_err(|_| {
+            BuzzAuthorityError::Transport("cannot reject unbound staged admission".into())
+        })?;
+        record_blocked_failure(pool, lease, "replacement_staged_evidence_rejected").await?;
+        return Ok(false);
+    }
     let binding: Uuid = op
         .try_get("replacement_binding_id")
         .map_err(|_| BuzzAuthorityError::InvalidResponse("malformed replacement binding".into()))?;
@@ -696,8 +738,9 @@ async fn complete(
     if activated.rows_affected() != 1 {
         return Ok(false);
     }
+    let admission_id = Uuid::new_v4();
     sqlx::query("INSERT INTO chat_buzz_admissions(admission_id,tenant_id,mapping_id,binding_id,buzz_pubkey,active) VALUES($1,$2,$3,$4,$5,true)")
-        .bind(Uuid::new_v4()).bind(lease.tenant_id.0).bind(mapping_id).bind(binding).bind(&lease.replacement_pubkey).execute(&mut *tx).await
+        .bind(admission_id).bind(lease.tenant_id.0).bind(mapping_id).bind(binding).bind(&lease.replacement_pubkey).execute(&mut *tx).await
         .map_err(|_|BuzzAuthorityError::Transport("cannot activate local admission".into()))?;
     let done=sqlx::query("UPDATE chat_identity_replacements SET state='completed',generation=generation+1,completed_at=clock_timestamp(),updated_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,failure_code=NULL
         WHERE tenant_id=$1 AND operation_id=$2 AND state=$3 AND generation=$4 AND lease_token=$5 AND lease_expires_at>clock_timestamp()")
@@ -715,6 +758,31 @@ async fn complete(
     sqlx::query("INSERT INTO chat_identity_replacement_audit(audit_id,tenant_id,operation_id,actor_id,from_state,to_state) VALUES(gen_random_uuid(),$1,$2,$3,'pending_membership_verification','completed')")
         .bind(lease.tenant_id.0).bind(lease.operation_id).bind(actor).execute(&mut *tx).await
         .map_err(|_|BuzzAuthorityError::Transport("cannot write completion audit".into()))?;
+    let release = IntegrationEvent::builder()
+        .source("elembra://io.elembra.chat")
+        .r#type("io.elembra.chat.buzz.admission.released.v1")
+        .tenant_id(TenantId(lease.tenant_id.0))
+        .workspace_id(WorkspaceId(lease.workspace_id.0))
+        .actor(ActorRef::Principal(PrincipalId(lease.principal_id.0)))
+        .data(serde_json::json!({
+            "operation":"admit",
+            "admission_id":admission_id,
+            "community_id":community.to_string(),
+            "relay_url":relay_url,
+            "relay_pubkey":relay_pubkey,
+            "buzz_pubkey":lease.replacement_pubkey,
+            "command_version":1,
+            "command_id":Uuid::new_v4(),
+            "expected_revision":candidate.observation.membership_revision,
+            "release_of":staged_command
+        }))
+        .build()
+        .map_err(|_| {
+            BuzzAuthorityError::InvalidResponse("cannot create staged admission release".into())
+        })?;
+    outbox.insert_in_tx(&mut tx, &release).await.map_err(|_| {
+        BuzzAuthorityError::Transport("cannot persist staged admission release".into())
+    })?;
     tx.commit().await.map_err(|_| {
         BuzzAuthorityError::Transport("cannot commit replacement completion".into())
     })?;
@@ -1120,6 +1188,7 @@ mod tests {
         let response = serde_json::json!({
             "request_id": request_id.to_string(), "community_id": community.to_string(),
             "pubkey": old_key.clone(), "membership": "revoked", "membership_revision": 1,
+            "send_enabled": false, "staged_operation_id": null,
             "evaluated_at": chrono::Utc::now().timestamp()
         });
         let signed = EventBuilder::new(Kind::Custom(19_030), response.to_string())
@@ -1266,6 +1335,8 @@ mod tests {
             command_version: Some(1),
             command_id: Some(stale_command),
             expected_revision: Some(0),
+            staged: true,
+            release_of: None,
         };
         assert!(crate::buzz_bridge::validate_conditional_command(
             &pool,

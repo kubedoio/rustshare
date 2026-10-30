@@ -75,6 +75,8 @@ pub struct BuzzMembershipObservation {
     pub pubkey: String,
     pub membership: BuzzMembership,
     pub membership_revision: u64,
+    pub send_enabled: bool,
+    pub staged_operation_id: Option<uuid::Uuid>,
     pub evaluated_at: i64,
     #[serde(skip)]
     pub(crate) event_id: String,
@@ -246,6 +248,11 @@ impl BuzzGatewayClient {
             BuzzAuthorityError::InvalidResponse("invalid membership timestamp".into())
         })?;
         result.event_id = event.id.to_hex();
+        let gate_valid = match &result.membership {
+            BuzzMembership::Active => result.send_enabled == result.staged_operation_id.is_none(),
+            BuzzMembership::Absent => result.send_enabled && result.staged_operation_id.is_none(),
+            BuzzMembership::Revoked => !result.send_enabled && result.staged_operation_id.is_none(),
+        };
         if result.request_id != req.request_id.to_string()
             || result.community_id != req.community_id.to_string()
             || result.pubkey != req.pubkey
@@ -253,6 +260,7 @@ impl BuzzGatewayClient {
             || result.membership_revision < minimum_revision
             || result.membership_revision > i64::MAX as u64
             || (result.membership == BuzzMembership::Absent) != (result.membership_revision == 0)
+            || !gate_valid
         {
             return Err(BuzzAuthorityError::InvalidResponse(
                 "membership response does not match fresh request/revision".into(),
@@ -1145,7 +1153,8 @@ mod tests {
             pubkey: &subject,
         };
         let good = json!({"request_id":req.request_id,"community_id":req.community_id,"pubkey":subject,
-            "membership":"active","membership_revision":2,"evaluated_at":Utc::now().timestamp()});
+            "membership":"active","membership_revision":2,"send_enabled":true,
+            "staged_operation_id":null,"evaluated_at":Utc::now().timestamp()});
         let signed = |content: Value| serde_json::to_value(relay_19030(&relay, content)).unwrap();
         assert_eq!(
             gateway
@@ -1176,6 +1185,26 @@ mod tests {
                 "accepted invalid {field}"
             );
         }
+        let mut inconsistent_gate = good.clone();
+        inconsistent_gate["send_enabled"] = json!(false);
+        assert!(gateway
+            .membership_from_19030(
+                &signed(inconsistent_gate),
+                &relay.public_key().to_hex(),
+                &req,
+                2,
+            )
+            .is_err());
+        let mut inconsistent_stage = good.clone();
+        inconsistent_stage["staged_operation_id"] = json!(Uuid::new_v4());
+        assert!(gateway
+            .membership_from_19030(
+                &signed(inconsistent_stage),
+                &relay.public_key().to_hex(),
+                &req,
+                2,
+            )
+            .is_err());
         let old = signed(good.clone());
         let new_request = BuzzMembershipRequest {
             request_id: Uuid::new_v4(),
@@ -1196,10 +1225,19 @@ mod tests {
             let mut content = good.clone();
             content["membership"] = json!(membership);
             content["membership_revision"] = json!(revision);
+            content["send_enabled"] = json!(membership == "absent");
             assert!(gateway
                 .membership_from_19030(&signed(content), &relay.public_key().to_hex(), &req, 0)
                 .is_ok());
         }
+        let mut staged = good.clone();
+        staged["send_enabled"] = json!(false);
+        staged["staged_operation_id"] = json!(Uuid::new_v4());
+        let staged = gateway
+            .membership_from_19030(&signed(staged), &relay.public_key().to_hex(), &req, 2)
+            .unwrap();
+        assert!(!staged.send_enabled);
+        assert!(staged.staged_operation_id.is_some());
     }
 
     fn client(keys: Keys) -> BuzzGatewayClient {

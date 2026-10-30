@@ -275,12 +275,14 @@ async function api(base, session, method, path, body, expected = 200) {
 // The proxy never grants membership: it can withhold ACKs/reads or corrupt evidence.
 const fault = {
 	read: null,
+	holdRelease: false,
 	dropAckFor: null,
 	afterAck: null,
 	dropped: [],
 	commands: [],
 	observations: [],
-	held: []
+	held: [],
+	heldReleases: []
 };
 async function proxy(targetPort) {
 	const server = createServer((req, res) => {
@@ -338,6 +340,17 @@ async function proxy(targetPort) {
 				frame = JSON.parse(data);
 			if (frame[0] === 'EVENT' && [9030, 9031].includes(frame[1].kind))
 				fault.commands.push(frame[1]);
+			if (
+				fault.holdRelease &&
+				frame[0] === 'EVENT' &&
+				frame[1].tags.some((tag) => tag[0] === 'elembra-release-of')
+			) {
+				fault.heldReleases.push(() => {
+					if (upstream.readyState === ProxySocket.OPEN) upstream.send(data);
+					else queued.push(data);
+				});
+				return;
+			}
 			if (upstream.readyState === ProxySocket.OPEN) upstream.send(data);
 			else queued.push(data);
 		});
@@ -378,7 +391,7 @@ const manifest = {
 	buzz_executable_sha256: hash(readFileSync(buzzBinary)),
 	results
 };
-assert.equal(manifest.buzz_source, '2a4a8d926d79b406b7058419ef84c319a0c107fd');
+assert.equal(manifest.buzz_source, 'e22ba1ed44822fd47a6c31362eea5087a8730d74');
 assert.equal(manifest.buzz_executable_sha256, process.env.RUSTSHARE_TEST_BUZZ_BINARY_SHA256);
 async function validate(name, args, cwd = root, extra = {}) {
 	const fd = openSync(`${artifacts}/${name}.log`, 'w', 0o600);
@@ -500,7 +513,7 @@ try {
 		buzz.container,
 		'SELECT max(version) FROM _sqlx_migrations WHERE success'
 	);
-	assert.equal(manifest.buzz_schema, '29');
+	assert.equal(manifest.buzz_schema, '30');
 	const community = sql(
 		buzz.container,
 		`SELECT id FROM communities WHERE host=${quote(`localhost:${relayPort}`)}`
@@ -564,7 +577,7 @@ try {
 	backend = start(backendBinary, backendEnv, 'elembra');
 	await backendReady();
 	pass(
-		'disposable backend, outbox, replacement worker, Buzz schema 29, two PostgreSQL, Redis, RustFS'
+		'disposable backend, outbox, replacement worker, Buzz schema 30, two PostgreSQL, Redis, RustFS'
 	);
 	const admin = await api(base, null, 'POST', '/auth/login', {
 		email: 'admin@replacement.test',
@@ -826,11 +839,45 @@ try {
 	backend = start(backendBinary, backendEnv, 'elembra');
 	await backendReady();
 	relayProcess = start(buzzBinary, relayEnv, 'buzz');
+	fault.holdRelease = true;
 	await completed(alice, operation);
+	await until('release command held after local completion', async () => fault.heldReleases.length > 0);
+	const stagedMembership = await membership(relayBase, community, alice.candidate.pk);
+	assert.equal(stagedMembership.membership, 'active');
+	assert.equal(stagedMembership.send_enabled, false);
+	const admissionCommand = rows(
+		db.container,
+		`SELECT command_id FROM chat_identity_replacement_commands WHERE operation_id=${quote(operation)} AND phase='admit' AND outcome='delivered' ORDER BY attempt DESC LIMIT 1`
+	)[0];
+	assert.equal(stagedMembership.staged_operation_id, admissionCommand.command_id);
+	assert.equal(
+		(await wire(relayUrl, alice.candidate, event(9, [['h', channel]], 'must remain gated', alice.candidate)))[2],
+		false
+	);
+	await assert.rejects(
+		subscribe(relayUrl, alice.candidate, { '#h': [channel] }),
+		/subscription denied/
+	);
+	pass('local completion is durable while signed Buzz admission remains staged and send-gated');
+	fault.holdRelease = false;
+	fault.heldReleases.splice(0).forEach((release) => release());
+	await until('signed Buzz admission release', async () => {
+		const released = await membership(relayBase, community, alice.candidate.pk);
+		return released.send_enabled && released.staged_operation_id === null;
+	});
 	const commands = rows(
 		db.container,
 		`SELECT command_id,phase,attempt,outcome,expected_revision FROM chat_identity_replacement_commands WHERE operation_id=${quote(operation)} ORDER BY created_at`
 	);
+	const releaseQuery = `SELECT o.event_id,d.state FROM integration_outbox o JOIN integration_deliveries d ON d.source=o.source AND d.event_id=o.event_id AND d.consumer_id='io.elembra.chat.buzz-bridge.v1' WHERE o.event_type='io.elembra.chat.buzz.admission.released.v1' AND o.event_json->'data'->>'buzz_pubkey'=${quote(alice.candidate.pk)}`;
+	await until('release outbox read-back processed', async () =>
+		rows(db.container, releaseQuery).some((delivery) => delivery.state === 'processed')
+	);
+	const releaseDelivery = rows(
+		db.container,
+		releaseQuery
+	);
+	assert(releaseDelivery.some((delivery) => delivery.state === 'processed'));
 	assert.deepEqual(
 		commands.map((v) => [v.phase, v.outcome]),
 		[
@@ -859,13 +906,14 @@ try {
 	manifest.happy_path = {
 		operation,
 		commands,
+		releaseDelivery,
 		observations,
 		audit,
 		historical_event_id: historical.id,
 		historical_author: historical.pubkey
 	};
 	pass(
-		'complete HTTP → NIP-43 revoke → signed REVOKED/ABSENT → admit → signed ACTIVE → atomic local completion, after restart'
+		'complete HTTP → NIP-43 revoke → signed REVOKED/ABSENT → staged NIP-43 admission → signed ACTIVE gate → local completion → release'
 	);
 	assert.equal(
 		(await wire(relayUrl, alice.old, event(9, [['h', channel]], 'old denied', alice.old)))[2],
@@ -1077,6 +1125,9 @@ try {
 		fault.dropped.some((c) => c.tags.some((t) => t[0] === 'p' && t[1] === lost.old.pk))
 	);
 	await completed(lost, lostRequest.operation_id);
+	await until('lost-ACK candidate gate released', async () =>
+		(await membership(relayBase, community, lost.candidate.pk)).send_enabled
+	);
 	const dropped = fault.dropped.find((c) =>
 		c.tags.some((t) => t[0] === 'p' && t[1] === lost.old.pk)
 	);
@@ -1225,7 +1276,7 @@ try {
 			RUSTUP_TOOLCHAIN: ''
 		};
 		await validate(
-			'buzz-migration-29',
+        'buzz-migration-30',
 			['test', '-p', 'buzz-db', '--test', 'membership_v1alpha2', '--', '--ignored'],
 			process.env.RUSTSHARE_TEST_BUZZ_SOURCE_DIR,
 			upstream

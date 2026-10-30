@@ -951,7 +951,8 @@ impl ChatIdentityStore {
             AND d.consumer_id='io.elembra.chat.buzz-bridge.v1'
            WHERE o.event_type IN (
              'io.elembra.chat.buzz.admission.requested.v1',
-             'io.elembra.chat.buzz.admission.revoked.v1')
+             'io.elembra.chat.buzz.admission.revoked.v1',
+             'io.elembra.chat.buzz.admission.released.v1')
              AND o.event_json->'data'->>'community_id'=$1
              AND COALESCE(d.state,'pending') <> 'processed'
          )",

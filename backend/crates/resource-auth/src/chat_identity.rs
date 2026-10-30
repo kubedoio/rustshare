@@ -78,9 +78,37 @@ pub fn build_buzz_conditional_admission_event_at(
     command_id: Uuid,
     expected_revision: u64,
 ) -> Result<Event, BuzzAdmissionCommandError> {
+    build_buzz_replacement_admission_event_at(
+        operation,
+        buzz_pubkey,
+        bridge_keys,
+        created_at,
+        command_id,
+        expected_revision,
+        BuzzAdmissionGate::Open,
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuzzAdmissionGate {
+    Open,
+    Staged,
+    ReleaseOf(Uuid),
+}
+
+/// Build a conditional admission with the replacement staging or release tag.
+pub fn build_buzz_replacement_admission_event_at(
+    operation: BuzzAdmissionOperation,
+    buzz_pubkey: &str,
+    bridge_keys: &Keys,
+    created_at: Timestamp,
+    command_id: Uuid,
+    expected_revision: u64,
+    gate: BuzzAdmissionGate,
+) -> Result<Event, BuzzAdmissionCommandError> {
     let pubkey = PublicKey::from_hex(buzz_pubkey)
         .map_err(|error| BuzzAdmissionCommandError::InvalidPubkey(error.to_string()))?;
-    EventBuilder::new(Kind::from(operation.buzz_kind()), "")
+    let mut builder = EventBuilder::new(Kind::from(operation.buzz_kind()), "")
         .tag(Tag::public_key(pubkey))
         .tag(Tag::parse(vec!["elembra-op".into(), command_id.to_string()]).expect("static tag"))
         .tag(
@@ -89,7 +117,22 @@ pub fn build_buzz_conditional_admission_event_at(
                 expected_revision.to_string(),
             ])
             .expect("static tag"),
-        )
+        );
+    if gate == BuzzAdmissionGate::Staged {
+        builder = builder.tag(
+            Tag::parse(vec!["elembra-stage".to_string(), "true".to_string()]).expect("static tag"),
+        );
+    }
+    if let BuzzAdmissionGate::ReleaseOf(release_of) = gate {
+        builder = builder.tag(
+            Tag::parse(vec![
+                "elembra-release-of".to_string(),
+                release_of.to_string(),
+            ])
+            .expect("static tag"),
+        );
+    }
+    builder
         .custom_created_at(created_at)
         .sign_with_keys(bridge_keys)
         .map_err(|error| BuzzAdmissionCommandError::Signing(error.to_string()))

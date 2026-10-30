@@ -597,6 +597,7 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
                     "io.elembra.chat.buzz.event.observed.v1".into(),
                     "io.elembra.chat.buzz.admission.requested.v1".into(),
                     "io.elembra.chat.buzz.admission.revoked.v1".into(),
+                    "io.elembra.chat.buzz.admission.released.v1".into(),
                 ],
                 subscribes: Vec::new(),
             },
@@ -1059,6 +1060,7 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
         assert!(registry.owns_event_type(&chat, buzz_event));
         assert!(registry.owns_event_type(&chat, "io.elembra.chat.buzz.admission.requested.v1"));
         assert!(registry.owns_event_type(&chat, "io.elembra.chat.buzz.admission.revoked.v1"));
+        assert!(registry.owns_event_type(&chat, "io.elembra.chat.buzz.admission.released.v1"));
         assert!(!registry.owns_event_type(&chat, "io.elembra.chat.buzz.admission.restored.v1"));
         assert!(!registry.owns_event_type(&chat, "io.elembra.files.file.created.v1"));
 
