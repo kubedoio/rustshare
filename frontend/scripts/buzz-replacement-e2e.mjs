@@ -1149,7 +1149,7 @@ try {
 		operation_id: stagedRequest.operation_id,
 		local_status: 'pending',
 		operation_state: 'pending_membership_verification',
-		relay_response: premature
+		relay_accepted: premature[2] === true
 	};
 	fault.read = null;
 	fault.held.splice(0).forEach((release) => release());

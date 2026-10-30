@@ -787,8 +787,8 @@ describe('CalendarApplicationView', () => {
 	});
 
 	it('offers a series edit for an occurrence and warns the whole series changes', async () => {
-		const masterDay = dayFromToday(2);
-		const occurrenceDay = dayFromToday(9);
+		const masterDay = dayInCurrentMonth(10);
+		const occurrenceDay = dayInCurrentMonth(17);
 		mocks.listEvents.mockResolvedValue([
 			eventAt(masterDay, {
 				id: 'evt-weekly',
@@ -812,8 +812,8 @@ describe('CalendarApplicationView', () => {
 	});
 
 	it('saves a series edit with the master id and master starts_at, not the occurrence instant', async () => {
-		const masterDay = dayFromToday(2);
-		const occurrenceDay = dayFromToday(9);
+		const masterDay = dayInCurrentMonth(10);
+		const occurrenceDay = dayInCurrentMonth(17);
 		mocks.listEvents.mockResolvedValue([
 			eventAt(masterDay, {
 				id: 'evt-weekly',
@@ -854,7 +854,7 @@ describe('CalendarApplicationView', () => {
 					rrule: 'FREQ=WEEKLY;COUNT=3',
 					starts_at: `${masterDay}T14:00:00`,
 					ends_at: `${masterDay}T15:00:00`,
-					instance_start: `${dayFromToday(9)}T14:00:00`
+					instance_start: `${dayInCurrentMonth(17)}T14:00:00`
 				})
 			]);
 			render(CalendarApplicationView, { module: testModule });
@@ -893,8 +893,8 @@ describe('CalendarApplicationView', () => {
 	});
 
 	it('shows the all-day explanation and no series edit for an all-day recurring occurrence', async () => {
-		const masterDay = dayFromToday(2);
-		const occurrenceDay = dayFromToday(9);
+		const masterDay = dayInCurrentMonth(10);
+		const occurrenceDay = dayInCurrentMonth(17);
 		mocks.listEvents.mockResolvedValue([
 			eventAt(masterDay, {
 				id: 'evt-allday-series',
@@ -902,14 +902,14 @@ describe('CalendarApplicationView', () => {
 				all_day: true,
 				original_date: masterDay,
 				starts_at: `${masterDay}T00:00:00Z`,
-				ends_at: `${dayFromToday(3)}T00:00:00Z`,
+				ends_at: `${dayInCurrentMonth(11)}T00:00:00Z`,
 				rrule: 'FREQ=WEEKLY;COUNT=3',
 				instance_start: `${occurrenceDay}T00:00:00Z`
 			})
 		]);
 		render(CalendarApplicationView, { module: testModule });
 
-		await fireEvent.click(await screen.findByText(/Company holiday/));
+		await fireEvent.click((await screen.findAllByText(/Company holiday/))[0]!);
 
 		// The occurrence's all-day span cannot round-trip through the editor, so
 		// it must not offer "Edit series" — only the all-day explanation.
