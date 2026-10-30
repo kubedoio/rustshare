@@ -260,6 +260,43 @@ jobs:
             echo "No Buzz diagnostics file was produced at ${diagnostics_file}."
           fi
 
+  buzz-identity-replacement-e2e:
+    name: Buzz Identity Replacement E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.2
+      - uses: Swatinem/rust-cache@v2
+      # Same immutable source as the membership contract integration job.
+      - uses: actions/checkout@v7
+        with:
+          repository: kubedoio/buzz
+          ref: 2a4a8d926d79b406b7058419ef84c319a0c107fd
+          path: .buzz-membership-source
+          persist-credentials: false
+      - name: Replacement against disposable services
+        env:
+          RUSTSHARE_TEST_BUZZ_SOURCE_DIR: ${{ github.workspace }}/.buzz-membership-source
+          RUSTSHARE_TEST_BUZZ_TARGET_DIR: ${{ runner.temp }}/buzz-replacement-target
+          REPLACEMENT_E2E_ARTIFACTS: ${{ runner.temp }}/replacement-evidence
+        run: ./scripts/run-buzz-replacement-e2e.sh
+      - name: Preserve bounded acceptance diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: buzz-identity-replacement-e2e
+          path: |
+            ${{ runner.temp }}/replacement-evidence/*.json
+            ${{ runner.temp }}/replacement-evidence/*.log
+          retention-days: 7
+      - name: Remove isolated containers after interruption
+        if: always()
+        run: docker ps -aq --filter label=io.elembra.replacement-e2e=${{ github.run_id }} | xargs -r docker rm -f -v
+
   chat-product-acceptance:
     name: Chat Product Acceptance
     # This job intentionally starts with only the checkout. The wrapper owns
