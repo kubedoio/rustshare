@@ -11,7 +11,7 @@ use futures_util::{SinkExt, StreamExt};
 use nostr::{Event, EventBuilder, JsonUtil, Keys, RelayUrl, Timestamp};
 use rustshare_integration_events::{ConsumerOutcome, IntegrationEvent, OutboxConsumer};
 use rustshare_resource_auth::{
-    build_buzz_admission_event_at, build_buzz_conditional_admission_event_at,
+    build_buzz_admission_event_at, build_buzz_replacement_admission_event_at, BuzzAdmissionGate,
     BuzzAdmissionOperation, BUZZ_RELAY_ADD_MEMBER_KIND, BUZZ_RELAY_REMOVE_MEMBER_KIND,
 };
 use serde::Deserialize;
@@ -23,6 +23,7 @@ use tracing::{debug, warn};
 
 const ADMIT_EVENT: &str = "io.elembra.chat.buzz.admission.requested.v1";
 const REVOKE_EVENT: &str = "io.elembra.chat.buzz.admission.revoked.v1";
+const RELEASE_EVENT: &str = "io.elembra.chat.buzz.admission.released.v1";
 const CONSUMER_ID: &str = "io.elembra.chat.buzz-bridge.v1";
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +41,10 @@ pub(crate) struct AdmissionData {
     pub(crate) command_id: Option<uuid::Uuid>,
     #[serde(default)]
     pub(crate) expected_revision: Option<u64>,
+    #[serde(default)]
+    pub(crate) staged: bool,
+    #[serde(default)]
+    pub(crate) release_of: Option<uuid::Uuid>,
 }
 
 /// A Buzz service/admin identity that applies Elembra's durable membership
@@ -88,13 +93,14 @@ impl BuzzAdmissionBridge {
         };
         let command = match (data.command_id, data.expected_revision) {
             (Some(command_id), Some(revision)) if data.command_version == Some(1) => {
-                build_buzz_conditional_admission_event_at(
+                build_buzz_replacement_admission_event_at(
                     data.operation,
                     &data.buzz_pubkey,
                     &self.keys,
                     created_at,
                     command_id,
                     revision,
+                    admission_gate(data),
                 )
             }
             (None, None) if data.command_version.is_none() => build_buzz_admission_event_at(
@@ -218,7 +224,11 @@ impl OutboxConsumer for BuzzAdmissionBridge {
     }
 
     fn subscriptions(&self) -> Vec<String> {
-        vec![ADMIT_EVENT.to_string(), REVOKE_EVENT.to_string()]
+        vec![
+            ADMIT_EVENT.to_string(),
+            REVOKE_EVENT.to_string(),
+            RELEASE_EVENT.to_string(),
+        ]
     }
 
     async fn process(&self, event: &IntegrationEvent) -> ConsumerOutcome {
@@ -231,7 +241,7 @@ impl OutboxConsumer for BuzzAdmissionBridge {
             }
         };
         let expected_operation = match event.r#type.as_str() {
-            ADMIT_EVENT => BuzzAdmissionOperation::Admit,
+            ADMIT_EVENT | RELEASE_EVENT => BuzzAdmissionOperation::Admit,
             REVOKE_EVENT => BuzzAdmissionOperation::Revoke,
             _ => {
                 return ConsumerOutcome::Permanent {
@@ -242,6 +252,8 @@ impl OutboxConsumer for BuzzAdmissionBridge {
         if data.operation != expected_operation
             || data.community_id.is_empty()
             || data.admission_id.is_nil()
+            || (event.r#type == RELEASE_EVENT) != data.release_of.is_some()
+            || (event.r#type == RELEASE_EVENT && data.staged)
         {
             return ConsumerOutcome::Permanent {
                 reason: "invalid Chat admission command".to_string(),
@@ -338,9 +350,20 @@ impl BuzzAdmissionBridge {
         event: &IntegrationEvent,
         data: AdmissionData,
     ) -> ConsumerOutcome {
-        if data.command_id != Some(event.id) || data.expected_revision.is_some() {
+        let staged_release = event.r#type == RELEASE_EVENT;
+        if (staged_release
+            && (data.command_id.is_none()
+                || data.expected_revision.is_none()
+                || data.release_of.is_none()
+                || data.staged))
+            || (!staged_release
+                && (data.command_id != Some(event.id)
+                    || data.expected_revision.is_some()
+                    || data.release_of.is_some()
+                    || data.staged))
+        {
             return ConsumerOutcome::Permanent {
-                reason: "ordinary v1alpha2 membership intent must use its outbox event ID".into(),
+                reason: "v1alpha2 membership intent has invalid command identity".into(),
             };
         }
         let Some(pool) = &self.pool else {
@@ -531,13 +554,58 @@ impl BuzzAdmissionBridge {
             BuzzAdmissionOperation::Admit => BuzzMembership::Active,
             BuzzAdmissionOperation::Revoke => BuzzMembership::Revoked,
         };
-        if observation.membership == desired {
+        let expected_stage = data.command_id.unwrap_or(event.id);
+        let gate_confirmed = match (staged_release, data.staged, data.operation) {
+            (true, _, BuzzAdmissionOperation::Admit) => {
+                observation.send_enabled && observation.staged_operation_id.is_none()
+            }
+            (false, true, BuzzAdmissionOperation::Admit) => {
+                !observation.send_enabled && observation.staged_operation_id == Some(expected_stage)
+            }
+            (false, false, BuzzAdmissionOperation::Admit) => {
+                observation.send_enabled && observation.staged_operation_id.is_none()
+            }
+            (_, _, BuzzAdmissionOperation::Revoke) => true,
+        };
+        if observation.membership == desired && gate_confirmed {
             return match complete_lifecycle_operation(pool, event, &observation).await {
                 Ok(()) => ConsumerOutcome::Processed,
                 Err(_) => ConsumerOutcome::Retryable {
                     reason: "cannot persist confirmed Buzz membership".into(),
                 },
             };
+        }
+        if observation.membership == desired {
+            if staged_release
+                && observation.staged_operation_id == data.release_of
+                && !observation.send_enabled
+            {
+                // The exact staged candidate is present; deliver its release below.
+            } else if staged_release {
+                return match block_lifecycle_operation(pool, event, None).await {
+                    Ok(true) => ConsumerOutcome::Permanent {
+                        reason: "Buzz candidate no longer matches the staged release".into(),
+                    },
+                    Ok(false) => ConsumerOutcome::Processed,
+                    Err(_) => ConsumerOutcome::Retryable {
+                        reason: "cannot persist mismatched staged release state".into(),
+                    },
+                };
+            } else if data.staged {
+                return match block_lifecycle_operation(pool, event, None).await {
+                    Ok(true) => ConsumerOutcome::Permanent {
+                        reason: "Buzz staged admission did not preserve its send gate".into(),
+                    },
+                    Ok(false) => ConsumerOutcome::Processed,
+                    Err(_) => ConsumerOutcome::Retryable {
+                        reason: "cannot persist invalid staged admission state".into(),
+                    },
+                };
+            } else if data.operation == BuzzAdmissionOperation::Admit {
+                return ConsumerOutcome::Retryable {
+                    reason: "Buzz member is active but its send gate is not open".into(),
+                };
+            }
         }
         if data.operation == BuzzAdmissionOperation::Admit
             && observation.membership == BuzzMembership::Revoked
@@ -565,13 +633,14 @@ impl BuzzAdmissionBridge {
         } else {
             uuid::Uuid::new_v4()
         };
-        let command = match build_buzz_conditional_admission_event_at(
+        let command = match build_buzz_replacement_admission_event_at(
             data.operation,
             &data.buzz_pubkey,
             &self.keys,
             Timestamp::now(),
             command_id,
             observation.membership_revision,
+            admission_gate(&data),
         ) {
             Ok(command) => command,
             Err(_) => {
@@ -643,6 +712,22 @@ impl BuzzAdmissionBridge {
                 reason: "Buzz command acknowledgement did not confirm requested membership".into(),
             };
         }
+        if data.release_of.is_some()
+            && (!observation.send_enabled || observation.staged_operation_id.is_some())
+        {
+            return ConsumerOutcome::Retryable {
+                reason: "Buzz release acknowledgement did not open the candidate send gate".into(),
+            };
+        }
+        if data.staged
+            && (observation.send_enabled
+                || observation.staged_operation_id != Some(data.command_id.unwrap_or(event.id)))
+        {
+            return ConsumerOutcome::Retryable {
+                reason: "Buzz staged admission read-back did not confirm the closed send gate"
+                    .into(),
+            };
+        }
         match complete_lifecycle_operation(pool, event, &observation).await {
             Ok(()) => ConsumerOutcome::Processed,
             Err(_) => ConsumerOutcome::Retryable {
@@ -667,6 +752,16 @@ struct LifecycleAttempt {
     expected_revision: u64,
     signed_event: Value,
     outcome: String,
+}
+
+fn admission_gate(data: &AdmissionData) -> BuzzAdmissionGate {
+    if data.staged {
+        BuzzAdmissionGate::Staged
+    } else if let Some(stage_id) = data.release_of {
+        BuzzAdmissionGate::ReleaseOf(stage_id)
+    } else {
+        BuzzAdmissionGate::Open
+    }
 }
 
 fn signed_tag_value<'a>(command: &'a Event, name: &str) -> Option<&'a str> {
@@ -697,6 +792,9 @@ fn valid_lifecycle_command(
         && signed_tag_value(command, "elembra-expected-revision")
             == Some(expected_revision.as_str())
         && signed_tag_value(command, "p") == Some(data.buzz_pubkey.as_str())
+        && signed_tag_value(command, "elembra-stage") == data.staged.then_some("true")
+        && signed_tag_value(command, "elembra-release-of")
+            == data.release_of.map(|id| id.to_string()).as_deref()
 }
 
 async fn mapping_protocol(
@@ -1069,7 +1167,9 @@ pub(crate) async fn validate_conditional_command(
             && row.try_get::<uuid::Uuid, _>("workspace_id")? == event.workspace_id.0
             && kind == expected_kind
             && ((phase == "revoke" && data.operation == BuzzAdmissionOperation::Revoke)
-                || (phase == "admit" && data.operation == BuzzAdmissionOperation::Admit)),
+                || (phase == "admit" && data.operation == BuzzAdmissionOperation::Admit))
+            && data.staged == (phase == "admit")
+            && data.release_of.is_none(),
     )
 }
 
@@ -1218,6 +1318,7 @@ mod tests {
     use super::*;
     use rustshare_core::domain::{TenantId, WorkspaceId};
     use rustshare_integration_events::ConsumerOutcome;
+    use rustshare_resource_auth::build_buzz_conditional_admission_event_at;
     use uuid::Uuid;
 
     fn event(event_type: &str, tenant: Uuid, data: Value) -> IntegrationEvent {
@@ -1253,6 +1354,8 @@ mod tests {
             command_version: Some(1),
             command_id: Some(command_id),
             expected_revision: Some(3),
+            staged: false,
+            release_of: None,
         };
         let command = build_buzz_conditional_admission_event_at(
             BuzzAdmissionOperation::Admit,
@@ -1282,6 +1385,48 @@ mod tests {
             &data,
             &keys
         ));
+    }
+
+    #[test]
+    fn staged_and_release_commands_bind_their_signed_tags() {
+        let keys = Keys::generate();
+        let target = Keys::generate().public_key().to_hex();
+        let stage_id = Uuid::new_v4();
+        let release_id = Uuid::new_v4();
+        for (staged, release_of) in [(true, None), (false, Some(stage_id))] {
+            let command_id = if staged { stage_id } else { release_id };
+            let attempt = LifecycleAttempt {
+                attempt: 1,
+                command_id,
+                expected_revision: 3,
+                signed_event: Value::Null,
+                outcome: "pending".into(),
+            };
+            let data = AdmissionData {
+                operation: BuzzAdmissionOperation::Admit,
+                admission_id: Uuid::new_v4(),
+                community_id: Uuid::new_v4().to_string(),
+                relay_url: "wss://relay.example.test".into(),
+                relay_pubkey: Some("1".repeat(64)),
+                buzz_pubkey: target.clone(),
+                command_version: Some(1),
+                command_id: Some(command_id),
+                expected_revision: Some(3),
+                staged,
+                release_of,
+            };
+            let command = build_buzz_replacement_admission_event_at(
+                BuzzAdmissionOperation::Admit,
+                &target,
+                &keys,
+                Timestamp::from_secs(1_700_000_000),
+                command_id,
+                3,
+                admission_gate(&data),
+            )
+            .unwrap();
+            assert!(valid_lifecycle_command(&command, &attempt, &data, &keys));
+        }
     }
 
     #[tokio::test]

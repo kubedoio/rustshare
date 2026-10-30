@@ -84,6 +84,7 @@ fn bridge_kind_for(event_type: &str) -> Option<&'static str> {
     match event_type {
         "io.elembra.chat.buzz.admission.created.v1" => Some("9030"),
         "io.elembra.chat.buzz.admission.revoked.v1" => Some("9031"),
+        "io.elembra.chat.buzz.admission.released.v1" => Some("9030"),
         _ => None,
     }
 }
@@ -112,6 +113,10 @@ mod tests {
         assert_eq!(
             bridge_kind_for("io.elembra.chat.buzz.admission.revoked.v1"),
             Some("9031")
+        );
+        assert_eq!(
+            bridge_kind_for("io.elembra.chat.buzz.admission.released.v1"),
+            Some("9030")
         );
         assert_eq!(
             bridge_kind_for("io.elembra.chat.buzz.admission.future.v1"),

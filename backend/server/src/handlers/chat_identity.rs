@@ -214,8 +214,8 @@ fn test_buzz_fixture_matches(
     expected_digest: &str,
     actual_digest: &str,
 ) -> bool {
-    const SOURCE_SHA: &str = "2a4a8d926d79b406b7058419ef84c319a0c107fd";
-    const SOURCE_TREE: &str = "a5cc0b56d6235ce800a515e7298aea155118a322";
+    const SOURCE_SHA: &str = "e22ba1ed44822fd47a6c31362eea5087a8730d74";
+    const SOURCE_TREE: &str = "163d0baf005b449838febe0b5667fb48733adf66";
     source_sha == Some(SOURCE_SHA)
         && source_tree == Some(SOURCE_TREE)
         && source_is_clean
@@ -1097,8 +1097,8 @@ mod tests {
     #[cfg(all(feature = "test-buzz-replacement-qualification", debug_assertions))]
     #[test]
     fn test_fixture_qualification_is_bound_to_pinned_source_and_binary_digest() {
-        let source = "2a4a8d926d79b406b7058419ef84c319a0c107fd";
-        let source_tree = "a5cc0b56d6235ce800a515e7298aea155118a322";
+        let source = "e22ba1ed44822fd47a6c31362eea5087a8730d74";
+        let source_tree = "163d0baf005b449838febe0b5667fb48733adf66";
         let digest = "f".repeat(64);
         assert!(test_buzz_fixture_matches(
             Some(source),
