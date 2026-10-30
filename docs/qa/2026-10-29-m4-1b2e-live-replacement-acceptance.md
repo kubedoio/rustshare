@@ -151,13 +151,16 @@ checks used `REPLACEMENT_E2E_VALIDATE=1`). The ignored local evidence is under
   70 existing ignored; affected server/core all-target/all-feature Clippy,
   formatting, release fixture exclusion, handler SQL guard (591 sites and 7
   guard tests), no-ACL structural guard, frontend check/lint/build passed.
-- **Other validation:** frontend unit tests reported 1,348 passed and 4 Calendar
-  failures (3 series-edit/delete cases and 1 all-day recurring case). The
-  existing Chat Product Acceptance workflow was still running at last check.
-  Its local harness could not start because an unrelated pre-existing service
-  owned port 80; only this task's isolated compose project was stopped. The
-  dependency CI audit failed on 9 findings (8 low, 1 high in existing
-  `happy-dom`), unrelated to the replacement change.
+- **Other validation and follow-up:** the initial frontend run had 4 date-sensitive
+  Calendar failures and the dependency audit had one high `happy-dom` finding.
+  The fixtures now stay within the visible month and the test dependency was
+  updated to `happy-dom` 21.0.4 without forcing other dependency upgrades.
+  Follow-up frontend results: Calendar tests 50/50 and full frontend tests
+  1,352/1,352 passed; `npm audit --audit-level=high` exits successfully with
+  eight low findings remaining. Frontend check/lint/build passed. The local
+  Chat Product Acceptance harness could not start because an unrelated
+  pre-existing service owned port 80; only this task's isolated compose project
+  was stopped. Its CI job was still in progress at the last check.
 - **Dedicated CI:** `Buzz Identity Replacement E2E` ran in workflow
   [41045465713](https://github.com/kubedoio/rustshare/actions/runs/41045465713),
   job 124028357826, against PR head `1cafe2882083a1a0c9c14e83cad52e808458e0de`
@@ -172,6 +175,11 @@ checks used `REPLACEMENT_E2E_VALIDATE=1`). The ignored local evidence is under
   check. No required-check probe was attempted because acceptance is red.
   Draft PR #434 requests review only from `senolcolak`; independent security
   review is pending. No reviewer outside the user's allowed list was requested.
+
+The PR's two CodeQL comments identified raw relay WebSocket response data in
+the persisted pre-activation probe. The JSON evidence now stores only the
+boolean relay-accepted result; raw network response content is not written to
+the evidence file. CodeQL re-analysis is pending on the follow-up commit.
 
 **Disposition: PARTIAL / merge NO-GO / production release NO-GO.** Resolve the
 pre-completion Buzz-send contract, complete the remaining fault matrix, obtain
