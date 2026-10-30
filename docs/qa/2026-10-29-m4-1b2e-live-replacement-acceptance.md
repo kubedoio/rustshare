@@ -332,3 +332,61 @@ Senol approved this head and no review threads remain unresolved. M4.1b2e is
 still **PARTIAL / merge NO-GO / production release NO-GO** because the
 remaining requested fault/recovery cases have not been implemented. The PR
 remains draft and production qualification remains disabled.
+
+## M4.1b2e fault-closure draft — 2026-10-31
+
+The feature branch `feat/m41b2e-replacement-fault-closure` starts from
+Elembra main `aea1cc8baec281a3d5cc1453468373c06021ed33` (tree
+`3fc0919e489e34196f686b01a5b5c541a7532f7a`). It extends the existing
+`scripts/run-buzz-replacement-e2e.sh` /
+`frontend/scripts/buzz-replacement-e2e.mjs` harness and retains the required
+`Buzz Identity Replacement E2E` job. The test-only Buzz pin is updated to the
+then-current PR #7 head `dc09fc2602a7cc64ea15caa865bd773d8be61eed` (tree
+`8feb9d59c14b53999dfa16148b2cef62ba28de30`); no production pin or allowlist
+was changed.
+
+The harness contains these 12 fault-closure groups:
+
+| Fault group | Status |
+| --- | --- |
+| Worker crash before relay ACK and after relay ACK | Implemented; not executed |
+| Lease expiry and fenced claim recovery | Implemented; not executed |
+| Identical concurrent initiation and competing starts | Implemented; not executed |
+| Principal disabled during staged verification | Implemented; not executed |
+| Mapping and relay-pin rotation mid-operation | Implemented; not executed |
+| Definitive stale revision and fresh conditional retry | Implemented; not executed |
+| Reordered conditional revocation delivery | Implemented; not executed |
+| Unexpected old-key reactivation and tombstone retention | Implemented; not executed |
+| Database failure during completion commit | Implemented; not executed |
+| Blocked operation recovery by an audited administrator | Implemented; not executed |
+| Staged release racing with revocation | Implemented; not executed |
+| Lost release ACK and exact-event replay | Implemented; not executed |
+
+Existing acceptance checks remain in the harness and have not been removed:
+the v1alpha1 path, relay OK without local completion, send and subscription
+gating, cross-tenant access, and ambiguous revoke retry. The historical 22/22
+result is preserved as prior evidence only; it is not a run of these additions.
+
+The required invocation was attempted with test-only source and target
+directories. Buzz `buzz-relay` built from `dc09fc2602a7cc64ea15caa865bd773d8be61eed`
+with SHA-256
+`2b5949ef0a856028fe6d76d9b626bca68937358d29e5d1fe395e605681f439f8`.
+Elembra `rustshare-server` built from the branch's unchanged backend source
+with SHA-256
+`1e597e7353cd3b7a9b67d53e900840d5e2ed14c45d572952e35429ec505fd61d`.
+`node --check frontend/scripts/buzz-replacement-e2e.mjs` and `git diff --check`
+passed; `bash -n scripts/run-buzz-replacement-e2e.sh` and frontend `npm run lint`
+passed (0 errors; 155 existing warnings). Rust workspace formatting, Clippy,
+SQLx metadata, OpenAPI, structural guards, full PostgreSQL
+tests, migration tests, actual relay conformance, multi-node/media tests, and
+the frontend acceptance validation were not run. The runner stopped before service startup because the sandbox denied
+access to `/var/run/docker.sock`; no new real relay case, migration check,
+PostgreSQL test, live conformance test, or validation tail was executed. No
+E2E `results.json` or live-run digest pair exists for this draft.
+
+**Disposition: IMPLEMENTED / NOT QUALIFIED / merge NO-GO / production
+qualification NO-GO.** The historical 22/22 pass above belongs to the earlier
+Elembra head and Buzz `e22ba1ed44822fd47a6c31362eea5087a8730d74`; it does not
+prove this test-only source update or any new fault case. Protected CI,
+independent security review, and real disposable-service execution remain
+required.

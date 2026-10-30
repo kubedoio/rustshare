@@ -13,9 +13,9 @@ export RUSTSHARE_TEST_BUZZ_SOURCE_DIR="${RUSTSHARE_TEST_BUZZ_SOURCE_DIR:-$REPO_R
 export RUSTSHARE_TEST_BUZZ_TARGET_DIR="${RUSTSHARE_TEST_BUZZ_TARGET_DIR:-$REPO_ROOT/.agents/buzz-target}"
 if [[ ! -d "$RUSTSHARE_TEST_BUZZ_SOURCE_DIR" ]]; then
   git clone --no-checkout https://github.com/kubedoio/buzz.git "$RUSTSHARE_TEST_BUZZ_SOURCE_DIR" >"$REPLACEMENT_E2E_ARTIFACTS/checkout.log" 2>&1
-  git -C "$RUSTSHARE_TEST_BUZZ_SOURCE_DIR" checkout --detach e22ba1ed44822fd47a6c31362eea5087a8730d74 >>"$REPLACEMENT_E2E_ARTIFACTS/checkout.log" 2>&1
+  git -C "$RUSTSHARE_TEST_BUZZ_SOURCE_DIR" checkout --detach dc09fc2602a7cc64ea15caa865bd773d8be61eed >>"$REPLACEMENT_E2E_ARTIFACTS/checkout.log" 2>&1
 fi
-[[ "$(git -C "$RUSTSHARE_TEST_BUZZ_SOURCE_DIR" rev-parse HEAD)" == e22ba1ed44822fd47a6c31362eea5087a8730d74 ]]
+[[ "$(git -C "$RUSTSHARE_TEST_BUZZ_SOURCE_DIR" rev-parse HEAD)" == dc09fc2602a7cc64ea15caa865bd773d8be61eed ]]
 [[ -z "$(git -C "$RUSTSHARE_TEST_BUZZ_SOURCE_DIR" status --porcelain --untracked-files=all)" ]]
 export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 SQLX_OFFLINE=true
 (
