@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Declare Chat admission and revocation events so durable replacement commands pass the integration outbox ownership check.
 - Wait for NIP-42 authentication acknowledgment before sending conditional Buzz membership commands.
 - Add authenticated durable Chat identity replacement initiation and scoped redacted status; initiation stays disabled until a separately qualified Buzz v1alpha2 runtime is pinned.
 - Add a service-authenticated, signed Buzz v1alpha2 membership read client with durable single-use verification receipts; identity replacement remains disabled.
