@@ -1180,6 +1180,8 @@ try {
 		}
 	}
 } finally {
+	// Preserve the acceptance outcome before optional, potentially long validation.
+	writeFileSync(`${artifacts}/results.json`, JSON.stringify(manifest, null, 2));
 	for (const socket of subscriptions) socket.close();
 	for (const { server, wss } of servers) {
 		for (const client of wss.clients) client.terminate();
