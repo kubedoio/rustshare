@@ -298,3 +298,16 @@ protected CI, and required-check failure enforcement are verified. The
 remaining requested fault cases listed above and independent human security
 review are still release gates. PR #434 remains draft; only Senol was requested
 because Zoorpha authored it. Production qualification remains disabled.
+
+## Upgrade review finding — 2026-10-30
+
+Codex identified that immutable durable-consumer subscriptions would reject the
+new release event on existing installations. Migration
+`20261030120000_buzz_bridge_release_subscription` extends the registered
+`io.elembra.chat.buzz-bridge.v1` contract in place, preserving its identity and
+existing delivery ledger; fresh installations still register the full contract
+at startup. The ignored database regression test reproduced the prior
+registration, applied the migration, and verified the bridge's current
+registration succeeds. It passed against a disposable PostgreSQL 16/pgvector
+database after all migrations; scoped storage Clippy and formatting passed.
+GitHub CI for this review fix is pending on the new commit.
