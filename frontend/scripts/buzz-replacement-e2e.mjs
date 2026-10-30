@@ -106,7 +106,8 @@ async function stop(child) {
 	}
 }
 async function dependency(name, image, ports, env) {
-	const container = `${prefix}-${name}`;
+	// The accepted upstream outage test only pauses containers with this prefix.
+	const container = name === 'buzz-pg' ? `m41-buzz-${prefix}` : `${prefix}-${name}`;
 	containers.push(container);
 	docker(
 		'run',
@@ -1213,6 +1214,9 @@ try {
 			SQLX_OFFLINE: 'false'
 		});
 		const upstream = {
+			...Object.fromEntries(
+				Object.entries(relayEnv).filter(([name]) => name.startsWith('BUZZ_S3_'))
+			),
 			BUZZ_TEST_DATABASE_URL: relayEnv.DATABASE_URL,
 			BUZZ_TEST_REDIS_URL: relayEnv.REDIS_URL,
 			BUZZ_TEST_RELAY_BINARY: buzzBinary,
