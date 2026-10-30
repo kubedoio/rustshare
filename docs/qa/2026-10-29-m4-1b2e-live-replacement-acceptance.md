@@ -185,3 +185,76 @@ the evidence file. CodeQL re-analysis is pending on the follow-up commit.
 pre-completion Buzz-send contract, complete the remaining fault matrix, obtain
 independent security review, and get green protected CI before closing M4.1b2e.
 M4.1b2f remains deferred.
+
+## Follow-up execution — 2026-10-30
+
+The staged-send defect above is fixed by the upstream Buzz staged-membership
+release change and the Elembra bridge now requires the signed gate-open
+observation before it completes the release. The following run used the
+committed Elembra tree `fe1dbe202dd0532be19ff9b3884c79a69bb4d5fa` and Buzz source
+`e22ba1ed44822fd47a6c31362eea5087a8730d74` (tree
+`163d0baf005b449838febe0b5667fb48733adf66`), schema 30. The actual debug relay
+SHA-256 was
+`2b5949ef0a856028fe6d76d9b626bca68937358d29e5d1fe395e605681f439f8`.
+Command: `REPLACEMENT_E2E_VALIDATE=1 scripts/run-buzz-replacement-e2e.sh` with
+the #433 test fixture variables pointing to that Buzz source and target.
+Disposable-run evidence is `/tmp/m41b2e-integrated-committed/results.json` and
+the driver log is `/tmp/m41b2e-integrated-committed-driver.log`.
+
+- **Live acceptance:** 22/22 passed. This included the real HTTP/NIP-42
+  replacement flow, conditional NIP-43 revoke and staged admission, signed
+  REVOKED/ABSENT/ACTIVE observations, local completion and audit, followed by
+  the signed Buzz release. The old key remained revoked and blocked; candidate
+  sending stayed blocked until the verified release. Historical attribution,
+  v1alpha1 compatibility, normal message delivery, reconnect denial and
+  offboarding also passed.
+- **Executed recovery/security cases:** relay outage and durable retry; lost ACK
+  with stable command UUID; duplicate/replayed UUID; wrong tenant, Principal,
+  workspace, binding and candidate proof; expired challenge; audit rollback;
+  permanently revoked candidate; invalid/replayed signed evidence; and relay OK
+  without verified completion. PostgreSQL regressions passed 3/3, OpenAPI tests
+  3/3, SQLx metadata passed, Buzz migration-30 test passed 1/1, and the
+  authoritative live Buzz membership test passed 1/1. Handler SQL guard passed
+  (591 reviewed sites), no-ACL guard passed, affected all-target/all-feature
+  Clippy and formatting passed, workspace library tests passed (1,335 passed,
+  70 existing ignored), and a release build with the fixture feature passed.
+- **Still outstanding:** this is not the entire requested injected fault matrix.
+  Dedicated cases for lease expiry, concurrent starts, Principal disable during
+  an operation, mapping rotation, definitive stale-revision recovery, command
+  reordering, unexpected old-key reactivation, failed DB commit, and operator
+  visibility for orphaned pending commands are still absent. CI results below
+  record which connected acceptance jobs passed and which integration sweep
+  exposed the stale fixture.
+- **CI/review:** PR run
+  [41083173638](https://github.com/kubedoio/rustshare/actions/runs/41083173638)
+  passed `Buzz Identity Replacement E2E` (job `124158142968`, 22/22), `Buzz
+  Live Conformance`, and `Chat Product Acceptance`. Its accepted Buzz build
+  SHA-256 was
+  `372f1b1eb551afc4d73746fabcca09de3a1fd0d800829d61b4da67fa827a5674`.
+  The same run found the broad ignored-test sweep had a stale mock in
+  `membership_http_persists_single_use_nonce_and_rejects_replay`: it omitted
+  the new signed `send_enabled` and `staged_operation_id` fields. The mock now
+  returns the open-gate values, and that exact test passed 1/1 against a fresh
+  pgvector-backed disposable PostgreSQL with all migrations. The integration
+  workflow must be rerun on the follow-up commit.
+- **Protection/review:** `main` now requires the exact `Buzz Identity
+  Replacement E2E` status from GitHub Actions (app 15368), verified via the
+  branch-protection API. The safe unmerged failed-check probe remains pending.
+  PR #434 is draft; old review threads are resolved. Senol (`senolcolak`) is
+  the only requested reviewer because Zoorpha authored the PR. Independent
+  human security review is still pending.
+- **Upstream CI:** Buzz PR #7 remains draft at the exact source SHA above and
+  has no reported checks. A manual dispatch attempt was rejected by GitHub
+  with “Actions has been disabled for this repository”; the immutable Buzz
+  source was instead built and tested by the RustShare E2E job and local Buzz
+  DB/relay Clippy and migration/conformance commands. Do not treat that as an
+  upstream PR CI pass.
+- **Production:** compatibility qualification remains disabled, the production
+  Buzz pin and allowlist are unchanged, and the #433 fixture is still debug
+  only. This source-built runtime is test evidence, not a production release.
+
+**Updated disposition: PARTIAL / merge NO-GO / production release NO-GO.** The
+specific pre-completion send defect is resolved and the integrated lifecycle now
+passes locally. Close M4.1b2e only after the remaining required fault coverage,
+green protected CI, verified required-check enforcement, and independent human
+security review are complete. M4.1b2f remains deferred.
