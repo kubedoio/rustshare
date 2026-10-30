@@ -841,7 +841,10 @@ try {
 	relayProcess = start(buzzBinary, relayEnv, 'buzz');
 	fault.holdRelease = true;
 	await completed(alice, operation);
-	await until('release command held after local completion', async () => fault.heldReleases.length > 0);
+	await until(
+		'release command held after local completion',
+		async () => fault.heldReleases.length > 0
+	);
 	const stagedMembership = await membership(relayBase, community, alice.candidate.pk);
 	assert.equal(stagedMembership.membership, 'active');
 	assert.equal(stagedMembership.send_enabled, false);
@@ -851,7 +854,13 @@ try {
 	)[0];
 	assert.equal(stagedMembership.staged_operation_id, admissionCommand.command_id);
 	assert.equal(
-		(await wire(relayUrl, alice.candidate, event(9, [['h', channel]], 'must remain gated', alice.candidate)))[2],
+		(
+			await wire(
+				relayUrl,
+				alice.candidate,
+				event(9, [['h', channel]], 'must remain gated', alice.candidate)
+			)
+		)[2],
 		false
 	);
 	await assert.rejects(
@@ -873,10 +882,7 @@ try {
 	await until('release outbox read-back processed', async () =>
 		rows(db.container, releaseQuery).some((delivery) => delivery.state === 'processed')
 	);
-	const releaseDelivery = rows(
-		db.container,
-		releaseQuery
-	);
+	const releaseDelivery = rows(db.container, releaseQuery);
 	assert(releaseDelivery.some((delivery) => delivery.state === 'processed'));
 	assert.deepEqual(
 		commands.map((v) => [v.phase, v.outcome]),
@@ -1125,8 +1131,9 @@ try {
 		fault.dropped.some((c) => c.tags.some((t) => t[0] === 'p' && t[1] === lost.old.pk))
 	);
 	await completed(lost, lostRequest.operation_id);
-	await until('lost-ACK candidate gate released', async () =>
-		(await membership(relayBase, community, lost.candidate.pk)).send_enabled
+	await until(
+		'lost-ACK candidate gate released',
+		async () => (await membership(relayBase, community, lost.candidate.pk)).send_enabled
 	);
 	const dropped = fault.dropped.find((c) =>
 		c.tags.some((t) => t[0] === 'p' && t[1] === lost.old.pk)
@@ -1276,7 +1283,7 @@ try {
 			RUSTUP_TOOLCHAIN: ''
 		};
 		await validate(
-        'buzz-migration-30',
+			'buzz-migration-30',
 			['test', '-p', 'buzz-db', '--test', 'membership_v1alpha2', '--', '--ignored'],
 			process.env.RUSTSHARE_TEST_BUZZ_SOURCE_DIR,
 			upstream
