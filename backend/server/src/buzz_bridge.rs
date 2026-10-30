@@ -126,10 +126,14 @@ impl BuzzAdmissionBridge {
             .map_err(|error| format!("relay connect failed: {error}"))?;
         let command_id = command.id.to_string();
         let event_message = serde_json::json!(["EVENT", command]).to_string();
-        socket
-            .send(Message::Text(event_message.clone().into()))
-            .await
-            .map_err(|error| format!("relay send failed: {error}"))?;
+        // v1alpha2 closes unauthenticated EVENT connections before sending an OK.
+        if !conditional {
+            socket
+                .send(Message::Text(event_message.clone().into()))
+                .await
+                .map_err(|error| format!("relay send failed: {error}"))?;
+        }
+        let mut auth_event_id = None;
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
         while let Some(message) = tokio::time::timeout_at(deadline, socket.next())
@@ -155,18 +159,29 @@ impl BuzzAdmissionBridge {
                     let auth = EventBuilder::auth(challenge, relay.clone())
                         .sign_with_keys(&self.keys)
                         .map_err(|error| error.to_string())?;
+                    auth_event_id = Some(auth.id.to_hex());
                     socket
                         .send(Message::Text(
                             serde_json::json!(["AUTH", auth]).to_string().into(),
                         ))
                         .await
                         .map_err(|error| format!("relay AUTH send failed: {error}"))?;
-                    socket
-                        .send(Message::Text(event_message.clone().into()))
-                        .await
-                        .map_err(|error| format!("relay retry send failed: {error}"))?;
                 }
                 Some("OK") => {
+                    if auth_event_id
+                        .as_deref()
+                        .is_some_and(|id| items.get(1).and_then(Value::as_str) == Some(id))
+                    {
+                        if items.get(2).and_then(Value::as_bool) != Some(true) {
+                            return Err("Buzz relay rejected service authentication".into());
+                        }
+                        auth_event_id = None;
+                        socket
+                            .send(Message::Text(event_message.clone().into()))
+                            .await
+                            .map_err(|error| format!("relay authenticated send failed: {error}"))?;
+                        continue;
+                    }
                     if items.get(1).and_then(Value::as_str) != Some(command_id.as_str()) {
                         continue;
                     }
@@ -1267,6 +1282,81 @@ mod tests {
             &data,
             &keys
         ));
+    }
+
+    #[tokio::test]
+    async fn conditional_publish_waits_for_successful_nip42_authentication() {
+        for accepted in [true, false] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("ws://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                socket
+                    .send(Message::Text(
+                        serde_json::json!(["AUTH", "test-nonce"]).to_string().into(),
+                    ))
+                    .await
+                    .unwrap();
+                let auth: Value =
+                    serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap())
+                        .unwrap();
+                assert_eq!(auth[0], "AUTH", "EVENT must not precede authentication");
+                let proof: nostr::Event = serde_json::from_value(auth[1].clone()).unwrap();
+                proof.verify().unwrap();
+                assert_eq!(proof.kind, nostr::Kind::Authentication);
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(50), socket.next())
+                        .await
+                        .is_err(),
+                    "EVENT must wait for the authentication ACK"
+                );
+                socket
+                    .send(Message::Text(
+                        serde_json::json!(["OK", proof.id, accepted, "test"])
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+                if accepted {
+                    let command: Value = serde_json::from_str(
+                        socket.next().await.unwrap().unwrap().to_text().unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(command[0], "EVENT");
+                    socket
+                        .send(Message::Text(
+                            serde_json::json!(["OK", command[1]["id"], true, ""])
+                                .to_string()
+                                .into(),
+                        ))
+                        .await
+                        .unwrap();
+                }
+            });
+            let bridge = BuzzAdmissionBridge {
+                keys: Keys::generate(),
+                pool: None,
+                gateway: None,
+            };
+            let command = build_buzz_conditional_admission_event_at(
+                BuzzAdmissionOperation::Admit,
+                &Keys::generate().public_key().to_hex(),
+                &bridge.keys,
+                Timestamp::now(),
+                Uuid::new_v4(),
+                0,
+            )
+            .unwrap();
+            let result = bridge.publish_signed(&url, command, true).await;
+            if accepted {
+                assert_eq!(result.unwrap(), Some(true));
+            } else {
+                assert!(result.is_err());
+            }
+            server.await.unwrap();
+        }
     }
 
     #[tokio::test]
