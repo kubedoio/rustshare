@@ -505,11 +505,6 @@ try {
 		`SELECT id FROM communities WHERE host=${quote(`localhost:${relayPort}`)}`
 	);
 	assert.match(community, /^[a-f0-9-]{36}$/);
-	// Accepted Buzz setup mechanism; no membership mutation is simulated in SQL.
-	sql(
-		buzz.container,
-		`UPDATE communities SET membership_v1alpha2=true WHERE id=${quote(community)}`
-	);
 	const encryptionKey = Buffer.from(secret(), 'hex').toString('base64');
 	secrets.push(encryptionKey);
 	backendEnv = {
@@ -585,7 +580,7 @@ try {
 			community_id: community,
 			relay_url: relayUrl,
 			relay_pubkey: relay.pk,
-			membership_protocol_version: 'v1alpha2'
+			membership_protocol_version: 'v1alpha1'
 		},
 		201
 	);
@@ -686,6 +681,85 @@ try {
 		);
 		assert.equal(status(op), 'active');
 	}
+	const legacy = await user('legacy'),
+		legacyKey = key(),
+		legacyChannel = randomUUID();
+	const legacyProof = await challenge(legacy, legacyKey);
+	await api(
+		base,
+		legacy,
+		'POST',
+		'/applications/chat/identity-binding/verify',
+		{ challenge_id: legacyProof.c.challenge_id, event: legacyProof.proof },
+		201
+	);
+	await api(base, legacy, 'POST', '/applications/chat/admission', { workspace_id: tenant }, 202);
+	await until(
+		'v1alpha1 admission',
+		async () =>
+			sql(
+				buzz.container,
+				`SELECT count(*) FROM relay_members WHERE community_id=${quote(community)} AND pubkey=${quote(legacyKey.pk)}`
+			) === '1'
+	);
+	assert.equal(
+		(
+			await wire(
+				relayUrl,
+				service,
+				event(
+					9007,
+					[
+						['h', legacyChannel],
+						['name', 'legacy'],
+						['visibility', 'open'],
+						['channel_type', 'stream']
+					],
+					'',
+					service
+				)
+			)
+		)[2],
+		true
+	);
+	assert.equal(
+		(
+			await wire(
+				relayUrl,
+				legacyKey,
+				event(9, [['h', legacyChannel]], 'legacy chat still works', legacyKey)
+			)
+		)[2],
+		true
+	);
+	await api(base, admin, 'POST', `/admin/applications/chat/principals/${legacy.user.id}/revoke`);
+	await until(
+		'v1alpha1 revocation',
+		async () =>
+			sql(
+				buzz.container,
+				`SELECT count(*) FROM relay_members WHERE community_id=${quote(community)} AND pubkey=${quote(legacyKey.pk)}`
+			) === '0'
+	);
+	assert.equal(
+		(
+			await wire(relayUrl, legacyKey, event(9, [['h', legacyChannel]], 'legacy revoked', legacyKey))
+		)[2],
+		false
+	);
+	await api(base, admin, 'POST', `/admin/users/${legacy.user.id}/disable`, undefined, 204);
+	await api(base, legacy, 'GET', '/users/me', undefined, [401, 403]);
+	pass('v1alpha1 first admission, normal message, revocation, reconnect denial and offboarding');
+	// Test-only opt-in uses the accepted upstream fixture; mutations remain on the wire.
+	sql(
+		buzz.container,
+		`UPDATE communities SET membership_v1alpha2=true WHERE id=${quote(community)}`
+	);
+	await api(base, admin, 'PATCH', `/admin/applications/chat/workspaces/${tenant}/community`, {
+		relay_url: relayUrl,
+		relay_pubkey: relay.pk,
+		membership_protocol_version: 'v1alpha2'
+	});
 	const alice = await onboard('alice');
 	pass('first-time v1alpha2 HTTP admission through real outbox');
 	const channel = randomUUID();
