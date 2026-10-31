@@ -1,6 +1,6 @@
 # ADR-0036: Elembra Chat Zero-Config Bootstrap
 
-> **2026-10-31 decision relationship:** ADR-0044 proposes a separate upstream-only profile. The signed HTTP contracts described here belong to the supported downstream Buzz implementation; they are not verified stock block/buzz capabilities. Existing deployments retain these checks until a separately approved replacement passes authorization and compatibility gates. See [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
+> **2026-10-31 profile amendment:** ADR-0044 accepts a separate upstream-only `upstream_managed` profile. The signed HTTP contracts described here remain required for deployed fork-backed behavior and are not stock `block/buzz` capabilities. See the runtime-profile amendment below and [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
 
 Status: Accepted (implemented v1alpha1)  
 Date: 2026-08-16
@@ -217,3 +217,19 @@ are sufficient and simpler.
 - `docs/architecture/elembra-chat-bootstrap.md` — topology and contract
   details.
 - `docs/runbooks/elembra-alpha.md` — operator instructions.
+
+## 2026-10-31 runtime-profile amendment
+
+The accepted ADR-0044 target profile does not replace this bootstrap for
+existing fork-backed deployments. Their signed fork discovery, admission,
+image pin and runtime behavior remain unchanged. An `upstream_managed`
+deployment instead requires one isolated relay/community per tenant and a
+trusted, versioned Elembra mapping pinned to exact host, TLS peer, community,
+relay identity and deployment provenance. Stock Buzz is not assumed to expose
+the fork's signed community-discovery endpoint or any private operator API.
+Provisioning must use the separately controlled owner/admin identity with
+standard NIP-43 and verify membership through ordinary authenticated relay
+behavior. A trusted-service exception for private/bundled relays remains
+disabled until independently reviewed and implemented with strict endpoint
+allowlisting and network-level egress enforcement. This amendment does not
+change existing configuration or authorize automatic production provisioning.

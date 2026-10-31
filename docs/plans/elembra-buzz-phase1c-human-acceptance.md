@@ -1,35 +1,34 @@
-# Elembra Buzz Phase 1c — Human Acceptance Decisions
+# Elembra Buzz — Architecture Adoption and Security Gates
 
-**Status: pending authorized human decisions.** PR approval or merge does not accept these security and product decisions. Signing below records design acceptance only; it does not prove that production enforcement has been implemented or tested.
+**Decision record date:** 2026-10-31. **Status:** Target product architecture and v1 messaging scope accepted by project-owner direction. Independent security approvals and runtime enforcement remain pending. PR approval or merge is not security acceptance.
 
-## A. ADR-0044 custody model — Option A
+The project owner explicitly approved ADR-0044 Option A as the target product architecture and authorized an isolated, disabled-by-default Phase 2A vault implementation. This records that instruction; it does not claim an independent security review, production enforcement, implementation approval or release authorization.
 
-Approve managed Nostr identities whose encrypted signing keys are controlled by Elembra. This grants the backend signing service technical capability to sign as a user; a compromised service or authorized operator could impersonate managed users. Accept that custody tradeoff only with KMS-backed envelope encryption, tenant/principal/identity/generation-bound AEAD, typed and scoped signing intents, least-privilege service permissions, separation of user and relay-admin keys, audited key lifecycle and export, backup/restore and tested recovery. A user's exported `nsec` is an independent copy and cannot be cryptographically revoked; recovery requires a new identity/key and corresponding relay membership transition.
+## A. ADR-0044 — managed identity custody
 
-**Decision:** ☐ Accept Option A and these required controls  ☐ Reject / revise
+**Product/architecture direction: ACCEPTED.** Elembra will own KMS-protected Nostr identities for the future `upstream_managed` profile. The backend signing service will technically be capable of signing as those users; this is custodial identity, not end-to-end key exclusivity. Target controls are KMS-backed envelope encryption, tenant/principal/identity/generation-bound AEAD, typed and scoped signing permissions, least privilege, audit, separation of user and relay-admin identities, tested backup/restore and recovery, and explicit export policy. A user-exported `nsec` copy cannot be cryptographically revoked.
 
-Authorized architecture/security approver: ____________________  Date: __________
+**Independent security approval: PENDING.** An independent reviewer must accept the threat model, signer boundary, KMS permissions and recovery, export/offboarding treatment and operational controls before any real-user provisioning, signing or export. No reviewer signature is fabricated here.
 
 ## B. Initial messaging scope
 
-Proposed v1 scope is NIP-29 channel messaging and native NIP-29 private-channel DMs only. Native private-channel DMs use Buzz's hidden NIP-29 channel membership and ACL behavior; they are not end-to-end encrypted NIP-17 gift-wrap DMs. NIP-17 is excluded and must remain disabled in v1. The recorded randomized-timestamp NIP-17 relay rejection remains a historical protocol failure, outside the proposed v1 acceptance suite. Managed mode creates no private key in the user's browser. Desktop channel and DM interoperability still requires the manual acceptance procedure in `scripts/upstream-buzz-poc/desktop-acceptance.md`; the current GUI assertions are unverified.
+**Product scope: ACCEPTED.** V1 targets NIP-29 channel messaging and native NIP-29 private-channel DMs. These private DMs are hidden relay-ACL-protected channels, not end-to-end encrypted NIP-17/NIP-44 gift wraps. NIP-17 is excluded and must remain disabled in v1. Its randomized-timestamp compatibility failure remains in the historical evidence. Managed mode creates no browser-held key.
 
-**Decision:** ☐ Accept this NIP-29-only scope  ☐ Reject / revise
+**Runtime acceptance: PENDING.** Stock Buzz Desktop native-keychain acceptance is deferred to [issue #442](https://github.com/kubedoio/rustshare/issues/442). It remains mandatory before Phase 2B managed Chat integration, not before inert vault work. Protocol-client proof does not satisfy desktop acceptance.
 
-Authorized product/security approver: ____________________  Date: __________
+## C. Tenant-to-relay architecture
 
-## C. Tenant-to-relay mapping security contract
+**Target topology: ACCEPTED.** One closed, isolated relay/community per tenant, selected from trusted tenant/workspace mapping. No user-controlled endpoint; exact URL, host, community, relay identity/provenance and mapping generation; TLS hostname/peer validation; DNS pinning; tenant-scoped sessions; generation-fenced changes; fail-closed behavior; no fallback to another tenant, an open relay or the legacy fork. Relay admin and user signing identities remain separate.
 
-Proposed v1 topology is one isolated relay/community per tenant. The trusted control plane binds tenant and workspace to an exact relay URL, canonical host, community, deployment provenance and pinned relay identity. DNS is validated and pinned per connection; TLS chain and hostname are verified; user-controlled destinations, redirects, proxy overrides, SSRF/rebinding, cross-tenant session reuse and stale generations fail closed. Mapping updates are versioned, audited and generation-fenced. Missing, stale, conflicting or changed mappings have no open-relay, other-tenant or legacy-fork fallback. Admin and user signing identities remain separate.
+**Independent security approval and production enforcement: PENDING.** The checked-in mapping model is policy code, not a production connector. The current strict policy rejects internal/special-use destinations. A proposed `trusted_service` exception for private/bundled relays must bind immutable service identity and exact admin-approved endpoints, preserve TLS and peer pinning, disable redirects/proxy overrides, and enforce destination limits at the network layer. It must receive independent threat-model review and integration tests before it is enabled. Do not allow arbitrary private endpoints or weaken the current SSRF guard.
 
-The checked-in policy model and negative tests do **not** enforce the contract in the production connector. Production acceptance needs transport integration and independent review of DNS/TLS, trusted mapping storage, egress/proxy policy, connection cancellation, session isolation and audit behavior.
+## D. Separate implementation and release gates
 
-The current blanket rejection of internal and IANA special-use addresses is incompatible with a relay bundled in-process/container-local or reachable only on a private network/VPC. Do not relax it as part of this POC. If private relay deployment is required, approve a narrowly scoped trusted-service exception with immutable service identity and endpoint allowlist plus network-level egress enforcement, and test DNS pinning, peer identity, TLS and tenant binding end to end. Otherwise require a publicly routable relay endpoint. The preferred v1 deployment model must be decided explicitly.
+| Gate | Status | Permitted scope |
+|---|---|---|
+| D — design adoption | Target direction accepted; repository PR/review pending | Profile-scoped ADR and contract updates |
+| V — Phase 2A vault | Authorized as implementation planning | Isolated KMS-backed test-only vault, disabled by default; no real-user provisioning, signing, export, relay integration or enablement |
+| I — Phase 2B managed Chat | NOT READY | Requires Gate V review, independent custody approval, issue #442 desktop results, production mapping enforcement and stock protocol tests |
+| R — production release/cutover | NOT READY | Requires separate security acceptance, backup/recovery, operational/rollback evidence and per-tenant migration approval |
 
-**Decision:** ☐ Accept the contract and public-endpoint requirement  ☐ Accept a separately reviewed private-service exception  ☐ Reject / revise
-
-Authorized security approver: ____________________  Date: __________
-
-## Enforcement and release gate
-
-These are proposed decisions only; no approval is recorded here. Even after design approval, Phase 2A remains blocked until the stock Buzz desktop import, public-key match, channel and private-DM event-ID interoperability, restart/history and cleanup checks pass, required CI and independent reviews pass, and production mapping enforcement has its own reviewed implementation gate. A human acceptance signature cannot substitute for executable proof.
+An accepted security design is not proof that runtime behavior enforces it. No production custody behavior or deployment change is authorized by this record.
