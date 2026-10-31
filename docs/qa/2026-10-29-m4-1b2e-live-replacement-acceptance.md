@@ -390,3 +390,29 @@ Elembra head and Buzz `e22ba1ed44822fd47a6c31362eea5087a8730d74`; it does not
 prove this test-only source update or any new fault case. Protected CI,
 independent security review, and real disposable-service execution remain
 required.
+
+## Upstream-only design compatibility and CI follow-up — 2026-10-31
+
+PR #438 protects existing downstream Buzz deployments. The proposed ADR-0044
+in PR #439 introduces a separate upstream-only managed identity design;
+this acceptance harness does not qualify that design or stock `block/buzz`.
+Its signed membership proofs, conditional revisions, tombstones and staged
+release remain downstream-specific. Production pins, runtime qualification
+allowlists and replacement enablement must remain unchanged.
+
+CI run `41145967534`, testing PR head
+`40016029ddefaa83d597bd46e6d1f228214b7b35`, supersedes the local execution
+limitation above for that head: disposable services started and the first
+four acceptance groups passed. Replacement initiation then returned HTTP 404,
+`Chat identity replacement is disabled`, at harness line 966. The independent
+integration job failed in the downstream `authoritative_membership` test at
+line 521 with `WebSocket(Protocol(SendAfterClosing))`. These are failing live
+results, not qualification evidence; the earlier local Docker failure does
+not describe this CI execution.
+
+Next: diagnose fixture qualification without bypassing production guards,
+resolve the downstream membership test failure, and rerun all required
+checks on the resulting exact head. Keep this PR draft and merge NO-GO until
+passing evidence and independent human review exist. Run ADR-0044 Phase 1
+against its independently pinned unmodified upstream sources in a separate
+harness; no result here enables managed key custody or identity migration.
