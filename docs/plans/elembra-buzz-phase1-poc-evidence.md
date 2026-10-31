@@ -13,7 +13,7 @@ Date: 2026-10-31
 | RustShare base | `36a058112324a9da10558bc9b9fae8f2bb565ef4` | Protected `main` matched `git ls-remote origin refs/heads/main` before work. |
 | `block/buzz` relay | commit `eafd77e9f6e96052476bdd88be732c046fdb7ab3`; tree `04e3a40545bd3b23510ec32b4c8cccee2acef7c5` | Exact SHA/tree verified; `git status --porcelain` empty; upstream checkout unchanged. |
 | `block/buzz-app` desktop | commit `662e91800af8204ec0e492522b8f23ef23b19baa`; tree `80275983372cc8dd840e732c0bb3610e97c7c283` | Exact SHA/tree verified; audited source checkout clean and unchanged. Build ran in a separate disposable clone. |
-| Locally built relay image | config ID and Buildx build digest `sha256:814c6cf1c5ce1d53b810ef61279555c4ebd4e40f592d632950ea671de0350ff0` | Built from the exact relay source and its Dockerfile. Local image digest, not a published GHCR digest. |
+| Locally built relay image | Final review rerun config ID and Buildx build digest `sha256:b8232baaa663c672cedc2f1ca379bd3fcc88d264e97d035338d9754e383c41eb` | Built from the exact relay source and its Dockerfile. Local image digest, not a published GHCR digest. |
 | Test runtime | Docker `29.7.2`; Compose `5.5.0`; Node `v22.22.2`; npm `10.9.7`; pnpm `11.8.0`; Rust `1.98.1` | Desktop package requires Node `>=24`; the app nevertheless built/launched under Node 22 with an engine warning. |
 
 ### Reproduction and environment
@@ -26,13 +26,15 @@ BUZZ_SOURCE_DIR=/tmp/block-buzz-phase0 POC_HOLD=0 scripts/upstream-buzz-poc/run.
 
 The final run used two independent disposable upstream Compose stacks, each with PostgreSQL 17, Redis 7, Silo object storage, an independent relay key and closed community. Authentication and membership enforcement were enabled. Only loopback ports were published. The run completed cleanup and returned exit status 1 because the required randomized-timestamp NIP-17 acceptance check failed. Its sanitized output contained no test private keys. `config/buzz-compatibility.env`, production deployment settings, upstream source trees, custom endpoints and private database access were not used or changed.
 
+After the review fixes, the full protocol suite was rerun from the same harness against the exact relay SHA/tree above. Docker 29.7.2, Compose 5.5.0, and Node v22.22.2 were recorded; image config/build digest was `sha256:b8232baaa663c672cedc2f1ca379bd3fcc88d264e97d035338d9754e383c41eb`. Results remained **35 PASS, 1 FAIL, 3 UNVERIFIED** across 39 checks, plus relay identity restart PASS. The NIP-19 export used the locked `nostr-tools` encoder. The command exited 1 due to the randomized-timestamp NIP-17 failure; the new denial and channel-tag assertions passed. Desktop GUI evidence remains the separate unverified attempt below.
+
 For the GUI attempt, the pinned desktop was built and launched under Xvfb and a private D-Bus session. A real GNOME Secret Service was unlocked and verified with a create/read/delete probe before launching Buzz; no mock store was used. The app rendered its initial screen, but synthetic mouse and keyboard input did not activate the controls. The `nsec` was not imported, and no desktop event was sent or received. This is **UNVERIFIED**, not a pass. Desktop public-key match, restart history, duplicate identity and community-enrollment checks are consequently also unverified.
 
 ### Phase 1b conformance matrix
 
 | Check | Result | Recorded evidence |
 |---|---|---|
-| `nsec_encoding_checksum` | PASS | Disposable NIP-19 encoder length/checksum self-check passed; GUI import was not exercised. |
+| `nsec_gui_export` | PASS | `nostr-tools` produced the disposable NIP-19 `nsec` file for the GUI attempt; GUI import was not exercised. |
 | `owner_nip42`, `member_nip42_alice`, `member_nip42_bob` | PASS | Relay challenge and authenticated `OK` for owner and both admitted users. |
 | `nonmember_nip42_denied` | PASS | Outsider received challenge; relay returned `accepted=false`. |
 | `nip43_add_alice`, `nip43_add_bob` | PASS | Both upstream kind-9000 admission commands accepted; subsequent NIP-42 passed. |
@@ -45,7 +47,7 @@ For the GUI attempt, the pinned desktop was built and launched under Xvfb and a 
 | `private_channel_add_bob`, `private_channel_bob_member_history` | PASS | After kind-9000 admission, Bob retrieved the existing private kind-9 event. |
 | `kind9_publish`, `kind9_history_bob` | PASS | Alice's public kind-9 event was accepted and retrieved by Bob with the same event ID and Alice pubkey. |
 | `nip29_dm_open_and_discovery` | PASS | Kind-41010 opened a hidden DM channel; Bob discovered kinds 39000/39001/39002. This is NIP-29 channel behavior, not encrypted NIP-17. |
-| `nip17_randomized_timestamp_relay_compatibility` | **FAIL** | Valid outer and seal signatures; wrap timestamp was 6,078 seconds old (within the 172,800-second NIP-59 randomized range), but relay returned `invalid: event timestamp too far from server time`. |
+| `nip17_randomized_timestamp_relay_compatibility` | **FAIL** | Valid outer and seal signatures; wrap timestamp was 5,672 seconds old (within the 172,800-second NIP-59 randomized range), but relay returned `invalid: event timestamp too far from server time`. |
 | `nip17_recent_timestamp_delivery_and_decryption` | PASS | Current-time kind-1059 gift wrap and kind-13 seal signatures verified; Bob retrieved and NIP-44-decrypted the kind-14 rumor with expected sender, recipient and plaintext; unrelated outsider could not decrypt. |
 | `nip17_recipient_only_visibility` | PASS | Alice's own recipient filter returned zero; Alice's attempt to query Bob's recipient filter was `CLOSED` with zero events. |
 | `open_pre_revocation_subscriptions` | PASS | Bob opened three subscriptions (public kind 9, public kind 7, private kind 9); all reached `EOSE` after Bob had read private history. |
@@ -57,14 +59,16 @@ For the GUI attempt, the pinned desktop was built and launched under Xvfb and a 
 | `cross_tenant_alice_denied`, `cross_tenant_b_user_denied` | PASS | Each relay rejected a member identity from the other community at NIP-42. |
 | `wrong_host_denied` | PASS | Test DNS explicitly resolved the wrong-host name to `127.0.0.1`; the proxy recorded matching SNI and Host and forwarded the HTTP upgrade to the stock relay. The relay returned HTTP 404 before NIP-42. |
 | `wrong_sni_tls_rejected_before_relay` | PASS | Test DNS resolved to loopback; client received `ERR_TLS_CERT_ALTNAME_INVALID`. No HTTP upgrade reached the relay. |
-| `relay_identity_restart` | PASS | Relay A's NIP-11 `self` remained `b3173258559b87509aefdd32d51f040032ae8da1aba10b648008ee818a4bfb2c` after restart. |
+| `relay_identity_restart` | PASS | Relay A's NIP-11 `self` remained `82252a7cfb9b0096d07098a2ab20608966a7422643ef40551a32fa94429fda6b` after restart. |
 
 Totals: **35 PASS, 1 FAIL, 3 UNVERIFIED** across 39 protocol checks; the independent relay restart identity check also passed. The suite's exit status is nonzero by design when any required compatibility assertion fails.
+
+Private-channel denial and the open-socket post-revocation REQ require an empty event list for both `CLOSED` and `EOSE`. Built-in assertions verify that denial fails when the accumulated event list is non-empty. Public and DM discovery checks require each matching kind 39000/39001/39002 event to carry a `d` tag equal to the requested channel ID; assertions also reject a mismatched channel tag.
 
 Combined sanitized observations from the same run (proxy log plus client protocol results; random port retained as evidence):
 
 ```json
-{"source":"proxy_log","id":9,"stage":"proxy_forwarded","sni":"buzz-wrong-host.poc.invalid","host":"buzz-wrong-host.poc.invalid:44503","request":"GET / HTTP/1.1"}
+{"source":"proxy_log","id":9,"stage":"proxy_forwarded","sni":"buzz-wrong-host.poc.invalid","host":"buzz-wrong-host.poc.invalid:46075","request":"GET / HTTP/1.1"}
 {"source":"protocol_result","test":"wrong_host_denied","layer":"relay_http_upgrade","status":404,"authenticated":false}
 {"source":"protocol_result","test":"wrong_sni_tls_rejected_before_relay","code":"ERR_TLS_CERT_ALTNAME_INVALID","relay_http_request":false}
 ```
@@ -76,8 +80,8 @@ Additional sanitized wire-level proof from this run:
 ```json
 {"test":"owner_nip42","challenge_received":true,"authenticated_ok":true}
 {"test":"nonmember_nip42_denied","challenge_received":true,"authenticated_ok":false}
-{"test":"kind9_publish_and_history","event_id":"16ec8c6a297fceaee4b6bd37a6662d3aced800886ebe288c25f1c939587692c7","author_pubkey":"13e570509b0da089bc3b88b9afa4cc05f01c5e94997ffdb829fbb4241d982c46","same_id_on_history":true}
-{"test":"nip17_randomized_timestamp","outer_signature_valid":true,"seal_signature_valid":true,"wrap_age_seconds":6078,"relay_accepted":false,"relay_reason":"event timestamp too far from server time"}
+{"test":"kind9_publish_and_history","event_id":"fd2d5cc6bb3de92f107b7a22c5edda535dcfc922d0462054b1a6109757ffc286","author_pubkey":"d2dd3f05ed51623e493618f1186a956163a698e329f94bc5b4930b5aabe0d19d","same_id_on_history":true}
+{"test":"nip17_randomized_timestamp","outer_signature_valid":true,"seal_signature_valid":true,"wrap_age_seconds":5672,"relay_accepted":false,"relay_reason":"event timestamp too far from server time"}
 {"test":"nip43_remove_bob","command_accepted":true,"already_connected_socket":"closed","active_subscriptions":3,"subscription_close_frames":0,"marker_delivered":false}
 {"test":"revoked_reconnect","immediate_auth_denied":true,"after_1500ms_auth_denied":true}
 ```
@@ -119,7 +123,7 @@ Both upstream checkout trees were clean. The relay was built from its unchanged 
 
 | Check | Result | Observed behavior |
 |---|---|---|
-| `nsec_encoding_checksum` | PASS | The generated disposable `nsec` passed the encoder's length/checksum self-check before writing. This does not replace desktop import verification. |
+| `nsec_gui_export` | PASS | `nostr-tools` produced the disposable NIP-19 `nsec` file before the GUI attempt. This does not replace desktop import verification. |
 | `owner_nip42` | PASS | Challenge received; authenticated `OK` accepted. |
 | `nonmember_nip42_denied` | PASS | Challenge received; authentication explicitly rejected. |
 | `nip43_add_alice`, `nip43_add_bob` | PASS | Both add commands accepted. |

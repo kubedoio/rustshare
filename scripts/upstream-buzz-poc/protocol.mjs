@@ -1,5 +1,6 @@
 // Disposable, wire-level conformance probe. Private keys enter only via env and optional 0600 GUI file.
 import { createRequire } from 'node:module';
+import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns';
@@ -10,7 +11,7 @@ const require = createRequire(process.env.POC_TEST_PACKAGE);
 const WebSocket = require('ws');
 const { schnorr } = require('@noble/curves/secp256k1.js');
 const { bytesToHex, hexToBytes } = require('@noble/curves/utils.js');
-const { finalizeEvent, generateSecretKey, getPublicKey, nip44, nip59, verifyEvent } = require('nostr-tools');
+const { finalizeEvent, generateSecretKey, getPublicKey, nip19, nip44, nip59, verifyEvent } = require('nostr-tools');
 const testLookup = (hostname, options, callback) => {
 	if (hostname.endsWith('.poc.invalid')) {
 		if (options?.all) callback(null, [{ address: '127.0.0.1', family: 4 }]);
@@ -29,29 +30,7 @@ if (!url || Object.values(keys).some((key) => !/^[0-9a-f]{64}$/i.test(key || '')
 const pubkey = (key) => bytesToHex(schnorr.getPublicKey(hexToBytes(key)));
 const pubs = Object.fromEntries(Object.entries(keys).map(([name, key]) => [name, pubkey(key)]));
 function nsec(key) {
-	const alphabet = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
-	let bits = 0, value = 0;
-	const words = [];
-	for (const byte of hexToBytes(key)) {
-		value = (value << 8) | byte; bits += 8;
-		while (bits >= 5) { bits -= 5; words.push((value >> bits) & 31); }
-	}
-	if (bits) words.push((value << (5 - bits)) & 31);
-	const polymod = (values) => {
-		let checksum = 1;
-		for (const v of values) {
-			const top = checksum >>> 25;
-			checksum = ((checksum & 0x1ffffff) << 5) ^ v;
-			for (const [bit, generator] of [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3].entries()) if ((top >>> bit) & 1) checksum ^= generator;
-		}
-		return checksum;
-	};
-	const expanded = [...'nsec'].map((c) => c.charCodeAt(0) >> 5).concat(0, ...[...'nsec'].map((c) => c.charCodeAt(0) & 31));
-	const remainder = polymod([...expanded, ...words, 0, 0, 0, 0, 0, 0]) ^ 1;
-	const checksum = Array.from({ length: 6 }, (_, i) => (remainder >>> (5 * (5 - i))) & 31);
-	const payload = [...words, ...checksum];
-	if (words.length !== 52 || polymod([...expanded, ...payload]) !== 1) throw new Error('nsec checksum self-check failed');
-	return `nsec1${payload.map((word) => alphabet[word]).join('')}`;
+	return nip19.nsecEncode(hexToBytes(key));
 }
 const hash = async (value) => bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))));
 async function event(key, kind, tags = [], content = '', createdAt = Math.floor(Date.now() / 1000)) {
@@ -164,6 +143,14 @@ async function check(name, fn) {
 	}
 }
 const result = (pass, detail = {}) => ({ pass, ...detail });
+const deniedWithoutEvents = (read) => ['CLOSED', 'EOSE'].includes(read.outcome) && read.events.length === 0;
+const hasChannelTag = (event, channelId) => event.tags?.some((tag) => tag[0] === 'd' && tag[1] === channelId) === true;
+assert.equal(deniedWithoutEvents({ outcome: 'CLOSED', events: [{ kind: 9 }] }), false);
+assert.equal(deniedWithoutEvents({ outcome: 'EOSE', events: [{ kind: 9 }] }), false);
+assert.equal(deniedWithoutEvents({ outcome: 'CLOSED', events: [] }), true);
+assert.equal(deniedWithoutEvents({ outcome: 'EOSE', events: [] }), true);
+assert.equal(hasChannelTag({ tags: [['d', 'other-channel']] }, 'requested-channel'), false);
+assert.equal(hasChannelTag({ tags: [['d', 'requested-channel']] }, 'requested-channel'), true);
 const explicitAuthDenial = (auth) => auth.challenged && !auth.accepted && ['OK', 'SOCKET_CLOSE'].includes(auth.outcome);
 async function desktopHold() {
 	console.log(`desktop_test_ready alice_pubkey=${pubs.ALICE} relay=${url} channel=${publicChannel} gui_nsec_path=${process.env.POC_GUI_NSEC_FILE}`);
@@ -192,11 +179,11 @@ async function desktopHold() {
 let owner, alice, bob, publicChannel, privateChannel, dmChannel, publicMessage, privateMessage, bobSubscriptions = [], aliceAdd, bobRemove;
 let aliceNsec;
 try {
-	await check('nsec_encoding_checksum', async () => {
+	await check('nsec_gui_export', async () => {
 		aliceNsec = nsec(keys.ALICE);
-		return result(true);
+		return result(aliceNsec.startsWith('nsec1'));
 	});
-	if (!aliceNsec) throw new Error('NIP-19 encoding self-check failed');
+	if (!aliceNsec) throw new Error('NIP-19 key export failed');
 	if (process.env.POC_GUI_NSEC_FILE) {
 		await writeFile(process.env.POC_GUI_NSEC_FILE, `${aliceNsec}\n`, { mode: 0o600, flag: 'wx' });
 	}
@@ -254,8 +241,9 @@ try {
 	});
 	for (const kind of [39000, 39001, 39002]) {
 		await check(`channel_discovery_${kind}`, async () => {
-			const read = await alice.read({ kinds: [kind], '#d': [publicChannel], limit: 20 });
-			return result(read.outcome === 'EOSE' && read.events.some((item) => item.kind === kind), read);
+			const read = await alice.read({ kinds: [kind], '#d': [publicChannel], limit: 20 }, true);
+			const matchingChannelEvents = read.events.filter((item) => item.kind === kind && hasChannelTag(item, publicChannel));
+			return result(read.outcome === 'EOSE' && matchingChannelEvents.length > 0, { outcome: read.outcome, event_count: read.events.length, matching_channel_event_count: matchingChannelEvents.length });
 		});
 	}
 	await check('kind9_publish', async () => {
@@ -270,7 +258,7 @@ try {
 	await check('private_channel_bob_denied', async () => {
 		const metadata = await bob.read({ kinds: [39000], '#d': [privateChannel], limit: 20 });
 		const history = await bob.read({ kinds: [9], '#h': [privateChannel], limit: 20 });
-		return result([metadata, history].every((read) => read.outcome === 'CLOSED' || (read.outcome === 'EOSE' && read.events.length === 0)), { metadata, history });
+		return result([metadata, history].every(deniedWithoutEvents), { metadata, history });
 	});
 	await check('private_channel_add_bob', async () => {
 		const wire = await owner.publish(await event(keys.OWNER, 9000, [['h', privateChannel], ['p', pubs.BOB]]));
@@ -288,10 +276,11 @@ try {
 		const kinds = [39000, 39001, 39002];
 		const discoveries = [];
 		for (const kind of kinds) discoveries.push(await bob.read({ kinds: [kind], '#d': [dmChannel], limit: 20 }, true));
-		const metadata = discoveries[0].events.find((item) => item.kind === 39000);
+		const metadata = discoveries[0].events.find((item) => item.kind === 39000 && hasChannelTag(item, dmChannel));
 		const hidden = metadata?.tags?.some((tag) => tag[0] === 'hidden');
-		const discovered = discoveries.every((read, index) => read.outcome === 'EOSE' && read.events.some((item) => item.kind === kinds[index]));
-		return result(discovered && hidden === true, { channel_id: dmChannel, discovery_kinds: discoveries.map((read) => read.events[0]?.kind), hidden });
+		const matchingChannelEvents = discoveries.map((read, index) => read.events.filter((item) => item.kind === kinds[index] && hasChannelTag(item, dmChannel)).length);
+		const discovered = discoveries.every((read, index) => read.outcome === 'EOSE' && matchingChannelEvents[index] > 0);
+		return result(discovered && hidden === true, { channel_id: dmChannel, discovery_kinds: discoveries.map((read) => read.events[0]?.kind), matching_channel_event_counts: matchingChannelEvents, hidden });
 	});
 	await check('nip17_randomized_timestamp_relay_compatibility', async () => {
 		const now = Math.floor(Date.now() / 1000);
@@ -355,7 +344,7 @@ try {
 	await check('revoked_existing_new_req', async () => {
 		if (bob.socket.readyState === WebSocket.CLOSED) return { name: 'revoked_existing_new_req', pass: null, outcome: 'UNVERIFIED_SOCKET_CLOSED_BEFORE_REQ', attempted: false };
 		const read = await bob.read({ kinds: [9], '#h': [publicChannel], limit: 20 });
-		return result(read.outcome === 'CLOSED' || (read.outcome === 'EOSE' && read.events.length === 0), { ...read, attempted: true });
+		return result(deniedWithoutEvents(read), { ...read, attempted: true });
 	});
 	await check('revoked_fresh_connection', async () => {
 		const joined = await connect(url, keys.BOB);
