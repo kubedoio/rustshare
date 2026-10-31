@@ -4,7 +4,7 @@ Date: 2026-10-31
 
 ## Phase 1b execution
 
-**Decision: Phase 1 remains incomplete; Phase 2 is NO-GO.** The stock relay passed core membership, channel, kind-9, NIP-29 DM discovery, tenant separation and recent-timestamp NIP-17 checks. Standard randomized NIP-59 timestamps failed the upstream relay's timestamp limit. The unmodified desktop window launched with a verified unlocked OS keyring, but GUI input did not respond in this Xvfb session, so identity import and messaging are unverified. ADR-0044 has not received explicit human security acceptance.
+**Historical Phase 1b decision:** Phase 1 evidence was incomplete; managed Chat integration and production rollout were NO-GO at that point. The stock relay passed core membership, channel, kind-9, NIP-29 DM discovery, tenant separation and recent-timestamp NIP-17 checks. Standard randomized NIP-59 timestamps failed the upstream relay's timestamp limit. The unmodified desktop window launched with a verified unlocked OS keyring, but GUI input did not respond in this Xvfb session, so identity import and messaging are unverified. Independent security acceptance of ADR-0044 remains pending. Current Phase 2A readiness is recorded at the end of this report and is limited to an inert, disabled-by-default vault.
 
 ### Exact sources and runtime
 
@@ -40,7 +40,7 @@ scripts/upstream-buzz-poc/run.sh
 
 On the exact unmodified relay source (`eafd77e9f6e96052476bdd88be732c046fdb7ab3`, tree `04e3a40545bd3b23510ec32b4c8cccee2acef7c5`; clean checkout), the two-stack harness reported **38 PASS, 1 FAIL, 3 UNVERIFIED** across 42 protocol checks; relay identity `a4c00b17e82cfc9cf0854a3117d9f1a4343a2ebbb4d13883aa4f772955e58236` persisted after restart. The new private-DM check passed: seeded event `006ef81913f0687dafe84e909728239ec781c7b4af5fbe30ca345f15d99f61e4` was published by Alice `a75e2c958c17bd0202141dff8b8ea1f18c246ec9a9d2202d53db51008d46f59e` in DM `675456b6-3b61-43da-bdef-acef61865d44`; Bob returned the same event ID, author and channel; outsider discovery ended `EOSE` with zero events and outsider history ended `CLOSED` with zero events. Existing bidirectional DM, revocation, cross-tenant and other tests remained in the same run and passed except for the recorded failure/unverified cases below.
 
-The one failure remains `nip17_randomized_timestamp_relay_compatibility`: a valid signed wrap aged 5,185 seconds was rejected as `event timestamp too far from server time`. The three unverified checks remain exact NIP-43 add replay semantics and post-removal publish/new-REQ behavior on a socket that the relay closes before either command can be sent. This failure remains visible; proposed v1 exclusion requires the human decision in [`elembra-buzz-phase1c-human-acceptance.md`](elembra-buzz-phase1c-human-acceptance.md).
+The one failure remains `nip17_randomized_timestamp_relay_compatibility`: a valid signed wrap aged 5,185 seconds was rejected as `event timestamp too far from server time`. The three unverified checks remain exact NIP-43 add replay semantics and post-removal publish/new-REQ behavior on a socket that the relay closes before either command can be sent. This failure remains visible; the accepted v1 scope excludes NIP-17 as recorded in [`elembra-buzz-phase1c-human-acceptance.md`](elembra-buzz-phase1c-human-acceptance.md).
 
 The corrected-wrapper rerun recorded Docker `29.7.2`, Compose `5.5.0`, Node `v22.22.2`, and local relay image config/build digest `sha256:2a1375c668d31e2d91dccf09155a0e2f1b4b1041eb3a1e21f6f92460efd45459`. The image was built from the exact clean upstream source using its unchanged Dockerfile; it is a local build, not a published image. The temporary Compose stacks and keys were removed after the run. The command exited 1 solely because the conformance suite retains the randomized-timestamp NIP-17 failure. No private key was printed in the captured protocol output.
 
@@ -104,15 +104,15 @@ Additional sanitized wire-level proof from this run:
 {"test":"revoked_reconnect","immediate_auth_denied":true,"after_1500ms_auth_denied":true}
 ```
 
-### DM and Phase 2 decision
+### Historical DM and Phase 2 decision (Phase 1b)
 
-The live desktop GUI DM path remains unverified. Source inspection at the pinned desktop commit shows its supported DM flow is NIP-29 private channels (kind 41010 open, kind 9 messages, kinds 39000/39001/39002 discovery); no NIP-17 kind-1059 client flow was found. The recent-timestamp NIP-44/NIP-17 wire test passes, but the relay rejects a valid randomized timestamp more than 15 minutes from server time. Do not silently change wrap timestamps to bypass that relay limit. **Keep encrypted DM disabled in the initial managed-identity release unless upstream-compatible behavior is demonstrated or a reviewed product scope explicitly excludes it.**
+The live desktop GUI DM path remains unverified. Source inspection at the pinned desktop commit shows its supported DM flow is NIP-29 private channels (kind 41010 open, kind 9 messages, kinds 39000/39001/39002 discovery); no NIP-17 kind-1059 client flow was found. The recent-timestamp NIP-44/NIP-17 wire test passes, but the relay rejects a valid randomized timestamp more than 15 minutes from server time. Do not silently change wrap timestamps to bypass that relay limit. NIP-17 is excluded and disabled in the accepted v1 scope; retain the compatibility failure as historical evidence.
 
-**Phase 2 readiness: NO-GO.** Mandatory desktop evidence is missing, randomized NIP-17 compatibility failed, Elembra host mapping has not been tested or security-accepted, and explicit human acceptance of ADR-0044 is absent. Approval of PR #440 is not ADR acceptance.
+**Historical Phase 2 readiness at the Phase 1b review: NO-GO for managed Chat integration and production.** Desktop evidence was missing, randomized NIP-17 compatibility failed, Elembra host mapping had not been tested or security-accepted, and the project-owner ADR-0044 adoption had not yet been recorded. The owner-approved target architecture and v1 scope are now recorded above; independent security approval and runtime enforcement remain pending. Current Phase 2A readiness is GO only after Gate D merges and only for the inert, disabled-by-default vault; Phase 2B and production remain gated.
 
-### Next Phase 2 prompt (gated)
+### Historical next Phase 2 prompt (superseded by the current Phase 2A prompt below)
 
-> Do not implement managed identity yet. First close the Phase 1b gates: rerun the unmodified pinned desktop GUI under a responsive graphical session and unlocked OS keyring, proving import/public-key match, both message directions with exact event IDs, restart/history, and no duplicate identity/enrollment; resolve or explicitly remove NIP-17 DM from initial scope while keeping it disabled; specify and independently review fail-closed Elembra tenant-to-relay host mapping; and obtain explicit security acceptance of ADR-0044. Once all gates are recorded, on latest protected `kubedoio/rustshare` main implement the feature-gated `upstream_managed` identity mode per ADR-0044, `contracts/managed-chat-identity-v1.md`, and `contracts/upstream-buzz-relay-adapter-v1.md`. Preserve browser-key mode, legacy client-held identities, and M4.1b2 replacement guards. Add tenant-scoped encrypted key storage and typed Chat-only signing with NIP-42 possession checks, step-up-gated export, audit, migrations, and tenant/replay/KMS/outage/rotation/restore tests. Do not enable production cutover, replacement, or migration.
+> At the Phase 1b review point, managed identity implementation was blocked until desktop interoperability, NIP-17 scope, tenant mapping and ADR/security decisions were resolved. This historical prompt is superseded: the current Phase 2A prompt below permits only an inert, disabled-by-default vault after Gate D review and merge.
 
 ## Initial Phase 1 provenance and evidence (preserved historical run)
 
@@ -223,8 +223,8 @@ Every protocol check from the final run is listed below. `nsec_gui_export` means
 | `nip29_dm_open_and_discovery` | PASS |
 | `nip29_dm_bidirectional_messages` | PASS |
 | `nip17_randomized_timestamp_relay_compatibility` | **FAIL** |
-| `nip17_recent_timestamp_delivery_and_decryption` | PASS (out of proposed v1 scope) |
-| `nip17_recipient_only_visibility` | PASS (out of proposed v1 scope) |
+| `nip17_recent_timestamp_delivery_and_decryption` | PASS (out of accepted v1 scope) |
+| `nip17_recipient_only_visibility` | PASS (out of accepted v1 scope) |
 | `open_pre_revocation_subscriptions` | PASS |
 | `nip43_remove_bob` | PASS |
 | `nip43_remove_exact_replay` | PASS |
@@ -246,8 +246,8 @@ Every protocol check from the final run is listed below. `nsec_gui_export` means
 | NIP-29 discovery, kind-9 and history | PASS | Public/private channel creation, kinds 39000/39001/39002, kind-9 messaging and history passed with matching event IDs and authors. |
 | Native NIP-29 DM discovery and ACL | PASS (protocol clients) | Kind-41010 opened a hidden channel. Bob discovered matching kinds 39000/39001/39002. A relay member outside the DM received zero discovery events (`EOSE`) and zero kind-9 history (`CLOSED`). |
 | Native NIP-29 DM two-way messaging | PASS (protocol clients) | Alice event `50144ac833fe3ec2530f2f67048ec5944ef9029609be2d17f2f3a715c1c87953` was returned to Bob with Alice's author key. Bob event `0f86614b3781485e2f657583c7145467427aa2f58a450ef50f89374fae714849` was returned to Alice with Bob's author key. This is not desktop proof. |
-| NIP-17 recent-timestamp NIP-44 delivery/decryption | PASS (out of proposed v1 scope) | Valid wrap and seal were accepted; Bob retrieved and decrypted the expected sender/recipient payload; outsider decryption failed. |
-| NIP-17 randomized timestamp compatibility | **FAIL (out of proposed v1 scope)** | Valid signatures; wrap age 6,259 seconds; relay rejected it with `event timestamp too far from server time`. The historical failure is retained and excluded only from the proposed NIP-29-only required v1 tally. |
+| NIP-17 recent-timestamp NIP-44 delivery/decryption | PASS (out of accepted v1 scope) | Valid wrap and seal were accepted; Bob retrieved and decrypted the expected sender/recipient payload; outsider decryption failed. |
+| NIP-17 randomized timestamp compatibility | **FAIL (out of accepted v1 scope)** | Valid signatures; wrap age 6,259 seconds; relay rejected it with `event timestamp too far from server time`. The historical failure is retained and excluded only from the accepted NIP-29-only required v1 tally. |
 | Revocation with active subscriptions | PASS, limited guarantee | Bob had three subscriptions. After removal, relay closed the socket within the 2,500 ms observation window; no marker was visible and no per-subscription `CLOSE` frame was observed. Fresh auth and reconnect after 1,500 ms were denied. Publish and new REQ on the already-closed socket were **UNVERIFIED** because the socket closed before either could be sent. No claim is made about every live session or immediate revocation latency. |
 | Two-relay tenant separation | PASS | Member of relay B authenticated on B; Alice from A was denied on B and B's user was denied on A. This proves the disposable relay protocol isolation, not Elembra's deployed mapping connector. |
 | Wrong host and TLS/SNI | PASS (stock relay behavior) | The local TLS proxy forwarded the request to stock Buzz; wrong HTTP host received relay HTTP 404 before WebSocket authentication. Wrong SNI failed TLS certificate hostname verification before any relay HTTP request. No proxy authorization rejection was exercised. |
@@ -261,7 +261,7 @@ The audited, unmodified desktop binary built and launched in Xvfb/Openbox under 
 
 ### Mapping policy tests and architecture decision
 
-`upstream_relay_mapping.rs` contains 13 isolated policy tests covering exact tenant/workspace lookup, missing/ambiguous mapping, exact canonical host/URL, SSRF/internal and special-use IPv4/IPv6 addresses, unapproved/rebound DNS, TLS/hostname evidence, pinned peer and relay identity/community, stale generation and update during connection, audited compare-and-swap, and cross-tenant relay/community/host/key reuse. All 13 mapping tests pass as part of the `rustshare-resource-auth` library result (**76 passed, 0 failed**). These are policy-model tests only: no production adapter, DNS resolver, TLS connector, proxy, session pool or mapping store invokes this module. The policy model must not be presented as production enforcement.
+`upstream_relay_mapping.rs` contains 14 isolated policy tests covering exact tenant/workspace lookup, missing/ambiguous mapping, exact canonical host/URL, SSRF/internal and special-use IPv4/IPv6 addresses, unapproved/rebound DNS, TLS/hostname evidence, pinned peer and relay identity/community, stale generation and update during connection (including mapping mutation without a generation increment), audited compare-and-swap, and cross-tenant relay/community/host/key reuse. All 14 mapping tests pass as part of the `rustshare-resource-auth` library result (**77 passed, 0 failed**). These are policy-model tests only: no production adapter, DNS resolver, TLS connector, proxy, session pool or mapping store invokes this module. The policy model must not be presented as production enforcement.
 
 The project owner accepted ADR-0044 Option A and the v1 scope of NIP-29 channels plus native private-channel DMs on 2026-10-31. NIP-17 remains excluded/disabled, and its randomized-timestamp rejection remains a historical failure. This is product/architecture direction, not independent security approval. Desktop assertions remain unverified and are deferred to issue #442. The mapping implementation remains an isolated policy model, not production enforcement; a `trusted_service` private-relay exception requires independent review and network enforcement.
 
@@ -272,7 +272,7 @@ The project owner accepted ADR-0044 Option A and the v1 scope of NIP-29 channels
 - `cargo fmt --all --check` — PASS.
 - `SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings` — PASS.
 - `SQLX_OFFLINE=true cargo test --workspace --all-features --lib` — PASS across 1,348 tests; 0 failed; 71 ignored.
-- `SQLX_OFFLINE=true cargo test -p rustshare-resource-auth --lib` — PASS, 76 passed; includes all 13 mapping policy tests.
+- `SQLX_OFFLINE=true cargo test -p rustshare-resource-auth --lib` — PASS, 77 passed; includes all 14 mapping policy tests.
 - `SQLX_OFFLINE=true cargo clippy -p rustshare-resource-auth --all-targets --all-features -- -D warnings` — PASS.
 - `node --check scripts/upstream-buzz-poc/protocol.mjs` and `node --check scripts/upstream-buzz-poc/desktop-evidence.mjs` — PASS.
 - `node --test scripts/upstream-buzz-poc/desktop-evidence.test.mjs` — PASS, 6 tests; includes secret/URL leak rejection, event/channel/author correlation, duplicate identity/channel rejection, and global event ID uniqueness.
