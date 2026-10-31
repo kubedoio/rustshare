@@ -9,4 +9,4 @@ createServer({ cert: readFileSync(certPath), key: readFileSync(keyPath) }, (clie
   client.pipe(relay).pipe(client);
   client.on('error', () => relay.destroy());
   relay.on('error', () => client.destroy());
-}).listen(Number(listenPort), '::');
+}).listen(Number(listenPort), '127.0.0.1');
