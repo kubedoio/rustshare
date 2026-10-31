@@ -56,3 +56,8 @@ be exercised, report desktop interoperability as **unverified**.
 The script does not claim GUI interoperability or revocation safety merely
 because the relays start. Record every protocol and GUI result in the Phase 1
 evidence report; a missing GUI run is **unverified**, not passed.
+
+For the full GUI checklist and sanitized-only evidence format, see
+[`desktop-acceptance.md`](desktop-acceptance.md). The structured evidence
+collector is `desktop-evidence.mjs`; it does not capture screenshots, read
+keychain data, or accept secret-bearing fields.

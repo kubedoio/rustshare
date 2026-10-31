@@ -38,6 +38,7 @@ pub mod decision;
 pub mod principal;
 pub mod registry;
 pub mod resource_ref;
+pub mod upstream_relay_mapping;
 
 pub use actions::*;
 pub use authorizer::SourceAuthorizer;
