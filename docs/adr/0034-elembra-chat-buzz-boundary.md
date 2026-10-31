@@ -1,5 +1,7 @@
 # ADR-0034: Elembra Chat and Buzz Boundary
 
+> **2026-10-31 decision relationship:** ADR-0044 proposes managed user-key custody and an upstream-only relay profile. It remains proposed; this document’s existing custody and safety rules are not superseded. See [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
+
 Status: Proposed  
 Date: 2026-08-07
 

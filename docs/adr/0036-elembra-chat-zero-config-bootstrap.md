@@ -1,5 +1,7 @@
 # ADR-0036: Elembra Chat Zero-Config Bootstrap
 
+> **2026-10-31 decision relationship:** ADR-0044 proposes a separate upstream-only profile. The signed HTTP contracts described here belong to the supported downstream Buzz implementation; they are not verified stock block/buzz capabilities. Existing deployments retain these checks until a separately approved replacement passes authorization and compatibility gates. See [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
+
 Status: Accepted (implemented v1alpha1)  
 Date: 2026-08-16
 
