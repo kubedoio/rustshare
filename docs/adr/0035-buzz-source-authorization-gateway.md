@@ -1,5 +1,7 @@
 # ADR-0035: Buzz Source Authorization Gateway
 
+> **2026-10-31 decision relationship:** ADR-0044 proposes a separate upstream-only profile. The signed HTTP contracts described here belong to the supported downstream Buzz implementation; they are not verified stock block/buzz capabilities. Existing deployments retain these checks until a separately approved replacement passes authorization and compatibility gates. See [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
+
 Status: Accepted (implemented v1alpha1; amended 2026-08-14 — batch + channel registry endpoints specified; stream-message wire format adopted)  
 Date: 2026-08-11 (amended 2026-08-14)
 

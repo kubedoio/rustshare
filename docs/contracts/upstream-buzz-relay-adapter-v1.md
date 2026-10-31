@@ -59,6 +59,6 @@ When source content must appear in Elembra Memory/RAG: authorize by current live
 
 - https://github.com/block/buzz/blob/eafd77e9f6e96052476bdd88be732c046fdb7ab3/NOSTR.md
 - https://github.com/block/buzz/blob/eafd77e9f6e96052476bdd88be732c046fdb7ab3/ARCHITECTURE.md
-- https://github.com/block/buzz/blob/main/crates/buzz-relay/src/handlers/relay_admin.rs
+- https://github.com/block/buzz/blob/eafd77e9f6e96052476bdd88be732c046fdb7ab3/crates/buzz-relay/src/handlers/relay_admin.rs
 - https://github.com/block/buzz-app/blob/662e91800af8204ec0e492522b8f23ef23b19baa/README.md
 - https://github.com/kubedoio/rustshare/blob/main/docs/adr/0035-buzz-source-authorization-gateway.md
