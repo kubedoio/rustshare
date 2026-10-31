@@ -1,8 +1,8 @@
 # ADR-0034: Elembra Chat and Buzz Boundary
 
-> **2026-10-31 decision relationship:** ADR-0044 proposes managed user-key custody and an upstream-only relay profile. It remains proposed; this document’s existing custody and safety rules are not superseded. See [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
+> **2026-10-31 profile amendment:** ADR-0044 is accepted as the target architecture for a new `upstream_managed` profile. The no-server-user-key rules in the historical `legacy_client_held` design remain normative for that profile and all existing fork deployments. Only the separately selected managed profile uses custodial keys; all tenant, authorization and offboarding invariants remain. Independent security review and runtime enablement are still gated. See [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
 
-Status: Proposed  
+Status: Accepted (runtime-profile amendment; existing deployments unchanged)
 Date: 2026-08-07
 
 ## Context
@@ -156,17 +156,17 @@ OIDC is the Elembra account/organizational SSO layer.
 
 OIDC **does not replace** Buzz NIP-42/NIP-98 or event signatures.
 
-An Elembra OIDC session proves the user controls/has authenticated the Elembra account. It is not by itself permission for the server to impersonate that user's Buzz private key.
+An Elembra OIDC session proves the user controls/has authenticated the Elembra account. It is not by itself permission for the server to impersonate that user's Buzz private key. Under the accepted `upstream_managed` target profile, a separate typed, scoped signing authorization may delegate that capability after independent custody security approval. This is not allowed in `legacy_client_held` or the existing `fork_v1alpha1` profile.
 
 The SSO/pairing design must specify how a Buzz key is generated/imported/bound, where private signing material lives, multi-device behavior and recovery/rotation.
 
-Preferred security direction:
+For the existing client-held profile, the security direction remains:
 
 - preserve client-side signing for sovereign identity;
 - support secure encrypted key recovery/synchronization only through an explicit key-management design;
 - do not silently move all user private keys to server custody for convenience.
 
-A managed/server-signing mode, if ever offered, must be explicitly named and must document that the service can impersonate those managed identities.
+A managed/server-signing mode must be explicitly selected as `upstream_managed` and must document that the service can impersonate those managed identities. It requires KMS-backed envelope encryption, scoped typed signing, audit, recovery/backup and explicit export policy under ADR-0044; the mode is not enabled by this ADR amendment.
 
 ## Offboarding/revocation
 
@@ -606,3 +606,7 @@ command signing.
 - [x] No shared Buzz/Elembra private database access exists.
 - [ ] Agent Chat identity and delegated Elembra authority remain separate.
 - [ ] Buzz upstream/delta compatibility tests are defined before large fork changes.
+
+## 2026-10-31 runtime-profile amendment
+
+ADR-0044 accepts a distinct `upstream_managed` target profile with Elembra-managed, KMS-protected Nostr identities. This supersedes the historical no-server-key rule only inside that explicitly selected profile and only after the custody controls and independent security review required by ADR-0044. The browser-held `legacy_client_held` profile, current fork-backed deployments, their stored identities and the M4.1b2 replacement guard are unchanged. Tenant/workspace isolation, Buzz as source of truth, current relay authorization, offboarding and fail-closed behavior apply to every profile. See [ADR-0044](0044-managed-buzz-identity-upstream-only.md).

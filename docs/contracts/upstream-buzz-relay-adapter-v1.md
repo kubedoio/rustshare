@@ -1,10 +1,19 @@
 # CONTRACT: No-Fork Upstream Buzz Relay Adapter v1
 
-**Status:** Proposed. Static source review is pinned to relay `eafd77e9f6e96052476bdd88be732c046fdb7ab3` and app `662e91800af8204ec0e492522b8f23ef23b19baa`; there is no selected relay release/image digest and no live conformance result. Never assume current `main` is a deployed release.
+**Status:** Accepted target architecture; production adapter and security enforcement remain gated. Protocol evidence is pinned to relay `eafd77e9f6e96052476bdd88be732c046fdb7ab3` and app `662e91800af8204ec0e492522b8f23ef23b19baa`; no upstream OCI release/image digest is qualified. Never assume current `main` is a deployed release.
 
 ## Strict boundary
 
 `Elembra Chat Adapter -> standard Nostr WebSocket + documented upstream Buzz protocol/operator surface -> upstream relay`. No `buzz-db` imports, SQL reads/writes, overlay-owned Chat ACL, custom handlers in Buzz, shared database schema, unreviewed monkey patches, or patched image. Buzz continues as source of truth for messages, channels, DM membership and native access policy. Public keys are portable; secret keys are exported only on user request.
+
+## Accepted v1 scope and implementation gates
+
+The target v1 scope is NIP-29 channel messages and native private-channel DMs.
+The latter are hidden relay-ACL-protected NIP-29 channels and are **not**
+end-to-end encrypted. NIP-17/NIP-44 gift-wrap DMs are excluded and must be
+disabled. Phase 2A is limited to an inert vault; it does not implement this
+adapter, user signing, provisioning or export. Desktop GUI acceptance is
+tracked by issue #442 and blocks Gate I/Phase 2B, not the isolated vault.
 
 ## Supported primitives and classification
 
@@ -17,8 +26,10 @@
 | Read relay metadata | NIP-11 relay info | Documented; not authoritative community UUID proof by itself |
 | Relay/community membership | Host-scoped relay membership when `BUZZ_REQUIRE_RELAY_MEMBERSHIP=true`; NIP-43 is documented as relay membership | Source-documented; closed defaults and host/tenant isolation need POC |
 | Channel discovery | NIP-29 kinds 39000/39001/39002; DM discovery uses group discovery | Source-documented; Elembra parity/pagination needs POC |
+| NIP-29 private-channel DMs | Native hidden NIP-29 channels and relay membership ACL | Accepted v1 scope; protocol-client outsider denial passed, desktop discovery and bidirectional DM acceptance deferred to issue #442 |
+| NIP-17 encrypted DMs | NIP-44 encrypted seals and NIP-59 gift wraps (kind 1059) | Excluded and disabled in v1; randomized-timestamp rejection remains historical compatibility failure, not a v1 pass |
 | Community/tenant creation | Deployment/operator configuration | No verified upstream HTTP community-creation contract; one isolated relay per tenant for POC |
-| Desktop onboarding | `block/buzz-app` README documents `nsec1…` import and Settings key copy; distinct commit `662e91800af8204ec0e492522b8f23ef23b19baa` | Documentation only; GUI import round-trip pending |
+| Desktop onboarding | `block/buzz-app` README documents `nsec1…` import and Settings key copy; distinct commit `662e91800af8204ec0e492522b8f23ef23b19baa` | GUI acceptance deferred to [issue #442](https://github.com/kubedoio/rustshare/issues/442); unverified until native keychain import, identity match, channel/DM IDs, restart/history and credential cleanup execute |
 | Permissions for Chat-backed Memory | Live read as subject managed Nostr identity | Proposed replacement for private signed check; must prove leakage-free behavior |
 
 Existing downstream-only endpoints that MUST NOT be used in this profile:

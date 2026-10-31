@@ -45,6 +45,34 @@ Sources: [relay NOSTR.md at audited SHA](https://github.com/block/buzz/blob/eafd
 | `frontend/scripts/alpha-buzz-ops.mjs`; `frontend/scripts/chat-bootstrap.mjs`; `scripts/run-buzz-conformance.sh` | Alpha membership/bootstrap and custom v1alpha1/v1alpha2 relay contract probes | Standard NIP-43 operations exist; custom endpoints and revision/conditional receipts do not | Keep these checks bound to the current fork profile. Add separate upstream POC scripts; never reinterpret current conformance as stock compatibility |
 | `backend/server/src/handlers/chat_identity.rs::revoke_principal`; `backend/crates/storage/src/chat_identity.rs` offboarding state | Stops Elembra binding and queues relay lifecycle work | 9031 removal is documented; active socket denial and existing exported-key limits are unknown | POC fresh reconnect and existing socket after removal. No immediate-revocation claim or rollout until observed behavior is accepted |
 
+## Architecture adoption and current phase gates (2026-10-31)
+
+The project owner accepted ADR-0044 Option A as the target architecture and
+approved NIP-29 channels plus native private-channel DMs as the initial scope.
+NIP-17 remains excluded/disabled; its randomized-timestamp relay rejection
+remains a historical failure. Existing browser-held and fork-backed runtime
+behavior is unchanged. Phase 2A is only an inert, disabled-by-default vault;
+no user provisioning, signing, key export, relay integration, migration or
+deployment is authorized in that phase.
+
+One isolated relay/community per tenant is the accepted topology. The mapping
+model is not a production enforcement path. `strict_public` remains the
+current policy; a private/bundled `trusted_service` exception requires
+independent security review, exact service identity and endpoint allowlisting,
+TLS/peer pinning, network-level egress enforcement and integration tests
+before any internal destination is permitted.
+
+| Gate | Current status |
+|---|---|
+| Gate D — adopted design docs | In the focused ADR PR; protected review/merge pending |
+| Gate V — inert Phase 2A vault | Authorized to implement; not yet implemented/reviewed |
+| Gate I — managed Chat integration | NO-GO: native desktop test remains unverified and is tracked by issue #442; mapping transport/security approval is pending |
+| Gate R — production release/cutover | NO-GO: separate operational, security, recovery and per-tenant migration decisions remain |
+
+These decisions represent accepted product architecture, not independent
+security acceptance or runtime enforcement. The historical Phase 1 evidence
+and result tables above are not rewritten by this adoption record.
+
 ## Immediately usable vs gated
 
 **Documented stock capability:** direct Buzz client NIP-42 AUTH, NIP-29 channel discovery/messages, NIP-43 relay member commands, NIP-17 gift-wrap DM discovery, and desktop `nsec` import. These are source-level findings only; Phase 1 must exercise the selected build.
