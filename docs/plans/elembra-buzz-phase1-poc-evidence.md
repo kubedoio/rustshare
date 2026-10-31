@@ -32,6 +32,12 @@ After the review fixes, the full protocol suite was rerun from the same harness 
 
 The actionable review finding on PR #441 observed that the outsider-history query ran before any kind-9 event existed in the NIP-29 DM. The harness now creates a unique Alice kind-9 event after opening the DM, publishes it, and verifies Bob retrieves that exact event ID, Alice author key, and `h` channel reference before querying as the already-authenticated ordinary relay member outside the DM. The outsider metadata discovery and history results must each have zero events with either `EOSE` or `CLOSED`; the read loop accumulates any EVENT frames before the terminal frame, and its regression assertions reject an event followed by `CLOSED` or `EOSE`.
 
+Exact retest command from the Phase 1c worktree (the harness cloned and verified its own clean pinned relay checkout; `POC_HOLD` defaults to `0`):
+
+```sh
+scripts/upstream-buzz-poc/run.sh
+```
+
 On the exact unmodified relay source (`eafd77e9f6e96052476bdd88be732c046fdb7ab3`, tree `04e3a40545bd3b23510ec32b4c8cccee2acef7c5`; clean checkout), the two-stack harness reported **38 PASS, 1 FAIL, 3 UNVERIFIED** across 42 protocol checks; relay identity `a4c00b17e82cfc9cf0854a3117d9f1a4343a2ebbb4d13883aa4f772955e58236` persisted after restart. The new private-DM check passed: seeded event `006ef81913f0687dafe84e909728239ec781c7b4af5fbe30ca345f15d99f61e4` was published by Alice `a75e2c958c17bd0202141dff8b8ea1f18c246ec9a9d2202d53db51008d46f59e` in DM `675456b6-3b61-43da-bdef-acef61865d44`; Bob returned the same event ID, author and channel; outsider discovery ended `EOSE` with zero events and outsider history ended `CLOSED` with zero events. Existing bidirectional DM, revocation, cross-tenant and other tests remained in the same run and passed except for the recorded failure/unverified cases below.
 
 The one failure remains `nip17_randomized_timestamp_relay_compatibility`: a valid signed wrap aged 5,185 seconds was rejected as `event timestamp too far from server time`. The three unverified checks remain exact NIP-43 add replay semantics and post-removal publish/new-REQ behavior on a socket that the relay closes before either command can be sent. This failure remains visible; proposed v1 exclusion requires the human decision in [`elembra-buzz-phase1c-human-acceptance.md`](elembra-buzz-phase1c-human-acceptance.md).
