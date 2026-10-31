@@ -158,6 +158,7 @@ impl TrustedRelayMapping {
         }
         Ok(ConnectionAttempt {
             scope: expected_scope,
+            mapping_snapshot: self.record.clone(),
             relay_url: self.canonical_url.clone(),
             relay_host: self.record.relay_host.clone(),
             community_id: self.record.community_id.clone(),
@@ -183,6 +184,7 @@ pub struct MappingScope {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionAttempt {
     scope: MappingScope,
+    mapping_snapshot: RelayMappingRecord,
     relay_url: String,
     relay_host: String,
     community_id: String,
@@ -217,7 +219,7 @@ pub fn verify_connected_relay(
     if now >= attempt.valid_until || now >= current.record.valid_until {
         return Err(MappingError::InactiveOrStale);
     }
-    if attempt.scope != current.scope() {
+    if attempt.scope != current.scope() || attempt.mapping_snapshot != current.record {
         return Err(MappingError::MappingChangedDuringConnect);
     }
     if evidence.scope != attempt.scope {
@@ -636,6 +638,29 @@ mod tests {
         assert_eq!(
             verify_connected_relay(&attempt, &mapping, &evidence, Utc::now()).unwrap_err(),
             MappingError::RelayIdentityMismatch
+        );
+    }
+
+    #[test]
+    fn connection_rejects_mapping_mutation_without_generation_change() {
+        let (tenant, workspace) = ids();
+        let mapping = TrustedRelayMapping::validate(
+            valid_record(tenant, workspace, "relay.tenant.example"),
+            Utc::now(),
+        )
+        .unwrap();
+        let attempt = mapping
+            .begin_connection(mapping.scope(), &["8.8.8.8".parse().unwrap()], Utc::now())
+            .unwrap();
+        let evidence = valid_connection(&mapping, "8.8.8.8".parse().unwrap());
+        let mut changed_record = mapping.record.clone();
+        changed_record.relay_url = "wss://other.tenant.example".into();
+        changed_record.relay_host = "other.tenant.example".into();
+        let current = TrustedRelayMapping::validate(changed_record, Utc::now()).unwrap();
+
+        assert_eq!(
+            verify_connected_relay(&attempt, &current, &evidence, Utc::now()).unwrap_err(),
+            MappingError::MappingChangedDuringConnect
         );
     }
 
