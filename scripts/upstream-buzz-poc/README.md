@@ -15,32 +15,43 @@ From a clean RustShare worktree:
 scripts/upstream-buzz-poc/run.sh
 ```
 
-The runner verifies the source commit and tree, builds the image, installs the
-frontend's locked Nostr test dependencies under its private temporary directory,
-starts both relays, runs
-`protocol.mjs`, prints sanitized provenance and conformance results, and
-removes both projects and volumes. `BUZZ_SOURCE_DIR=/path/to/clean/checkout`
-uses an already-fetched, exact-SHA checkout without modifying it. The printed
-`upstream_image_id` is the locally built image config digest;
-`upstream_image_build_digest` is Buildx's local build metadata digest. Neither
-is a published registry digest. The temporary TLS certificate and CA path are
-printed so the desktop GUI can trust this disposable WSS endpoint.
+The runner verifies the source commit, tree and clean checkout, builds the
+upstream image, installs this harness's locked Nostr protocol dependencies in
+its private temporary directory, starts both relays, runs `protocol.mjs`, and
+removes the projects, volumes and temporary key material.
+`BUZZ_SOURCE_DIR=/path/to/clean/checkout` uses an already-fetched exact-SHA
+checkout without modifying it. `upstream_image_id` is the local image config
+digest and `upstream_image_build_digest` is Buildx's build digest; neither is a
+published registry digest. The disposable TLS CA path is printed for the GUI
+test.
 
-For the separate stock desktop GUI test, run with `POC_HOLD=1` in a terminal.
-After protocol checks, the runner prints the WSS relay URLs and pauses. The protocol
-test writes Alice's disposable `nsec` inside the runner's mode-`0700` temporary
-directory with mode `0600` and prints its path while it waits.
-Import it into `block/buzz-app` at
-`662e91800af8204ec0e492522b8f23ef23b19baa`, confirm the displayed pubkey,
-and verify that it receives relay messages and can publish a message. Start
-the GUI with `G_TLS_CA_FILE` and `SSL_CERT_FILE` set to the printed
-`tls_ca_path`. The current harness does not observe desktop-published event
-IDs, so do not mark bidirectional same-event interoperability as passed from
-this manual GUI step alone.
-Press Enter
-after the GUI test; the runner removes the key file, temporary configuration,
-containers and volumes. Never upload the key file or a raw Compose config/log
-as a CI artifact. The test data and identities are disposable.
+For the GUI test, use a private desktop profile and a real unlocked OS
+credential service (the upstream client must use its normal secure-storage
+implementation). Run the harness interactively with `POC_HOLD=1`. It pauses
+after the protocol checks, before Bob's revocation. It creates Alice's
+disposable `nsec` in the mode-`0700` run directory as a mode-`0600` file and
+prints its path, public key, relay URL and channel ID. Import that key into the
+unmodified desktop at `662e91800af8204ec0e492522b8f23ef23b19baa`; verify the
+displayed public key and connect to the printed relay and community. Set
+`G_TLS_CA_FILE` and `SSL_CERT_FILE` to the printed CA when starting the desktop.
+
+While the relay harness is held, enter these commands in its terminal as each
+step is completed:
+
+1. `SEND <unique-text>` publishes from the POC client. Confirm that exact text
+   appears in the desktop; retain the printed event ID.
+2. Send a different unique text from the desktop. Enter `WAIT <unique-text>`;
+   retain the retrieved event ID and public key and compare the ID with the
+   desktop's displayed event when available.
+3. Restart the desktop, reconnect, and enter `HISTORY <event-id>` to confirm
+   persistence and the same author key.
+4. Check the desktop has no duplicate identity or unexpected community
+   enrollment, then enter `EXIT` to continue removal and cleanup tests.
+
+The terminal output and screenshots must omit private keys and message text
+that is not needed as evidence. Never upload the `nsec`, its file, raw Compose
+environment/logs, private profile or keyring as CI artifacts. If the GUI cannot
+be exercised, report desktop interoperability as **unverified**.
 
 The script does not claim GUI interoperability or revocation safety merely
 because the relays start. Record every protocol and GUI result in the Phase 1
