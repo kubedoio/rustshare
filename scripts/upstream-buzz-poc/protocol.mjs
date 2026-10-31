@@ -145,6 +145,7 @@ async function check(name, fn) {
 const result = (pass, detail = {}) => ({ pass, ...detail });
 const deniedWithoutEvents = (read) => ['CLOSED', 'EOSE'].includes(read.outcome) && read.events.length === 0;
 const hasChannelTag = (event, channelId) => event.tags?.some((tag) => tag[0] === 'd' && tag[1] === channelId) === true;
+const hasChannelRef = (event, channelId) => event.tags?.some((tag) => tag[0] === 'h' && tag[1] === channelId) === true;
 assert.equal(deniedWithoutEvents({ outcome: 'CLOSED', events: [{ kind: 9 }] }), false);
 assert.equal(deniedWithoutEvents({ outcome: 'EOSE', events: [{ kind: 9 }] }), false);
 assert.equal(deniedWithoutEvents({ outcome: 'CLOSED', events: [] }), true);
@@ -153,8 +154,8 @@ assert.equal(hasChannelTag({ tags: [['d', 'other-channel']] }, 'requested-channe
 assert.equal(hasChannelTag({ tags: [['d', 'requested-channel']] }, 'requested-channel'), true);
 const explicitAuthDenial = (auth) => auth.challenged && !auth.accepted && ['OK', 'SOCKET_CLOSE'].includes(auth.outcome);
 async function desktopHold() {
-	console.log(`desktop_test_ready alice_pubkey=${pubs.ALICE} relay=${url} channel=${publicChannel} gui_nsec_path=${process.env.POC_GUI_NSEC_FILE}`);
-	console.log('desktop_test_commands: SEND <text> | WAIT <text> | HISTORY <event_id> | EXIT');
+	console.log(`desktop_test_ready alice_pubkey=${pubs.ALICE} bob_pubkey=${pubs.BOB} relay=${url} channel=${publicChannel} dm_channel=${dmChannel} gui_nsec_path=${process.env.POC_GUI_NSEC_FILE}`);
+	console.log('desktop_test_commands: SEND <text> | WAIT <text> | HISTORY <event_id> | SEND_DM <text> | WAIT_DM <text> | HISTORY_DM <event_id> | EXIT');
 	for await (const line of createInterface({ input: process.stdin })) {
 		const [command, ...parts] = line.trim().split(/\s+/);
 		const value = parts.join(' ');
@@ -166,17 +167,31 @@ async function desktopHold() {
 		} else if (command === 'WAIT' && value) {
 			let found;
 			for (let attempt = 0; attempt < 45 && !found; attempt++) {
-				found = (await bob.read({ kinds: [9], '#h': [publicChannel], limit: 200 }, true)).events.find((item) => item.content === value);
+				found = (await bob.read({ kinds: [9], '#h': [publicChannel], limit: 200 }, true)).events.find((item) => item.content === value && item.pubkey === pubs.ALICE && hasChannelRef(item, publicChannel));
 				if (!found) await new Promise((resolve) => setTimeout(resolve, 1000));
 			}
-			console.log(JSON.stringify({ name: 'desktop_to_relay', found: Boolean(found), event_id: found?.id, pubkey: found?.pubkey, alice_pubkey_match: found?.pubkey === pubs.ALICE, kind: found?.kind }));
+			console.log(JSON.stringify({ name: 'desktop_to_relay', found: Boolean(found), event_id: found?.id, channel_id: found?.tags?.find((tag) => tag[0] === 'h')?.[1], pubkey: found?.pubkey, alice_pubkey_match: found?.pubkey === pubs.ALICE, kind: found?.kind }));
 		} else if (command === 'HISTORY' && value) {
-			const found = (await bob.read({ kinds: [9], '#h': [publicChannel], limit: 200 }, true)).events.find((item) => item.id === value);
-			console.log(JSON.stringify({ name: 'desktop_restart_history', found: Boolean(found), event_id: found?.id, pubkey: found?.pubkey, alice_pubkey_match: found?.pubkey === pubs.ALICE, kind: found?.kind }));
+			const found = (await bob.read({ kinds: [9], '#h': [publicChannel], limit: 200 }, true)).events.find((item) => item.id === value && item.pubkey === pubs.ALICE && hasChannelRef(item, publicChannel));
+			console.log(JSON.stringify({ name: 'desktop_restart_history', found: Boolean(found), event_id: found?.id, channel_id: found?.tags?.find((tag) => tag[0] === 'h')?.[1], pubkey: found?.pubkey, alice_pubkey_match: found?.pubkey === pubs.ALICE, kind: found?.kind }));
+		} else if (command === 'SEND_DM' && value) {
+			const signed = await event(keys.BOB, 9, [['h', dmChannel]], value);
+			const sent = await bob.publish(signed);
+			console.log(JSON.stringify({ name: 'protocol_to_desktop_dm', channel_id: dmChannel, event_id: signed.id, pubkey: pubs.BOB, accepted: sent.accepted }));
+		} else if (command === 'WAIT_DM' && value) {
+			let found;
+			for (let attempt = 0; attempt < 45 && !found; attempt++) {
+				found = (await bob.read({ kinds: [9], '#h': [dmChannel], limit: 200 }, true)).events.find((item) => item.content === value && item.pubkey === pubs.ALICE && hasChannelRef(item, dmChannel));
+				if (!found) await new Promise((resolve) => setTimeout(resolve, 1000));
+			}
+			console.log(JSON.stringify({ name: 'desktop_to_protocol_dm', found: Boolean(found), channel_id: found?.tags?.find((tag) => tag[0] === 'h')?.[1], event_id: found?.id, pubkey: found?.pubkey, alice_pubkey_match: found?.pubkey === pubs.ALICE, kind: found?.kind }));
+		} else if (command === 'HISTORY_DM' && value) {
+			const found = (await bob.read({ kinds: [9], '#h': [dmChannel], limit: 200 }, true)).events.find((item) => item.id === value && item.pubkey === pubs.ALICE && hasChannelRef(item, dmChannel));
+			console.log(JSON.stringify({ name: 'protocol_dm_history', found: Boolean(found), channel_id: found?.tags?.find((tag) => tag[0] === 'h')?.[1], event_id: found?.id, pubkey: found?.pubkey, alice_pubkey_match: found?.pubkey === pubs.ALICE, kind: found?.kind }));
 		} else console.log(JSON.stringify({ name: 'desktop_test_command_error', reason: 'unknown command' }));
 	}
 }
-let owner, alice, bob, publicChannel, privateChannel, dmChannel, publicMessage, privateMessage, bobSubscriptions = [], aliceAdd, bobRemove;
+let owner, alice, bob, outsider, publicChannel, privateChannel, dmChannel, publicMessage, privateMessage, bobSubscriptions = [], aliceAdd, bobRemove;
 let aliceNsec;
 try {
 	await check('nsec_gui_export', async () => {
@@ -268,6 +283,15 @@ try {
 		const read = await bob.read({ kinds: [9], '#h': [privateChannel], limit: 20 });
 		return result(read.outcome === 'EOSE' && read.events.some((item) => item.id === privateMessage.id), read);
 	});
+	await check('nip43_add_outsider_for_private_dm_denial', async () => {
+		const wire = await owner.publish(await event(keys.OWNER, 9030, [['p', pubs.OUTSIDER]]));
+		return result(wire.accepted, wire);
+	});
+	await check('member_nip42_outsider', async () => {
+		const joined = await connect(url, keys.OUTSIDER);
+		outsider = joined.session;
+		return result(joined.auth.accepted, joined.auth);
+	});
 	await check('nip29_dm_open_and_discovery', async () => {
 		const wire = await alice.publish(await event(keys.ALICE, 41010, [['p', pubs.BOB]]));
 		const response = wire.relay_message?.startsWith('response:') ? JSON.parse(wire.relay_message.slice(9)) : null;
@@ -280,7 +304,20 @@ try {
 		const hidden = metadata?.tags?.some((tag) => tag[0] === 'hidden');
 		const matchingChannelEvents = discoveries.map((read, index) => read.events.filter((item) => item.kind === kinds[index] && hasChannelTag(item, dmChannel)).length);
 		const discovered = discoveries.every((read, index) => read.outcome === 'EOSE' && matchingChannelEvents[index] > 0);
-		return result(discovered && hidden === true, { channel_id: dmChannel, discovery_kinds: discoveries.map((read) => read.events[0]?.kind), matching_channel_event_counts: matchingChannelEvents, hidden });
+		const outsiderMetadata = await outsider.read({ kinds: [39000, 39001, 39002], '#d': [dmChannel], limit: 20 });
+		const outsiderHistory = await outsider.read({ kinds: [9], '#h': [dmChannel], limit: 20 });
+		return result(discovered && hidden === true && deniedWithoutEvents(outsiderMetadata) && deniedWithoutEvents(outsiderHistory), { channel_id: dmChannel, discovery_kinds: discoveries.map((read) => read.events[0]?.kind), matching_channel_event_counts: matchingChannelEvents, hidden, outsider_discovery: outsiderMetadata.outcome, outsider_discovery_event_count: outsiderMetadata.events.length, outsider_history: outsiderHistory.outcome, outsider_history_event_count: outsiderHistory.events.length });
+	});
+	await check('nip29_dm_bidirectional_messages', async () => {
+		const aliceMessage = await event(keys.ALICE, 9, [['h', dmChannel]], `POC NIP-29 Alice ${randomUUID()}`);
+		const alicePublish = await alice.publish(aliceMessage);
+		const bobRead = await bob.read({ kinds: [9], '#h': [dmChannel], limit: 50 }, true);
+		const bobObservedAlice = bobRead.events.find((item) => item.id === aliceMessage.id);
+		const bobMessage = await event(keys.BOB, 9, [['h', dmChannel]], `POC NIP-29 Bob ${randomUUID()}`);
+		const bobPublish = await bob.publish(bobMessage);
+		const aliceRead = await alice.read({ kinds: [9], '#h': [dmChannel], limit: 50 }, true);
+		const aliceObservedBob = aliceRead.events.find((item) => item.id === bobMessage.id);
+		return result(alicePublish.accepted && bobObservedAlice?.pubkey === pubs.ALICE && bobPublish.accepted && aliceObservedBob?.pubkey === pubs.BOB, { alice_event_id: aliceMessage.id, alice_author: pubs.ALICE, bob_observed_alice_event_id: bobObservedAlice?.id, bob_observed_alice_author: bobObservedAlice?.pubkey, bob_event_id: bobMessage.id, bob_author: pubs.BOB, alice_observed_bob_event_id: aliceObservedBob?.id, alice_observed_bob_author: aliceObservedBob?.pubkey });
 	});
 	await check('nip17_randomized_timestamp_relay_compatibility', async () => {
 		const now = Math.floor(Date.now() / 1000);

@@ -154,3 +154,66 @@ Removal closed the already connected WebSocket in this run. This is a result for
 ### Initial desktop GUI attempt (historical; superseded by Phase 1b attempt)
 
 The first desktop attempt displayed “Your identity could not be accessed in secure storage. Unlock your credential store and retry without changing keys.” The Secret Service was then found locked. No import or messaging occurred during that first attempt. Phase 1b later verified and unlocked an actual GNOME Secret Service, but the headless GUI still did not accept input; see the current Phase 1b result above.
+
+## Phase 1c execution (2026-10-31)
+
+### Provenance and environment
+
+| Artifact | Exact identifier | Result |
+|---|---|---|
+| Relay source | `block/buzz` commit `eafd77e9f6e96052476bdd88be732c046fdb7ab3`, tree `04e3a40545bd3b23510ec32b4c8cccee2acef7c5` | Required SHA/tree verified. Source checkout had no tracked or untracked changes. |
+| Relay image | `sha256:0e0c4e868254088e1096b6550cef2f99b1789b0aec98ec3469557b90e9bf5c6b` (local image ID and Buildx build digest) | Final full protocol run, built from unmodified pinned source; local build digest, not published registry digest. |
+| Relay image used during GUI attempt | `sha256:6f9876d8251d5b999400c7fb9a2843ccf8c4b37318030e0d8f341611f09c4d26` (local image ID and Buildx build digest) | Same source. Hold run was stopped after the desktop welcome-screen controls did not respond; disposable stacks were cleaned and this run is not counted as the full acceptance run. |
+| Desktop source | `block/buzz-app` commit `662e91800af8204ec0e492522b8f23ef23b19baa`, tree `80275983372cc8dd840e732c0bb3610e97c7c283` | Exact audited checkout and separate build clone had the required commit/tree; tracked source unchanged. |
+| Desktop binary | `/tmp/buzz-app-phase1c/target/release/Buzz`, SHA-256 `a78a37c202707a2c7fe4b00c0d4f7d599602ce2cf6f5536c33e837df678a89a3` | Unmodified app build. Build used Rust 1.98.1, Node v22.22.2 and pnpm 11.8.0; package requested Node >=24, so the unsupported-engine warning is retained. |
+| Relay test runtime | Docker 29.7.2, Compose 5.5.0, Node v22.22.2; RustShare host Rust 1.97.1 | Two independent disposable stock Compose stacks; each used isolated PostgreSQL 17, Redis 7, object storage, relay key and closed community. Authentication and membership enforcement were enabled. |
+
+Harness command: `BUZZ_SOURCE_DIR=/tmp/block-buzz-phase0 scripts/upstream-buzz-poc/run.sh`. The command rebuilt the relay image, ran the protocol suite, checked relay NIP-11 identity across restart, and removed its projects, volumes and temporary private keys. `config/buzz-compatibility.env`, production deployment configuration and either tracked upstream source tree were not modified.
+
+### Current protocol conformance run
+
+Result: **38 PASS, 1 FAIL, 3 UNVERIFIED (42 total)**, plus the independent relay restart identity check **PASS**. The JSON report and relay restart were emitted; the run exited nonzero only because the required randomized NIP-17 timestamp assertion fails.
+
+| Test | Result | Observed result |
+|---|---|---|
+| NIP-42 owner/member/nonmember authentication | PASS | Owner and admitted Alice/Bob authenticated; nonmember received a challenge and was denied. |
+| NIP-43 add, stale add, removal | PASS | Alice, Bob, and the test outsider were added through signed upstream kind-9030 events; stale add was denied; kind-9031 Bob removal was accepted. Exact add replay was recorded as `accepted=true` but remains unasserted. |
+| NIP-29 discovery, kind-9 and history | PASS | Public/private channel creation, kinds 39000/39001/39002, kind-9 messaging and history passed with matching event IDs and authors. |
+| Native NIP-29 DM discovery and ACL | PASS (protocol clients) | Kind-41010 opened a hidden channel. Bob discovered matching kinds 39000/39001/39002. A relay member outside the DM received zero discovery events (`EOSE`) and zero kind-9 history (`CLOSED`). |
+| Native NIP-29 DM two-way messaging | PASS (protocol clients) | Alice event `50144ac833fe3ec2530f2f67048ec5944ef9029609be2d17f2f3a715c1c87953` was returned to Bob with Alice's author key. Bob event `0f86614b3781485e2f657583c7145467427aa2f58a450ef50f89374fae714849` was returned to Alice with Bob's author key. This is not desktop proof. |
+| NIP-17 recent-timestamp NIP-44 delivery/decryption | PASS (out of proposed v1 scope) | Valid wrap and seal were accepted; Bob retrieved and decrypted the expected sender/recipient payload; outsider decryption failed. |
+| NIP-17 randomized timestamp compatibility | **FAIL (out of proposed v1 scope)** | Valid signatures; wrap age 6,259 seconds; relay rejected it with `event timestamp too far from server time`. The historical failure is retained and excluded only from the proposed NIP-29-only required v1 tally. |
+| Revocation with active subscriptions | PASS, limited guarantee | Bob had three subscriptions. After removal, relay closed the socket within the 2,500 ms observation window; no marker was visible and no per-subscription `CLOSE` frame was observed. Fresh auth and reconnect after 1,500 ms were denied. Publish and new REQ on the already-closed socket were **UNVERIFIED** because the socket closed before either could be sent. No claim is made about every live session or immediate revocation latency. |
+| Two-relay tenant separation | PASS | Member of relay B authenticated on B; Alice from A was denied on B and B's user was denied on A. This proves the disposable relay protocol isolation, not Elembra's deployed mapping connector. |
+| Wrong host and TLS/SNI | PASS (stock relay behavior) | The local TLS proxy forwarded the request to stock Buzz; wrong HTTP host received relay HTTP 404 before WebSocket authentication. Wrong SNI failed TLS certificate hostname verification before any relay HTTP request. No proxy authorization rejection was exercised. |
+| Relay identity restart | PASS | NIP-11 `self` remained `09309c87ab899e31c6a758f5df3ec45c4287dd2daa84a19052e318e820c05f49` across restart. |
+
+The three `UNVERIFIED` checks are exact kind-9030 add replay semantics and post-removal publish/REQ on a still-open socket (the socket closed before either request could be sent). The GUI hold was started with both communities and protocol outputs, but synthetic GUI clicks/tab input did not advance the Buzz welcome screen; it was stopped before importing the `nsec` or publishing any desktop event.
+
+### Desktop build and GUI attempt
+
+The audited, unmodified desktop binary built and launched in Xvfb/Openbox under a private D-Bus session. An actual GNOME Secret Service was unlocked, and its normal create/read/delete credential probe passed. Buzz rendered its welcome screen. Despite the active window and synthetic pointer/keyboard input, the “Use an existing key” control did not activate. No `nsec` was imported, no public-key match was observed, and no community join, message, restart/history or desktop DM assertion was executed. **All desktop interoperability assertions remain UNVERIFIED.** The GUI did not create an identity or enroll in a community. No test key, keychain database, profile or screenshot was retained. The secure manual process and collector are in `scripts/upstream-buzz-poc/desktop-acceptance.md` and `desktop-evidence.mjs`.
+
+### Mapping policy tests and architecture decision
+
+`upstream_relay_mapping.rs` contains 13 isolated policy tests covering exact tenant/workspace lookup, missing/ambiguous mapping, exact canonical host/URL, SSRF/internal and special-use IPv4/IPv6 addresses, unapproved/rebound DNS, TLS/hostname evidence, pinned peer and relay identity/community, stale generation and update during connection, audited compare-and-swap, and cross-tenant relay/community/host/key reuse. All 13 mapping tests pass as part of the `rustshare-resource-auth` library result (**76 passed, 0 failed**). These are policy-model tests only: no production adapter, DNS resolver, TLS connector, proxy, session pool or mapping store invokes this module. The policy model must not be presented as production enforcement.
+
+The proposed v1 scope is NIP-29 channels plus native private-channel DMs after desktop E2E proof. NIP-17 encrypted DMs are excluded and must remain disabled. ADR-0044 now records the distinction, Option A custody consequences and controls, and reconciliation with ADR-0034/0035/0036. Its explicit architecture/security approval remains **PENDING**; no approver has accepted it.
+
+**Phase 2A readiness: NO-GO.** The desktop interoperability gate, human acceptance of the v1 messaging scope and tenant mapping security contract, authorized ADR-0044 acceptance, independent review, and protected CI are not all satisfied. The policy-model implementation is not a substitute for accepting and integrating the transport contract.
+
+### Validation results
+
+- `cargo fmt --all --check` — PASS.
+- `SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings` — PASS.
+- `SQLX_OFFLINE=true cargo test --workspace --all-features --lib` — PASS across 1,348 tests; 0 failed; 71 ignored.
+- `SQLX_OFFLINE=true cargo test -p rustshare-resource-auth --lib` — PASS, 76 passed; includes all 13 mapping policy tests.
+- `SQLX_OFFLINE=true cargo clippy -p rustshare-resource-auth --all-targets --all-features -- -D warnings` — PASS.
+- `node --check scripts/upstream-buzz-poc/protocol.mjs` and `node --check scripts/upstream-buzz-poc/desktop-evidence.mjs` — PASS.
+- `node --test scripts/upstream-buzz-poc/desktop-evidence.test.mjs` — PASS, 6 tests; includes secret/URL leak rejection, event/channel/author correlation, duplicate identity/channel rejection, and global event ID uniqueness.
+- `git diff --check` — PASS.
+- Protected GitHub CI has not run yet; the PR must remain draft while required checks and human acceptances are pending.
+
+### Exact Phase 2A implementation prompt (gated; do not start while NO-GO)
+
+> On the latest protected `kubedoio/rustshare` main, implement only the isolated `upstream_managed` Chat identity vault described by the human-accepted ADR-0044, `docs/specs/elembra-buzz-upstream-managed-identity-v1.md`, `docs/contracts/managed-chat-identity-v1.md`, `docs/contracts/upstream-buzz-relay-adapter-v1.md`, and the accepted tenant-to-relay mapping contract. Before editing, verify the Phase 1c desktop interoperability evidence, required CI/reviews, explicit NIP-29-only v1 messaging scope, mapping security acceptance and authorized ADR-0044 acceptance are recorded; stop without implementation if any gate is missing. Preserve `legacy_client_held`, current fork-backed production behavior and all M4.1b2 identity replacement/recovery guards. Add tenant/principal/identity/generation-bound KMS envelope encryption with AEAD AAD, strict typed Chat signing intents, least-privilege signing authorization, step-up/no-store audited user key export, distinct owner/admin and user keys, audited key lifecycle/recovery, and tested backup/restore. Deny plaintext persistence/logging/tracing and arbitrary caller-supplied event signing. Keep NIP-17 disabled; implement only the accepted NIP-29 channel/private-channel DM subset. Add tenant-isolation, replay, binding, KMS outage/rotation, recovery/restore, export and audit tests. Do not change production Buzz pins, migrate existing users, enable cutover, or deploy. Run the protected Rust/frontend/SQLx CI required by changed packages and request independent security review.

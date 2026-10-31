@@ -2,6 +2,9 @@
 	"name": "rustshare-upstream-buzz-poc",
 	"private": true,
 	"type": "module",
+	"scripts": {
+		"test:desktop-evidence": "node --test desktop-evidence.test.mjs"
+	},
 	"dependencies": {
 		"@noble/curves": "2.4.0",
 		"nostr-tools": "2.25.2",

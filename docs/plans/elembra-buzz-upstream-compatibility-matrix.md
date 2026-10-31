@@ -72,3 +72,18 @@ Run this only on a disposable host/worktree. It must not connect to production, 
 7. Capture exact source/image hashes, compose configuration with secrets removed, sanitized protocol traces and a pass/fail table. Confirm no request touched `/api/v1/relay/access/*`, `/api/v1/relay/channels`, `/api/v1/relay/state/events`, `/api/v1/relay/community` or `/api/v1/relay/membership/check`. Stop and destroy only the disposable services after evidence is saved.
 
 **Phase 1 exit gate:** exact unmodified source and image provenance; NIP-42; NIP-43 add/remove semantics; kind-9 history and channel discovery; private channel and DM behavior; desktop `nsec` import and bidirectional messaging; active-session/offboarding behavior; and isolation/failure behavior are evidenced. Passing this POC does not authorize KMS implementation, managed key custody, production pin changes or migration; those require ADR-0044 and independent human security review.
+
+## Phase 1c acceptance update (2026-10-31)
+
+| Gate | Current result | Evidence / limitation |
+|---|---|---|
+| Exact stock source | PASS for protocol baseline; desktop runtime pending | Relay source/tree and image provenance remain recorded in `elembra-buzz-phase1-poc-evidence.md`; desktop GUI must be run at the audited app SHA. |
+| NIP-29 channel protocol | PASS | The 2026-10-31 disposable run passed NIP-42/NIP-43, kind-9, history, discovery, and private-channel membership. New outsider private-DM denial and bidirectional protocol-client DM assertions also passed; desktop compatibility remains unverified. |
+| Stock desktop interoperability | UNVERIFIED | Use `scripts/upstream-buzz-poc/desktop-acceptance.md`. Desktop source/build or a rendered window is not proof of import, key match, bidirectional event IDs, restart/history, or native private-channel DM behavior. |
+| NIP-29 native private-channel DM | Required for proposed v1; UNVERIFIED in stock desktop | Distinct from encrypted NIP-17. Protocol-client relay checks do not replace desktop acceptance. |
+| NIP-17 encrypted DM | Proposed upstream v1 profile excludes it; production behavior unchanged | Historical randomized timestamp FAIL remains a FAIL in the conformance report, separated from the proposed v1 acceptance tally. Keep NIP-17 disabled in the upstream v1 profile. |
+| Tenant-to-relay contract | Proposed; 13 policy tests PASS, transport integration UNVERIFIED | `SQLX_OFFLINE=true cargo test -p rustshare-resource-auth --lib` passed 76/76 package tests, including 13 mapping tests. See `docs/contracts/upstream-buzz-tenant-relay-mapping-v1.md`. The model is not production-wired; external security acceptance and real connector tests remain required. |
+| ADR-0044 custody decision | PENDING authorized human acceptance | Option A consequences and the NIP-29-only scope proposal are documented. PR approval is not ADR acceptance. |
+| Phase 2A readiness | **NO-GO** | Desktop runtime acceptance, accepted mapping security contract, authorized ADR-0044 decision, required CI, and independent review are still gates. |
+
+No production Buzz pin, identity mode, cutover behavior or replacement guard is changed by this Phase 1c work.

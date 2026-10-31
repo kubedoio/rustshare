@@ -35,6 +35,26 @@ This proposal conflicts with the current ADR-0034 rule that Elembra never holds 
 - Exported identities may remain usable in an independent client after Elembra logout or account disable until Buzz membership is removed and existing sessions are cut off. Stock Buzz revocation convergence, reconnect behavior, live-session denial and roster limitations must be measured; do not claim instant revocation without proof. Never reuse an exported old private key for a new person.
 - Ephemeral server signing does not imply message confidentiality from Elembra. User documentation must say that Elembra holds and can use their Chat signing identity.
 
+## Phase 1c proposed v1 messaging scope (acceptance pending)
+
+The Phase 1c proposal is deliberately narrower than all Buzz DM protocols:
+
+- NIP-29 channel messaging is in scope for the upstream profile.
+- Native Buzz private-channel DMs are in scope only after live, end-to-end proof of discovery, membership denial, and bidirectional kind-9 history with the pinned desktop client.
+- NIP-17 encrypted DMs (NIP-44 encrypted seals and NIP-59 gift wraps) are excluded from initial v1 and must remain disabled. This is a separate protocol from Buzz's hidden NIP-29 channels: hidden metadata and relay ACLs do not provide end-to-end message encryption. Phase 1's valid randomized-timestamp NIP-17 event was rejected by stock Buzz; that historical failure remains visible as out-of-scope evidence and is not counted as a required v1 acceptance test.
+- Managed mode never creates a private key in the user's browser. Browser key creation remains only in the existing legacy mode until a separately approved migration.
+- No upstream Buzz source modification, endpoint, middleware, or private database access is allowed.
+
+Native NIP-29 private channels rely on Buzz's relay membership and channel access controls. They are visible to the relay operator and are not equivalent to NIP-17 end-to-end encryption. Excluding NIP-17 from v1 is a product-scope decision, not evidence that the randomized timestamp failure was fixed. The pinned desktop's actual private-channel DM discovery and send/receive behavior remains a runtime acceptance gate; source inspection and protocol-client-only checks do not close it.
+
+## Explicit custody consequences requiring human acceptance
+
+Selecting Option A means Elembra controls encrypted user signing keys and the signing service can technically sign as a user. This is a deliberate custodial model and is not end-to-end exclusive user custody. Implementation requires KMS-backed envelope encryption with tenant/principal/identity/generation AAD; typed, scoped signing permissions that reject arbitrary event signing; separate owner/admin and user keys; least-privilege service access; audit of every signing and export; step-up and no-store export controls; tested key recovery and database-plus-KMS backup/restore; documented user export and recovery policy; and incident/offboarding procedures. Loss of required KMS material may make identities unrecoverable. Once a user exports an `nsec`, Elembra cannot cryptographically revoke that copy; relay removal and session termination are separate, eventually effective controls and cannot invalidate an offline key.
+
+ADR-0034's no-server-human-key rule and ADR-0035's accepted live authorization gateway continue to govern current behavior until authorized architecture/security owners explicitly accept this ADR. ADR-0035's fork-specific checks are not silently replaced by local Elembra ACLs; the upstream profile must enforce the tenant-to-relay contract and fail closed. ADR-0036's rejected operator database/API bootstrap remains rejected; a separately protected owner/admin key may use upstream NIP-43 only. This proposal preserves their authorization and tenant isolation requirements and does not itself authorize an implementation or deployment.
+
+**Required explicit decision:** `PENDING — no authorized architecture/security approver recorded.` PR approval, code review, or a Phase 1 POC result is not acceptance of this custody decision. Record approver identity, role, date, decision and conditions here before Phase 2A begins.
+
 ## Existing work and migration policy
 
 - Keep existing client-held identities usable through an explicit `legacy_client_held` mode. For conversion, require the user to deliberately import/upload their existing key through a dedicated authenticated migration; verify that its derived public key equals the active binding, and encrypt immediately. **Never silently rotate a user's key** or misattribute historical messages.
@@ -57,7 +77,7 @@ This proposal conflicts with the current ADR-0034 rule that Elembra never holds 
 
 **Positive:** Native Elembra Chat, one user lifecycle, upstream desktop interoperability, one release source for Buzz, no per-user setup. **Negative:** custodial key-management liability, export/revocation limitations, potential performance/cost of per-user relay sessions and current product features that cannot be carried to stock Buzz unchanged.
 
-**GO for migration only when:** upstream source/digest provenance and unchanged-source proof; active-user credential, cross-tenant, NIP-42/NIP-43 and channel tests; Buzz desktop import round-trips; two-way messaging; offboarding/reconnect tests; permission-aware Chat Memory denial tests; backup/KMS restore; clear failed-compatibility behavior; independent security review; and approved per-tenant cutover plan. A partial feature-compatible POC is not production acceptance. Current evidence and the file/function migration matrix are in `docs/plans/elembra-buzz-upstream-compatibility-matrix.md`.
+**GO for Phase 2A only when:** exact upstream desktop interoperability including native private-channel DM behavior is proven; the v1 NIP-29-only messaging scope is explicitly accepted and NIP-17 remains disabled; tenant-to-relay mapping contract and transport integration are independently security accepted; this ADR is explicitly accepted by an authorized architecture/security owner; required CI and independent review pass. Phase 2A may implement the isolated managed identity vault only after those gates and must not enable production cutover. **GO for migration/deployment remains separately gated** on upstream source/digest provenance and unchanged-source proof; active-user credential, cross-tenant, NIP-42/NIP-43 and channel tests; offboarding/reconnect tests; permission-aware Chat Memory denial tests; backup/KMS restore; clear failed-compatibility behavior; independent security review; and approved per-tenant cutover plan. A partial feature-compatible POC is not production acceptance. Current evidence and the file/function migration matrix are in `docs/plans/elembra-buzz-upstream-compatibility-matrix.md`.
 
 ## References
 
