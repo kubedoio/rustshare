@@ -265,19 +265,19 @@ The audited, unmodified desktop binary built and launched in Xvfb/Openbox under 
 
 The project owner accepted ADR-0044 Option A and the v1 scope of NIP-29 channels plus native private-channel DMs on 2026-10-31. NIP-17 remains excluded/disabled, and its randomized-timestamp rejection remains a historical failure. This is product/architecture direction, not independent security approval. Desktop assertions remain unverified and are deferred to issue #442. The mapping implementation remains an isolated policy model, not production enforcement; a `trusted_service` private-relay exception requires independent review and network enforcement.
 
-**Phase 2A implementation: GO, limited to an inert, disabled-by-default vault.** No real-user provisioning, signing, export, relay connection, production integration or deployment is authorized. The ADR/docs adoption PR still requires protected CI and human review; the vault PR requires independent cryptographic/security review before merge. **Phase 2B managed Chat: NO-GO** until desktop acceptance, custody security approval, production mapping transport enforcement and live protocol acceptance pass. **Production release/cutover: NO-GO** pending its separate operational and per-tenant migration gates.
+**Phase 2A implementation: GO, limited to an inert, disabled-by-default vault.** No real-user provisioning, signing, export, relay connection, production integration or deployment is authorized. The adopted ADR/docs are included in PR #441; its protected CI and independent review remain pending. Any vault PR requires independent cryptographic/security review before merge. **Phase 2B managed Chat: NO-GO** until desktop acceptance, custody security approval, production mapping transport enforcement and live protocol acceptance pass. **Production release/cutover: NO-GO** pending its separate operational and per-tenant migration gates.
 
 ### Validation results
 
 - `cargo fmt --all --check` — PASS.
 - `SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings` — PASS.
-- `SQLX_OFFLINE=true cargo test --workspace --all-features --lib` — PASS across 1,348 tests; 0 failed; 71 ignored.
+- Earlier reviewed head: `SQLX_OFFLINE=true cargo test --workspace --all-features --lib` — PASS across 1,348 tests; 0 failed; 71 ignored. The additional mapping regression is covered in the current 77/77 `rustshare-resource-auth` test run below.
 - `SQLX_OFFLINE=true cargo test -p rustshare-resource-auth --lib` — PASS, 77 passed; includes all 14 mapping policy tests.
 - `SQLX_OFFLINE=true cargo clippy -p rustshare-resource-auth --all-targets --all-features -- -D warnings` — PASS.
 - `node --check scripts/upstream-buzz-poc/protocol.mjs` and `node --check scripts/upstream-buzz-poc/desktop-evidence.mjs` — PASS.
 - `node --test scripts/upstream-buzz-poc/desktop-evidence.test.mjs` — PASS, 6 tests; includes secret/URL leak rejection, event/channel/author correlation, duplicate identity/channel rejection, and global event ID uniqueness.
 - `git diff --check` — PASS.
-- Protected GitHub CI results are recorded on PR #441; the Chat Product Acceptance job must pass after the evidence-based timeout correction before that PR is mergeable.
+- Protected GitHub CI for the updated #441 head is pending. The previous post-timeout-fix run passed Chat Product Acceptance, deployment persistence and integration tests; the updated head must pass its own required checks before merge.
 
 ### Exact Phase 2A implementation prompt
 

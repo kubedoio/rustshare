@@ -64,7 +64,7 @@ before any internal destination is permitted.
 
 | Gate | Current status |
 |---|---|
-| Gate D — adopted design docs | In the focused ADR PR; protected review/merge pending |
+| Gate D — adopted design docs | Included in PR #441 via #443; protected CI, independent review and merge of #441 pending |
 | Gate V — inert Phase 2A vault | Authorized to implement; not yet implemented/reviewed |
 | Gate I — managed Chat integration | NO-GO: native desktop test remains unverified and is tracked by issue #442; mapping transport/security approval is pending |
 | Gate R — production release/cutover | NO-GO: separate operational, security, recovery and per-tenant migration decisions remain |
