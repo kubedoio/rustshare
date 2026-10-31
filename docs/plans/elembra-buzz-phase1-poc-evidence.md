@@ -14,7 +14,7 @@ Date: 2026-10-31
 | `block/buzz` relay | `eafd77e9f6e96052476bdd88be732c046fdb7ab3` | `04e3a40545bd3b23510ec32b4c8cccee2acef7c5` |
 | `block/buzz-app` desktop | `662e91800af8204ec0e492522b8f23ef23b19baa` | `80275983372cc8dd840e732c0bb3610e97c7c283` |
 
-Both upstream checkout trees were clean. The relay was built from its unchanged Dockerfile and source. For the completed protocol run, Buildx reported local image digest/config ID `sha256:91d0032555fac809cd00200d550e1cbc462f8ca8a0b3065be63f338cedbfdcab`. This is a local build, not a published GHCR digest; lookup of `ghcr.io/block/buzz:sha-eafd77e` returned not found. No upstream source was modified.
+Both upstream checkout trees were clean. The relay was built from its unchanged Dockerfile and source. For the latest protocol run, Buildx reported local image digest/config ID `sha256:323ca8c528b6496a7bfa104c8fa1c14685bdea5944258aef63e7fa86fbde1d16`. This is a local build, not a published GHCR digest; lookup of `ghcr.io/block/buzz:sha-eafd77e` returned not found. No upstream source was modified.
 
 ## Environment and execution
 
@@ -33,21 +33,33 @@ Both upstream checkout trees were clean. The relay was built from its unchanged 
 
 | Check | Result | Observed behavior |
 |---|---|---|
-| Owner NIP-42 | PASS | Challenge received; authenticated `OK` accepted. |
-| Nonmember NIP-42 | PASS | Challenge received; authentication explicitly rejected. |
-| NIP-43 9030 add Alice and Bob | PASS | Both accepted. Exact replay of Alice's signed add returned accepted `OK`; it did not create a second identity. A 24-hour-old add returned `OK` with `accepted=false`. |
-| Member NIP-42 | PASS | Alice and Bob authenticated after admission. |
-| Public/private channel creation and private Alice membership | PASS | Upstream NIP-29 commands accepted. |
-| 39000 / 39001 / 39002 discovery | PASS | Each returned the requested channel event and `EOSE`. |
-| Kind-9 send and history | PASS | Alice's event ID `d3210b88b00b597de5654be909e61d7ec1a8ac4bc7a3a825d7e0e36e1ff34df4` was retrieved by Bob with Alice's same public key. |
-| Private-channel visibility | PASS | Alice retrieved private-channel kind-9 history; Bob received no metadata and the private history request was `CLOSED`. |
-| NIP-17 kind-1059 routing | PARTIAL PASS | Opaque kind-1059 routing to Bob was accepted and retrieved. Payload was intentionally not NIP-44 encrypted. Encrypted DM and DM-channel discovery remain UNVERIFIED. |
-| NIP-43 9031 removal | PASS | Bob's existing socket was closed. Publish and subsequent request on that socket could not proceed. A fresh connection received a challenge but was explicitly rejected. Exact replay of the removal was explicitly rejected (`OK`, `accepted=false`). |
-| Two isolated communities | PASS | A user admitted to B authenticated on B; Alice from A was denied on B, and B's user was denied on A. |
-| Wrong-host access | UNVERIFIED | The `localhost` alternate authority ended in a transport error without a NIP-42 challenge. This does not prove host-level authorization behavior. |
-| Stable relay identity | PASS | NIP-11 relay `self` stayed identical across relay A restart: `a56b5970c36ecb07beab7f223e709e57c173879c6bfc504ad518b63bafc8bfa5`. |
+| `nsec_encoding_checksum` | PASS | The generated disposable `nsec` passed the encoder's length/checksum self-check before writing. This does not replace desktop import verification. |
+| `owner_nip42` | PASS | Challenge received; authenticated `OK` accepted. |
+| `nonmember_nip42_denied` | PASS | Challenge received; authentication explicitly rejected. |
+| `nip43_add_alice`, `nip43_add_bob` | PASS | Both add commands accepted. |
+| `nip43_add_exact_replay` | RECORDED | Exact replay returned `OK`, `accepted=true`; no idempotency assertion. |
+| `nip43_add_stale_signed_command` | PASS | A separately signed 24-hour-old add targeting a nonmember returned `OK`, `accepted=false`. |
+| `member_nip42_alice`, `member_nip42_bob` | PASS | Both authenticated after admission. |
+| `create_public_channel`, `create_private_channel` | PASS | Both upstream NIP-29 commands accepted. |
+| `private_channel_add_alice` | PASS | Owner added Alice to the private channel. |
+| `private_channel_alice_message`, `private_channel_alice_history` | PASS | Alice published and retrieved private kind-9 event `7fb6f68ea6ebbdaaf23cc76aac81cb4a4db2078ec7337bd84d48857acbf56a69`. |
+| `channel_discovery_39000`, `_39001`, `_39002` | PASS | Each returned the requested channel event and `EOSE`. |
+| `kind9_publish`, `kind9_history_bob` | PASS | Bob retrieved Alice's kind-9 event `15581dec1b81497b1bf1582b211efa6b6c05409895456e26e017ccd3fd796e3d` with the same Alice pubkey. |
+| `private_channel_bob_denied` | PASS | Bob received no private metadata; history request was `CLOSED`. |
+| `nip17_giftwrap_routing` | PARTIAL PASS | Opaque kind-1059 routing to Bob was accepted and retrieved; payload was not NIP-44 encrypted. |
+| `nip17_encrypted_dm_and_discovery` | UNVERIFIED | No NIP-44 payload or DM channel creation was exercised. |
+| `open_pre_revocation_subscription` | PASS | Bob's subscription reached `EOSE` before removal. |
+| `nip43_remove_bob` | PASS | Owner's removal command was accepted. |
+| `nip43_remove_exact_replay` | PASS | Exact replay returned `OK`, `accepted=false`. |
+| `revoked_existing_subscription` | PASS | After Alice published a marker, Bob's subscription received `CLOSE`; no marker was returned. |
+| `revoked_existing_publish`, `revoked_existing_new_req` | PASS | Bob's existing socket was closed before either request could proceed. |
+| `revoked_fresh_connection` | PASS | Fresh connection was challenged and explicitly rejected. |
+| `tenant_b_member_nip42` | PASS | A user admitted to isolated relay B authenticated on B. |
+| `cross_tenant_alice_denied`, `cross_tenant_b_user_denied` | PASS | A's Alice was denied on B; B's user was denied on A. |
+| `wrong_host_denied` | UNVERIFIED | `localhost` ended in transport error without a NIP-42 challenge; this does not prove host authorization behavior. |
+| `relay_identity_restart` | PASS | NIP-11 relay `self` stayed identical across relay A restart: `3f93d2b022bb97f0ae2707d81ad669eeb22e0d88a7f087c52bcd0de0e09c3e24`. |
 
-Removal behavior is stronger than reconnect-only revocation in this run: the already connected WebSocket closed immediately after the accepted 9031 removal. This is a result for the tested upstream build and path, not a substitute for broader reconnect, subscription, and timing coverage.
+Removal closed the already connected WebSocket in this run. This is a result for the tested upstream build and path, not a substitute for broader reconnect and timing coverage.
 
 ## Desktop GUI result
 

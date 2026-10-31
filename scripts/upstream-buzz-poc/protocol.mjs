@@ -3,7 +3,8 @@ import { createRequire } from 'node:module';
 import { writeFile } from 'node:fs/promises';
 import { randomBytes, randomUUID } from 'node:crypto';
 
-const require = createRequire(new URL('../../frontend/package.json', import.meta.url));
+if (!process.env.POC_TEST_PACKAGE) throw new Error('POC_TEST_PACKAGE is required');
+const require = createRequire(process.env.POC_TEST_PACKAGE);
 const { schnorr } = require('@noble/curves/secp256k1.js');
 const { bytesToHex, hexToBytes } = require('@noble/curves/utils.js');
 const url = process.env.POC_RELAY_URL;
@@ -36,7 +37,9 @@ function nsec(key) {
 	const expanded = [...'nsec'].map((c) => c.charCodeAt(0) >> 5).concat(0, ...[...'nsec'].map((c) => c.charCodeAt(0) & 31));
 	const remainder = polymod([...expanded, ...words, 0, 0, 0, 0, 0, 0]) ^ 1;
 	const checksum = Array.from({ length: 6 }, (_, i) => (remainder >>> (5 * (5 - i))) & 31);
-	return `nsec1${[...words, ...checksum].map((word) => alphabet[word]).join('')}`;
+	const payload = [...words, ...checksum];
+	if (words.length !== 52 || polymod([...expanded, ...payload]) !== 1) throw new Error('nsec checksum self-check failed');
+	return `nsec1${payload.map((word) => alphabet[word]).join('')}`;
 }
 const hash = async (value) => bytesToHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))));
 async function event(key, kind, tags = [], content = '', createdAt = Math.floor(Date.now() / 1000)) {
@@ -127,9 +130,15 @@ async function check(name, fn) {
 const result = (pass, detail = {}) => ({ pass, ...detail });
 const explicitAuthDenial = (auth) => auth.challenged && !auth.accepted && ['OK', 'CLOSE'].includes(auth.outcome);
 let owner, alice, bob, publicChannel, privateChannel, publicMessage, privateMessage, bobSubscription, aliceAdd, bobRemove;
+let aliceNsec;
 try {
+	await check('nsec_encoding_checksum', async () => {
+		aliceNsec = nsec(keys.ALICE);
+		return result(true);
+	});
+	if (!aliceNsec) throw new Error('NIP-19 encoding self-check failed');
 	if (process.env.POC_GUI_NSEC_FILE) {
-		await writeFile(process.env.POC_GUI_NSEC_FILE, `${nsec(keys.ALICE)}\n`, { mode: 0o600, flag: 'wx' });
+		await writeFile(process.env.POC_GUI_NSEC_FILE, `${aliceNsec}\n`, { mode: 0o600, flag: 'wx' });
 	}
 	await check('owner_nip42', async () => {
 		const joined = await connect(url, keys.OWNER); owner = joined.session;
@@ -149,12 +158,12 @@ try {
 	}
 	await check('nip43_add_exact_replay', async () => {
 		const wire = await owner.publish(aliceAdd);
-		return result(wire.outcome === 'OK', { ...wire, note: 'acceptance is measured, not assumed idempotent' });
+		return result(null, { ...wire, note: 'replay behavior is recorded, not asserted' });
 	});
 	await check('nip43_add_stale_signed_command', async () => {
-		const stale = await event(keys.OWNER, 9030, [['p', pubs.ALICE]], '', Math.floor(Date.now() / 1000) - 86400);
+		const stale = await event(keys.OWNER, 9030, [['p', pubs.OUTSIDER]], '', Math.floor(Date.now() / 1000) - 86400);
 		const wire = await owner.publish(stale);
-		return result(wire.outcome === 'OK', { ...wire, age_seconds: 86400, note: 'acceptance is measured, not assumed safe' });
+		return result(wire.outcome === 'OK' && !wire.accepted, { ...wire, age_seconds: 86400 });
 	});
 	for (const name of ['ALICE', 'BOB']) {
 		await check(`member_nip42_${name.toLowerCase()}`, async () => {
@@ -221,18 +230,18 @@ try {
 	});
 	await check('nip43_remove_exact_replay', async () => {
 		const wire = await owner.publish(bobRemove);
-		return result(wire.outcome === 'OK', { ...wire, note: 'acceptance is measured, not assumed idempotent' });
-	});
-	await check('revoked_existing_publish', async () => {
-		if (bob.socket.readyState === WebSocket.CLOSED) return result(true, { outcome: 'SOCKET_CLOSED_BEFORE_PUBLISH' });
-		const wire = await bob.publish(await event(keys.BOB, 9, [['h', publicChannel]], `POC ${randomUUID()}`));
-		return result(!wire.accepted && ['OK', 'CLOSE'].includes(wire.outcome), wire);
+		return result(wire.outcome === 'OK' && !wire.accepted, wire);
 	});
 	await check('revoked_existing_subscription', async () => {
 		const marker = await event(keys.ALICE, 9, [['h', publicChannel]], `POC ${randomUUID()}`);
 		const sent = await alice.publish(marker);
 		const frame = await bob.next((f) => (f[0] === 'EVENT' && f[1] === bobSubscription?.sub && f[2]?.id === marker.id) || (f[0] === 'CLOSED' && f[1] === bobSubscription?.sub) || ['CLOSE', 'TRANSPORT_ERROR'].includes(f[0]), 2500);
-		return result(sent.accepted && ['CLOSED', 'CLOSE', 'TIMEOUT'].includes(frame[0]), { published: sent, subscription_outcome: frame[0], observation_ms: 2500 });
+		return result(sent.accepted && ['CLOSED', 'CLOSE'].includes(frame[0]), { published: sent, subscription_outcome: frame[0], observation_ms: 2500, socket_open: bob.socket.readyState === WebSocket.OPEN });
+	});
+	await check('revoked_existing_publish', async () => {
+		if (bob.socket.readyState === WebSocket.CLOSED) return result(true, { outcome: 'SOCKET_CLOSED_BEFORE_PUBLISH' });
+		const wire = await bob.publish(await event(keys.BOB, 9, [['h', publicChannel]], `POC ${randomUUID()}`));
+		return result(!wire.accepted && ['OK', 'CLOSE'].includes(wire.outcome), wire);
 	});
 	await check('revoked_existing_new_req', async () => {
 		if (bob.socket.readyState === WebSocket.CLOSED) return result(true, { outcome: 'SOCKET_CLOSED_BEFORE_REQ' });
