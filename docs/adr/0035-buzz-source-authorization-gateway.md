@@ -1,6 +1,6 @@
 # ADR-0035: Buzz Source Authorization Gateway
 
-> **2026-10-31 decision relationship:** ADR-0044 proposes a separate upstream-only profile. The signed HTTP contracts described here belong to the supported downstream Buzz implementation; they are not verified stock block/buzz capabilities. Existing deployments retain these checks until a separately approved replacement passes authorization and compatibility gates. See [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
+> **2026-10-31 profile amendment:** ADR-0044 accepts a separate upstream-only `upstream_managed` profile. The signed HTTP contracts described here remain required for deployed fork-backed behavior and are not stock `block/buzz` capabilities. See the runtime-profile amendment below and [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
 
 Status: Accepted (implemented v1alpha1; amended 2026-08-14 — batch + channel registry endpoints specified; stream-message wire format adopted)  
 Date: 2026-08-11 (amended 2026-08-14)
@@ -22,7 +22,8 @@ The constraints that shaped the design:
 
 - Elembra must not read Buzz's private database;
 - Elembra must not duplicate Buzz's authorization rules — no second ACL system;
-- the server workload must never hold a human user's signing key;
+- in the currently supported client-held profile, the server workload must
+  never hold a human user's signing key;
 - a stored authorization snapshot is unacceptable — decisions must reflect
   current Buzz state, so revocations take effect on the very next read;
 - any authorization failure must fail closed.
@@ -86,8 +87,9 @@ repairs Chat projections from the relay's public signed state.**
   ACL system, no duplicated rules, no private DB access.
 - Revocations and membership changes at the relay take effect on the very
   next read.
-- The server never holds a human signing key; requests are NIP-98-signed with
-  a provisioned service key.
+- In the currently supported client-held profile, the server never holds a
+  human signing key; requests are NIP-98-signed with a provisioned service
+  key.
 - Reconcile repairs are idempotent and cannot re-trigger the durable pipeline
   (no outbox or consumer-receipt writes).
 
@@ -122,8 +124,10 @@ to re-implement channel visibility, membership, and message availability.
 
 ### Hold human signing keys server-side for direct relay queries
 
-Rejected. This destroys the sovereign-identity property ADR-0034 preserves:
-the workload is trusted but must never be able to sign as a user.
+Rejected for this fork-backed gateway and client-held profile. ADR-0044
+separately adopts a custodial `upstream_managed` profile; it does not reuse
+this gateway's fork-only endpoints and requires a typed signing boundary,
+KMS custody and independent security review before any managed signing.
 
 ## Acceptance criteria
 
@@ -147,3 +151,16 @@ the workload is trusted but must never be able to sign as a user.
   proofs; the fake remains for the contract-faithful unit/integration suites.
   RustShare production buzz mode (kubedoio/rustshare PR #249, merged) consumes
   that merged contract.
+
+## 2026-10-31 runtime-profile amendment
+
+This accepted gateway remains normative for existing `fork_v1alpha1`
+deployments, including their signed access checks, channel registry, signed
+state and failure behavior. ADR-0044 accepts a separate `upstream_managed`
+profile that MUST NOT call these fork-only APIs or substitute Elembra-local
+ACLs. In that profile, current subject-bound authorization must come from a
+live read as the managed user's identity using unmodified upstream Buzz; any
+dependent timeline, reconciliation or Chat-backed Memory feature without
+such proof remains disabled. Existing production pins and behavior are
+unchanged. The managed custody design and its implementation remain subject
+to independent security review.
