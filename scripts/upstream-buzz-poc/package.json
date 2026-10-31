@@ -1,0 +1,10 @@
+{
+	"name": "rustshare-upstream-buzz-poc",
+	"private": true,
+	"type": "module",
+	"dependencies": {
+		"@noble/curves": "2.4.0",
+		"nostr-tools": "2.25.2",
+		"ws": "8.18.3"
+	}
+}

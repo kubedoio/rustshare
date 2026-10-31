@@ -21,11 +21,11 @@ cleanup() {
   for proxy in "${PROXIES[@]}"; do kill "$proxy" >/dev/null 2>&1 || true; wait "$proxy" 2>/dev/null || true; done
   for stack in "${STACKS[@]}"; do
     if ! compose "$stack" down --volumes --remove-orphans >/dev/null 2>&1; then
-      echo "Failed to remove disposable Buzz stack $PROJECT-$stack; secrets/config retained in $RUN_DIR" >&2
+      echo "Failed to remove disposable Buzz stack $PROJECT-$stack" >&2
       failed=1
     fi
   done
-  if [[ "$failed" == 0 ]]; then rm -rf -- "$RUN_DIR"; fi
+  rm -rf -- "$RUN_DIR"
   if [[ "$failed" == 1 && "$status" == 0 ]]; then status=1; fi
   exit "$status"
 }
@@ -56,11 +56,11 @@ fi
 IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
 IMAGE_BUILD_DIGEST="$(node -e 'const m=require(process.argv[1]);console.log(m["containerimage.digest"]||"unavailable")' "$RUN_DIR/build-metadata.json")"
 mkdir -p "$RUN_DIR/test-deps"
-cp "$ROOT/frontend/package.json" "$ROOT/frontend/package-lock.json" "$RUN_DIR/test-deps/"
+cp "$ROOT/scripts/upstream-buzz-poc/package.json" "$ROOT/scripts/upstream-buzz-poc/package-lock.json" "$RUN_DIR/test-deps/"
 npm ci --prefix "$RUN_DIR/test-deps" --ignore-scripts --no-audit --no-fund >"$RUN_DIR/npm.log" 2>&1 || { echo 'Frontend protocol dependencies could not be installed' >&2; tail -n 20 "$RUN_DIR/npm.log" >&2; exit 1; }
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
   -keyout "$RUN_DIR/tls.key" -out "$RUN_DIR/tls.crt" -days 1 \
-  -subj '/CN=localhost' -addext 'subjectAltName=IP:127.0.0.1,DNS:localhost' \
+  -subj '/CN=localhost' -addext 'subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:buzz-wrong-host.poc.invalid' \
   >"$RUN_DIR/tls.log" 2>&1
 
 new_key() { openssl rand -hex 32; }
@@ -122,7 +122,8 @@ start_stack a "$POC_OWNER_SK" "$(new_key)" "$PORT_A" "$TLS_A"
 start_stack b "$POC_B_OWNER_SK" "$(new_key)" "$PORT_B" "$TLS_B"
 POC_RELAY_URL="wss://127.0.0.1:$TLS_A"
 POC_RELAY_B_URL="wss://127.0.0.1:$TLS_B"
-POC_WRONG_HOST_URL="wss://localhost:$TLS_A"
+POC_WRONG_HOST_URL="wss://buzz-wrong-host.poc.invalid:$TLS_A"
+POC_TLS_FAILURE_URL="wss://buzz-bad-sni.poc.invalid:$TLS_A"
 
 echo "upstream_relay_commit=$SHA"
 echo "upstream_relay_tree=$TREE"
@@ -138,8 +139,10 @@ PROTOCOL_STATUS=0
 POC_OWNER_SK="$POC_OWNER_SK" POC_ALICE_SK="$POC_ALICE_SK" POC_BOB_SK="$POC_BOB_SK" \
 POC_OUTSIDER_SK="$POC_OUTSIDER_SK" POC_B_OWNER_SK="$POC_B_OWNER_SK" POC_B_USER_SK="$POC_B_USER_SK" \
 POC_RELAY_URL="$POC_RELAY_URL" POC_RELAY_B_URL="$POC_RELAY_B_URL" \
-POC_WRONG_HOST_URL="$POC_WRONG_HOST_URL" POC_GUI_NSEC_FILE="$POC_GUI_NSEC_FILE" \
+POC_WRONG_HOST_URL="$POC_WRONG_HOST_URL" POC_TLS_FAILURE_URL="$POC_TLS_FAILURE_URL" \
+POC_GUI_NSEC_FILE="$POC_GUI_NSEC_FILE" \
 POC_TEST_PACKAGE="$RUN_DIR/test-deps/package.json" \
+POC_HOLD="${POC_HOLD:-0}" \
 NODE_EXTRA_CA_CERTS="$RUN_DIR/tls.crt" G_TLS_CA_FILE="$RUN_DIR/tls.crt" \
   node "$ROOT/scripts/upstream-buzz-poc/protocol.mjs" || PROTOCOL_STATUS=$?
 relay_identity() {
@@ -159,8 +162,7 @@ else
   echo 'relay_identity_restart=FAIL'
   exit 1
 fi
-if [[ "${POC_HOLD:-0}" == 1 ]]; then
-  echo "GUI nsec file: $POC_GUI_NSEC_FILE (removed when this run exits)"
-  read -r -p 'GUI test complete; press Enter to destroy the disposable stacks: ' _
-fi
+echo 'sanitized_proxy_trace_begin'
+cat "$RUN_DIR/a/proxy.log" "$RUN_DIR/b/proxy.log"
+echo 'sanitized_proxy_trace_end'
 exit "$PROTOCOL_STATUS"
