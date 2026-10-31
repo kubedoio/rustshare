@@ -304,9 +304,14 @@ try {
 		const hidden = metadata?.tags?.some((tag) => tag[0] === 'hidden');
 		const matchingChannelEvents = discoveries.map((read, index) => read.events.filter((item) => item.kind === kinds[index] && hasChannelTag(item, dmChannel)).length);
 		const discovered = discoveries.every((read, index) => read.outcome === 'EOSE' && matchingChannelEvents[index] > 0);
+		const dmMessage = await event(keys.ALICE, 9, [['h', dmChannel]], `POC NIP-29 private DM ${randomUUID()}`);
+		const dmPublish = await alice.publish(dmMessage);
+		const bobDmHistory = await bob.read({ kinds: [9], '#h': [dmChannel], limit: 50 }, true);
+		const bobObservedDm = bobDmHistory.events.find((item) => item.id === dmMessage.id);
+		const bobSawExactDm = dmPublish.accepted && bobDmHistory.outcome === 'EOSE' && bobObservedDm?.pubkey === pubs.ALICE && hasChannelRef(bobObservedDm, dmChannel);
 		const outsiderMetadata = await outsider.read({ kinds: [39000, 39001, 39002], '#d': [dmChannel], limit: 20 });
 		const outsiderHistory = await outsider.read({ kinds: [9], '#h': [dmChannel], limit: 20 });
-		return result(discovered && hidden === true && deniedWithoutEvents(outsiderMetadata) && deniedWithoutEvents(outsiderHistory), { channel_id: dmChannel, discovery_kinds: discoveries.map((read) => read.events[0]?.kind), matching_channel_event_counts: matchingChannelEvents, hidden, outsider_discovery: outsiderMetadata.outcome, outsider_discovery_event_count: outsiderMetadata.events.length, outsider_history: outsiderHistory.outcome, outsider_history_event_count: outsiderHistory.events.length });
+		return result(discovered && hidden === true && bobSawExactDm && deniedWithoutEvents(outsiderMetadata) && deniedWithoutEvents(outsiderHistory), { channel_id: dmChannel, discovery_kinds: discoveries.map((read) => read.events[0]?.kind), matching_channel_event_counts: matchingChannelEvents, hidden, participant_dm_event_id: dmMessage.id, participant_dm_author: pubs.ALICE, participant_dm_channel: dmChannel, bob_observed_dm_event_id: bobObservedDm?.id, bob_observed_dm_author: bobObservedDm?.pubkey, bob_observed_dm_channel: bobObservedDm?.tags?.find((tag) => tag[0] === 'h')?.[1], outsider_discovery: outsiderMetadata.outcome, outsider_discovery_event_count: outsiderMetadata.events.length, outsider_history: outsiderHistory.outcome, outsider_history_event_count: outsiderHistory.events.length });
 	});
 	await check('nip29_dm_bidirectional_messages', async () => {
 		const aliceMessage = await event(keys.ALICE, 9, [['h', dmChannel]], `POC NIP-29 Alice ${randomUUID()}`);

@@ -27,7 +27,7 @@ const input = () => {
 		expected_peer_pubkey: bob,
 		expected_channel_id: channel,
 		expected_dm_channel_id: dm,
-		checks: { nsec_imported: true, intended_community_joined: true, identity_persisted_after_restart: true, reconnected_after_restart: true, history_restored: true, no_duplicate_identity: true, no_unexpected_enrollment: true, private_dm_discovered: true },
+		checks: { nsec_imported: true, intended_community_joined: true, identity_persisted_after_restart: true, reconnected_after_restart: true, history_restored: true, no_duplicate_identity: true, no_unexpected_enrollment: true, private_dm_discovered: true, credential_removed_after_test: true },
 		events: [message('protocol_to_desktop', channel, 'aa'.repeat(32), alice, 'desktop'), message('desktop_to_protocol', channel, 'bb'.repeat(32), alice, 'protocol')],
 		dm_events: [message('protocol_to_desktop', dm, 'cc'.repeat(32), bob, 'desktop'), message('desktop_to_protocol', dm, 'dd'.repeat(32), alice, 'protocol')],
 	};
@@ -73,6 +73,14 @@ test('rejects identical identities or channel IDs for the DM proof', () => {
 	data.expected_peer_pubkey = bob;
 	data.expected_dm_channel_id = data.expected_channel_id;
 	assert.equal(run(JSON.stringify(data)).status, 2);
+});
+
+test('keeps evidence unverified when credential cleanup was not confirmed', () => {
+	const data = input();
+	data.checks.credential_removed_after_test = false;
+	const result = run(JSON.stringify(data));
+	assert.equal(result.status, 0);
+	assert.equal(JSON.parse(result.stdout).status, 'UNVERIFIED_OR_FAIL');
 });
 
 test('rejects an event reused as proof in both public and DM channels', () => {

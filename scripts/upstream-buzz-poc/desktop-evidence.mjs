@@ -5,7 +5,7 @@ const topKeys = new Set(['relay_url', 'expected_pubkey', 'displayed_pubkey', 'ex
 const checkKeys = new Set([
 	'nsec_imported', 'intended_community_joined', 'identity_persisted_after_restart',
 	'reconnected_after_restart', 'history_restored', 'no_duplicate_identity',
-	'no_unexpected_enrollment', 'private_dm_discovered',
+	'no_unexpected_enrollment', 'private_dm_discovered', 'credential_removed_after_test',
 ]);
 const directions = new Set(['protocol_to_desktop', 'desktop_to_protocol']);
 
