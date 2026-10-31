@@ -174,6 +174,53 @@ Harness command: `BUZZ_SOURCE_DIR=/tmp/block-buzz-phase0 scripts/upstream-buzz-p
 
 Result: **38 PASS, 1 FAIL, 3 UNVERIFIED (42 total)**, plus the independent relay restart identity check **PASS**. The JSON report and relay restart were emitted; the run exited nonzero only because the required randomized NIP-17 timestamp assertion fails.
 
+Every protocol check from the final run is listed below. `nsec_gui_export` means only that the disposable identity file was generated; it is not desktop import evidence.
+
+| Check | Result |
+|---|---|
+| `nsec_gui_export` | PASS |
+| `owner_nip42` | PASS |
+| `nonmember_nip42_denied` | PASS |
+| `nip43_add_alice` | PASS |
+| `nip43_add_bob` | PASS |
+| `nip43_add_exact_replay` | UNVERIFIED; relay returned `accepted=true`, recorded without an idempotency assertion |
+| `nip43_add_stale_signed_command` | PASS |
+| `member_nip42_alice` | PASS |
+| `member_nip42_bob` | PASS |
+| `create_public_channel` | PASS |
+| `create_private_channel` | PASS |
+| `private_channel_add_alice` | PASS |
+| `private_channel_alice_message` | PASS |
+| `private_channel_alice_history` | PASS |
+| `channel_discovery_39000` | PASS |
+| `channel_discovery_39001` | PASS |
+| `channel_discovery_39002` | PASS |
+| `kind9_publish` | PASS |
+| `kind9_history_bob` | PASS |
+| `private_channel_bob_denied` | PASS |
+| `private_channel_add_bob` | PASS |
+| `private_channel_bob_member_history` | PASS |
+| `nip43_add_outsider_for_private_dm_denial` | PASS |
+| `member_nip42_outsider` | PASS |
+| `nip29_dm_open_and_discovery` | PASS |
+| `nip29_dm_bidirectional_messages` | PASS |
+| `nip17_randomized_timestamp_relay_compatibility` | **FAIL** |
+| `nip17_recent_timestamp_delivery_and_decryption` | PASS (out of proposed v1 scope) |
+| `nip17_recipient_only_visibility` | PASS (out of proposed v1 scope) |
+| `open_pre_revocation_subscriptions` | PASS |
+| `nip43_remove_bob` | PASS |
+| `nip43_remove_exact_replay` | PASS |
+| `revoked_existing_subscription` | PASS |
+| `revoked_existing_publish` | UNVERIFIED; socket closed before publish could be sent |
+| `revoked_existing_new_req` | UNVERIFIED; socket closed before REQ could be sent |
+| `revoked_fresh_connection` | PASS |
+| `revoked_reconnect_after_delay` | PASS |
+| `tenant_b_member_nip42` | PASS |
+| `cross_tenant_alice_denied` | PASS |
+| `cross_tenant_b_user_denied` | PASS |
+| `wrong_host_denied` | PASS; stock relay returned HTTP 404 at upgrade |
+| `wrong_sni_tls_rejected_before_relay` | PASS; TLS hostname validation failed before relay HTTP |
+
 | Test | Result | Observed result |
 |---|---|---|
 | NIP-42 owner/member/nonmember authentication | PASS | Owner and admitted Alice/Bob authenticated; nonmember received a challenge and was denied. |
