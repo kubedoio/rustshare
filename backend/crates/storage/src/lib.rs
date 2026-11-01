@@ -9,6 +9,7 @@ pub mod chat_identity;
 pub mod chat_integration_impl;
 pub mod chat_observation;
 pub mod event_store;
+pub mod managed_identity_vault;
 pub mod memory_catalog;
 pub mod metadata;
 pub mod object_store;
@@ -23,6 +24,10 @@ pub use chat_identity::{
 };
 pub use chat_observation::{ChatObservationStore, UpsertOutcome};
 pub use event_store::EventStore;
+pub use managed_identity_vault::{
+    ManagedIdentityRecord, ManagedIdentityStatus, ManagedIdentityStoreError,
+    ManagedIdentityVaultStore,
+};
 pub use memory_catalog::{content_match_terms, MemoryCatalogStore, ReconcileCounts};
 pub use metadata::{
     BlobReferenceSummary, MemoryReconcileFile, MetadataStore, ObjectGcCandidate,

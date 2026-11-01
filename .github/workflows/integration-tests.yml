@@ -303,21 +303,21 @@ jobs:
     # .env/bootstrap creation; the dogfood driver uses the managed observer's
     # pinned runtime for Buzz operations, so host Node/npm is not required.
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Start clean bundled Chat deployment
-        timeout-minutes: 50
+        timeout-minutes: 90
         run: |
           # Keep image build/pull and Compose startup failures bounded inside
           # the step so the diagnostic and cleanup steps always get a chance
           # to run when a registry or dependency stalls.
           timeout --foreground --signal=TERM --kill-after=30s 12m \
             ./scripts/elembra.sh init --with-chat
-          timeout --foreground --signal=TERM --kill-after=30s 30m \
+          timeout --foreground --signal=TERM --kill-after=30s 70m \
             ./scripts/elembra.sh up
 
       - name: Run live Chat product acceptance

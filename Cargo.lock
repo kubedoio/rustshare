@@ -4506,12 +4506,18 @@ version = "0.8.0-alpha.1"
 dependencies = [
  "aes-gcm",
  "argon2",
+ "async-trait",
  "base64 0.23.1",
  "hex",
  "hmac 0.13.0",
+ "nostr",
+ "rand 0.10.2",
  "sha2 0.11.0",
  "subtle",
  "thiserror 2.0.20",
+ "tokio",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -4592,6 +4598,7 @@ dependencies = [
  "bytes",
  "chrono",
  "futures-util",
+ "ipnet",
  "nostr",
  "percent-encoding",
  "rustshare-core",
@@ -4609,6 +4616,7 @@ dependencies = [
 name = "rustshare-server"
 version = "0.8.0-alpha.1"
 dependencies = [
+ "aes-gcm",
  "ammonia",
  "anyhow",
  "async-imap",
@@ -4674,6 +4682,7 @@ dependencies = [
  "validator",
  "webpki-roots",
  "yaml_serde",
+ "zeroize",
  "zip",
 ]
 
@@ -4695,6 +4704,7 @@ dependencies = [
  "md5",
  "metrics",
  "rustshare-core",
+ "rustshare-crypto",
  "rustshare-integration-events",
  "rustshare-memory",
  "rustshare-resource-auth",

@@ -1,5 +1,7 @@
 # Specification: Buzz Upstream Source Authorization & State v1alpha1
 
+> **2026-10-31 decision relationship:** ADR-0044 proposes a separate upstream-only profile. The signed HTTP contracts described here belong to the supported downstream Buzz implementation; they are not verified stock block/buzz capabilities. Existing deployments retain these checks until a separately approved replacement passes authorization and compatibility gates. See [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
+
 Status: Draft — v1alpha1; amended 2026-08-14 (batch checks, channel registry, canonical publish tags and kinds, stream-message wire format)  
 Date: 2026-08-11 (amended 2026-08-14)  
 Related: `resource-ref-authorization-v1alpha1.md`, Elembra Chat identity/admission contracts

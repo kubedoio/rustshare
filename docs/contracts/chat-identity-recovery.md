@@ -1,5 +1,7 @@
 # Chat identity onboarding and recovery
 
+> **2026-10-31 decision relationship:** ADR-0044 proposes a separate managed identity mode. It does not qualify stock Buzz for this replacement/recovery protocol, enable replacement, or authorize migration of existing keys. Preserve all current release and runtime guards. See [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
+
 M4.1a / #215; authority: [ADR-0034](../adr/0034-elembra-chat-buzz-boundary.md).
 
 ## Authority and API

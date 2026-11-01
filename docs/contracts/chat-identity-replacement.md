@@ -1,5 +1,7 @@
 # Chat identity replacement protocol
 
+> **2026-10-31 decision relationship:** ADR-0044 proposes a separate managed identity mode. It does not qualify stock Buzz for this replacement/recovery protocol, enable replacement, or authorize migration of existing keys. Preserve all current release and runtime guards. See [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
+
 Status: guarded initiation API implemented; production replacement remains
 disabled until Buzz v1alpha2 is qualified and independently reviewed. Pairing
 and replacement UX are not enabled.

@@ -449,6 +449,7 @@ describe('CalendarApplicationView', () => {
 	});
 
 	it('does not offer movement for read-only, recurring, or all-day events', async () => {
+		const recurringDay = dayFromToday(2);
 		mocks.listEvents.mockResolvedValue([
 			eventAt(dayFromToday(1), {
 				id: 'provider',
@@ -456,11 +457,11 @@ describe('CalendarApplicationView', () => {
 				read_only: true,
 				source_kind: 'google'
 			}),
-			eventAt(dayFromToday(2), {
+			eventAt(recurringDay, {
 				id: 'series',
 				title: 'Recurring event',
 				rrule: 'FREQ=DAILY',
-				instance_start: '2026-10-25T14:00:00Z'
+				instance_start: `${recurringDay}T14:00:00`
 			}),
 			eventAt(dayFromToday(3), { id: 'all-day', title: 'All-day event', all_day: true })
 		]);
@@ -775,6 +776,7 @@ describe('CalendarApplicationView', () => {
 			})
 		]);
 		render(CalendarApplicationView, { module: testModule });
+		await goToMonth(2026, 9);
 
 		const occurrenceLabel = new Date('2026-10-08T12:00:00').toLocaleDateString();
 		const occurrenceCell = await screen.findByRole('button', {
@@ -972,6 +974,7 @@ describe('CalendarApplicationView', () => {
 			await goToMonth(2026, 10);
 
 			const label = new Date(2026, 10, 1, 12).toLocaleDateString();
+			await screen.findByRole('button', { name: `Create event on ${label}` });
 			expect(cellForDay(label).textContent).toContain('Late night');
 		} finally {
 			process.env.TZ = originalTz;
