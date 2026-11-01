@@ -250,15 +250,36 @@ async fn managed_identity_vault_postgres_invariants_and_recovery() {
         rustshare_storage::ManagedIdentityStoreError::Conflict
     );
 
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query(
+        "CREATE ROLE managed_identity_vault_rls_probe \
+         NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query(
+        "GRANT SELECT, UPDATE ON managed_chat_identities TO managed_identity_vault_rls_probe",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("GRANT managed_identity_vault_rls_probe TO CURRENT_USER")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SET LOCAL ROLE managed_identity_vault_rls_probe")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
     let unscoped_count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM managed_chat_identities WHERE tenant_id=$1")
             .bind(tenant)
-            .fetch_one(&pool)
+            .fetch_one(&mut *tx)
             .await
             .unwrap();
     assert_eq!(unscoped_count, 0);
 
-    let mut tx = pool.begin().await.unwrap();
     sqlx::query("SELECT set_config('app.current_tenant_id', $1, true)")
         .bind(tenant.to_string())
         .execute(&mut *tx)
