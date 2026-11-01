@@ -3,7 +3,7 @@
 //! This module has no route or startup caller. A session is returned only
 //! after the tenant mapping is reloaded and its generation still matches.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,6 +22,7 @@ use tokio_rustls::TlsConnector;
 use tokio_tungstenite::{client_async, tungstenite::Message, WebSocketStream};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 const SESSION_REVALIDATE_INTERVAL: Duration = Duration::from_secs(5);
 const NIP11_MAX_BYTES: usize = 64 * 1024;
 
@@ -108,32 +109,8 @@ pub(crate) async fn connect(
 ) -> Result<TenantRelaySession, UpstreamBuzzTransportError> {
     let mapping = load_mapping(store, tenant_id, workspace_id).await?;
     let scope = mapping.scope();
-    let host = mapping.record().relay_host.as_str();
-    let port = mapping_port(&mapping)?;
-    let resolved = tokio::time::timeout(CONNECT_TIMEOUT, lookup_host((host, port)))
-        .await
-        .map_err(|_| UpstreamBuzzTransportError::Connection)?
-        .map_err(|_| UpstreamBuzzTransportError::Connection)?
-        .map(|addr| addr.ip())
-        .collect::<Vec<_>>();
-    let attempt = mapping.begin_connection(scope, &resolved, chrono::Utc::now())?;
-    let peer = attempt
-        .pinned_ips()
-        .first()
-        .copied()
-        .map(|ip| SocketAddr::new(ip, attempt.port()))
-        .ok_or(UpstreamBuzzTransportError::Connection)?;
-
-    let tcp = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(peer))
-        .await
-        .map_err(|_| UpstreamBuzzTransportError::Connection)?
-        .map_err(|_| UpstreamBuzzTransportError::Connection)?;
-    let actual_peer = tcp
-        .peer_addr()
-        .map_err(|_| UpstreamBuzzTransportError::Connection)?;
-    if actual_peer != peer {
-        return Err(UpstreamBuzzTransportError::Connection);
-    }
+    let attempt = resolve_connection_attempt(&mapping, &scope).await?;
+    let tcp = connect_pinned(attempt.pinned_ips(), attempt.port()).await?;
 
     let tls_config = tls_config();
     let server_name = ServerName::try_from(attempt.relay_host().to_owned())
@@ -165,6 +142,51 @@ pub(crate) async fn connect(
         socket: Some(socket),
         last_revalidation: tokio::time::Instant::now(),
     })
+}
+
+async fn resolve_connection_attempt(
+    mapping: &TrustedRelayMapping,
+    expected_scope: &rustshare_resource_auth::upstream_relay_mapping::MappingScope,
+) -> Result<
+    rustshare_resource_auth::upstream_relay_mapping::ConnectionAttempt,
+    UpstreamBuzzTransportError,
+> {
+    let host = mapping.record().relay_host.as_str();
+    let port = mapping_port(mapping)?;
+    let resolved = tokio::time::timeout(CONNECT_TIMEOUT, lookup_host((host, port)))
+        .await
+        .map_err(|_| UpstreamBuzzTransportError::Connection)?
+        .map_err(|_| UpstreamBuzzTransportError::Connection)?
+        .map(|addr| addr.ip())
+        .collect::<Vec<_>>();
+    Ok(mapping.begin_connection(expected_scope.clone(), &resolved, chrono::Utc::now())?)
+}
+
+async fn connect_pinned(
+    pinned_ips: &[IpAddr],
+    port: u16,
+) -> Result<TcpStream, UpstreamBuzzTransportError> {
+    let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
+    for ip in pinned_ips {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let peer = SocketAddr::new(*ip, port);
+        let timeout = remaining.min(CONNECT_ATTEMPT_TIMEOUT);
+        let Ok(Ok(tcp)) = tokio::time::timeout(timeout, TcpStream::connect(peer)).await else {
+            continue;
+        };
+        if tcp
+            .peer_addr()
+            .map_err(|_| UpstreamBuzzTransportError::Connection)?
+            != peer
+        {
+            return Err(UpstreamBuzzTransportError::Connection);
+        }
+        return Ok(tcp);
+    }
+    Err(UpstreamBuzzTransportError::Connection)
 }
 
 async fn load_mapping(
@@ -329,9 +351,44 @@ fn relay_identity(nip11: &Value) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{Duration as ChronoDuration, Utc};
     use serde_json::json;
+    use std::time::Duration;
+    use uuid::Uuid;
 
-    use super::{parse_nip11_headers, relay_identity};
+    use rustshare_core::domain::{TenantId, WorkspaceId};
+    use rustshare_resource_auth::upstream_relay_mapping::{
+        RelayMappingRecord, TrustedRelayMapping,
+    };
+
+    use super::{
+        connect_pinned, parse_nip11_headers, relay_identity, resolve_connection_attempt,
+        MappingError,
+    };
+
+    fn mapping(host: &str, port: u16) -> TrustedRelayMapping {
+        let tenant_id = TenantId(Uuid::new_v4());
+        TrustedRelayMapping::validate(
+            RelayMappingRecord {
+                mapping_id: Uuid::new_v4(),
+                tenant_id,
+                workspace_id: WorkspaceId(Uuid::new_v4()),
+                community_id: "test-community".into(),
+                relay_url: format!("wss://{host}:{port}"),
+                relay_host: host.into(),
+                relay_pubkey: "22".repeat(32),
+                deployment_digest: format!("sha256:{}", "ab".repeat(32)),
+                approved_ips: vec!["8.8.8.8".parse().unwrap()],
+                generation: 1,
+                active: true,
+                valid_until: Utc::now() + ChronoDuration::minutes(5),
+                updated_by: Uuid::new_v4(),
+                audit_entry_id: Uuid::new_v4(),
+            },
+            Utc::now(),
+        )
+        .unwrap()
+    }
 
     #[test]
     fn nip11_identity_requires_exact_self_field() {
@@ -362,5 +419,43 @@ mod tests {
         for response in invalid {
             assert!(parse_nip11_headers(response).is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn resolver_rejects_loopback_before_any_socket_dial() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mapping = mapping("localhost", port);
+
+        assert!(matches!(
+            resolve_connection_attempt(&mapping, &mapping.scope()).await,
+            Err(super::UpstreamBuzzTransportError::Mapping(
+                MappingError::UnsafeDnsTargets
+            ))
+        ));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), listener.accept())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn pinned_connection_tries_remaining_approved_addresses() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let ips: [std::net::IpAddr; 2] =
+            ["127.0.0.2".parse().unwrap(), "127.0.0.1".parse().unwrap()];
+
+        let stream = connect_pinned(&ips, port).await.unwrap();
+        let (_, peer) = tokio::time::timeout(Duration::from_secs(1), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            stream.peer_addr().unwrap().ip(),
+            "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
+        );
+        assert_eq!(peer.ip(), "127.0.0.1".parse::<std::net::IpAddr>().unwrap());
     }
 }
