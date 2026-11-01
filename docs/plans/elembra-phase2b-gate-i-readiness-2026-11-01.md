@@ -139,4 +139,4 @@ The exact current source passes Rust formatting, `git diff --check`, and `SQLX_O
 
 The disposable connector test now also installs a signed test mapping whose relay public key intentionally differs from the live Buzz NIP-11 `self` key and asserts that the connector rejects the TLS-valid endpoint before WebSocket upgrade; it then restores the attested key at a new generation before the positive NIP-42/DM checks. This new live assertion compiled as part of the test binary but was not rerun against the private service in this follow-up. The six focused transport unit tests pass, and feature-enabled server Clippy plus formatting and `git diff --check` pass. The required live regression rerun, protected CI, independent review and operator-authority acceptance remain outstanding.
 
-This follow-up is DCO-signed commit `73ef0b1f` on draft PR #450. The PR remains stacked on #449 with no status checks.
+The test change is DCO-signed commit `73ef0b1f`; report update `64af979b` is the current PR #450 head. The PR remains stacked on #449 with no status checks.
