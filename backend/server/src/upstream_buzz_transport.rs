@@ -870,8 +870,8 @@ mod disposable_service_tests {
             TenantId(tenant_id),
             WorkspaceId(workspace_id),
             &RelayTlsTrustConfig::TrustedService {
-                endpoint_service_identity: service_identity,
-                roots: vec![CertificateDer::from(root_der)],
+                endpoint_service_identity: service_identity.clone(),
+                roots: vec![CertificateDer::from(root_der.clone())],
             },
         )
         .await
@@ -1003,6 +1003,43 @@ mod disposable_service_tests {
             )
             .await
             .expect("mapping generation revalidation timed out"),
+            Err(UpstreamBuzzTransportError::SessionFenced)
+        ));
+
+        let mut revoked_session = connect(
+            &store,
+            TenantId(tenant_id),
+            WorkspaceId(workspace_id),
+            &RelayTlsTrustConfig::TrustedService {
+                endpoint_service_identity: service_identity,
+                roots: vec![CertificateDer::from(root_der)],
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(revoked_session.scope().generation, 6);
+
+        statement.operation_id = Uuid::new_v4();
+        statement.change_reference_id = Uuid::new_v4();
+        statement.action = MappingProvisioningAction::Deactivate;
+        statement.expected_generation = 6;
+        statement.record.generation = 7;
+        statement.record.active = false;
+        statement.record.audit_entry_id = Uuid::new_v4();
+        statement.issued_at = test_now();
+        statement.expires_at = statement.issued_at + chrono::Duration::minutes(2);
+        statement.signature = operator_key
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        store.apply(&statement).await.unwrap();
+        assert!(matches!(
+            tokio::time::timeout(
+                SESSION_REVALIDATE_INTERVAL + Duration::from_secs(2),
+                revoked_session.receive()
+            )
+            .await
+            .expect("mapping revocation revalidation timed out"),
             Err(UpstreamBuzzTransportError::SessionFenced)
         ));
     }
