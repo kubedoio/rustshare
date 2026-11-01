@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+upstream-buzz = []
+
 [dependencies]
 rustshare-core = { path = "../core" }
 rustshare-crypto = { path = "../crypto" }
@@ -37,3 +41,4 @@ base64 = "0.23"
 
 [dev-dependencies]
 libc = "0.2"
+nostr.workspace = true
