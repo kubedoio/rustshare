@@ -15,3 +15,11 @@ hmac.workspace = true
 sha2.workspace = true
 hex.workspace = true
 subtle.workspace = true
+nostr.workspace = true
+zeroize = "1"
+async-trait = "0.1"
+uuid.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
