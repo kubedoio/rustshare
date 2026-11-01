@@ -677,6 +677,53 @@ mod disposable_service_tests {
         Utc.timestamp_micros(Utc::now().timestamp_micros()).unwrap()
     }
 
+    async fn authenticate_member(session: &mut TenantRelaySession, user_keys: &Keys) {
+        let challenge = tokio::time::timeout(Duration::from_secs(15), session.receive())
+            .await
+            .expect("relay AUTH challenge timed out")
+            .unwrap()
+            .expect("relay closed before AUTH challenge");
+        let Message::Text(challenge) = challenge else {
+            panic!("expected upstream relay AUTH frame")
+        };
+        let challenge: Value = serde_json::from_str(&challenge).unwrap();
+        assert_eq!(challenge[0], "AUTH");
+        let challenge = challenge[1].as_str().expect("AUTH challenge string");
+        let relay = RelayUrl::parse(&required("BUZZ_TEST_RELAY_URL")).unwrap();
+        let auth = EventBuilder::auth(challenge, relay)
+            .sign_with_keys(user_keys)
+            .unwrap();
+        let auth_id = auth.id.to_hex();
+        session
+            .socket
+            .as_mut()
+            .expect("connected socket")
+            .send(Message::Text(
+                serde_json::json!(["AUTH", auth]).to_string().into(),
+            ))
+            .await
+            .unwrap();
+
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(15), session.receive())
+                .await
+                .expect("relay AUTH response timed out")
+                .unwrap()
+                .expect("relay closed before AUTH response");
+            let Message::Text(frame) = frame else {
+                continue;
+            };
+            let response: Value = serde_json::from_str(&frame).unwrap();
+            if response[0] == "OK" && response[1] == auth_id {
+                assert!(
+                    response[2].as_bool().unwrap_or(false),
+                    "upstream relay rejected member NIP-42"
+                );
+                return;
+            }
+        }
+    }
+
     // Run only inside the Cilium-restricted connector namespace against disposable services.
     #[tokio::test]
     #[ignore = "requires disposable PostgreSQL, operator-attested mapping inputs, and private Buzz service"]
@@ -760,7 +807,8 @@ mod disposable_service_tests {
             )
             .unwrap(),
         );
-        let store = UpstreamRelayMappingStore::with_provisioning_verifier(pool.clone(), verifier);
+        let store =
+            UpstreamRelayMappingStore::with_provisioning_verifier(pool.clone(), verifier.clone());
         store.apply(&statement).await.unwrap();
 
         let wrong_trust = RelayTlsTrustConfig::TrustedService {
@@ -878,48 +926,7 @@ mod disposable_service_tests {
         .unwrap();
         assert_eq!(session.scope().generation, 5);
 
-        let challenge = tokio::time::timeout(Duration::from_secs(15), session.receive())
-            .await
-            .expect("relay AUTH challenge timed out")
-            .unwrap()
-            .expect("relay closed before AUTH challenge");
-        let Message::Text(challenge) = challenge else {
-            panic!("expected upstream relay AUTH frame")
-        };
-        let challenge: Value = serde_json::from_str(&challenge).unwrap();
-        assert_eq!(challenge[0], "AUTH");
-        let challenge = challenge[1].as_str().expect("AUTH challenge string");
-        let relay = RelayUrl::parse(&required("BUZZ_TEST_RELAY_URL")).unwrap();
-        let auth = EventBuilder::auth(challenge, relay)
-            .sign_with_keys(&user_keys)
-            .unwrap();
-        let auth_id = auth.id.to_hex();
-        let socket = session.socket.as_mut().expect("connected socket");
-        socket
-            .send(Message::Text(
-                serde_json::json!(["AUTH", auth]).to_string().into(),
-            ))
-            .await
-            .unwrap();
-
-        loop {
-            let frame = tokio::time::timeout(Duration::from_secs(15), session.receive())
-                .await
-                .expect("relay AUTH response timed out")
-                .unwrap()
-                .expect("relay closed before AUTH response");
-            let Message::Text(frame) = frame else {
-                continue;
-            };
-            let response: Value = serde_json::from_str(&frame).unwrap();
-            if response[0] == "OK" && response[1] == auth_id {
-                assert!(
-                    response[2].as_bool().unwrap_or(false),
-                    "upstream relay rejected member NIP-42"
-                );
-                break;
-            }
-        }
+        authenticate_member(&mut session, &user_keys).await;
 
         let dm_channel = required("BUZZ_TEST_DM_CHANNEL_ID");
         let expected_dm_id = required("BUZZ_TEST_EXPECTED_DM_EVENT_ID");
@@ -1006,13 +1013,111 @@ mod disposable_service_tests {
             Err(UpstreamBuzzTransportError::SessionFenced)
         ));
 
-        let mut revoked_session = connect(
-            &store,
+        let outage_pool = PgPool::connect(&database_url).await.unwrap();
+        let outage_store = UpstreamRelayMappingStore::with_provisioning_verifier(
+            outage_pool.clone(),
+            verifier.clone(),
+        );
+        let mut subscribed_session = connect(
+            &outage_store,
             TenantId(tenant_id),
             WorkspaceId(workspace_id),
             &RelayTlsTrustConfig::TrustedService {
-                endpoint_service_identity: service_identity,
-                roots: vec![CertificateDer::from(root_der)],
+                endpoint_service_identity: service_identity.clone(),
+                roots: vec![CertificateDer::from(root_der.clone())],
+            },
+        )
+        .await
+        .unwrap();
+        authenticate_member(&mut subscribed_session, &user_keys).await;
+        let outage_subscription = Uuid::new_v4().to_string();
+        subscribed_session
+            .socket
+            .as_mut()
+            .expect("connected socket")
+            .send(Message::Text(
+                serde_json::json!([
+                    "REQ",
+                    outage_subscription,
+                    {"kinds": [9], "#h": [dm_channel], "limit": 50}
+                ])
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let mut outage_subscription_saw_dm = false;
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(15), subscribed_session.receive())
+                .await
+                .expect("outage test subscription timed out")
+                .unwrap()
+                .expect("relay closed before outage test subscription completed");
+            let Message::Text(frame) = frame else {
+                continue;
+            };
+            let response: Value = serde_json::from_str(&frame).unwrap();
+            if response[0] == "EVENT" && response[1] == outage_subscription {
+                outage_subscription_saw_dm |= response[2]["id"] == expected_dm_id;
+            } else if response[0] == "EOSE" && response[1] == outage_subscription {
+                break;
+            }
+        }
+        assert!(
+            outage_subscription_saw_dm,
+            "active NIP-29 subscription saw no expected DM"
+        );
+
+        let outage_ack_path = std::path::PathBuf::from(required("BUZZ_TEST_DB_OUTAGE_ACK_FILE"));
+        assert!(
+            !outage_ack_path.exists(),
+            "database-outage acknowledgement must start absent"
+        );
+        println!("BUZZ_TEST_DB_OUTAGE_READY");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+        tokio::time::timeout(Duration::from_secs(120), async {
+            while !outage_ack_path.exists() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("disposable PostgreSQL outage acknowledgement timed out");
+        assert!(matches!(
+            tokio::time::timeout(
+                SESSION_REVALIDATE_INTERVAL + CONNECT_TIMEOUT + Duration::from_secs(2),
+                subscribed_session.receive()
+            )
+            .await
+            .expect("database-outage fencing timed out"),
+            Err(UpstreamBuzzTransportError::SessionFenced)
+        ));
+        assert!(subscribed_session.socket.is_none());
+
+        let restore_ack_path = std::path::PathBuf::from(required("BUZZ_TEST_DB_RESTORE_ACK_FILE"));
+        assert!(
+            !restore_ack_path.exists(),
+            "database-restore acknowledgement must start absent"
+        );
+        println!("BUZZ_TEST_DB_RESTORE_READY");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+        tokio::time::timeout(Duration::from_secs(120), async {
+            while !restore_ack_path.exists() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("disposable PostgreSQL restore acknowledgement timed out");
+
+        let restored_pool = PgPool::connect(&database_url).await.unwrap();
+        let restored_store =
+            UpstreamRelayMappingStore::with_provisioning_verifier(restored_pool, verifier);
+        let mut revoked_session = connect(
+            &restored_store,
+            TenantId(tenant_id),
+            WorkspaceId(workspace_id),
+            &RelayTlsTrustConfig::TrustedService {
+                endpoint_service_identity: service_identity.clone(),
+                roots: vec![CertificateDer::from(root_der.clone())],
             },
         )
         .await
@@ -1032,7 +1137,7 @@ mod disposable_service_tests {
             .sign(&statement.signing_bytes().unwrap())
             .to_bytes()
             .to_vec();
-        store.apply(&statement).await.unwrap();
+        restored_store.apply(&statement).await.unwrap();
         assert!(matches!(
             tokio::time::timeout(
                 SESSION_REVALIDATE_INTERVAL + Duration::from_secs(2),
