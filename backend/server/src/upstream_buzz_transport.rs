@@ -672,6 +672,7 @@ mod disposable_service_tests {
         let relay_url = required("BUZZ_TEST_RELAY_URL");
         let community_id = required("BUZZ_TEST_COMMUNITY_ID");
         let relay_pubkey = required("BUZZ_TEST_RELAY_PUBKEY");
+        let trusted_relay_pubkey = relay_pubkey.clone();
         let deployment_digest = required("BUZZ_TEST_DEPLOYMENT_DIGEST");
         let service_identity = required("BUZZ_TEST_SERVICE_IDENTITY");
         let spki_pin = required("BUZZ_TEST_TLS_SPKI_PIN");
@@ -800,6 +801,51 @@ mod disposable_service_tests {
             .to_vec();
         store.apply(&statement).await.unwrap();
 
+        let mut wrong_relay_identity = statement.clone();
+        wrong_relay_identity.operation_id = Uuid::new_v4();
+        wrong_relay_identity.change_reference_id = Uuid::new_v4();
+        wrong_relay_identity.action = MappingProvisioningAction::Update;
+        wrong_relay_identity.expected_generation = 3;
+        wrong_relay_identity.record.generation = 4;
+        wrong_relay_identity.record.audit_entry_id = Uuid::new_v4();
+        wrong_relay_identity.record.relay_pubkey = Keys::generate().public_key().to_hex();
+        wrong_relay_identity.issued_at = test_now();
+        wrong_relay_identity.expires_at =
+            wrong_relay_identity.issued_at + chrono::Duration::minutes(2);
+        wrong_relay_identity.signature = operator_key
+            .sign(&wrong_relay_identity.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        store.apply(&wrong_relay_identity).await.unwrap();
+        assert!(matches!(
+            connect(
+                &store,
+                TenantId(tenant_id),
+                WorkspaceId(workspace_id),
+                &RelayTlsTrustConfig::TrustedService {
+                    endpoint_service_identity: service_identity.clone(),
+                    roots: vec![CertificateDer::from(root_der.clone())],
+                },
+            )
+            .await,
+            Err(UpstreamBuzzTransportError::Connection)
+        ));
+
+        statement = wrong_relay_identity;
+        statement.operation_id = Uuid::new_v4();
+        statement.change_reference_id = Uuid::new_v4();
+        statement.expected_generation = 4;
+        statement.record.generation = 5;
+        statement.record.audit_entry_id = Uuid::new_v4();
+        statement.record.relay_pubkey = trusted_relay_pubkey;
+        statement.issued_at = test_now();
+        statement.expires_at = statement.issued_at + chrono::Duration::minutes(2);
+        statement.signature = operator_key
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        store.apply(&statement).await.unwrap();
+
         let mut session = connect(
             &store,
             TenantId(tenant_id),
@@ -811,7 +857,7 @@ mod disposable_service_tests {
         )
         .await
         .unwrap();
-        assert_eq!(session.scope().generation, 3);
+        assert_eq!(session.scope().generation, 5);
 
         let challenge = tokio::time::timeout(Duration::from_secs(15), session.receive())
             .await
@@ -921,8 +967,8 @@ mod disposable_service_tests {
         statement.operation_id = Uuid::new_v4();
         statement.change_reference_id = Uuid::new_v4();
         statement.action = MappingProvisioningAction::Update;
-        statement.expected_generation = 3;
-        statement.record.generation = 4;
+        statement.expected_generation = 5;
+        statement.record.generation = 6;
         statement.record.audit_entry_id = Uuid::new_v4();
         statement.issued_at = test_now();
         statement.expires_at = statement.issued_at + chrono::Duration::minutes(2);
