@@ -1,5 +1,6 @@
 //! Cryptographic utilities for RustShare, including password hashing and secret encryption.
 
+pub mod managed_identity_vault;
 pub mod password;
 pub mod secret_encryption;
 pub mod webhook_signature;

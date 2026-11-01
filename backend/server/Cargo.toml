@@ -442,11 +442,18 @@ path = "tests/share_authorization_parity.rs"
 name = "meeting_resource_links_test"
 path = "../tests/meeting_resource_links_test.rs"
 
+[[test]]
+name = "managed_identity_vault_test"
+path = "../tests/managed_identity_vault_test.rs"
+
 [dev-dependencies]
 ical = { version = "0.11", default-features = false, features = ["ical"] }
 rustshare-crypto = { path = "../crates/crypto" }
 hmac = { workspace = true }
 hex = { workspace = true }
+zeroize = "1"
+aes-gcm = { workspace = true }
+rand = { workspace = true }
 sha2 = { workspace = true }
 base64 = { workspace = true }
 libc = "0.2"

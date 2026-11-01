@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 rustshare-core = { path = "../core" }
+rustshare-crypto = { path = "../crypto" }
 rustshare-integration-events = { path = "../integration-events" }
 rustshare-memory = { path = "../memory" }
 rustshare-resource-auth = { path = "../resource-auth" }
