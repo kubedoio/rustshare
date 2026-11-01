@@ -7,16 +7,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use rustshare_core::domain::{TenantId, WorkspaceId};
-use rustshare_resource_auth::upstream_relay_mapping::{
-    verify_connected_relay, ConnectedRelayEvidence, MappingError, TrustedRelayMapping,
-};
+use rustshare_resource_auth::upstream_relay_mapping::{MappingError, TrustedRelayMapping};
 use rustshare_storage::upstream_relay_mapping_store::{
     UpstreamRelayMappingStore, UpstreamRelayMappingStoreError,
 };
 use serde_json::Value;
 use thiserror::Error;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufStream};
 use tokio::net::{lookup_host, TcpStream};
 use tokio_rustls::rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
@@ -26,7 +25,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SESSION_REVALIDATE_INTERVAL: Duration = Duration::from_secs(5);
 const NIP11_MAX_BYTES: usize = 64 * 1024;
 
-type RelaySocket = WebSocketStream<tokio_rustls::client::TlsStream<TcpStream>>;
+type RelaySocket = WebSocketStream<BufStream<tokio_rustls::client::TlsStream<TcpStream>>>;
 
 #[derive(Debug, Error)]
 pub enum UpstreamBuzzTransportError {
@@ -41,39 +40,42 @@ pub enum UpstreamBuzzTransportError {
 }
 
 /// A WebSocket dedicated to one exact tenant, workspace and mapping generation.
-pub struct TenantRelaySession {
+pub(crate) struct TenantRelaySession {
     store: UpstreamRelayMappingStore,
     tenant_id: TenantId,
     workspace_id: WorkspaceId,
     scope: rustshare_resource_auth::upstream_relay_mapping::MappingScope,
-    socket: RelaySocket,
+    socket: Option<RelaySocket>,
     last_revalidation: tokio::time::Instant,
 }
 
 impl TenantRelaySession {
-    pub fn scope(&self) -> &rustshare_resource_auth::upstream_relay_mapping::MappingScope {
+    pub(crate) fn scope(&self) -> &rustshare_resource_auth::upstream_relay_mapping::MappingScope {
         &self.scope
     }
 
-    /// Send a protocol frame only while the stored tenant mapping still matches.
-    pub async fn send(&mut self, message: Message) -> Result<(), UpstreamBuzzTransportError> {
-        self.revalidate().await?;
-        self.socket
-            .send(message)
-            .await
-            .map_err(|_| UpstreamBuzzTransportError::Connection)
-    }
-
-    /// Receive frames while periodically fencing the session against mapping
-    /// updates, deactivation and expiry. The timestamp persists across calls,
-    /// so a busy stream cannot keep resetting the revalidation deadline.
-    pub async fn receive(&mut self) -> Result<Option<Message>, UpstreamBuzzTransportError> {
+    /// Receive frames while fencing the session against mapping updates,
+    /// deactivation and expiry. This transport foundation exposes no raw send.
+    pub(crate) async fn receive(&mut self) -> Result<Option<Message>, UpstreamBuzzTransportError> {
         loop {
             tokio::select! {
-                frame = self.socket.next() => {
-                    let frame = frame
-                        .transpose()
-                        .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+                frame = async {
+                    match self.socket.as_mut() {
+                        Some(socket) => socket.next().await,
+                        None => None,
+                    }
+                } => {
+                    let frame = match frame {
+                        Some(Ok(frame)) => Some(frame),
+                        Some(Err(_)) => {
+                            self.socket.take();
+                            return Err(UpstreamBuzzTransportError::Connection);
+                        }
+                        None => {
+                            self.socket.take();
+                            return Ok(None);
+                        }
+                    };
                     self.revalidate().await?;
                     self.last_revalidation = tokio::time::Instant::now();
                     return Ok(frame);
@@ -81,8 +83,6 @@ impl TenantRelaySession {
                 _ = tokio::time::sleep_until(self.last_revalidation + SESSION_REVALIDATE_INTERVAL) => {
                     self.revalidate().await?;
                     self.last_revalidation = tokio::time::Instant::now();
-                    self.socket.send(Message::Ping(Vec::new().into())).await
-                        .map_err(|_| UpstreamBuzzTransportError::Connection)?;
                 }
             }
         }
@@ -91,7 +91,7 @@ impl TenantRelaySession {
     async fn revalidate(&mut self) -> Result<(), UpstreamBuzzTransportError> {
         let current = load_mapping(&self.store, self.tenant_id, self.workspace_id).await;
         if !matches!(current, Ok(ref mapping) if mapping.scope() == self.scope) {
-            let _ = self.socket.close(None).await;
+            self.socket.take();
             return Err(UpstreamBuzzTransportError::SessionFenced);
         }
         Ok(())
@@ -101,7 +101,7 @@ impl TenantRelaySession {
 /// Resolve and connect only to operator-approved destinations from the current
 /// tenant/workspace mapping. The store enforces tenant RLS; callers supply IDs
 /// from their already-authorized subject context, never API-provided relay data.
-pub async fn connect(
+pub(crate) async fn connect(
     store: &UpstreamRelayMappingStore,
     tenant_id: TenantId,
     workspace_id: WorkspaceId,
@@ -124,7 +124,6 @@ pub async fn connect(
         .map(|ip| SocketAddr::new(ip, attempt.port()))
         .ok_or(UpstreamBuzzTransportError::Connection)?;
 
-    verify_nip11(&attempt, peer).await?;
     let tcp = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(peer))
         .await
         .map_err(|_| UpstreamBuzzTransportError::Connection)?
@@ -146,30 +145,24 @@ pub async fn connect(
     .await
     .map_err(|_| UpstreamBuzzTransportError::Connection)?
     .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+    let mut tls = BufStream::new(tls);
+    verify_nip11(&attempt, &mut tls).await?;
     let (socket, _) = tokio::time::timeout(CONNECT_TIMEOUT, client_async(attempt.relay_url(), tls))
         .await
         .map_err(|_| UpstreamBuzzTransportError::Connection)?
         .map_err(|_| UpstreamBuzzTransportError::Connection)?;
 
     let current = load_mapping(store, tenant_id, workspace_id).await?;
-    let evidence = ConnectedRelayEvidence {
-        scope: attempt.scope().clone(),
-        relay_url: attempt.relay_url().to_owned(),
-        tls_server_name: attempt.relay_host().to_owned(),
-        tls_certificate_and_hostname_verified: true,
-        peer_ip: actual_peer.ip(),
-        peer_port: actual_peer.port(),
-        community_id: attempt.community_id().to_owned(),
-        relay_pubkey: attempt.relay_pubkey().to_owned(),
-    };
-    verify_connected_relay(&attempt, &current, &evidence, chrono::Utc::now())?;
+    if current != mapping {
+        return Err(MappingError::MappingChangedDuringConnect.into());
+    }
 
     Ok(TenantRelaySession {
         store: store.clone(),
         tenant_id,
         workspace_id,
         scope: attempt.scope().clone(),
-        socket,
+        socket: Some(socket),
         last_revalidation: tokio::time::Instant::now(),
     })
 }
@@ -195,60 +188,139 @@ fn mapping_port(mapping: &TrustedRelayMapping) -> Result<u16, UpstreamBuzzTransp
 fn tls_config() -> Arc<ClientConfig> {
     let mut roots = RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    Arc::new(
-        ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth(),
-    )
+    let mut config = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Arc::new(config)
 }
 
 async fn verify_nip11(
     attempt: &rustshare_resource_auth::upstream_relay_mapping::ConnectionAttempt,
-    pinned_peer: SocketAddr,
+    stream: &mut BufStream<tokio_rustls::client::TlsStream<TcpStream>>,
 ) -> Result<(), UpstreamBuzzTransportError> {
-    let http_url = attempt.relay_url().replacen("wss://", "https://", 1);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .resolve_to_addrs(attempt.relay_host(), &[pinned_peer])
-        .timeout(CONNECT_TIMEOUT)
-        .build()
-        .map_err(|_| UpstreamBuzzTransportError::Connection)?;
-    let mut response = tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        client
-            .get(http_url)
-            .header(reqwest::header::ACCEPT, "application/nostr+json")
-            .send(),
-    )
-    .await
-    .map_err(|_| UpstreamBuzzTransportError::Connection)?
-    .map_err(|_| UpstreamBuzzTransportError::Connection)?;
-    if !response.status().is_success()
-        || response.remote_addr() != Some(pinned_peer)
-        || response
-            .content_length()
-            .is_some_and(|length| length > NIP11_MAX_BYTES as u64)
-    {
-        return Err(UpstreamBuzzTransportError::Connection);
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
+    tokio::time::timeout(CONNECT_TIMEOUT, verify_nip11_inner(attempt, stream))
         .await
         .map_err(|_| UpstreamBuzzTransportError::Connection)?
-    {
-        if body.len().saturating_add(chunk.len()) > NIP11_MAX_BYTES {
+}
+
+async fn verify_nip11_inner(
+    attempt: &rustshare_resource_auth::upstream_relay_mapping::ConnectionAttempt,
+    stream: &mut BufStream<tokio_rustls::client::TlsStream<TcpStream>>,
+) -> Result<(), UpstreamBuzzTransportError> {
+    let authority = format!("{}:{}", attempt.relay_host(), attempt.port());
+    let request = format!(
+        "GET / HTTP/1.1\r\nHost: {authority}\r\nAccept: application/nostr+json\r\nConnection: keep-alive\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+    stream
+        .flush()
+        .await
+        .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+
+    let mut response = Vec::with_capacity(4096);
+    let (header_len, body_len) = loop {
+        if let Some(header) = parse_nip11_headers(&response)? {
+            break header;
+        }
+        if response.len() >= 16 * 1024 {
             return Err(UpstreamBuzzTransportError::Connection);
         }
-        body.extend_from_slice(&chunk);
+        let mut bytes = [0; 2048];
+        let count = stream
+            .read(&mut bytes)
+            .await
+            .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+        if count == 0 {
+            return Err(UpstreamBuzzTransportError::Connection);
+        }
+        response.extend_from_slice(&bytes[..count]);
+    };
+    let already_read = response.len().saturating_sub(header_len);
+    if already_read > body_len {
+        return Err(UpstreamBuzzTransportError::Connection);
     }
-    let value: Value =
-        serde_json::from_slice(&body).map_err(|_| UpstreamBuzzTransportError::Connection)?;
+    while response.len().saturating_sub(header_len) < body_len {
+        let mut bytes = [0; 2048];
+        let count = stream
+            .read(&mut bytes)
+            .await
+            .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+        if count == 0 || response.len() + count > header_len + NIP11_MAX_BYTES {
+            return Err(UpstreamBuzzTransportError::Connection);
+        }
+        response.extend_from_slice(&bytes[..count]);
+    }
+    if response.len() != header_len + body_len {
+        return Err(UpstreamBuzzTransportError::Connection);
+    }
+    let value: Value = serde_json::from_slice(&response[header_len..])
+        .map_err(|_| UpstreamBuzzTransportError::Connection)?;
     if relay_identity(&value) != Some(attempt.relay_pubkey()) {
         return Err(UpstreamBuzzTransportError::Connection);
     }
     Ok(())
+}
+
+fn parse_nip11_headers(
+    response: &[u8],
+) -> Result<Option<(usize, usize)>, UpstreamBuzzTransportError> {
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut parsed = httparse::Response::new(&mut headers);
+    let header_len = match parsed
+        .parse(response)
+        .map_err(|_| UpstreamBuzzTransportError::Connection)?
+    {
+        httparse::Status::Partial => return Ok(None),
+        httparse::Status::Complete(header_len) => header_len,
+    };
+    if header_len > 16 * 1024 {
+        return Err(UpstreamBuzzTransportError::Connection);
+    }
+    let content_length = parsed
+        .headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case("content-length"));
+    let mut connection_close = false;
+    let mut has_transfer_encoding = false;
+    let mut content_type = false;
+    let mut content_length_count = 0;
+    for header in parsed.headers.iter() {
+        if header.name.eq_ignore_ascii_case("content-length") {
+            content_length_count += 1;
+        } else if header.name.eq_ignore_ascii_case("connection") {
+            connection_close |= std::str::from_utf8(header.value).ok().is_some_and(|value| {
+                value
+                    .split(',')
+                    .any(|token| token.trim().eq_ignore_ascii_case("close"))
+            });
+        } else if header.name.eq_ignore_ascii_case("transfer-encoding") {
+            has_transfer_encoding = true;
+        } else if header.name.eq_ignore_ascii_case("content-type") {
+            content_type = std::str::from_utf8(header.value)
+                .ok()
+                .and_then(|value| value.split(';').next())
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/nostr+json"));
+        }
+    }
+    let body_len = content_length
+        .and_then(|header| std::str::from_utf8(header.value).ok())
+        .and_then(|value| value.parse::<usize>().ok())
+        .ok_or(UpstreamBuzzTransportError::Connection)?;
+    if parsed.version != Some(1)
+        || parsed.code != Some(200)
+        || content_length_count != 1
+        || connection_close
+        || has_transfer_encoding
+        || !content_type
+        || body_len > NIP11_MAX_BYTES
+    {
+        return Err(UpstreamBuzzTransportError::Connection);
+    }
+    Ok(Some((header_len, body_len)))
 }
 
 fn relay_identity(nip11: &Value) -> Option<&str> {
@@ -259,7 +331,7 @@ fn relay_identity(nip11: &Value) -> Option<&str> {
 mod tests {
     use serde_json::json;
 
-    use super::relay_identity;
+    use super::{parse_nip11_headers, relay_identity};
 
     #[test]
     fn nip11_identity_requires_exact_self_field() {
@@ -270,5 +342,25 @@ mod tests {
         );
         assert_eq!(relay_identity(&json!({"pubkey": identity})), None);
         assert_eq!(relay_identity(&json!({"self": 7})), None);
+    }
+
+    #[test]
+    fn nip11_response_requires_bounded_persistent_http_1_1_json() {
+        let valid = b"HTTP/1.1 200 OK\r\nContent-Type: application/nostr+json; charset=utf-8\r\nContent-Length: 10\r\n\r\n";
+        let parsed = parse_nip11_headers(valid).unwrap().unwrap();
+        assert_eq!(parsed.0, valid.len());
+        assert_eq!(parsed.1, 10);
+
+        let invalid = [
+            &b"HTTP/1.1 302 Found\r\nContent-Type: application/nostr+json\r\nContent-Length: 2\r\n\r\n"[..],
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/nostr+json\r\nTransfer-Encoding: chunked\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/nostr+json\r\nConnection: close\r\nContent-Length: 2\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/nostr+json\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/nostr+json\r\nContent-Length: 65537\r\n\r\n",
+        ];
+        for response in invalid {
+            assert!(parse_nip11_headers(response).is_err());
+        }
     }
 }

@@ -36,7 +36,11 @@ pub mod state;
 pub mod test_guard;
 pub mod trash_cleanup;
 #[cfg(feature = "upstream-buzz-runtime")]
-pub mod upstream_buzz_transport;
+#[expect(
+    dead_code,
+    reason = "transport is deliberately unwired until Gate I and independent review pass"
+)]
+pub(crate) mod upstream_buzz_transport;
 pub mod user_disable;
 pub mod web_session;
 

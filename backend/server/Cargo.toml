@@ -59,6 +59,7 @@ aws-config.workspace = true
 aws-sdk-s3.workspace = true
 futures-util = "0.3"
 tokio-tungstenite = "0.30"
+httparse = "1"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 tempfile = "3"
 dotenvy = "0.15"
