@@ -35,6 +35,8 @@ pub mod state;
 #[doc(hidden)]
 pub mod test_guard;
 pub mod trash_cleanup;
+#[cfg(feature = "upstream-buzz-runtime")]
+pub mod upstream_buzz_transport;
 pub mod user_disable;
 pub mod web_session;
 

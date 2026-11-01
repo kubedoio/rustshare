@@ -18,6 +18,8 @@ test-recording-provider = []
 # Non-distributable debug acceptance build. Fixture code is also gated on
 # debug_assertions, so release binaries cannot enable it.
 test-buzz-replacement-qualification = []
+# Inert connector foundation; no routes or runtime profile enable it.
+upstream-buzz-runtime = ["rustshare-storage/upstream-buzz"]
 
 [[bin]]
 name = "rustshare-server"
