@@ -14,6 +14,14 @@ use rustshare_core::domain::{TenantId, WorkspaceId};
 use url::Url;
 use uuid::Uuid;
 
+/// Endpoint validation policy selected only by the signed deployment authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RelayEndpointPolicy {
+    StrictPublic = 1,
+    TrustedService = 2,
+}
+
 /// Trusted, versioned tenant/workspace binding to one upstream relay.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayMappingRecord {
@@ -25,6 +33,8 @@ pub struct RelayMappingRecord {
     pub workspace_id: WorkspaceId,
     /// Buzz community provisioned on this isolated relay.
     pub community_id: String,
+    /// Signed endpoint policy; no client input selects this value.
+    pub endpoint_policy: RelayEndpointPolicy,
     /// Unique deployment identity allocated by the trusted operator service.
     pub relay_deployment_id: Uuid,
     /// Immutable orchestrator identity, including namespace and service UID.
@@ -139,12 +149,24 @@ impl TrustedRelayMapping {
         if record.relay_url != canonical_url {
             return Err(MappingError::InvalidRelayUrl);
         }
+        let unsafe_ip = match record.endpoint_policy {
+            RelayEndpointPolicy::StrictPublic => is_unsafe_relay_ip,
+            RelayEndpointPolicy::TrustedService => is_forbidden_service_ip,
+        };
         if record.approved_ips.is_empty()
             || record.approved_ips.len() > 64
-            || record.approved_ips.iter().any(is_unsafe_relay_ip)
+            || record.approved_ips.iter().any(unsafe_ip)
             || has_duplicates(&record.approved_ips)
         {
             return Err(MappingError::UnsafeDnsTargets);
+        }
+        if record.endpoint_policy == RelayEndpointPolicy::TrustedService
+            && !trusted_kubernetes_service_identity(
+                &record.endpoint_service_identity,
+                &record.relay_host,
+            )
+        {
+            return Err(MappingError::InvalidDeploymentProvenance);
         }
         Ok(())
     }
@@ -166,6 +188,7 @@ impl TrustedRelayMapping {
             workspace_id: self.record.workspace_id,
             mapping_id: self.record.mapping_id,
             relay_deployment_id: self.record.relay_deployment_id,
+            endpoint_policy: self.record.endpoint_policy,
             endpoint_service_identity: self.record.endpoint_service_identity.clone(),
             tls_peer_spki_sha256: self.record.tls_peer_spki_sha256.clone(),
             generation: self.record.generation,
@@ -188,10 +211,14 @@ impl TrustedRelayMapping {
         if now >= self.record.valid_until {
             return Err(MappingError::InactiveOrStale);
         }
+        let unsafe_ip = match self.record.endpoint_policy {
+            RelayEndpointPolicy::StrictPublic => is_unsafe_relay_ip,
+            RelayEndpointPolicy::TrustedService => is_forbidden_service_ip,
+        };
         if resolved_ips.is_empty()
             || resolved_ips
                 .iter()
-                .any(|ip| is_unsafe_relay_ip(ip) || !self.record.approved_ips.contains(ip))
+                .any(|ip| unsafe_ip(ip) || !self.record.approved_ips.contains(ip))
         {
             return Err(MappingError::UnsafeDnsTargets);
         }
@@ -218,6 +245,7 @@ pub struct MappingScope {
     pub workspace_id: WorkspaceId,
     pub mapping_id: Uuid,
     pub relay_deployment_id: Uuid,
+    pub endpoint_policy: RelayEndpointPolicy,
     pub endpoint_service_identity: String,
     pub tls_peer_spki_sha256: String,
     pub generation: u64,
@@ -319,10 +347,14 @@ pub fn verify_connected_relay(
     if !evidence.tls_certificate_and_hostname_verified {
         return Err(MappingError::TlsVerificationFailed);
     }
+    let unsafe_ip = match attempt.scope.endpoint_policy {
+        RelayEndpointPolicy::StrictPublic => is_unsafe_relay_ip,
+        RelayEndpointPolicy::TrustedService => is_forbidden_service_ip,
+    };
     if evidence.peer_port != attempt.port
         || !attempt.pinned_ips.contains(&evidence.peer_ip)
         || !current.record.approved_ips.contains(&evidence.peer_ip)
-        || is_unsafe_relay_ip(&evidence.peer_ip)
+        || unsafe_ip(&evidence.peer_ip)
     {
         return Err(MappingError::PeerAddressMismatch);
     }
@@ -446,6 +478,58 @@ fn is_unsafe_relay_ip(ip: &IpAddr) -> bool {
         || SPECIAL_USE_IP_RANGES.iter().any(|range| range.contains(ip))
 }
 
+fn is_forbidden_service_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            !ip.is_private()
+                || ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_multicast()
+                || ip.is_broadcast()
+        }
+        IpAddr::V6(ip) => {
+            !ip.is_unique_local()
+                || ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_unicast_link_local()
+                || ip.is_multicast()
+        }
+    }
+}
+
+fn trusted_kubernetes_service_identity(identity: &str, host: &str) -> bool {
+    let Some(identity) = identity.strip_prefix("k8s://") else {
+        return false;
+    };
+    let mut parts = identity.split('/');
+    let (Some(cluster), Some(namespace), Some(service), Some(uid), None) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
+        return false;
+    };
+    let canonical_uuid =
+        |value: &str| Uuid::parse_str(value).is_ok_and(|parsed| parsed.to_string() == value);
+    let dns_label = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 63
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            && value.as_bytes()[0].is_ascii_alphanumeric()
+            && value.as_bytes()[value.len() - 1].is_ascii_alphanumeric()
+    };
+    canonical_uuid(cluster)
+        && canonical_uuid(uid)
+        && dns_label(namespace)
+        && dns_label(service)
+        && host == format!("{service}.{namespace}.svc.cluster.local")
+}
+
 static SPECIAL_USE_IP_RANGES: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
     include_str!("upstream_special_use_ip_ranges.txt")
         .lines()
@@ -558,6 +642,7 @@ mod tests {
             tenant_id,
             workspace_id,
             community_id: Uuid::new_v4().to_string(),
+            endpoint_policy: RelayEndpointPolicy::StrictPublic,
             relay_deployment_id: Uuid::new_v4(),
             endpoint_service_identity: format!(
                 "cluster/test-ns/buzz-{tenant_id}#{}",
@@ -680,6 +765,41 @@ mod tests {
                 MappingError::UnsafeDnsTargets
             );
         }
+    }
+
+    #[test]
+    fn trusted_service_requires_exact_service_identity_and_private_target() {
+        let (tenant, workspace) = ids();
+        let cluster = Uuid::new_v4();
+        let service_uid = Uuid::new_v4();
+        let mut record = valid_record(tenant, workspace, "buzz.tenant-a.svc.cluster.local");
+        record.endpoint_policy = RelayEndpointPolicy::TrustedService;
+        record.endpoint_service_identity = format!("k8s://{cluster}/tenant-a/buzz/{service_uid}");
+        record.approved_ips = vec!["10.96.32.10".parse().unwrap()];
+        let mapping = TrustedRelayMapping::validate(record.clone(), Utc::now()).unwrap();
+        assert!(mapping
+            .begin_connection(
+                mapping.scope(),
+                &["10.96.32.10".parse().unwrap()],
+                Utc::now()
+            )
+            .is_ok());
+
+        for ip in ["127.0.0.1", "169.254.169.254", "224.0.0.1"] {
+            assert_eq!(
+                mapping
+                    .begin_connection(mapping.scope(), &[ip.parse().unwrap()], Utc::now())
+                    .unwrap_err(),
+                MappingError::UnsafeDnsTargets
+            );
+        }
+
+        record.relay_host = "other.tenant-a.svc.cluster.local".into();
+        record.relay_url = format!("wss://{}", record.relay_host);
+        assert_eq!(
+            TrustedRelayMapping::validate(record, Utc::now()).unwrap_err(),
+            MappingError::InvalidDeploymentProvenance
+        );
     }
 
     #[test]

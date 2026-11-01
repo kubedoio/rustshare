@@ -14,10 +14,14 @@ use rustshare_storage::upstream_relay_mapping_store::{
     UpstreamRelayMappingStore, UpstreamRelayMappingStoreError,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufStream};
 use tokio::net::{lookup_host, TcpStream};
-use tokio_rustls::rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
+use tokio_rustls::rustls::{
+    pki_types::{CertificateDer, ServerName},
+    ClientConfig, RootCertStore,
+};
 use tokio_rustls::TlsConnector;
 use tokio_tungstenite::{client_async, tungstenite::Message, WebSocketStream};
 
@@ -25,6 +29,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 const SESSION_REVALIDATE_INTERVAL: Duration = Duration::from_secs(5);
 const NIP11_MAX_BYTES: usize = 64 * 1024;
+const MAX_TRUSTED_SERVICE_ROOTS: usize = 8;
 
 type RelaySocket = WebSocketStream<BufStream<tokio_rustls::client::TlsStream<TcpStream>>>;
 
@@ -38,6 +43,16 @@ pub enum UpstreamBuzzTransportError {
     Connection,
     #[error("trusted relay mapping changed; session closed")]
     SessionFenced,
+}
+
+/// Operator-mounted TLS roots for one exact signed private-service identity.
+/// It is never built from request data or selected from the relay URL.
+pub(crate) enum RelayTlsTrustConfig {
+    StrictPublic,
+    TrustedService {
+        endpoint_service_identity: String,
+        roots: Vec<CertificateDer<'static>>,
+    },
 }
 
 /// A WebSocket dedicated to one exact tenant, workspace and mapping generation.
@@ -106,14 +121,16 @@ pub(crate) async fn connect(
     store: &UpstreamRelayMappingStore,
     tenant_id: TenantId,
     workspace_id: WorkspaceId,
+    trust: &RelayTlsTrustConfig,
 ) -> Result<TenantRelaySession, UpstreamBuzzTransportError> {
     tokio::time::timeout(CONNECT_TIMEOUT, async {
         let mapping = load_mapping(store, tenant_id, workspace_id).await?;
+        validate_trust_profile(&mapping, trust)?;
         let scope = mapping.scope();
         let attempt = resolve_connection_attempt(&mapping, &scope).await?;
         let tcp = connect_pinned(attempt.pinned_ips(), attempt.port()).await?;
 
-        let tls_config = tls_config();
+        let tls_config = tls_config(trust)?;
         let server_name = ServerName::try_from(attempt.relay_host().to_owned())
             .map_err(|_| UpstreamBuzzTransportError::Connection)?;
         let tls = tokio::time::timeout(
@@ -123,6 +140,7 @@ pub(crate) async fn connect(
         .await
         .map_err(|_| UpstreamBuzzTransportError::Connection)?
         .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+        verify_tls_spki_pin(&tls, &attempt.scope().tls_peer_spki_sha256)?;
         let mut tls = BufStream::new(tls);
         verify_nip11(&attempt, &mut tls).await?;
         let (socket, _) =
@@ -212,14 +230,75 @@ fn mapping_port(mapping: &TrustedRelayMapping) -> Result<u16, UpstreamBuzzTransp
         .ok_or(UpstreamBuzzTransportError::Connection)
 }
 
-fn tls_config() -> Arc<ClientConfig> {
+fn validate_trust_profile(
+    mapping: &TrustedRelayMapping,
+    trust: &RelayTlsTrustConfig,
+) -> Result<(), UpstreamBuzzTransportError> {
+    use rustshare_resource_auth::upstream_relay_mapping::RelayEndpointPolicy;
+
+    match (mapping.record().endpoint_policy, trust) {
+        (RelayEndpointPolicy::StrictPublic, RelayTlsTrustConfig::StrictPublic) => Ok(()),
+        (
+            RelayEndpointPolicy::TrustedService,
+            RelayTlsTrustConfig::TrustedService {
+                endpoint_service_identity,
+                roots,
+            },
+        ) if endpoint_service_identity == &mapping.record().endpoint_service_identity
+            && !roots.is_empty()
+            && roots.len() <= MAX_TRUSTED_SERVICE_ROOTS =>
+        {
+            Ok(())
+        }
+        _ => Err(UpstreamBuzzTransportError::Mapping(
+            MappingError::InvalidDeploymentProvenance,
+        )),
+    }
+}
+
+fn tls_config(
+    trust: &RelayTlsTrustConfig,
+) -> Result<Arc<ClientConfig>, UpstreamBuzzTransportError> {
     let mut roots = RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    match trust {
+        RelayTlsTrustConfig::StrictPublic => {
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        }
+        RelayTlsTrustConfig::TrustedService {
+            roots: certificates,
+            ..
+        } => {
+            for certificate in certificates {
+                roots
+                    .add(certificate.clone())
+                    .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+            }
+        }
+    }
     let mut config = ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
-    Arc::new(config)
+    Ok(Arc::new(config))
+}
+
+fn verify_tls_spki_pin(
+    tls: &tokio_rustls::client::TlsStream<TcpStream>,
+    expected: &str,
+) -> Result<(), UpstreamBuzzTransportError> {
+    let certificate = tls
+        .get_ref()
+        .1
+        .peer_certificates()
+        .and_then(|certificates| certificates.first())
+        .ok_or(UpstreamBuzzTransportError::Connection)?;
+    let (_, certificate) = x509_parser::parse_x509_certificate(certificate.as_ref())
+        .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+    let digest = Sha256::digest(certificate.tbs_certificate.subject_pki.raw);
+    if expected != format!("sha256:{}", hex::encode(digest)) {
+        return Err(UpstreamBuzzTransportError::Connection);
+    }
+    Ok(())
 }
 
 async fn verify_nip11(
@@ -363,12 +442,13 @@ mod tests {
 
     use rustshare_core::domain::{TenantId, WorkspaceId};
     use rustshare_resource_auth::upstream_relay_mapping::{
-        RelayMappingRecord, TrustedRelayMapping,
+        RelayEndpointPolicy, RelayMappingRecord, TrustedRelayMapping,
     };
+    use tokio_rustls::rustls::pki_types::CertificateDer;
 
     use super::{
         connect_pinned, parse_nip11_headers, relay_identity, resolve_connection_attempt,
-        MappingError,
+        tls_config, validate_trust_profile, MappingError, RelayTlsTrustConfig,
     };
 
     fn mapping(host: &str, port: u16) -> TrustedRelayMapping {
@@ -378,8 +458,16 @@ mod tests {
                 mapping_id: Uuid::new_v4(),
                 tenant_id,
                 workspace_id: WorkspaceId(Uuid::new_v4()),
-                community_id: "test-community".into(),
-                relay_url: format!("wss://{host}:{port}"),
+                community_id: Uuid::new_v4().to_string(),
+                endpoint_policy: rustshare_resource_auth::upstream_relay_mapping::RelayEndpointPolicy::StrictPublic,
+                relay_deployment_id: Uuid::new_v4(),
+                endpoint_service_identity: format!("k8s://{}/{}/buzz/{}", Uuid::new_v4(), "test-ns", Uuid::new_v4()),
+                tls_peer_spki_sha256: format!("sha256:{}", "b2".repeat(32)),
+                relay_url: if port == 443 {
+                    format!("wss://{host}")
+                } else {
+                    format!("wss://{host}:{port}")
+                },
                 relay_host: host.into(),
                 relay_pubkey: "22".repeat(32),
                 deployment_digest: format!("sha256:{}", "ab".repeat(32)),
@@ -404,6 +492,44 @@ mod tests {
         );
         assert_eq!(relay_identity(&json!({"pubkey": identity})), None);
         assert_eq!(relay_identity(&json!({"self": 7})), None);
+    }
+
+    #[test]
+    fn tls_profile_is_bound_to_signed_endpoint_policy_and_service_identity() {
+        let strict = mapping("relay.example.test", 443);
+        assert!(validate_trust_profile(&strict, &RelayTlsTrustConfig::StrictPublic).is_ok());
+        assert!(validate_trust_profile(
+            &strict,
+            &RelayTlsTrustConfig::TrustedService {
+                endpoint_service_identity: strict.record().endpoint_service_identity.clone(),
+                roots: vec![CertificateDer::from(vec![1, 2, 3])],
+            }
+        )
+        .is_err());
+
+        let mut record = strict.record().clone();
+        record.endpoint_policy = RelayEndpointPolicy::TrustedService;
+        let cluster = Uuid::new_v4();
+        let service_uid = Uuid::new_v4();
+        record.endpoint_service_identity = format!("k8s://{cluster}/tenant-a/buzz/{service_uid}");
+        record.relay_host = "buzz.tenant-a.svc.cluster.local".into();
+        record.relay_url = format!("wss://{}", record.relay_host);
+        record.approved_ips = vec!["10.96.32.10".parse().unwrap()];
+        let private = TrustedRelayMapping::validate(record, Utc::now()).unwrap();
+        let exact_roots = RelayTlsTrustConfig::TrustedService {
+            endpoint_service_identity: private.record().endpoint_service_identity.clone(),
+            roots: vec![CertificateDer::from(vec![1, 2, 3])],
+        };
+        assert!(validate_trust_profile(&private, &exact_roots).is_ok());
+        assert!(validate_trust_profile(
+            &private,
+            &RelayTlsTrustConfig::TrustedService {
+                endpoint_service_identity: "other-service".into(),
+                roots: vec![CertificateDer::from(vec![1, 2, 3])],
+            }
+        )
+        .is_err());
+        assert!(tls_config(&exact_roots).is_err());
     }
 
     #[test]

@@ -188,11 +188,11 @@ impl UpstreamRelayMappingStore {
 
         let inserted = sqlx::query_as::<_, RelayRow>(
             "INSERT INTO upstream_buzz_tenant_relays \
-             (mapping_id,tenant_id,relay_url,relay_host,community_id,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
+             (mapping_id,tenant_id,relay_url,relay_host,community_id,endpoint_policy,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
               deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) \
              ON CONFLICT (tenant_id) DO NOTHING \
-             RETURNING mapping_id,tenant_id,relay_url,relay_host,community_id,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
+             RETURNING mapping_id,tenant_id,relay_url,relay_host,community_id,endpoint_policy,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
               deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id",
         )
         .bind(record.mapping_id)
@@ -200,6 +200,7 @@ impl UpstreamRelayMappingStore {
         .bind(&record.relay_url)
         .bind(&record.relay_host)
         .bind(&record.community_id)
+        .bind(endpoint_policy_name(record.endpoint_policy))
         .bind(record.relay_deployment_id)
         .bind(&record.endpoint_service_identity)
         .bind(&record.tls_peer_spki_sha256)
@@ -244,7 +245,7 @@ impl UpstreamRelayMappingStore {
                 return Err(UpstreamRelayMappingStoreError::Conflict);
             }
             let existing = sqlx::query_as::<_, RelayRow>(
-                "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
+                "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,endpoint_policy,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
                  deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id \
                  FROM upstream_buzz_tenant_relays WHERE tenant_id=$1",
             )
@@ -310,7 +311,7 @@ impl UpstreamRelayMappingStore {
             }
         }
         let row = sqlx::query_as::<_, RelayRow>(
-            "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
+            "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,endpoint_policy,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
              deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id \
              FROM upstream_buzz_tenant_relays WHERE tenant_id=$1 FOR UPDATE",
         )
@@ -376,7 +377,7 @@ impl UpstreamRelayMappingStore {
         let mut tx = self.pool.begin().await.map_err(map_database_error)?;
         set_tenant(&mut tx, tenant_id.0).await?;
         let row = sqlx::query_as::<_, RelayRow>(
-            "SELECT r.mapping_id,r.tenant_id,r.relay_url,r.relay_host,r.community_id,r.relay_deployment_id,r.endpoint_service_identity,r.tls_peer_spki_sha256,r.relay_pubkey, \
+            "SELECT r.mapping_id,r.tenant_id,r.relay_url,r.relay_host,r.community_id,r.endpoint_policy,r.relay_deployment_id,r.endpoint_service_identity,r.tls_peer_spki_sha256,r.relay_pubkey, \
              r.deployment_digest,r.approved_ips,r.generation,r.active,r.valid_until,r.updated_by,r.audit_entry_id \
              FROM upstream_buzz_tenant_relays r \
              JOIN upstream_buzz_workspace_relay_bindings b \
@@ -597,7 +598,7 @@ impl UpstreamRelayMappingStore {
             }
         }
         let old = sqlx::query_as::<_, RelayRow>(
-            "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
+            "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,endpoint_policy,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
              deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id \
              FROM upstream_buzz_tenant_relays WHERE tenant_id=$1 AND mapping_id=$2 FOR UPDATE",
         )
@@ -627,10 +628,10 @@ impl UpstreamRelayMappingStore {
         }
         let changed = changed_snapshot(&old, next)?;
         let result = sqlx::query(
-            "UPDATE upstream_buzz_tenant_relays SET relay_url=$4,relay_host=$5,community_id=$6, \
-             relay_deployment_id=$7,endpoint_service_identity=$8,tls_peer_spki_sha256=$9,relay_pubkey=$10, \
-             deployment_digest=$11,approved_ips=$12,generation=$13,active=$14, \
-             valid_until=$15,updated_by=$16,audit_entry_id=$17,updated_at=now() \
+            "UPDATE upstream_buzz_tenant_relays SET relay_url=$4,relay_host=$5,community_id=$6,endpoint_policy=$7, \
+             relay_deployment_id=$8,endpoint_service_identity=$9,tls_peer_spki_sha256=$10,relay_pubkey=$11, \
+             deployment_digest=$12,approved_ips=$13,generation=$14,active=$15, \
+             valid_until=$16,updated_by=$17,audit_entry_id=$18,updated_at=now() \
              WHERE tenant_id=$1 AND mapping_id=$2 AND generation=$3",
         )
         .bind(tenant_id)
@@ -642,6 +643,7 @@ impl UpstreamRelayMappingStore {
         .bind(&next.relay_url)
         .bind(&next.relay_host)
         .bind(&next.community_id)
+        .bind(endpoint_policy_name(next.endpoint_policy))
         .bind(next.relay_deployment_id)
         .bind(&next.endpoint_service_identity)
         .bind(&next.tls_peer_spki_sha256)
@@ -862,6 +864,7 @@ struct RelayRow {
     relay_url: String,
     relay_host: String,
     community_id: String,
+    endpoint_policy: String,
     relay_deployment_id: Uuid,
     endpoint_service_identity: String,
     tls_peer_spki_sha256: String,
@@ -885,6 +888,11 @@ impl RelayRow {
             tenant_id: TenantId(self.tenant_id),
             workspace_id: WorkspaceId(workspace_id),
             community_id: self.community_id.clone(),
+            endpoint_policy: match self.endpoint_policy.as_str() {
+                "strict_public" => rustshare_resource_auth::upstream_relay_mapping::RelayEndpointPolicy::StrictPublic,
+                "trusted_service" => rustshare_resource_auth::upstream_relay_mapping::RelayEndpointPolicy::TrustedService,
+                _ => return Err(UpstreamRelayMappingStoreError::InvalidRecord),
+            },
             relay_deployment_id: self.relay_deployment_id,
             endpoint_service_identity: self.endpoint_service_identity.clone(),
             tls_peer_spki_sha256: self.tls_peer_spki_sha256.clone(),
@@ -942,11 +950,25 @@ fn ip_strings(ips: &[IpAddr]) -> Vec<String> {
     ips.iter().map(ToString::to_string).collect()
 }
 
+fn endpoint_policy_name(
+    policy: rustshare_resource_auth::upstream_relay_mapping::RelayEndpointPolicy,
+) -> &'static str {
+    match policy {
+        rustshare_resource_auth::upstream_relay_mapping::RelayEndpointPolicy::StrictPublic => {
+            "strict_public"
+        }
+        rustshare_resource_auth::upstream_relay_mapping::RelayEndpointPolicy::TrustedService => {
+            "trusted_service"
+        }
+    }
+}
+
 fn mapping_snapshot(record: &RelayMappingRecord) -> Value {
     json!({
         "relay_url": record.relay_url,
         "relay_host": record.relay_host,
         "community_id": record.community_id,
+        "endpoint_policy": endpoint_policy_name(record.endpoint_policy),
         "relay_deployment_id": record.relay_deployment_id,
         "endpoint_service_identity": record.endpoint_service_identity,
         "tls_peer_spki_sha256": record.tls_peer_spki_sha256,
@@ -1044,6 +1066,8 @@ mod tests {
             tenant_id: TenantId(tenant_id),
             workspace_id: WorkspaceId(workspace_id),
             community_id: Uuid::new_v4().to_string(),
+            endpoint_policy:
+                rustshare_resource_auth::upstream_relay_mapping::RelayEndpointPolicy::StrictPublic,
             relay_deployment_id: Uuid::new_v4(),
             endpoint_service_identity: format!(
                 "cluster/test-ns/buzz-{tenant_id}#{}",
@@ -1160,6 +1184,38 @@ mod tests {
                 MappingError::MissingMapping
             ))
         ));
+
+        let mut internal = statement.clone();
+        internal.operation_id = Uuid::new_v4();
+        internal.change_reference_id = Uuid::new_v4();
+        internal.record = record(tenant_b, workspace_b);
+        internal.record.updated_by = statement.operator_service_id;
+        internal.record.endpoint_policy =
+            rustshare_resource_auth::upstream_relay_mapping::RelayEndpointPolicy::TrustedService;
+        let service_name = format!("buzz-{tenant_b}");
+        internal.record.endpoint_service_identity = format!(
+            "k8s://{}/tenant-b/{service_name}/{}",
+            Uuid::new_v4(),
+            Uuid::new_v4()
+        );
+        internal.record.relay_host = format!("{service_name}.tenant-b.svc.cluster.local");
+        internal.record.relay_url = format!("wss://{}", internal.record.relay_host);
+        internal.record.approved_ips = vec!["10.96.32.11".parse().unwrap()];
+        internal.record.valid_until = statement.record.valid_until;
+        internal.record.audit_entry_id = Uuid::new_v4();
+        internal.signature = signing_key
+            .sign(&internal.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        store.apply(&internal).await.unwrap();
+        let loaded = store
+            .load(TenantId(tenant_b), WorkspaceId(workspace_b))
+            .await
+            .unwrap();
+        assert_eq!(
+            loaded.record().endpoint_policy,
+            rustshare_resource_auth::upstream_relay_mapping::RelayEndpointPolicy::TrustedService
+        );
 
         let mut tx = pool.begin().await.unwrap();
         set_tenant(&mut tx, tenant_id).await.unwrap();
@@ -1316,15 +1372,16 @@ mod tests {
         set_tenant(&mut tx, tenant_b).await.unwrap();
         sqlx::query(
             "INSERT INTO upstream_buzz_tenant_relays \
-             (mapping_id,tenant_id,relay_url,relay_host,community_id,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
+             (mapping_id,tenant_id,relay_url,relay_host,community_id,endpoint_policy,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
               deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1,true,$12,$13,$14)",
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1,true,$13,$14,$15)",
         )
         .bind(mismatched_create.mapping_id)
         .bind(tenant_b)
         .bind(&mismatched_create.relay_url)
         .bind(&mismatched_create.relay_host)
         .bind(&mismatched_create.community_id)
+        .bind(endpoint_policy_name(mismatched_create.endpoint_policy))
         .bind(mismatched_create.relay_deployment_id)
         .bind(&mismatched_create.endpoint_service_identity)
         .bind(&mismatched_create.tls_peer_spki_sha256)

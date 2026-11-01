@@ -60,6 +60,7 @@ impl MappingProvisioningStatement {
         out.extend_from_slice(record.tenant_id.0.as_bytes());
         out.extend_from_slice(record.workspace_id.0.as_bytes());
         put_string(&mut out, &record.community_id)?;
+        out.push(record.endpoint_policy as u8);
         out.extend_from_slice(record.relay_deployment_id.as_bytes());
         put_string(&mut out, &record.endpoint_service_identity)?;
         put_string(&mut out, &record.tls_peer_spki_sha256)?;
@@ -288,6 +289,7 @@ fn put_count(out: &mut Vec<u8>, value: usize) -> Result<(), MappingProvisioningE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::upstream_relay_mapping::RelayEndpointPolicy;
     use ed25519_dalek::{Signer, SigningKey};
     use rustshare_core::domain::{TenantId, WorkspaceId};
 
@@ -308,6 +310,7 @@ mod tests {
             tenant_id: TenantId(Uuid::new_v4()),
             workspace_id: WorkspaceId(Uuid::new_v4()),
             community_id: Uuid::new_v4().to_string(),
+            endpoint_policy: RelayEndpointPolicy::StrictPublic,
             relay_deployment_id: Uuid::new_v4(),
             endpoint_service_identity: "cluster/ns/buzz#service-uid".into(),
             tls_peer_spki_sha256: format!("sha256:{}", "ab".repeat(32)),
@@ -370,6 +373,36 @@ mod tests {
         assert_eq!(
             verifier.verify(&statement, now).unwrap_err(),
             MappingProvisioningError::InvalidSignature
+        );
+    }
+
+    #[test]
+    fn trusted_service_policy_is_signed_and_bound_to_exact_kubernetes_service() {
+        let (verifier, mut statement, now) = signed(MappingProvisioningAction::Create);
+        let cluster = Uuid::new_v4();
+        let service_uid = Uuid::new_v4();
+        statement.record.endpoint_policy = RelayEndpointPolicy::TrustedService;
+        statement.record.endpoint_service_identity =
+            format!("k8s://{cluster}/tenant-a/buzz/{service_uid}");
+        statement.record.relay_host = "buzz.tenant-a.svc.cluster.local".into();
+        statement.record.relay_url = format!("wss://{}", statement.record.relay_host);
+        statement.record.approved_ips = vec!["10.96.32.10".parse().unwrap()];
+        let signer = SigningKey::from_bytes(&[7; 32]);
+        statement.signature = signer
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        assert!(verifier.verify(&statement, now).is_ok());
+
+        statement.record.relay_host = "buzz.other-tenant.svc.cluster.local".into();
+        statement.record.relay_url = format!("wss://{}", statement.record.relay_host);
+        statement.signature = signer
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        assert_eq!(
+            verifier.verify(&statement, now).unwrap_err(),
+            MappingProvisioningError::Mapping(MappingError::InvalidDeploymentProvenance)
         );
     }
 
