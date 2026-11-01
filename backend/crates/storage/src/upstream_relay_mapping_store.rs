@@ -652,6 +652,45 @@ mod tests {
         ));
         store.create(&initial, change_ref).await.unwrap();
         store.create(&initial, change_ref).await.unwrap();
+
+        let mismatched_binding_workspace = Uuid::new_v4();
+        let mismatched_binding_audit = Uuid::new_v4();
+        let mut tx = pool.begin().await.unwrap();
+        set_tenant(&mut tx, tenant_a).await.unwrap();
+        sqlx::query(
+            "INSERT INTO upstream_buzz_workspace_relay_bindings \
+             (tenant_id,workspace_id,mapping_id,created_by,audit_entry_id) \
+             VALUES ($1,$2,$3,$4,$5)",
+        )
+        .bind(tenant_a)
+        .bind(mismatched_binding_workspace)
+        .bind(initial.mapping_id)
+        .bind(initial.updated_by)
+        .bind(mismatched_binding_audit)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO upstream_buzz_relay_mapping_audit \
+             (audit_entry_id,tenant_id,mapping_id,generation,action,actor_id,change_reference_id) \
+             VALUES ($1,$2,$3,2,'mapping_created',$4,$5)",
+        )
+        .bind(mismatched_binding_audit)
+        .bind(tenant_a)
+        .bind(initial.mapping_id)
+        .bind(initial.updated_by)
+        .bind(Uuid::new_v4())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let mismatched_binding_result = tx.commit().await;
+        assert!(mismatched_binding_result
+            .unwrap_err()
+            .as_database_error()
+            .unwrap()
+            .message()
+            .contains("workspace binding audit does not match binding"));
+
         store
             .bind_workspace(
                 TenantId(tenant_a),
