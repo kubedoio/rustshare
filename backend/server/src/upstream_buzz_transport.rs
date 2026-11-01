@@ -107,41 +107,46 @@ pub(crate) async fn connect(
     tenant_id: TenantId,
     workspace_id: WorkspaceId,
 ) -> Result<TenantRelaySession, UpstreamBuzzTransportError> {
-    let mapping = load_mapping(store, tenant_id, workspace_id).await?;
-    let scope = mapping.scope();
-    let attempt = resolve_connection_attempt(&mapping, &scope).await?;
-    let tcp = connect_pinned(attempt.pinned_ips(), attempt.port()).await?;
+    tokio::time::timeout(CONNECT_TIMEOUT, async {
+        let mapping = load_mapping(store, tenant_id, workspace_id).await?;
+        let scope = mapping.scope();
+        let attempt = resolve_connection_attempt(&mapping, &scope).await?;
+        let tcp = connect_pinned(attempt.pinned_ips(), attempt.port()).await?;
 
-    let tls_config = tls_config();
-    let server_name = ServerName::try_from(attempt.relay_host().to_owned())
-        .map_err(|_| UpstreamBuzzTransportError::Connection)?;
-    let tls = tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        TlsConnector::from(tls_config).connect(server_name, tcp),
-    )
-    .await
-    .map_err(|_| UpstreamBuzzTransportError::Connection)?
-    .map_err(|_| UpstreamBuzzTransportError::Connection)?;
-    let mut tls = BufStream::new(tls);
-    verify_nip11(&attempt, &mut tls).await?;
-    let (socket, _) = tokio::time::timeout(CONNECT_TIMEOUT, client_async(attempt.relay_url(), tls))
+        let tls_config = tls_config();
+        let server_name = ServerName::try_from(attempt.relay_host().to_owned())
+            .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+        let tls = tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            TlsConnector::from(tls_config).connect(server_name, tcp),
+        )
         .await
         .map_err(|_| UpstreamBuzzTransportError::Connection)?
         .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+        let mut tls = BufStream::new(tls);
+        verify_nip11(&attempt, &mut tls).await?;
+        let (socket, _) =
+            tokio::time::timeout(CONNECT_TIMEOUT, client_async(attempt.relay_url(), tls))
+                .await
+                .map_err(|_| UpstreamBuzzTransportError::Connection)?
+                .map_err(|_| UpstreamBuzzTransportError::Connection)?;
 
-    let current = load_mapping(store, tenant_id, workspace_id).await?;
-    if current != mapping {
-        return Err(MappingError::MappingChangedDuringConnect.into());
-    }
+        let current = load_mapping(store, tenant_id, workspace_id).await?;
+        if current != mapping {
+            return Err(MappingError::MappingChangedDuringConnect.into());
+        }
 
-    Ok(TenantRelaySession {
-        store: store.clone(),
-        tenant_id,
-        workspace_id,
-        scope: attempt.scope().clone(),
-        socket: Some(socket),
-        last_revalidation: tokio::time::Instant::now(),
+        Ok(TenantRelaySession {
+            store: store.clone(),
+            tenant_id,
+            workspace_id,
+            scope: attempt.scope().clone(),
+            socket: Some(socket),
+            last_revalidation: tokio::time::Instant::now(),
+        })
     })
+    .await
+    .map_err(|_| UpstreamBuzzTransportError::Connection)?
 }
 
 async fn resolve_connection_attempt(
