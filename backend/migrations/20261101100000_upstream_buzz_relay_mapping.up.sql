@@ -73,6 +73,43 @@ CREATE TRIGGER upstream_buzz_mapping_attribution_immutable
     BEFORE UPDATE OR DELETE ON upstream_buzz_tenant_relays
     FOR EACH ROW EXECUTE FUNCTION reject_upstream_buzz_mapping_attribution_change();
 
+CREATE FUNCTION require_upstream_buzz_mapping_generation_bump()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.generation <> OLD.generation + 1
+       OR NEW.audit_entry_id = OLD.audit_entry_id THEN
+        RAISE EXCEPTION 'upstream relay mapping updates must bump generation and audit';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER upstream_buzz_mapping_generation_bump
+    BEFORE UPDATE ON upstream_buzz_tenant_relays
+    FOR EACH ROW EXECUTE FUNCTION require_upstream_buzz_mapping_generation_bump();
+
+CREATE FUNCTION verify_upstream_buzz_mapping_update_audit()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM upstream_buzz_relay_mapping_audit
+        WHERE audit_entry_id = NEW.audit_entry_id
+          AND tenant_id = NEW.tenant_id
+          AND mapping_id = NEW.mapping_id
+          AND generation = NEW.generation
+          AND action = 'mapping_updated'
+    ) THEN
+        RAISE EXCEPTION 'upstream relay mapping update audit does not match generation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER upstream_buzz_mapping_update_audit_matches_generation
+    AFTER UPDATE ON upstream_buzz_tenant_relays
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION verify_upstream_buzz_mapping_update_audit();
+
 CREATE FUNCTION reject_upstream_buzz_workspace_binding_change()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
