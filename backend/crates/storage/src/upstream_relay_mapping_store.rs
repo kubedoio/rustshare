@@ -704,6 +704,50 @@ mod tests {
             ))
         ));
 
+        let mismatched_create = record(tenant_b, workspace_b);
+        let mut tx = pool.begin().await.unwrap();
+        set_tenant(&mut tx, tenant_b).await.unwrap();
+        sqlx::query(
+            "INSERT INTO upstream_buzz_tenant_relays \
+             (mapping_id,tenant_id,relay_url,relay_host,community_id,relay_pubkey, \
+              deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,true,$9,$10,$11)",
+        )
+        .bind(mismatched_create.mapping_id)
+        .bind(tenant_b)
+        .bind(&mismatched_create.relay_url)
+        .bind(&mismatched_create.relay_host)
+        .bind(&mismatched_create.community_id)
+        .bind(&mismatched_create.relay_pubkey)
+        .bind(&mismatched_create.deployment_digest)
+        .bind(ip_strings(&mismatched_create.approved_ips))
+        .bind(mismatched_create.valid_until)
+        .bind(mismatched_create.updated_by)
+        .bind(mismatched_create.audit_entry_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO upstream_buzz_relay_mapping_audit \
+             (audit_entry_id,tenant_id,mapping_id,generation,action,actor_id,change_reference_id) \
+             VALUES ($1,$2,$3,2,'workspace_bound',$4,$5)",
+        )
+        .bind(mismatched_create.audit_entry_id)
+        .bind(tenant_b)
+        .bind(mismatched_create.mapping_id)
+        .bind(mismatched_create.updated_by)
+        .bind(Uuid::new_v4())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        let mismatched_create_result = tx.commit().await;
+        assert!(mismatched_create_result
+            .unwrap_err()
+            .as_database_error()
+            .unwrap()
+            .message()
+            .contains("creation audit does not match mapping"));
+
         let expired = record(tenant_b, workspace_b);
         store.create(&expired, Uuid::new_v4()).await.unwrap();
         let mut expired_revision = expired.clone();
