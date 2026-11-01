@@ -143,20 +143,39 @@ pub(crate) async fn connect(
         let tls_config = tls_config(trust)?;
         let server_name = ServerName::try_from(attempt.relay_host().to_owned())
             .map_err(|_| UpstreamBuzzTransportError::Connection)?;
-        let tls = tokio::time::timeout(
+        let tls_result = tokio::time::timeout(
             CONNECT_TIMEOUT,
             TlsConnector::from(tls_config).connect(server_name, tcp),
         )
-        .await
-        .map_err(|_| UpstreamBuzzTransportError::Connection)?
-        .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+        .await;
+        let tls = match tls_result {
+            Ok(Ok(tls)) => tls,
+            Ok(Err(_)) => {
+                #[cfg(test)]
+                eprintln!("upstream transport stage: TLS handshake rejected");
+                return Err(UpstreamBuzzTransportError::Connection);
+            }
+            Err(_) => {
+                #[cfg(test)]
+                eprintln!("upstream transport stage: TLS handshake timed out");
+                return Err(UpstreamBuzzTransportError::Connection);
+            }
+        };
         #[cfg(test)]
         eprintln!("upstream transport stage: TLS certificate and hostname verified");
-        verify_tls_spki_pin(&tls, &attempt.scope().tls_peer_spki_sha256)?;
+        if verify_tls_spki_pin(&tls, &attempt.scope().tls_peer_spki_sha256).is_err() {
+            #[cfg(test)]
+            eprintln!("upstream transport stage: TLS SPKI pin rejected");
+            return Err(UpstreamBuzzTransportError::Connection);
+        }
         #[cfg(test)]
         eprintln!("upstream transport stage: TLS SPKI pin verified");
         let mut tls = BufStream::new(tls);
-        verify_nip11(&attempt, &mut tls).await?;
+        if verify_nip11(&attempt, &mut tls).await.is_err() {
+            #[cfg(test)]
+            eprintln!("upstream transport stage: NIP-11 identity rejected");
+            return Err(UpstreamBuzzTransportError::Connection);
+        }
         #[cfg(test)]
         eprintln!("upstream transport stage: NIP-11 relay identity verified");
         let (socket, _) =
