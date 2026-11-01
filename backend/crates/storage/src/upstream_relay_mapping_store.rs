@@ -672,6 +672,29 @@ mod tests {
             .unwrap();
         assert_eq!(first.scope().mapping_id, second.scope().mapping_id);
         assert_eq!(first.scope().generation, second.scope().generation);
+        let mut tx = pool.begin().await.unwrap();
+        set_tenant(&mut tx, tenant_a).await.unwrap();
+        let unversioned_update =
+            sqlx::query("UPDATE upstream_buzz_tenant_relays SET relay_url=$2 WHERE tenant_id=$1")
+                .bind(tenant_a)
+                .bind("wss://unversioned.example.test")
+                .execute(&mut *tx)
+                .await;
+        assert!(unversioned_update
+            .unwrap_err()
+            .as_database_error()
+            .unwrap()
+            .message()
+            .contains("generation and audit"));
+        tx.rollback().await.unwrap();
+        assert_eq!(
+            store
+                .load(TenantId(tenant_a), WorkspaceId(workspace_a))
+                .await
+                .unwrap()
+                .relay_url(),
+            first.relay_url()
+        );
         assert!(matches!(
             store
                 .load(TenantId(tenant_b), WorkspaceId(workspace_a))
@@ -683,13 +706,36 @@ mod tests {
 
         let expired = record(tenant_b, workspace_b);
         store.create(&expired, Uuid::new_v4()).await.unwrap();
+        let mut expired_revision = expired.clone();
+        expired_revision.generation += 1;
+        expired_revision.valid_until = Utc::now() - chrono::Duration::seconds(1);
+        expired_revision.updated_by = Uuid::new_v4();
+        expired_revision.audit_entry_id = Uuid::new_v4();
+        let mut tx = pool.begin().await.unwrap();
+        set_tenant(&mut tx, tenant_b).await.unwrap();
         sqlx::query(
-            "UPDATE upstream_buzz_tenant_relays SET valid_until=now()-interval '1 second' WHERE tenant_id=$1",
+            "UPDATE upstream_buzz_tenant_relays SET generation=$2,valid_until=$3,updated_by=$4, \
+             audit_entry_id=$5,updated_at=now() WHERE tenant_id=$1",
         )
         .bind(tenant_b)
-        .execute(&pool)
+        .bind(db_generation(expired_revision.generation).unwrap())
+        .bind(expired_revision.valid_until)
+        .bind(expired_revision.updated_by)
+        .bind(expired_revision.audit_entry_id)
+        .execute(&mut *tx)
         .await
         .unwrap();
+        insert_audit(
+            &mut tx,
+            &expired_revision,
+            None,
+            "mapping_updated",
+            Uuid::new_v4(),
+            json!({"valid_until": expired_revision.valid_until}),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
         assert!(matches!(
             store
                 .load(TenantId(tenant_b), WorkspaceId(workspace_b))
