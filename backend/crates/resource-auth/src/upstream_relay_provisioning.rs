@@ -407,11 +407,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_operator_key_id() {
-        let (verifier, mut statement, now) = signed(MappingProvisioningAction::Create);
-        statement.operator_key_id = "revoked-or-unknown".into();
+    fn revoked_operator_key_is_rejected_by_reloaded_trust_configuration() {
+        let (verifier, statement, now) = signed(MappingProvisioningAction::Create);
+        assert!(verifier.verify(&statement, now).is_ok());
+
+        // Trust is deployment configuration: removing the key and rebuilding
+        // the verifier revokes still-valid statements signed by that key.
+        let revoked =
+            MappingProvisioningVerifier::new(statement.operator_service_id, HashMap::new())
+                .unwrap();
         assert_eq!(
-            verifier.verify(&statement, now).unwrap_err(),
+            revoked.verify(&statement, now).unwrap_err(),
             MappingProvisioningError::UntrustedSigner
         );
     }
@@ -448,18 +454,6 @@ mod tests {
         assert_eq!(
             verifier.verify(&statement, now).unwrap_err(),
             MappingProvisioningError::InvalidStatement
-        );
-    }
-
-    #[test]
-    fn operator_key_removed_from_deployment_trust_is_rejected() {
-        let (_, statement, now) = signed(MappingProvisioningAction::Create);
-        let verifier =
-            MappingProvisioningVerifier::new(statement.operator_service_id, HashMap::new())
-                .unwrap();
-        assert_eq!(
-            verifier.verify(&statement, now).unwrap_err(),
-            MappingProvisioningError::UntrustedSigner
         );
     }
 }
