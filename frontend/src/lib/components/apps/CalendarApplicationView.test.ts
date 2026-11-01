@@ -974,6 +974,7 @@ describe('CalendarApplicationView', () => {
 			await goToMonth(2026, 10);
 
 			const label = new Date(2026, 10, 1, 12).toLocaleDateString();
+			await screen.findByRole('button', { name: `Create event on ${label}` });
 			expect(cellForDay(label).textContent).toContain('Late night');
 		} finally {
 			process.env.TZ = originalTz;
