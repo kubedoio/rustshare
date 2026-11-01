@@ -152,6 +152,7 @@ async fn scoped_count(pool: &PgPool, tenant_id: Uuid, principal_id: Uuid) -> i64
 }
 
 #[tokio::test]
+#[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
 async fn managed_identity_vault_postgres_invariants_and_recovery() {
     let database_url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must point at a disposable PostgreSQL database");
