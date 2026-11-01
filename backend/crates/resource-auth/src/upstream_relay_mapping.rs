@@ -123,6 +123,11 @@ impl TrustedRelayMapping {
         &self.canonical_url
     }
 
+    /// The immutable record snapshot that was validated by this policy model.
+    pub fn record(&self) -> &RelayMappingRecord {
+        &self.record
+    }
+
     /// Scope of this relay mapping.
     pub fn scope(&self) -> MappingScope {
         MappingScope {
@@ -258,22 +263,43 @@ pub fn verify_mapping_update(
     expected_generation: u64,
     now: DateTime<Utc>,
 ) -> Result<TrustedRelayMapping, MappingError> {
-    if current.record.generation != expected_generation {
+    verify_mapping_revision(current, &next, expected_generation)?;
+    TrustedRelayMapping::validate(next, now)
+}
+
+/// Check immutable identity and monotonic generation for any mapping revision.
+/// Callers still validate the endpoint policy before making an active mapping usable.
+pub fn verify_mapping_revision(
+    current: &TrustedRelayMapping,
+    next: &RelayMappingRecord,
+    expected_generation: u64,
+) -> Result<(), MappingError> {
+    verify_mapping_revision_record(&current.record, next, expected_generation)
+}
+
+/// Check a revision when the current record is expired or inactive and cannot
+/// be represented as a trusted, connectable mapping.
+pub fn verify_mapping_revision_record(
+    current: &RelayMappingRecord,
+    next: &RelayMappingRecord,
+    expected_generation: u64,
+) -> Result<(), MappingError> {
+    if current.generation != expected_generation {
         return Err(MappingError::StaleMappingGeneration);
     }
-    if next.mapping_id != current.record.mapping_id
-        || next.tenant_id != current.record.tenant_id
-        || next.workspace_id != current.record.workspace_id
+    if next.mapping_id != current.mapping_id
+        || next.tenant_id != current.tenant_id
+        || next.workspace_id != current.workspace_id
         || next.generation
             != expected_generation
                 .checked_add(1)
                 .ok_or(MappingError::StaleMappingGeneration)?
-        || next.audit_entry_id == current.record.audit_entry_id
+        || next.audit_entry_id == current.audit_entry_id
         || next.updated_by.is_nil()
     {
         return Err(MappingError::InvalidMappingUpdate);
     }
-    TrustedRelayMapping::validate(next, now)
+    Ok(())
 }
 
 /// Require all active workspaces in a tenant to use one isolated relay and

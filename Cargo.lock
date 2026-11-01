@@ -4703,6 +4703,7 @@ dependencies = [
  "libc",
  "md5",
  "metrics",
+ "nostr",
  "rustshare-core",
  "rustshare-crypto",
  "rustshare-integration-events",

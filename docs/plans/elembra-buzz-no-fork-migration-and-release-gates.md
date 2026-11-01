@@ -20,9 +20,9 @@ Record the owner-approved Option A architecture, profile-scoped ADR-0034/0035/00
 
 ## Gate V — Phase 2A inert vault
 
-Implement a tenant/principal/generation-bound KMS envelope vault and isolated schema. Generate only test identities in tests. A database dump alone cannot decrypt envelopes. Enforce explicit disabled state with no route, worker, CLI or runtime selector that can provision a real user, sign, export or contact Buzz. Preserve legacy browser-held keys, current fork deployments and M4.1b2 replacement guards.
+The inert tenant/principal/generation-bound KMS envelope vault and isolated schema landed in PR #444. It generates identities only in tests; a database dump alone cannot decrypt envelopes. It has no route, worker, CLI or runtime selector that can provision a real user, sign, export or contact Buzz. Preserve legacy browser-held keys, current fork deployments and M4.1b2 replacement guards.
 
-Require race/retry, failure, tamper/AAD, tenant/generation, disabled account, KMS outage/rotation, DB-only compromise, backup/restore, audit redaction and old-mode regression tests. Independent cryptographic/security review and protected CI are required before merge.
+Complete Gate V qualification with race/retry, failure, tamper/AAD, tenant/generation, disabled account, KMS outage/rotation, DB-only compromise, backup/restore, audit redaction and old-mode regression evidence. Protected CI passed for the merged PR; named independent cryptographic/security acceptance and KMS recovery evidence remain pending before real-user use.
 
 **Allows:** merge of reviewed inert storage code only.
 
