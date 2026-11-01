@@ -55,6 +55,9 @@ pub struct ManagedIdentityRecord {
 
 impl ManagedIdentityRecord {
     pub fn envelope(&self) -> Result<ManagedIdentityEnvelope, ManagedIdentityStoreError> {
+        if self.status != ManagedIdentityStatus::Active.as_str() {
+            return Err(ManagedIdentityStoreError::NotFound);
+        }
         let version = u16::try_from(self.envelope_version)
             .map_err(|_| ManagedIdentityStoreError::InvalidEnvelope)?;
         let nonce = self
@@ -189,8 +192,17 @@ impl ManagedIdentityVaultStore {
     /// Persist KMS rewrapping while matching the immutable identity envelope.
     pub async fn persist_rewrapped_dek(
         &self,
+        expected: &ManagedIdentityEnvelope,
         envelope: &ManagedIdentityEnvelope,
     ) -> Result<(), ManagedIdentityStoreError> {
+        if expected.context != envelope.context
+            || expected.public_key != envelope.public_key
+            || expected.version != envelope.version
+            || expected.nonce != envelope.nonce
+            || expected.ciphertext != envelope.ciphertext
+        {
+            return Err(ManagedIdentityStoreError::InvalidEnvelope);
+        }
         let mut tx = self.0.begin().await.map_err(map_database_error)?;
         set_tenant(&mut tx, envelope.context.tenant_id).await?;
         let result = sqlx::query(
@@ -198,7 +210,8 @@ impl ManagedIdentityVaultStore {
              kms_key_version=$6, updated_at=now() \
              WHERE tenant_id=$1 AND identity_id=$2 AND public_key=$3 \
                AND envelope_version=$7 AND nonce=$8 AND ciphertext=$9 \
-               AND principal_id=$10 AND generation=$11",
+               AND principal_id=$10 AND generation=$11 \
+               AND wrapped_dek=$12 AND kms_key_id=$13 AND kms_key_version=$14",
         )
         .bind(envelope.context.tenant_id)
         .bind(envelope.context.identity_id)
@@ -214,11 +227,14 @@ impl ManagedIdentityVaultStore {
         .bind(&envelope.ciphertext)
         .bind(envelope.context.principal_id)
         .bind(envelope.context.generation)
+        .bind(&expected.wrapped_dek.ciphertext)
+        .bind(&expected.wrapped_dek.key_id)
+        .bind(&expected.wrapped_dek.key_version)
         .execute(&mut *tx)
         .await
         .map_err(map_database_error)?;
         if result.rows_affected() != 1 {
-            return Err(ManagedIdentityStoreError::NotFound);
+            return Err(ManagedIdentityStoreError::Conflict);
         }
         tx.commit().await.map_err(map_database_error)
     }

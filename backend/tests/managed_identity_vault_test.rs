@@ -3,7 +3,6 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use async_trait::async_trait;
-use rand::RngExt;
 use rustshare_crypto::managed_identity_vault::{
     DekKeyManagement, IdentityContext, KeyEncryptionContext, ManagedIdentityEnvelope, VaultError,
     WrappedDek,
@@ -105,9 +104,7 @@ impl DekKeyManagement for TestKms {
 }
 
 fn random_nonce() -> Nonce<U12> {
-    let mut bytes = [0; 12];
-    rand::rng().fill(&mut bytes);
-    bytes.into()
+    rand::random::<[u8; 12]>().into()
 }
 
 fn kms_context_aad(context: &KeyEncryptionContext) -> Vec<u8> {
@@ -220,10 +217,14 @@ async fn managed_identity_vault_postgres_invariants_and_recovery() {
         .await
         .is_err());
 
-    let mut rewrapped = stored.envelope().unwrap();
+    let original_envelope = stored.envelope().unwrap();
+    let mut rewrapped = original_envelope.clone();
     let rotated_kms = TestKms::with_rotation(key_manager.clone(), 46, "v2");
     rewrapped.rewrap_dek(&rotated_kms).await.unwrap();
-    store.persist_rewrapped_dek(&rewrapped).await.unwrap();
+    store
+        .persist_rewrapped_dek(&original_envelope, &rewrapped)
+        .await
+        .unwrap();
     let after_rotation = store.get(tenant, left.identity_id).await.unwrap();
     assert_eq!(after_rotation.public_key, stored.public_key);
     assert_eq!(after_rotation.ciphertext, stored.ciphertext);
@@ -237,6 +238,15 @@ async fn managed_identity_vault_postgres_invariants_and_recovery() {
             .unwrap()
             .public_key(),
         stored.public_key
+    );
+    let mut stale_rewrap = original_envelope.clone();
+    stale_rewrap.rewrap_dek(&rotated_kms).await.unwrap();
+    assert_eq!(
+        store
+            .persist_rewrapped_dek(&original_envelope, &stale_rewrap)
+            .await
+            .unwrap_err(),
+        rustshare_storage::ManagedIdentityStoreError::Conflict
     );
 
     let unscoped_count: i64 =
@@ -305,6 +315,15 @@ async fn managed_identity_vault_postgres_invariants_and_recovery() {
     );
     assert_eq!(
         store
+            .get(tenant, left.identity_id)
+            .await
+            .unwrap()
+            .envelope()
+            .unwrap_err(),
+        rustshare_storage::ManagedIdentityStoreError::NotFound
+    );
+    assert_eq!(
+        store
             .get(Uuid::new_v4(), left.identity_id)
             .await
             .unwrap_err()
@@ -332,6 +351,15 @@ async fn managed_identity_vault_postgres_invariants_and_recovery() {
     assert_eq!(
         store.get(tenant, next.identity_id).await.unwrap().status,
         "revoked"
+    );
+    assert_eq!(
+        store
+            .get(tenant, next.identity_id)
+            .await
+            .unwrap()
+            .envelope()
+            .unwrap_err(),
+        rustshare_storage::ManagedIdentityStoreError::NotFound
     );
 
     // The immutable identity row retains attribution while state changes.

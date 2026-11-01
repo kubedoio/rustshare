@@ -233,9 +233,7 @@ fn aad(context: IdentityContext, public_key: &str, version: u16) -> Vec<u8> {
 }
 
 fn random_nonce() -> Nonce<U12> {
-    let mut bytes = [0; 12];
-    rand::rng().fill(&mut bytes);
-    bytes.into()
+    rand::random::<[u8; 12]>().into()
 }
 
 #[cfg(test)]
