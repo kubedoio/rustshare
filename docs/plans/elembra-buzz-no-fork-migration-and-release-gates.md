@@ -1,46 +1,51 @@
-# PLAN: Transition Elembra Chat to stock Buzz without destructive cutover
+# PLAN: Elembra Chat on unmodified upstream Buzz
 
-**Status:** Proposed. **Goal:** make `upstream_managed` the default for new installations once qualified; migrate existing fork deployments only with explicit operator approval.
+**Status:** Target architecture accepted; execution and release gates are separate. Existing fork-backed deployments and browser-held identities remain unchanged.
 
-## Phase 0 — architecture and compatibility audit (docs only)
+## Phase 0 — source and architecture audit (complete)
 
-Inventory references to `BUZZ_SUPPORTED_COMMIT`, `BUZZ_CONTRACT_VERSION`, `BUZZ_REPLACEMENT_V1ALPHA2_QUALIFIED`, `buzz_gateway`, `buzz_bridge`, `chat_membership`, existing Chat identity API and `config/buzz-compatibility.env`. For each call classify it as upstream-native, fork-specific, or proposed only. Separately pin official `block/buzz` relay and `block/buzz-app` client commits/releases; verify that stock image provenance is reproducible and unchanged. Produce matrix with risk and named replacement for every fork-only feature. ADR-0044 owner direction does not waive independent security review.
+The relay and desktop source baselines are recorded in `elembra-buzz-upstream-compatibility-matrix.md` and the Phase 1c evidence report. The POC runs unmodified upstream source. This evidence does not establish desktop GUI acceptance or production transport enforcement.
 
-**Result (2026-10-31):** source audit and file/function migration matrix are in `docs/plans/elembra-buzz-upstream-compatibility-matrix.md`. The exact source snapshots are `block/buzz` `eafd77e9f6e96052476bdd88be732c046fdb7ab3` and `block/buzz-app` `662e91800af8204ec0e492522b8f23ef23b19baa`. This phase did not run a relay smoke test, test desktop import, or qualify an OCI digest. ADR-0044 remains proposed; existing ADRs and production behavior remain operative.
+## Phase 1 — disposable upstream interoperability (evidence complete with gaps)
 
-**Gate:** source inventory is documented; Phase 1 must supply real-source protocol/GUI evidence. No production changes.
+Preserve the exact-source protocol harness and prior passing evidence. The latest run confirms NIP-42, NIP-43, channel history/discovery and protocol-client native private-DM denial; randomized-timestamp NIP-17 remains a historical failure. Desktop assertions are unverified and deferred to issue #442. Do not use the POC relay with real users or production data.
 
-## Phase 1 — stock Buzz disposable POC
+## Gate D — accepted design record
 
-Use the executable sequence in `docs/plans/elembra-buzz-upstream-compatibility-matrix.md`: check out the exact audited relay SHA into a disposable directory; build/run only the unmodified source with isolated backing services; set explicit auth and membership enforcement; create a dedicated relay owner and two disposable members; add members with NIP-43 9030; authenticate through NIP-42; exercise NIP-29 discovery and two-way kind-9 history with the separate Buzz 1.0 beta desktop client. Test NIP-43 9031 against both a fresh reconnect and the already-open socket. Save only sanitized traces and container/source digests. Do not connect the relay to Elembra production or modify the current Chat authority.
+Record the owner-approved Option A architecture, profile-scoped ADR-0034/0035/0036 amendments, NIP-29-only v1 scope and one relay/community per tenant. The ADR/documentation PR must be DCO-signed, reviewed and merged through protected repository policy. Independent security acceptance of custody and private-service endpoint policy remains separately pending.
 
-**Gate:** all transport/conformance and isolation checks against exact source/digest; desktop import result and session-removal behavior are evidenced; any gap stays disabled.
+**Allows:** isolated Phase 2A vault code behind a disabled-by-default boundary.
 
-## Phase 2 — managed vault and Elembra native Chat
+**Does not allow:** real-user provisioning, signing, key export, Buzz integration, production migration or deployment.
 
-Add isolated managed-key storage with KMS, identity generation, workers, OIDC-protected typed signer, authenticated WS adapter and user Settings export. New accounts are automatically provisioned when Chat enabled. Legacy browser-key onboarding remains enabled on the old profile but not silently rotated. Chat UI uses server signing, not a browser private-key prompt. Add login/logout, audit and failed-provisioning operator diagnostics.
+## Gate V — Phase 2A inert vault
 
-**Gate:** per-user two-way interoperability; backup/restore; security/tenant/credential tests and protected CI.
+Implement a tenant/principal/generation-bound KMS envelope vault and isolated schema. Generate only test identities in tests. A database dump alone cannot decrypt envelopes. Enforce explicit disabled state with no route, worker, CLI or runtime selector that can provision a real user, sign, export or contact Buzz. Preserve legacy browser-held keys, current fork deployments and M4.1b2 replacement guards.
 
-## Phase 3 — capability parity and data/memory boundaries
+Require race/retry, failure, tamper/AAD, tenant/generation, disabled account, KMS outage/rotation, DB-only compromise, backup/restore, audit redaction and old-mode regression tests. Independent cryptographic/security review and protected CI are required before merge.
 
-Replace channel discovery and reconciliation only where native Buzz access is proven. Enable Chat-backed Memory only after current-user live relay read-based authorization is demonstrated for private/revoked channels, DMs and race conditions; otherwise keep disabled. Preserve attachment authorization through Elembra Files. Document workflows/huddles/notifications/complex roles that are out of scope; never fake parity. Independently review security/custody and offboarding.
+**Allows:** merge of reviewed inert storage code only.
 
-**Gate:** all MUST capabilities satisfy contract; unsupported optional capabilities are explicitly disabled, visible to operators and non-leaking.
+**Does not allow:** identity activation, managed Chat integration or key export.
 
-## Phase 4 — release and cutover
+## Gate I — Phase 2B managed Chat integration
 
-Cut immutable digest-pinned release; test PostgreSQL backup/restore, state migration, identity continuity, channel IDs/historical messages and direct client reconnection. Fresh new deployments can select upstream profile after qualification. Migrate existing tenants individually with traffic quiescence as needed and explicit revert window. Preserve the previous fork image and state for rollback until proof. Never destructively overwrite a Buzz DB with a different upstream migration history. If import/export of messages is unsupported, label migration BLOCKED and offer clean-start tenant only by explicit choice.
+Before integration is enabled, close desktop acceptance issue #442 using the native OS keychain and exact audited upstream relay/desktop sources. Prove identity continuity, correct relay/community, channel and private-DM event IDs in both directions, restart/history, no duplicate enrollment and credential cleanup. Build a production-wired tenant mapping store, resolver/TLS transport and session/generation fencing. The default endpoint policy remains strict public. A private/bundled `trusted_service` exception requires independent threat-model review, immutable service identity, exact endpoint allowlisting, TLS peer pinning and network-enforced egress controls; no broad internal-IP exception is allowed.
 
-**Gate:** independent architecture/security review, CI on exact pinned source/image, operator go/no-go, documented status and rollback rehearsal.
+Prove NIP-42 subject-bound reads, NIP-43 add/removal and effective revocation, tenant isolation and NIP-29 channel/native private-DM semantics. NIP-17 stays disabled. Keep timeline, Chat-backed Memory, reconciliation, and other reads disabled unless current-subject relay authorization is demonstrated. Require independent custody security acceptance before any real-user signing or export.
 
-## Explicit incompatibilities to resolve before claiming no-fork parity
+**Allows:** a separately approved non-production managed Chat integration test.
 
-1. Signed `access/check`/batch and channel/state registry used by Elembra authorization, reconciliation and Memory.
-2. Signed `community` discovery and release/pin validation from zero-config bootstrap.
-3. Custom v1alpha2 revision/tombstone/operation receipts, pre-send release gate and `rotation_of` replacement protocol from downstream Buzz PRs #6/#7.
-4. Managed vs legacy client-held identities; historic signer continuity, user key loss, exported key reuse and zero-tenant migration.
-5. Ordinary NIP-43 membership removal vs true live client disconnection; no stronger claim without tests.
-6. One host/community topology and tenant-isolated Postgres, operator controls, TLS/cert issuance, backups and upgrades.
+**Does not allow:** production defaults, automatic rollout, historical migration or deployment.
 
-**Release guard:** "No fork" is a property of source and execution, not branding. Validate exact image source/attestation and no calls into unsupported relay endpoints. Keep existing fork profile installed but inactive/segregated until every migration gate succeeds.
+## Gate R — new-install enablement and per-tenant cutover
+
+Qualify immutable upstream source/image digest, SBOM/provenance, PostgreSQL and KMS backup/restore, key recovery, rollback, host and relay-key rotation, offboarding/reconnect, and feature-specific authorization tests. Decide exported-`nsec` incident/recovery treatment. Enable new installations only through a reviewed release change. Migrate existing tenants one at a time with explicit operator approval, verified identity/history treatment and rollback; never rewrite keys/history or lower production/fork identity guards silently.
+
+## Non-negotiable compatibility constraints
+
+- No patch, fork, custom endpoint or private database access in upstream Buzz.
+- One isolated relay/community per tenant; no cross-tenant socket or subscription reuse.
+- No NIP-17 in v1; the recorded failure remains visible.
+- No private endpoint without the reviewed `trusted_service` exception and network-layer egress enforcement.
+- Preserve existing fork pins, browser-held identities, identity-replacement guards and runtime behavior until separate release approval.

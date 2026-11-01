@@ -45,6 +45,34 @@ Sources: [relay NOSTR.md at audited SHA](https://github.com/block/buzz/blob/eafd
 | `frontend/scripts/alpha-buzz-ops.mjs`; `frontend/scripts/chat-bootstrap.mjs`; `scripts/run-buzz-conformance.sh` | Alpha membership/bootstrap and custom v1alpha1/v1alpha2 relay contract probes | Standard NIP-43 operations exist; custom endpoints and revision/conditional receipts do not | Keep these checks bound to the current fork profile. Add separate upstream POC scripts; never reinterpret current conformance as stock compatibility |
 | `backend/server/src/handlers/chat_identity.rs::revoke_principal`; `backend/crates/storage/src/chat_identity.rs` offboarding state | Stops Elembra binding and queues relay lifecycle work | 9031 removal is documented; active socket denial and existing exported-key limits are unknown | POC fresh reconnect and existing socket after removal. No immediate-revocation claim or rollout until observed behavior is accepted |
 
+## Architecture adoption and current phase gates (2026-10-31)
+
+The project owner accepted ADR-0044 Option A as the target architecture and
+approved NIP-29 channels plus native private-channel DMs as the initial scope.
+NIP-17 remains excluded/disabled; its randomized-timestamp relay rejection
+remains a historical failure. Existing browser-held and fork-backed runtime
+behavior is unchanged. Phase 2A is only an inert, disabled-by-default vault;
+no user provisioning, signing, key export, relay integration, migration or
+deployment is authorized in that phase.
+
+One isolated relay/community per tenant is the accepted topology. The mapping
+model is not a production enforcement path. `strict_public` remains the
+current policy; a private/bundled `trusted_service` exception requires
+independent security review, exact service identity and endpoint allowlisting,
+TLS/peer pinning, network-level egress enforcement and integration tests
+before any internal destination is permitted.
+
+| Gate | Current status |
+|---|---|
+| Gate D — adopted design docs | Included in PR #441 via #443; protected CI, independent review and merge of #441 pending |
+| Gate V — inert Phase 2A vault | Authorized to implement; not yet implemented/reviewed |
+| Gate I — managed Chat integration | NO-GO: native desktop test remains unverified and is tracked by issue #442; mapping transport/security approval is pending |
+| Gate R — production release/cutover | NO-GO: separate operational, security, recovery and per-tenant migration decisions remain |
+
+These decisions represent accepted product architecture, not independent
+security acceptance or runtime enforcement. The historical Phase 1 evidence
+and result tables above are not rewritten by this adoption record.
+
 ## Immediately usable vs gated
 
 **Documented stock capability:** direct Buzz client NIP-42 AUTH, NIP-29 channel discovery/messages, NIP-43 relay member commands, NIP-17 gift-wrap DM discovery, and desktop `nsec` import. These are source-level findings only; Phase 1 must exercise the selected build.
@@ -72,3 +100,18 @@ Run this only on a disposable host/worktree. It must not connect to production, 
 7. Capture exact source/image hashes, compose configuration with secrets removed, sanitized protocol traces and a pass/fail table. Confirm no request touched `/api/v1/relay/access/*`, `/api/v1/relay/channels`, `/api/v1/relay/state/events`, `/api/v1/relay/community` or `/api/v1/relay/membership/check`. Stop and destroy only the disposable services after evidence is saved.
 
 **Phase 1 exit gate:** exact unmodified source and image provenance; NIP-42; NIP-43 add/remove semantics; kind-9 history and channel discovery; private channel and DM behavior; desktop `nsec` import and bidirectional messaging; active-session/offboarding behavior; and isolation/failure behavior are evidenced. Passing this POC does not authorize KMS implementation, managed key custody, production pin changes or migration; those require ADR-0044 and independent human security review.
+
+## Phase 1c acceptance update (2026-10-31)
+
+| Gate | Current result | Evidence / limitation |
+|---|---|---|
+| Exact stock source | PASS for protocol baseline; desktop runtime pending | Relay source/tree and image provenance remain recorded in `elembra-buzz-phase1-poc-evidence.md`; desktop GUI must be run at the audited app SHA. |
+| NIP-29 channel protocol | PASS | The 2026-10-31 disposable run passed NIP-42/NIP-43, kind-9, history, discovery, and private-channel membership. New outsider private-DM denial and bidirectional protocol-client DM assertions also passed; desktop compatibility remains unverified. |
+| Stock desktop interoperability | UNVERIFIED | Use `scripts/upstream-buzz-poc/desktop-acceptance.md`. Desktop source/build or a rendered window is not proof of import, key match, bidirectional event IDs, restart/history, or native private-channel DM behavior. |
+| NIP-29 native private-channel DM | Accepted v1 scope; UNVERIFIED in stock desktop | Distinct from encrypted NIP-17. Protocol-client relay checks do not replace desktop acceptance, tracked in issue #442 and required before Phase 2B. |
+| NIP-17 encrypted DM | Excluded and disabled in accepted v1 scope; production behavior unchanged | Historical randomized timestamp FAIL remains a FAIL in the conformance report and is excluded from the accepted v1 acceptance tally. Keep NIP-17 disabled in the upstream v1 profile. |
+| Tenant-to-relay contract | Target topology accepted; 14 policy tests PASS, transport integration UNVERIFIED | `SQLX_OFFLINE=true cargo test -p rustshare-resource-auth --lib` passed 77/77 package tests, including 14 mapping tests. See `docs/contracts/upstream-buzz-tenant-relay-mapping-v1.md`. The model is not production-wired; independent security acceptance and real connector tests remain required. |
+| ADR-0044 custody decision | Target architecture accepted; independent security approval pending | The owner-approved Option A and its custodial consequences are recorded in ADR-0044. PR approval is not independent security acceptance. |
+| Phase 2A readiness | **GO after Gate D merge; inert vault only** | Phase 2A is limited to a disabled-by-default vault. Desktop acceptance gates Phase 2B; independent security review gates real-user provisioning, signing and export. |
+
+No production Buzz pin, identity mode, cutover behavior or replacement guard is changed by this Phase 1c work.
