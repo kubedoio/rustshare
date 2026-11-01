@@ -1,5 +1,7 @@
 //! Cryptographic utilities for RustShare, including password hashing and secret encryption.
 
+#[cfg(feature = "local-dek-key-provider")]
+pub mod local_dek_key_provider;
 pub mod managed_identity_vault;
 pub mod password;
 pub mod secret_encryption;
