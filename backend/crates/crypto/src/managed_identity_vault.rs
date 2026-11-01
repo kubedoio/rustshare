@@ -127,6 +127,7 @@ impl ManagedIdentityEnvelope {
         let keys = Keys::generate();
         let public_key = keys.public_key().to_hex();
         let secret_key = Zeroizing::new(keys.secret_key().to_secret_bytes());
+        drop(keys);
         let mut dek = Zeroizing::new([0; 32]);
         rand::rng().fill(&mut dek[..]);
         let nonce = random_nonce();
@@ -141,6 +142,7 @@ impl ManagedIdentityEnvelope {
                 },
             )
             .map_err(|_| VaultError::Encryption)?;
+        drop(secret_key);
         let kms_context = KeyEncryptionContext::new(context, &public_key, ENVELOPE_VERSION);
         let wrapped_dek = kms.wrap_dek(&dek, &kms_context).await?;
 
