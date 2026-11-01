@@ -4714,6 +4714,7 @@ dependencies = [
  "chrono-tz",
  "constant_time_eq",
  "dotenvy",
+ "ed25519-dalek",
  "envy",
  "futures-util",
  "governor",

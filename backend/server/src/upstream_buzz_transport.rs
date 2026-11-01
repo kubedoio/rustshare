@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use rustshare_core::domain::{TenantId, WorkspaceId};
-use rustshare_resource_auth::upstream_relay_mapping::{MappingError, TrustedRelayMapping};
+use rustshare_resource_auth::upstream_relay_mapping::{
+    MappingError, RelayEndpointPolicy, TrustedRelayMapping,
+};
 use rustshare_storage::upstream_relay_mapping_store::{
     UpstreamRelayMappingStore, UpstreamRelayMappingStoreError,
 };
@@ -125,10 +127,18 @@ pub(crate) async fn connect(
 ) -> Result<TenantRelaySession, UpstreamBuzzTransportError> {
     tokio::time::timeout(CONNECT_TIMEOUT, async {
         let mapping = load_mapping(store, tenant_id, workspace_id).await?;
+        #[cfg(test)]
+        eprintln!("upstream transport stage: mapping loaded");
         validate_trust_profile(&mapping, trust)?;
+        #[cfg(test)]
+        eprintln!("upstream transport stage: trust profile accepted");
         let scope = mapping.scope();
         let attempt = resolve_connection_attempt(&mapping, &scope).await?;
+        #[cfg(test)]
+        eprintln!("upstream transport stage: DNS answers pinned");
         let tcp = connect_pinned(attempt.pinned_ips(), attempt.port()).await?;
+        #[cfg(test)]
+        eprintln!("upstream transport stage: approved TCP peer connected");
 
         let tls_config = tls_config(trust)?;
         let server_name = ServerName::try_from(attempt.relay_host().to_owned())
@@ -140,14 +150,22 @@ pub(crate) async fn connect(
         .await
         .map_err(|_| UpstreamBuzzTransportError::Connection)?
         .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+        #[cfg(test)]
+        eprintln!("upstream transport stage: TLS certificate and hostname verified");
         verify_tls_spki_pin(&tls, &attempt.scope().tls_peer_spki_sha256)?;
+        #[cfg(test)]
+        eprintln!("upstream transport stage: TLS SPKI pin verified");
         let mut tls = BufStream::new(tls);
         verify_nip11(&attempt, &mut tls).await?;
+        #[cfg(test)]
+        eprintln!("upstream transport stage: NIP-11 relay identity verified");
         let (socket, _) =
             tokio::time::timeout(CONNECT_TIMEOUT, client_async(attempt.relay_url(), tls))
                 .await
                 .map_err(|_| UpstreamBuzzTransportError::Connection)?
                 .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+        #[cfg(test)]
+        eprintln!("upstream transport stage: WebSocket upgraded");
 
         let current = load_mapping(store, tenant_id, workspace_id).await?;
         if current != mapping {
@@ -275,9 +293,14 @@ fn tls_config(
             }
         }
     }
-    let mut config = ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    // SQLx enables ring while the AWS SDK enables aws-lc-rs in this process.
+    let mut config = ClientConfig::builder_with_provider(Arc::new(
+        tokio_rustls::rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(|_| UpstreamBuzzTransportError::Connection)?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     Ok(Arc::new(config))
 }
@@ -329,7 +352,10 @@ async fn verify_nip11_inner(
 
     let mut response = Vec::with_capacity(4096);
     let (header_len, body_len) = loop {
-        if let Some(header) = parse_nip11_headers(&response)? {
+        if let Some(header) = parse_nip11_headers(
+            &response,
+            attempt.scope().endpoint_policy == RelayEndpointPolicy::TrustedService,
+        )? {
             break header;
         }
         if response.len() >= 16 * 1024 {
@@ -373,6 +399,7 @@ async fn verify_nip11_inner(
 
 fn parse_nip11_headers(
     response: &[u8],
+    allow_json_media_type: bool,
 ) -> Result<Option<(usize, usize)>, UpstreamBuzzTransportError> {
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut parsed = httparse::Response::new(&mut headers);
@@ -406,10 +433,14 @@ fn parse_nip11_headers(
         } else if header.name.eq_ignore_ascii_case("transfer-encoding") {
             has_transfer_encoding = true;
         } else if header.name.eq_ignore_ascii_case("content-type") {
-            content_type = std::str::from_utf8(header.value)
+            let media_type = std::str::from_utf8(header.value)
                 .ok()
                 .and_then(|value| value.split(';').next())
-                .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/nostr+json"));
+                .map(str::trim);
+            content_type = media_type.is_some_and(|value| {
+                value.eq_ignore_ascii_case("application/nostr+json")
+                    || (allow_json_media_type && value.eq_ignore_ascii_case("application/json"))
+            });
         }
     }
     let body_len = content_length
@@ -535,7 +566,7 @@ mod tests {
     #[test]
     fn nip11_response_requires_bounded_persistent_http_1_1_json() {
         let valid = b"HTTP/1.1 200 OK\r\nContent-Type: application/nostr+json; charset=utf-8\r\nContent-Length: 10\r\n\r\n";
-        let parsed = parse_nip11_headers(valid).unwrap().unwrap();
+        let parsed = parse_nip11_headers(valid, false).unwrap().unwrap();
         assert_eq!(parsed.0, valid.len());
         assert_eq!(parsed.1, 10);
 
@@ -548,8 +579,16 @@ mod tests {
             b"HTTP/1.1 200 OK\r\nContent-Type: application/nostr+json\r\nContent-Length: 65537\r\n\r\n",
         ];
         for response in invalid {
-            assert!(parse_nip11_headers(response).is_err());
+            assert!(parse_nip11_headers(response, false).is_err());
         }
+    }
+
+    #[test]
+    fn nip11_application_json_is_accepted_only_for_trusted_service() {
+        let response =
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n";
+        assert!(parse_nip11_headers(response, false).is_err());
+        assert!(parse_nip11_headers(response, true).is_ok());
     }
 
     #[tokio::test]
@@ -588,5 +627,318 @@ mod tests {
             "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
         );
         assert_eq!(peer.ip(), "127.0.0.1".parse::<std::net::IpAddr>().unwrap());
+    }
+}
+
+#[cfg(all(test, feature = "upstream-buzz-runtime"))]
+mod disposable_service_tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use ed25519_dalek::{Signer, SigningKey};
+    use futures_util::SinkExt;
+    use nostr::{EventBuilder, Keys, RelayUrl};
+    use rustshare_core::domain::{TenantId, WorkspaceId};
+    use rustshare_resource_auth::upstream_relay_mapping::{
+        RelayEndpointPolicy, RelayMappingRecord,
+    };
+    use rustshare_resource_auth::upstream_relay_provisioning::{
+        MappingProvisioningAction, MappingProvisioningStatement, MappingProvisioningVerifier,
+    };
+    use rustshare_storage::upstream_relay_mapping_store::UpstreamRelayMappingStore;
+    use sqlx::PgPool;
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    fn required(name: &str) -> String {
+        std::env::var(name)
+            .unwrap_or_else(|_| panic!("{name} must be set for the disposable relay test"))
+    }
+
+    fn test_now() -> chrono::DateTime<Utc> {
+        Utc.timestamp_micros(Utc::now().timestamp_micros()).unwrap()
+    }
+
+    // Run only inside the Cilium-restricted connector namespace against disposable services.
+    #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL, operator-attested mapping inputs, and private Buzz service"]
+    async fn trusted_service_transport_connects_and_authenticates_member() {
+        assert_eq!(
+            required("BUZZ_TEST_DISPOSABLE_CONFIRM"),
+            "DISPOSABLE_ONLY",
+            "this test creates permanent mapping audit rows; use a disposable database"
+        );
+        let database_url = required("DATABASE_URL");
+        let relay_host = required("BUZZ_TEST_RELAY_HOST");
+        let relay_url = required("BUZZ_TEST_RELAY_URL");
+        let community_id = required("BUZZ_TEST_COMMUNITY_ID");
+        let relay_pubkey = required("BUZZ_TEST_RELAY_PUBKEY");
+        let deployment_digest = required("BUZZ_TEST_DEPLOYMENT_DIGEST");
+        let service_identity = required("BUZZ_TEST_SERVICE_IDENTITY");
+        let spki_pin = required("BUZZ_TEST_TLS_SPKI_PIN");
+        let trusted_spki_pin = spki_pin.clone();
+        let approved_ip = required("BUZZ_TEST_APPROVED_IP").parse().unwrap();
+        let root_der = std::fs::read(required("BUZZ_TEST_TLS_ROOT_DER"))
+            .expect("read the disposable service CA certificate in DER format");
+        let user_keys = Keys::parse(&required("BUZZ_TEST_MEMBER_NSEC"))
+            .expect("disposable relay member nsec must parse");
+
+        let pool = PgPool::connect(&database_url).await.unwrap();
+        sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+        let tenant_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO tenants (id,name) VALUES ($1,$2)")
+            .bind(tenant_id)
+            .bind(format!("disposable Buzz transport {tenant_id}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let operator_service_id = Uuid::new_v4();
+        let operator_key_id = "disposable-test-authority-v1".to_owned();
+        let operator_key = SigningKey::from_bytes(&rand::random());
+        let now = Utc::now();
+        let now = Utc.timestamp_micros(now.timestamp_micros()).unwrap();
+        let mut statement = MappingProvisioningStatement {
+            operator_service_id,
+            operator_key_id: operator_key_id.clone(),
+            operation_id: Uuid::new_v4(),
+            change_reference_id: Uuid::new_v4(),
+            action: MappingProvisioningAction::Create,
+            expected_generation: 0,
+            issued_at: now,
+            expires_at: now + chrono::Duration::minutes(2),
+            record: RelayMappingRecord {
+                mapping_id: Uuid::new_v4(),
+                tenant_id: TenantId(tenant_id),
+                workspace_id: WorkspaceId(workspace_id),
+                community_id,
+                endpoint_policy: RelayEndpointPolicy::TrustedService,
+                relay_deployment_id: Uuid::new_v4(),
+                endpoint_service_identity: service_identity.clone(),
+                tls_peer_spki_sha256: spki_pin,
+                relay_url,
+                relay_host,
+                relay_pubkey,
+                deployment_digest,
+                approved_ips: vec![approved_ip],
+                generation: 1,
+                active: true,
+                valid_until: now + chrono::Duration::hours(1),
+                updated_by: operator_service_id,
+                audit_entry_id: Uuid::new_v4(),
+            },
+            signature: Vec::new(),
+        };
+        statement.signature = operator_key
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        let verifier = Arc::new(
+            MappingProvisioningVerifier::new(
+                operator_service_id,
+                HashMap::from([(operator_key_id, operator_key.verifying_key())]),
+            )
+            .unwrap(),
+        );
+        let store = UpstreamRelayMappingStore::with_provisioning_verifier(pool.clone(), verifier);
+        store.apply(&statement).await.unwrap();
+
+        let wrong_trust = RelayTlsTrustConfig::TrustedService {
+            endpoint_service_identity: "k8s://wrong/tenant-a/buzz-edge/wrong".into(),
+            roots: vec![CertificateDer::from(root_der.clone())],
+        };
+        assert!(connect(
+            &store,
+            TenantId(tenant_id),
+            WorkspaceId(workspace_id),
+            &wrong_trust
+        )
+        .await
+        .is_err());
+
+        let mut wrong_pin = statement.clone();
+        wrong_pin.operation_id = Uuid::new_v4();
+        wrong_pin.change_reference_id = Uuid::new_v4();
+        wrong_pin.action = MappingProvisioningAction::Update;
+        wrong_pin.expected_generation = 1;
+        wrong_pin.record.generation = 2;
+        wrong_pin.record.audit_entry_id = Uuid::new_v4();
+        wrong_pin.record.tls_peer_spki_sha256 = format!("sha256:{}", "00".repeat(32));
+        wrong_pin.issued_at = test_now();
+        wrong_pin.expires_at = wrong_pin.issued_at + chrono::Duration::minutes(2);
+        wrong_pin.signature = operator_key
+            .sign(&wrong_pin.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        store.apply(&wrong_pin).await.unwrap();
+        assert!(matches!(
+            connect(
+                &store,
+                TenantId(tenant_id),
+                WorkspaceId(workspace_id),
+                &RelayTlsTrustConfig::TrustedService {
+                    endpoint_service_identity: service_identity.clone(),
+                    roots: vec![CertificateDer::from(root_der.clone())],
+                },
+            )
+            .await,
+            Err(UpstreamBuzzTransportError::Connection)
+        ));
+
+        let mut statement = wrong_pin;
+        statement.operation_id = Uuid::new_v4();
+        statement.change_reference_id = Uuid::new_v4();
+        statement.expected_generation = 2;
+        statement.record.generation = 3;
+        statement.record.audit_entry_id = Uuid::new_v4();
+        statement.record.tls_peer_spki_sha256 = trusted_spki_pin;
+        statement.issued_at = test_now();
+        statement.expires_at = statement.issued_at + chrono::Duration::minutes(2);
+        statement.signature = operator_key
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        store.apply(&statement).await.unwrap();
+
+        let mut session = connect(
+            &store,
+            TenantId(tenant_id),
+            WorkspaceId(workspace_id),
+            &RelayTlsTrustConfig::TrustedService {
+                endpoint_service_identity: service_identity,
+                roots: vec![CertificateDer::from(root_der)],
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(session.scope().generation, 3);
+
+        let challenge = tokio::time::timeout(Duration::from_secs(15), session.receive())
+            .await
+            .expect("relay AUTH challenge timed out")
+            .unwrap()
+            .expect("relay closed before AUTH challenge");
+        let Message::Text(challenge) = challenge else {
+            panic!("expected upstream relay AUTH frame")
+        };
+        let challenge: Value = serde_json::from_str(&challenge).unwrap();
+        assert_eq!(challenge[0], "AUTH");
+        let challenge = challenge[1].as_str().expect("AUTH challenge string");
+        let relay = RelayUrl::parse(&required("BUZZ_TEST_RELAY_URL")).unwrap();
+        let auth = EventBuilder::auth(challenge, relay)
+            .sign_with_keys(&user_keys)
+            .unwrap();
+        let auth_id = auth.id.to_hex();
+        let socket = session.socket.as_mut().expect("connected socket");
+        socket
+            .send(Message::Text(
+                serde_json::json!(["AUTH", auth]).to_string().into(),
+            ))
+            .await
+            .unwrap();
+
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(15), session.receive())
+                .await
+                .expect("relay AUTH response timed out")
+                .unwrap()
+                .expect("relay closed before AUTH response");
+            let Message::Text(frame) = frame else {
+                continue;
+            };
+            let response: Value = serde_json::from_str(&frame).unwrap();
+            if response[0] == "OK" && response[1] == auth_id {
+                assert!(
+                    response[2].as_bool().unwrap_or(false),
+                    "upstream relay rejected member NIP-42"
+                );
+                break;
+            }
+        }
+
+        let dm_channel = required("BUZZ_TEST_DM_CHANNEL_ID");
+        let expected_dm_id = required("BUZZ_TEST_EXPECTED_DM_EVENT_ID");
+        let expected_author = required("BUZZ_TEST_EXPECTED_DM_AUTHOR");
+        let other_member = required("BUZZ_TEST_OTHER_MEMBER_PUBKEY");
+        let subscription = Uuid::new_v4().to_string();
+        session
+            .socket
+            .as_mut()
+            .expect("connected socket")
+            .send(Message::Text(
+                serde_json::json!([
+                    "REQ",
+                    subscription,
+                    {"kinds": [9], "#h": [dm_channel], "limit": 50}
+                ])
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let mut expected_dm_seen = false;
+        let mut observed_dm_events = Vec::new();
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(15), session.receive())
+                .await
+                .expect("private-channel history timed out")
+                .unwrap()
+                .expect("relay closed before private-channel history completed");
+            let Message::Text(frame) = frame else {
+                continue;
+            };
+            let response: Value = serde_json::from_str(&frame).unwrap();
+            if response[0] == "EVENT" && response[1] == subscription {
+                let event = &response[2];
+                let has_expected_channel = event["tags"].as_array().is_some_and(|tags| {
+                    tags.iter().any(|tag| tag[0] == "h" && tag[1] == dm_channel)
+                });
+                assert!(
+                    has_expected_channel,
+                    "relay returned an event outside the requested channel"
+                );
+                assert_eq!(event["kind"], 9);
+                let author = event["pubkey"].as_str().unwrap_or_default();
+                assert!(
+                    author == expected_author || author == other_member,
+                    "private channel returned an event from a nonmember author"
+                );
+                let event_id = event["id"].as_str().unwrap_or_default();
+                observed_dm_events.push(format!("{event_id}:{author}"));
+                if event_id == expected_dm_id.as_str() {
+                    assert_eq!(author, expected_author);
+                }
+                expected_dm_seen |= event_id == expected_dm_id.as_str();
+            } else if response[0] == "EOSE" && response[1] == subscription {
+                break;
+            }
+        }
+        assert!(
+            expected_dm_seen,
+            "member session did not retrieve the expected private-channel DM {expected_dm_id}; observed {observed_dm_events:?}"
+        );
+
+        statement.operation_id = Uuid::new_v4();
+        statement.change_reference_id = Uuid::new_v4();
+        statement.action = MappingProvisioningAction::Update;
+        statement.expected_generation = 3;
+        statement.record.generation = 4;
+        statement.record.audit_entry_id = Uuid::new_v4();
+        statement.issued_at = test_now();
+        statement.expires_at = statement.issued_at + chrono::Duration::minutes(2);
+        statement.signature = operator_key
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        store.apply(&statement).await.unwrap();
+        assert!(matches!(
+            tokio::time::timeout(
+                SESSION_REVALIDATE_INTERVAL + Duration::from_secs(2),
+                session.receive()
+            )
+            .await
+            .expect("mapping generation revalidation timed out"),
+            Err(UpstreamBuzzTransportError::SessionFenced)
+        ));
     }
 }
