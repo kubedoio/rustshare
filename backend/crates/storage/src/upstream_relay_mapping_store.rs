@@ -7,11 +7,11 @@
 use std::net::IpAddr;
 use std::str::FromStr;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Timelike, Utc};
 use rustshare_core::domain::{TenantId, WorkspaceId};
 use rustshare_resource_auth::upstream_relay_mapping::{
-    verify_mapping_revision, verify_mapping_update, MappingError, RelayMappingRecord,
-    TrustedRelayMapping,
+    verify_mapping_revision, verify_mapping_revision_record, verify_mapping_update, MappingError,
+    RelayMappingRecord, TrustedRelayMapping,
 };
 use serde_json::{json, Value};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
@@ -46,8 +46,9 @@ impl UpstreamRelayMappingStore {
         record: &RelayMappingRecord,
         change_reference_id: Uuid,
     ) -> Result<(), UpstreamRelayMappingStoreError> {
+        let record = database_precision_record(record)?;
         let now = Utc::now();
-        validate_record(record, change_reference_id, now)?;
+        validate_record(&record, change_reference_id, now)?;
         let generation = db_generation(record.generation)?;
         let mut tx = self.0.begin().await.map_err(map_database_error)?;
         set_tenant(&mut tx, record.tenant_id.0).await?;
@@ -79,10 +80,10 @@ impl UpstreamRelayMappingStore {
         .map_err(map_database_error)?;
 
         if let Some(row) = inserted {
-            let changed = mapping_snapshot(record);
+            let changed = mapping_snapshot(&record);
             insert_audit(
                 &mut tx,
-                record,
+                &record,
                 None,
                 "mapping_created",
                 change_reference_id,
@@ -110,7 +111,7 @@ impl UpstreamRelayMappingStore {
             .await
             .map_err(map_database_error)?
             .ok_or(UpstreamRelayMappingStoreError::Conflict)?;
-            if existing.to_record(record.workspace_id.0)? != *record {
+            if existing.to_record(record.workspace_id.0)? != record {
                 return Err(UpstreamRelayMappingStoreError::Conflict);
             }
             bind_workspace(
@@ -173,7 +174,25 @@ impl UpstreamRelayMappingStore {
         tenant_id: TenantId,
         workspace_id: WorkspaceId,
     ) -> Result<TrustedRelayMapping, UpstreamRelayMappingStoreError> {
-        let now = Utc::now();
+        let record = self.load_record(tenant_id, workspace_id).await?;
+        Ok(TrustedRelayMapping::validate(record, Utc::now())?)
+    }
+
+    /// Read a tenant-scoped record for an authorized control-plane renewal.
+    /// Expired or inactive records are returned raw and are never connectable.
+    pub async fn load_for_management(
+        &self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+    ) -> Result<RelayMappingRecord, UpstreamRelayMappingStoreError> {
+        self.load_record(tenant_id, workspace_id).await
+    }
+
+    async fn load_record(
+        &self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+    ) -> Result<RelayMappingRecord, UpstreamRelayMappingStoreError> {
         let mut tx = self.0.begin().await.map_err(map_database_error)?;
         set_tenant(&mut tx, tenant_id.0).await?;
         let row = sqlx::query_as::<_, RelayRow>(
@@ -190,9 +209,9 @@ impl UpstreamRelayMappingStore {
         .await
         .map_err(map_database_error)?
         .ok_or(MappingError::MissingMapping)?;
-        let mapping = TrustedRelayMapping::validate(row.to_record(workspace_id.0)?, now)?;
+        let record = row.to_record(workspace_id.0)?;
         tx.commit().await.map_err(map_database_error)?;
-        Ok(mapping)
+        Ok(record)
     }
 
     /// Compare-and-swap the one tenant relay. The generation change applies to
@@ -205,9 +224,48 @@ impl UpstreamRelayMappingStore {
         change_reference_id: Uuid,
     ) -> Result<(), UpstreamRelayMappingStoreError> {
         let now = Utc::now();
-        validate_record(next, change_reference_id, now)?;
+        let next = database_precision_record(next)?;
+        validate_record(&next, change_reference_id, now)?;
         verify_mapping_update(current, next.clone(), expected_generation, now)?;
-        self.persist_update(current, next, expected_generation, change_reference_id)
+        self.persist_update(
+            current.record(),
+            &next,
+            expected_generation,
+            change_reference_id,
+        )
+        .await
+    }
+
+    /// Renew an expired active mapping after an authorized operator reloads it.
+    /// The database row and generation are rechecked in the update transaction.
+    pub async fn renew_expired(
+        &self,
+        current: &RelayMappingRecord,
+        valid_until: DateTime<Utc>,
+        expected_generation: u64,
+        actor_id: Uuid,
+        change_reference_id: Uuid,
+    ) -> Result<(), UpstreamRelayMappingStoreError> {
+        let now = Utc::now();
+        if actor_id.is_nil()
+            || change_reference_id.is_nil()
+            || !current.active
+            || current.valid_until >= now
+        {
+            return Err(UpstreamRelayMappingStoreError::InvalidRecord);
+        }
+        let mut next = current.clone();
+        next.generation = expected_generation
+            .checked_add(1)
+            .ok_or(UpstreamRelayMappingStoreError::Conflict)?;
+        next.active = true;
+        next.valid_until = valid_until;
+        next.updated_by = actor_id;
+        next.audit_entry_id = Uuid::new_v4();
+        let next = database_precision_record(&next)?;
+        validate_record(&next, change_reference_id, now)?;
+        verify_mapping_revision_record(current, &next, expected_generation)?;
+        self.persist_update(current, &next, expected_generation, change_reference_id)
             .await
     }
 
@@ -231,33 +289,40 @@ impl UpstreamRelayMappingStore {
         next.updated_by = actor_id;
         next.audit_entry_id = Uuid::new_v4();
         verify_mapping_revision(current, &next, expected_generation)?;
-        self.persist_update(current, &next, expected_generation, change_reference_id)
-            .await
+        self.persist_update(
+            current.record(),
+            &next,
+            expected_generation,
+            change_reference_id,
+        )
+        .await
     }
 
     async fn persist_update(
         &self,
-        current: &TrustedRelayMapping,
+        current: &RelayMappingRecord,
         next: &RelayMappingRecord,
         expected_generation: u64,
         change_reference_id: Uuid,
     ) -> Result<(), UpstreamRelayMappingStoreError> {
-        let scope = current.scope();
+        let tenant_id = current.tenant_id.0;
+        let workspace_id = current.workspace_id.0;
+        let mapping_id = current.mapping_id;
         let generation = db_generation(next.generation)?;
         let mut tx = self.0.begin().await.map_err(map_database_error)?;
-        set_tenant(&mut tx, scope.tenant_id.0).await?;
+        set_tenant(&mut tx, tenant_id).await?;
         let old = sqlx::query_as::<_, RelayRow>(
             "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,relay_pubkey, \
              deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id \
              FROM upstream_buzz_tenant_relays WHERE tenant_id=$1 AND mapping_id=$2 FOR UPDATE",
         )
-        .bind(scope.tenant_id.0)
-        .bind(scope.mapping_id)
+        .bind(tenant_id)
+        .bind(mapping_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(map_database_error)?
         .ok_or(UpstreamRelayMappingStoreError::Conflict)?;
-        if old.to_record(scope.workspace_id.0)? != *current.record()
+        if old.to_record(workspace_id)? != *current
             || u64::try_from(old.generation).ok() != Some(expected_generation)
         {
             return Err(UpstreamRelayMappingStoreError::Conflict);
@@ -266,9 +331,9 @@ impl UpstreamRelayMappingStore {
             "SELECT EXISTS(SELECT 1 FROM upstream_buzz_workspace_relay_bindings \
              WHERE tenant_id=$1 AND workspace_id=$2 AND mapping_id=$3)",
         )
-        .bind(scope.tenant_id.0)
-        .bind(scope.workspace_id.0)
-        .bind(scope.mapping_id)
+        .bind(tenant_id)
+        .bind(workspace_id)
+        .bind(mapping_id)
         .fetch_one(&mut *tx)
         .await
         .map_err(map_database_error)?;
@@ -282,8 +347,8 @@ impl UpstreamRelayMappingStore {
              valid_until=$12,updated_by=$13,audit_entry_id=$14,updated_at=now() \
              WHERE tenant_id=$1 AND mapping_id=$2 AND generation=$3",
         )
-        .bind(scope.tenant_id.0)
-        .bind(scope.mapping_id)
+        .bind(tenant_id)
+        .bind(mapping_id)
         .bind(
             i64::try_from(expected_generation)
                 .map_err(|_| UpstreamRelayMappingStoreError::Conflict)?,
@@ -464,6 +529,18 @@ fn validate_record(
     Ok(())
 }
 
+fn database_precision_record(
+    record: &RelayMappingRecord,
+) -> Result<RelayMappingRecord, UpstreamRelayMappingStoreError> {
+    let mut record = record.clone();
+    let micros = record.valid_until.timestamp_subsec_micros();
+    record.valid_until = record
+        .valid_until
+        .with_nanosecond(micros * 1_000)
+        .ok_or(UpstreamRelayMappingStoreError::InvalidRecord)?;
+    Ok(record)
+}
+
 fn db_generation(generation: u64) -> Result<i64, UpstreamRelayMappingStoreError> {
     i64::try_from(generation).map_err(|_| UpstreamRelayMappingStoreError::InvalidRecord)
 }
@@ -529,7 +606,9 @@ mod tests {
             approved_ips: vec!["8.8.8.8".parse().unwrap()],
             generation: 1,
             active: true,
-            valid_until: Utc::now() + chrono::Duration::days(1),
+            valid_until: Utc::now()
+                + chrono::Duration::days(1)
+                + chrono::Duration::nanoseconds(987),
             updated_by: Uuid::new_v4(),
             audit_entry_id: Uuid::new_v4(),
         }
@@ -572,6 +651,7 @@ mod tests {
             ))
         ));
         store.create(&initial, change_ref).await.unwrap();
+        store.create(&initial, change_ref).await.unwrap();
         store
             .bind_workspace(
                 TenantId(tenant_a),
@@ -600,6 +680,49 @@ mod tests {
                 MappingError::MissingMapping
             ))
         ));
+
+        let expired = record(tenant_b, workspace_b);
+        store.create(&expired, Uuid::new_v4()).await.unwrap();
+        sqlx::query(
+            "UPDATE upstream_buzz_tenant_relays SET valid_until=now()-interval '1 second' WHERE tenant_id=$1",
+        )
+        .bind(tenant_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(matches!(
+            store
+                .load(TenantId(tenant_b), WorkspaceId(workspace_b))
+                .await,
+            Err(UpstreamRelayMappingStoreError::Policy(
+                MappingError::InactiveOrStale
+            ))
+        ));
+        let expired_mapping = store
+            .load_for_management(TenantId(tenant_b), WorkspaceId(workspace_b))
+            .await
+            .unwrap();
+        assert!(expired_mapping.active);
+        assert!(expired_mapping.valid_until < Utc::now());
+        store
+            .renew_expired(
+                &expired_mapping,
+                Utc::now() + chrono::Duration::days(1),
+                expired_mapping.generation,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .load(TenantId(tenant_b), WorkspaceId(workspace_b))
+                .await
+                .unwrap()
+                .scope()
+                .generation,
+            expired_mapping.generation + 1
+        );
 
         let mut cross_tenant = record(tenant_b, workspace_b);
         cross_tenant.relay_url.clone_from(&initial.relay_url);
