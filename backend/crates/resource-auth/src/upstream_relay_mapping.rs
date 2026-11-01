@@ -123,6 +123,11 @@ impl TrustedRelayMapping {
         &self.canonical_url
     }
 
+    /// The immutable record snapshot that was validated by this policy model.
+    pub fn record(&self) -> &RelayMappingRecord {
+        &self.record
+    }
+
     /// Scope of this relay mapping.
     pub fn scope(&self) -> MappingScope {
         MappingScope {
@@ -258,6 +263,17 @@ pub fn verify_mapping_update(
     expected_generation: u64,
     now: DateTime<Utc>,
 ) -> Result<TrustedRelayMapping, MappingError> {
+    verify_mapping_revision(current, &next, expected_generation)?;
+    TrustedRelayMapping::validate(next, now)
+}
+
+/// Check immutable identity and monotonic generation for any mapping revision.
+/// Callers still validate the endpoint policy before making an active mapping usable.
+pub fn verify_mapping_revision(
+    current: &TrustedRelayMapping,
+    next: &RelayMappingRecord,
+    expected_generation: u64,
+) -> Result<(), MappingError> {
     if current.record.generation != expected_generation {
         return Err(MappingError::StaleMappingGeneration);
     }
@@ -273,7 +289,7 @@ pub fn verify_mapping_update(
     {
         return Err(MappingError::InvalidMappingUpdate);
     }
-    TrustedRelayMapping::validate(next, now)
+    Ok(())
 }
 
 /// Require all active workspaces in a tenant to use one isolated relay and
