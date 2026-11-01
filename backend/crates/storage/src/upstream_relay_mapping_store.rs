@@ -6,12 +6,17 @@
 
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use chrono::{DateTime, Timelike, Utc};
 use rustshare_core::domain::{TenantId, WorkspaceId};
 use rustshare_resource_auth::upstream_relay_mapping::{
-    verify_mapping_revision, verify_mapping_revision_record, verify_mapping_update, MappingError,
-    RelayMappingRecord, TrustedRelayMapping,
+    verify_mapping_revision_record, verify_mapping_update, MappingError, RelayMappingRecord,
+    TrustedRelayMapping,
+};
+use rustshare_resource_auth::upstream_relay_provisioning::{
+    MappingProvisioningAction, MappingProvisioningStatement, MappingProvisioningVerifier,
+    VerifiedMappingProvisioning,
 };
 use serde_json::{json, Value};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
@@ -32,34 +37,162 @@ pub enum UpstreamRelayMappingStoreError {
 
 /// Persistence only; no production runtime caller is wired.
 #[derive(Clone)]
-pub struct UpstreamRelayMappingStore(PgPool);
+pub struct UpstreamRelayMappingStore {
+    pool: PgPool,
+    verifier: Option<Arc<MappingProvisioningVerifier>>,
+}
 
 impl UpstreamRelayMappingStore {
     pub fn new(pool: PgPool) -> Self {
-        Self(pool)
+        Self {
+            pool,
+            verifier: None,
+        }
+    }
+
+    /// Construct a write-capable store with deployment-owned verifier configuration.
+    pub fn with_provisioning_verifier(
+        pool: PgPool,
+        verifier: Arc<MappingProvisioningVerifier>,
+    ) -> Self {
+        Self {
+            pool,
+            verifier: Some(verifier),
+        }
+    }
+
+    /// Apply a write only after the deployment/operator signature was verified.
+    pub async fn apply(
+        &self,
+        statement: &MappingProvisioningStatement,
+    ) -> Result<(), UpstreamRelayMappingStoreError> {
+        let verifier = self
+            .verifier
+            .as_ref()
+            .ok_or(UpstreamRelayMappingStoreError::InvalidRecord)?;
+        let command = verifier
+            .verify(statement, Utc::now())
+            .map_err(|_| UpstreamRelayMappingStoreError::InvalidRecord)?;
+        let record = command.record().clone();
+        let change_reference_id = command.change_reference_id();
+        let expected_generation = command.expected_generation();
+        let result = match command.action() {
+            MappingProvisioningAction::Create => {
+                self.create_with_authority(&record, change_reference_id, Some(&command))
+                    .await
+            }
+            MappingProvisioningAction::BindWorkspace => {
+                self.bind_workspace_with_authority(
+                    record.tenant_id,
+                    record.workspace_id,
+                    record.updated_by,
+                    change_reference_id,
+                    Some(&command),
+                )
+                .await
+            }
+            MappingProvisioningAction::Update => {
+                let current = self.load(record.tenant_id, record.workspace_id).await?;
+                self.update_with_authority(
+                    &current,
+                    &record,
+                    expected_generation,
+                    change_reference_id,
+                    Some(&command),
+                )
+                .await
+            }
+            MappingProvisioningAction::Renew => {
+                let current = self
+                    .load_for_management(record.tenant_id, record.workspace_id)
+                    .await?;
+                self.renew_expired_with_authority(
+                    &current,
+                    record.valid_until,
+                    expected_generation,
+                    record.updated_by,
+                    change_reference_id,
+                    Some(&command),
+                )
+                .await
+            }
+            MappingProvisioningAction::Deactivate => {
+                let current = self
+                    .load_for_management(record.tenant_id, record.workspace_id)
+                    .await?;
+                self.deactivate_with_authority(
+                    &current,
+                    expected_generation,
+                    record.updated_by,
+                    change_reference_id,
+                    Some(&command),
+                )
+                .await
+            }
+        };
+        match result {
+            Ok(()) => Ok(()),
+            Err(_error) if self.operation_was_applied(&command).await? => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn operation_was_applied(
+        &self,
+        command: &VerifiedMappingProvisioning,
+    ) -> Result<bool, UpstreamRelayMappingStoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_database_error)?;
+        set_tenant(&mut tx, command.record().tenant_id.0).await?;
+        let applied = lock_and_check_replay(&mut tx, command).await?;
+        tx.commit().await.map_err(map_database_error)?;
+        Ok(applied)
     }
 
     /// Create the tenant's sole relay mapping and bind its first workspace.
     /// Retrying the same audited record is idempotent.
-    pub async fn create(
+    #[cfg(test)]
+    async fn create(
         &self,
         record: &RelayMappingRecord,
         change_reference_id: Uuid,
+    ) -> Result<(), UpstreamRelayMappingStoreError> {
+        self.create_with_authority(record, change_reference_id, None)
+            .await
+    }
+
+    async fn create_with_authority(
+        &self,
+        record: &RelayMappingRecord,
+        change_reference_id: Uuid,
+        command: Option<&VerifiedMappingProvisioning>,
     ) -> Result<(), UpstreamRelayMappingStoreError> {
         let record = database_precision_record(record)?;
         let now = Utc::now();
         validate_record(&record, change_reference_id, now)?;
         let generation = db_generation(record.generation)?;
-        let mut tx = self.0.begin().await.map_err(map_database_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_database_error)?;
         set_tenant(&mut tx, record.tenant_id.0).await?;
+        if let Some(command) = command {
+            validate_write_command(
+                command,
+                MappingProvisioningAction::Create,
+                &record,
+                0,
+                change_reference_id,
+            )?;
+            if lock_and_check_replay(&mut tx, command).await? {
+                tx.commit().await.map_err(map_database_error)?;
+                return Ok(());
+            }
+        }
 
         let inserted = sqlx::query_as::<_, RelayRow>(
             "INSERT INTO upstream_buzz_tenant_relays \
-             (mapping_id,tenant_id,relay_url,relay_host,community_id,relay_pubkey, \
+             (mapping_id,tenant_id,relay_url,relay_host,community_id,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
               deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) \
              ON CONFLICT (tenant_id) DO NOTHING \
-             RETURNING mapping_id,tenant_id,relay_url,relay_host,community_id,relay_pubkey, \
+             RETURNING mapping_id,tenant_id,relay_url,relay_host,community_id,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
               deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id",
         )
         .bind(record.mapping_id)
@@ -67,6 +200,9 @@ impl UpstreamRelayMappingStore {
         .bind(&record.relay_url)
         .bind(&record.relay_host)
         .bind(&record.community_id)
+        .bind(record.relay_deployment_id)
+        .bind(&record.endpoint_service_identity)
+        .bind(&record.tls_peer_spki_sha256)
         .bind(&record.relay_pubkey)
         .bind(&record.deployment_digest)
         .bind(ip_strings(&record.approved_ips))
@@ -79,7 +215,10 @@ impl UpstreamRelayMappingStore {
         .await
         .map_err(map_database_error)?;
 
-        if let Some(row) = inserted {
+        if inserted.is_some() {
+            if let Some(command) = command {
+                record_operation(&mut tx, command).await?;
+            }
             let changed = mapping_snapshot(&record);
             insert_audit(
                 &mut tx,
@@ -88,21 +227,24 @@ impl UpstreamRelayMappingStore {
                 "mapping_created",
                 change_reference_id,
                 changed,
+                command,
             )
             .await?;
             bind_workspace(
                 &mut tx,
-                row.mapping_id,
-                record.tenant_id.0,
-                record.workspace_id.0,
+                &record,
                 generation,
                 record.updated_by,
                 change_reference_id,
+                command,
             )
             .await?;
         } else {
+            if command.is_some() {
+                return Err(UpstreamRelayMappingStoreError::Conflict);
+            }
             let existing = sqlx::query_as::<_, RelayRow>(
-                "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,relay_pubkey, \
+                "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
                  deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id \
                  FROM upstream_buzz_tenant_relays WHERE tenant_id=$1",
             )
@@ -116,12 +258,11 @@ impl UpstreamRelayMappingStore {
             }
             bind_workspace(
                 &mut tx,
-                existing.mapping_id,
-                record.tenant_id.0,
-                record.workspace_id.0,
+                &record,
                 generation,
                 record.updated_by,
                 change_reference_id,
+                command,
             )
             .await?;
         }
@@ -130,21 +271,46 @@ impl UpstreamRelayMappingStore {
     }
 
     /// Bind another workspace to the tenant's existing isolated relay.
-    pub async fn bind_workspace(
+    #[cfg(test)]
+    async fn bind_workspace(
         &self,
         tenant_id: TenantId,
         workspace_id: WorkspaceId,
         actor_id: Uuid,
         change_reference_id: Uuid,
     ) -> Result<(), UpstreamRelayMappingStoreError> {
+        self.bind_workspace_with_authority(
+            tenant_id,
+            workspace_id,
+            actor_id,
+            change_reference_id,
+            None,
+        )
+        .await
+    }
+
+    async fn bind_workspace_with_authority(
+        &self,
+        tenant_id: TenantId,
+        workspace_id: WorkspaceId,
+        actor_id: Uuid,
+        change_reference_id: Uuid,
+        command: Option<&VerifiedMappingProvisioning>,
+    ) -> Result<(), UpstreamRelayMappingStoreError> {
         let now = Utc::now();
         if actor_id.is_nil() || change_reference_id.is_nil() || workspace_id.0.is_nil() {
             return Err(UpstreamRelayMappingStoreError::InvalidRecord);
         }
-        let mut tx = self.0.begin().await.map_err(map_database_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_database_error)?;
         set_tenant(&mut tx, tenant_id.0).await?;
+        if let Some(command) = command {
+            if lock_and_check_replay(&mut tx, command).await? {
+                tx.commit().await.map_err(map_database_error)?;
+                return Ok(());
+            }
+        }
         let row = sqlx::query_as::<_, RelayRow>(
-            "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,relay_pubkey, \
+            "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
              deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id \
              FROM upstream_buzz_tenant_relays WHERE tenant_id=$1 FOR UPDATE",
         )
@@ -155,14 +321,28 @@ impl UpstreamRelayMappingStore {
         .ok_or(MappingError::MissingMapping)?;
         let record = row.to_record(workspace_id.0)?;
         TrustedRelayMapping::validate(record.clone(), now)?;
+        if let Some(command) = command {
+            validate_write_command(
+                command,
+                MappingProvisioningAction::BindWorkspace,
+                &record,
+                record.generation,
+                change_reference_id,
+            )?;
+            let mut signed_record = record.clone();
+            signed_record.workspace_id = command.record().workspace_id;
+            if &signed_record != command.record() {
+                return Err(UpstreamRelayMappingStoreError::Conflict);
+            }
+            record_operation(&mut tx, command).await?;
+        }
         bind_workspace(
             &mut tx,
-            record.mapping_id,
-            tenant_id.0,
-            workspace_id.0,
+            &record,
             db_generation(record.generation)?,
             actor_id,
             change_reference_id,
+            command,
         )
         .await?;
         tx.commit().await.map_err(map_database_error)
@@ -193,10 +373,10 @@ impl UpstreamRelayMappingStore {
         tenant_id: TenantId,
         workspace_id: WorkspaceId,
     ) -> Result<RelayMappingRecord, UpstreamRelayMappingStoreError> {
-        let mut tx = self.0.begin().await.map_err(map_database_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_database_error)?;
         set_tenant(&mut tx, tenant_id.0).await?;
         let row = sqlx::query_as::<_, RelayRow>(
-            "SELECT r.mapping_id,r.tenant_id,r.relay_url,r.relay_host,r.community_id,r.relay_pubkey, \
+            "SELECT r.mapping_id,r.tenant_id,r.relay_url,r.relay_host,r.community_id,r.relay_deployment_id,r.endpoint_service_identity,r.tls_peer_spki_sha256,r.relay_pubkey, \
              r.deployment_digest,r.approved_ips,r.generation,r.active,r.valid_until,r.updated_by,r.audit_entry_id \
              FROM upstream_buzz_tenant_relays r \
              JOIN upstream_buzz_workspace_relay_bindings b \
@@ -216,35 +396,85 @@ impl UpstreamRelayMappingStore {
 
     /// Compare-and-swap the one tenant relay. The generation change applies to
     /// all workspace bindings and makes existing connector snapshots stale.
-    pub async fn update(
+    #[cfg(test)]
+    async fn update(
         &self,
         current: &TrustedRelayMapping,
         next: &RelayMappingRecord,
         expected_generation: u64,
         change_reference_id: Uuid,
     ) -> Result<(), UpstreamRelayMappingStoreError> {
+        self.update_with_authority(
+            current,
+            next,
+            expected_generation,
+            change_reference_id,
+            None,
+        )
+        .await
+    }
+
+    async fn update_with_authority(
+        &self,
+        current: &TrustedRelayMapping,
+        next: &RelayMappingRecord,
+        expected_generation: u64,
+        change_reference_id: Uuid,
+        command: Option<&VerifiedMappingProvisioning>,
+    ) -> Result<(), UpstreamRelayMappingStoreError> {
         let now = Utc::now();
         let next = database_precision_record(next)?;
         validate_record(&next, change_reference_id, now)?;
         verify_mapping_update(current, next.clone(), expected_generation, now)?;
+        if let Some(command) = command {
+            validate_write_command(
+                command,
+                MappingProvisioningAction::Update,
+                &next,
+                expected_generation,
+                change_reference_id,
+            )?;
+        }
         self.persist_update(
             current.record(),
             &next,
             expected_generation,
             change_reference_id,
+            command,
         )
         .await
     }
 
     /// Renew an expired active mapping after an authorized operator reloads it.
     /// The database row and generation are rechecked in the update transaction.
-    pub async fn renew_expired(
+    #[cfg(test)]
+    async fn renew_expired(
         &self,
         current: &RelayMappingRecord,
         valid_until: DateTime<Utc>,
         expected_generation: u64,
         actor_id: Uuid,
         change_reference_id: Uuid,
+    ) -> Result<(), UpstreamRelayMappingStoreError> {
+        self.renew_expired_with_authority(
+            current,
+            valid_until,
+            expected_generation,
+            actor_id,
+            change_reference_id,
+            None,
+        )
+        .await
+    }
+
+    async fn renew_expired_with_authority(
+        &self,
+        current: &RelayMappingRecord,
+        valid_until: DateTime<Utc>,
+        expected_generation: u64,
+        actor_id: Uuid,
+        change_reference_id: Uuid,
+        command: Option<&VerifiedMappingProvisioning>,
     ) -> Result<(), UpstreamRelayMappingStoreError> {
         let now = Utc::now();
         if actor_id.is_nil()
@@ -261,39 +491,87 @@ impl UpstreamRelayMappingStore {
         next.active = true;
         next.valid_until = valid_until;
         next.updated_by = actor_id;
-        next.audit_entry_id = Uuid::new_v4();
+        next.audit_entry_id = command
+            .map(|command| command.record().audit_entry_id)
+            .unwrap_or_else(Uuid::new_v4);
         let next = database_precision_record(&next)?;
         validate_record(&next, change_reference_id, now)?;
         verify_mapping_revision_record(current, &next, expected_generation)?;
-        self.persist_update(current, &next, expected_generation, change_reference_id)
-            .await
+        if let Some(command) = command {
+            validate_write_command(
+                command,
+                MappingProvisioningAction::Renew,
+                &next,
+                expected_generation,
+                change_reference_id,
+            )?;
+        }
+        self.persist_update(
+            current,
+            &next,
+            expected_generation,
+            change_reference_id,
+            command,
+        )
+        .await
     }
 
     /// Disable the tenant mapping immediately with an audited generation bump.
     /// An inactive mapping cannot be loaded or used by a connector.
-    pub async fn deactivate(
+    #[cfg(test)]
+    async fn deactivate(
         &self,
         current: &TrustedRelayMapping,
         expected_generation: u64,
         actor_id: Uuid,
         change_reference_id: Uuid,
     ) -> Result<(), UpstreamRelayMappingStoreError> {
+        self.deactivate_with_authority(
+            current.record(),
+            expected_generation,
+            actor_id,
+            change_reference_id,
+            None,
+        )
+        .await
+    }
+
+    async fn deactivate_with_authority(
+        &self,
+        current: &RelayMappingRecord,
+        expected_generation: u64,
+        actor_id: Uuid,
+        change_reference_id: Uuid,
+        command: Option<&VerifiedMappingProvisioning>,
+    ) -> Result<(), UpstreamRelayMappingStoreError> {
         if actor_id.is_nil() || change_reference_id.is_nil() {
             return Err(UpstreamRelayMappingStoreError::InvalidRecord);
         }
-        let mut next = current.record().clone();
+        let mut next = current.clone();
         next.generation = expected_generation
             .checked_add(1)
             .ok_or(UpstreamRelayMappingStoreError::Conflict)?;
         next.active = false;
         next.updated_by = actor_id;
-        next.audit_entry_id = Uuid::new_v4();
-        verify_mapping_revision(current, &next, expected_generation)?;
+        next.audit_entry_id = command
+            .map(|command| command.record().audit_entry_id)
+            .unwrap_or_else(Uuid::new_v4);
+        verify_mapping_revision_record(current, &next, expected_generation)?;
+        if let Some(command) = command {
+            validate_write_command(
+                command,
+                MappingProvisioningAction::Deactivate,
+                &next,
+                expected_generation,
+                change_reference_id,
+            )?;
+        }
         self.persist_update(
-            current.record(),
+            current,
             &next,
             expected_generation,
             change_reference_id,
+            command,
         )
         .await
     }
@@ -304,15 +582,22 @@ impl UpstreamRelayMappingStore {
         next: &RelayMappingRecord,
         expected_generation: u64,
         change_reference_id: Uuid,
+        command: Option<&VerifiedMappingProvisioning>,
     ) -> Result<(), UpstreamRelayMappingStoreError> {
         let tenant_id = current.tenant_id.0;
         let workspace_id = current.workspace_id.0;
         let mapping_id = current.mapping_id;
         let generation = db_generation(next.generation)?;
-        let mut tx = self.0.begin().await.map_err(map_database_error)?;
+        let mut tx = self.pool.begin().await.map_err(map_database_error)?;
         set_tenant(&mut tx, tenant_id).await?;
+        if let Some(command) = command {
+            if lock_and_check_replay(&mut tx, command).await? {
+                tx.commit().await.map_err(map_database_error)?;
+                return Ok(());
+            }
+        }
         let old = sqlx::query_as::<_, RelayRow>(
-            "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,relay_pubkey, \
+            "SELECT mapping_id,tenant_id,relay_url,relay_host,community_id,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
              deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id \
              FROM upstream_buzz_tenant_relays WHERE tenant_id=$1 AND mapping_id=$2 FOR UPDATE",
         )
@@ -343,8 +628,9 @@ impl UpstreamRelayMappingStore {
         let changed = changed_snapshot(&old, next)?;
         let result = sqlx::query(
             "UPDATE upstream_buzz_tenant_relays SET relay_url=$4,relay_host=$5,community_id=$6, \
-             relay_pubkey=$7,deployment_digest=$8,approved_ips=$9,generation=$10,active=$11, \
-             valid_until=$12,updated_by=$13,audit_entry_id=$14,updated_at=now() \
+             relay_deployment_id=$7,endpoint_service_identity=$8,tls_peer_spki_sha256=$9,relay_pubkey=$10, \
+             deployment_digest=$11,approved_ips=$12,generation=$13,active=$14, \
+             valid_until=$15,updated_by=$16,audit_entry_id=$17,updated_at=now() \
              WHERE tenant_id=$1 AND mapping_id=$2 AND generation=$3",
         )
         .bind(tenant_id)
@@ -356,6 +642,9 @@ impl UpstreamRelayMappingStore {
         .bind(&next.relay_url)
         .bind(&next.relay_host)
         .bind(&next.community_id)
+        .bind(next.relay_deployment_id)
+        .bind(&next.endpoint_service_identity)
+        .bind(&next.tls_peer_spki_sha256)
         .bind(&next.relay_pubkey)
         .bind(&next.deployment_digest)
         .bind(ip_strings(&next.approved_ips))
@@ -370,6 +659,9 @@ impl UpstreamRelayMappingStore {
         if result.rows_affected() != 1 {
             return Err(UpstreamRelayMappingStoreError::Conflict);
         }
+        if let Some(command) = command {
+            record_operation(&mut tx, command).await?;
+        }
         insert_audit(
             &mut tx,
             next,
@@ -377,6 +669,7 @@ impl UpstreamRelayMappingStore {
             "mapping_updated",
             change_reference_id,
             changed,
+            command,
         )
         .await?;
         tx.commit().await.map_err(map_database_error)
@@ -385,13 +678,15 @@ impl UpstreamRelayMappingStore {
 
 async fn bind_workspace(
     tx: &mut Transaction<'_, Postgres>,
-    mapping_id: Uuid,
-    tenant_id: Uuid,
-    workspace_id: Uuid,
+    record: &RelayMappingRecord,
     generation: i64,
     actor_id: Uuid,
     change_reference_id: Uuid,
+    command: Option<&VerifiedMappingProvisioning>,
 ) -> Result<(), UpstreamRelayMappingStoreError> {
+    let mapping_id = record.mapping_id;
+    let tenant_id = record.tenant_id.0;
+    let workspace_id = record.workspace_id.0;
     let audit_entry_id = Uuid::new_v4();
     let inserted = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO upstream_buzz_workspace_relay_bindings \
@@ -416,7 +711,7 @@ async fn bind_workspace(
         .fetch_optional(&mut **tx)
         .await
         .map_err(map_database_error)?;
-        return if existing == Some(mapping_id) {
+        return if existing == Some(mapping_id) && command.is_none() {
             Ok(())
         } else {
             Err(UpstreamRelayMappingStoreError::Conflict)
@@ -424,8 +719,8 @@ async fn bind_workspace(
     }
     sqlx::query(
         "INSERT INTO upstream_buzz_relay_mapping_audit \
-         (audit_entry_id,tenant_id,mapping_id,workspace_id,generation,action,actor_id,change_reference_id) \
-         VALUES ($1,$2,$3,$4,$5,'workspace_bound',$6,$7)",
+         (audit_entry_id,tenant_id,mapping_id,workspace_id,generation,action,actor_id,change_reference_id,operation_id,operator_key_id) \
+         VALUES ($1,$2,$3,$4,$5,'workspace_bound',$6,$7,$8,$9)",
     )
     .bind(audit_entry_id)
     .bind(tenant_id)
@@ -434,6 +729,8 @@ async fn bind_workspace(
     .bind(generation)
     .bind(actor_id)
     .bind(change_reference_id)
+    .bind(command.map(VerifiedMappingProvisioning::operation_id))
+    .bind(command.map(|command| command.operator_key_id()))
     .execute(&mut **tx)
     .await
     .map_err(map_database_error)?;
@@ -447,11 +744,12 @@ async fn insert_audit(
     action: &str,
     change_reference_id: Uuid,
     changed_fields: Value,
+    command: Option<&VerifiedMappingProvisioning>,
 ) -> Result<(), UpstreamRelayMappingStoreError> {
     sqlx::query(
         "INSERT INTO upstream_buzz_relay_mapping_audit \
-         (audit_entry_id,tenant_id,mapping_id,workspace_id,generation,action,actor_id,change_reference_id,changed_fields) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+         (audit_entry_id,tenant_id,mapping_id,workspace_id,generation,action,actor_id,change_reference_id,changed_fields,operation_id,operator_key_id) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
     )
     .bind(record.audit_entry_id)
     .bind(record.tenant_id.0)
@@ -462,9 +760,98 @@ async fn insert_audit(
     .bind(record.updated_by)
     .bind(change_reference_id)
     .bind(changed_fields)
+    .bind(command.map(VerifiedMappingProvisioning::operation_id))
+    .bind(command.map(|command| command.operator_key_id()))
     .execute(&mut **tx)
     .await
     .map_err(map_database_error)?;
+    Ok(())
+}
+
+async fn check_replayed_operation(
+    tx: &mut Transaction<'_, Postgres>,
+    command: &VerifiedMappingProvisioning,
+) -> Result<bool, UpstreamRelayMappingStoreError> {
+    let existing = sqlx::query_as::<_, (Vec<u8>,)>(
+        "SELECT statement_digest FROM upstream_buzz_mapping_operations \
+         WHERE operation_id=$1 AND tenant_id=$2",
+    )
+    .bind(command.operation_id())
+    .bind(command.record().tenant_id.0)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_database_error)?;
+    match existing {
+        Some((digest,)) if digest.as_slice() == command.statement_digest() => Ok(true),
+        Some(_) => Err(UpstreamRelayMappingStoreError::Conflict),
+        None => Ok(false),
+    }
+}
+
+async fn lock_and_check_replay(
+    tx: &mut Transaction<'_, Postgres>,
+    command: &VerifiedMappingProvisioning,
+) -> Result<bool, UpstreamRelayMappingStoreError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(command.operation_id().to_string())
+        .execute(&mut **tx)
+        .await
+        .map_err(map_database_error)?;
+    check_replayed_operation(tx, command).await
+}
+
+async fn record_operation(
+    tx: &mut Transaction<'_, Postgres>,
+    command: &VerifiedMappingProvisioning,
+) -> Result<(), UpstreamRelayMappingStoreError> {
+    let record = command.record();
+    let action = match command.action() {
+        MappingProvisioningAction::Create => "create",
+        MappingProvisioningAction::BindWorkspace => "bind_workspace",
+        MappingProvisioningAction::Update => "update",
+        MappingProvisioningAction::Renew => "renew",
+        MappingProvisioningAction::Deactivate => "deactivate",
+    };
+    let inserted = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO upstream_buzz_mapping_operations \
+         (operation_id,tenant_id,workspace_id,mapping_id,generation,action,operator_service_id,operator_key_id, \
+          change_reference_id,statement_digest) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING RETURNING operation_id",
+    )
+    .bind(command.operation_id())
+    .bind(record.tenant_id.0)
+    .bind(record.workspace_id.0)
+    .bind(record.mapping_id)
+    .bind(db_generation(record.generation)?)
+    .bind(action)
+    .bind(command.operator_service_id())
+    .bind(command.operator_key_id())
+    .bind(command.change_reference_id())
+    .bind(command.statement_digest().as_slice())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_database_error)?;
+    if inserted.is_none() {
+        return Err(UpstreamRelayMappingStoreError::Conflict);
+    }
+    Ok(())
+}
+
+fn validate_write_command(
+    command: &VerifiedMappingProvisioning,
+    action: MappingProvisioningAction,
+    record: &RelayMappingRecord,
+    expected_generation: u64,
+    change_reference_id: Uuid,
+) -> Result<(), UpstreamRelayMappingStoreError> {
+    if command.action() != action
+        || command.record() != record
+        || command.expected_generation() != expected_generation
+        || command.change_reference_id() != change_reference_id
+        || command.operator_service_id() != record.updated_by
+    {
+        return Err(UpstreamRelayMappingStoreError::Conflict);
+    }
     Ok(())
 }
 
@@ -475,6 +862,9 @@ struct RelayRow {
     relay_url: String,
     relay_host: String,
     community_id: String,
+    relay_deployment_id: Uuid,
+    endpoint_service_identity: String,
+    tls_peer_spki_sha256: String,
     relay_pubkey: String,
     deployment_digest: String,
     approved_ips: Vec<String>,
@@ -495,6 +885,9 @@ impl RelayRow {
             tenant_id: TenantId(self.tenant_id),
             workspace_id: WorkspaceId(workspace_id),
             community_id: self.community_id.clone(),
+            relay_deployment_id: self.relay_deployment_id,
+            endpoint_service_identity: self.endpoint_service_identity.clone(),
+            tls_peer_spki_sha256: self.tls_peer_spki_sha256.clone(),
             relay_url: self.relay_url.clone(),
             relay_host: self.relay_host.clone(),
             relay_pubkey: self.relay_pubkey.clone(),
@@ -554,6 +947,9 @@ fn mapping_snapshot(record: &RelayMappingRecord) -> Value {
         "relay_url": record.relay_url,
         "relay_host": record.relay_host,
         "community_id": record.community_id,
+        "relay_deployment_id": record.relay_deployment_id,
+        "endpoint_service_identity": record.endpoint_service_identity,
+        "tls_peer_spki_sha256": record.tls_peer_spki_sha256,
         "relay_pubkey": record.relay_pubkey,
         "deployment_digest": record.deployment_digest,
         "approved_ips": ip_strings(&record.approved_ips),
@@ -592,13 +988,68 @@ fn map_database_error(_: sqlx::Error) -> UpstreamRelayMappingStoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+    use sqlx::postgres::PgPoolOptions;
+    use std::collections::HashMap;
+
+    fn signed_create(
+        tenant_id: Uuid,
+        workspace_id: Uuid,
+    ) -> (
+        Arc<MappingProvisioningVerifier>,
+        MappingProvisioningStatement,
+        SigningKey,
+    ) {
+        let signing_key = SigningKey::from_bytes(&[21; 32]);
+        let operator_service_id = Uuid::new_v4();
+        let now = Utc::now();
+        let now = now
+            .with_nanosecond(now.timestamp_subsec_micros() * 1_000)
+            .unwrap();
+        let mut record = record(tenant_id, workspace_id);
+        record.updated_by = operator_service_id;
+        record.valid_until = now + chrono::Duration::days(1);
+        let mut statement = MappingProvisioningStatement {
+            operator_service_id,
+            operator_key_id: "deployment-test-key-v1".into(),
+            operation_id: Uuid::new_v4(),
+            change_reference_id: Uuid::new_v4(),
+            action: MappingProvisioningAction::Create,
+            expected_generation: 0,
+            issued_at: now,
+            expires_at: now + chrono::Duration::minutes(2),
+            record,
+            signature: Vec::new(),
+        };
+        statement.signature = signing_key
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        let verifier = Arc::new(
+            MappingProvisioningVerifier::new(
+                operator_service_id,
+                HashMap::from([(
+                    statement.operator_key_id.clone(),
+                    signing_key.verifying_key(),
+                )]),
+            )
+            .unwrap(),
+        );
+        (verifier, statement, signing_key)
+    }
 
     fn record(tenant_id: Uuid, workspace_id: Uuid) -> RelayMappingRecord {
         RelayMappingRecord {
             mapping_id: Uuid::new_v4(),
             tenant_id: TenantId(tenant_id),
             workspace_id: WorkspaceId(workspace_id),
-            community_id: format!("community-{tenant_id}"),
+            community_id: Uuid::new_v4().to_string(),
+            relay_deployment_id: Uuid::new_v4(),
+            endpoint_service_identity: format!(
+                "cluster/test-ns/buzz-{tenant_id}#{}",
+                Uuid::new_v4()
+            ),
+            tls_peer_spki_sha256: format!("sha256:{}", "b2".repeat(32)),
             relay_url: format!("wss://relay-{tenant_id}.example.test"),
             relay_host: format!("relay-{tenant_id}.example.test"),
             relay_pubkey: nostr::Keys::generate().public_key().to_hex(),
@@ -612,6 +1063,123 @@ mod tests {
             updated_by: Uuid::new_v4(),
             audit_entry_id: Uuid::new_v4(),
         }
+    }
+
+    #[tokio::test]
+    async fn store_without_deployment_verifier_rejects_mapping_writes() {
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://test:test@127.0.0.1/unused")
+            .unwrap();
+        let (_, statement, _) = signed_create(Uuid::new_v4(), Uuid::new_v4());
+        assert_eq!(
+            UpstreamRelayMappingStore::new(pool)
+                .apply(&statement)
+                .await
+                .unwrap_err(),
+            UpstreamRelayMappingStoreError::InvalidRecord
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a disposable PostgreSQL database"]
+    async fn signed_mapping_write_is_atomic_idempotent_and_replay_protected() {
+        let pool = PgPool::connect(
+            &std::env::var("DATABASE_URL").expect("DATABASE_URL must be disposable PostgreSQL"),
+        )
+        .await
+        .unwrap();
+        sqlx::migrate!("../../migrations").run(&pool).await.unwrap();
+        let tenant_id = Uuid::new_v4();
+        let tenant_b = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let workspace_b = Uuid::new_v4();
+        sqlx::query("INSERT INTO tenants (id,name) VALUES ($1,$2)")
+            .bind(tenant_id)
+            .bind(format!("signed relay mapping {tenant_id}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO tenants (id,name) VALUES ($1,$2)")
+            .bind(tenant_b)
+            .bind(format!("signed relay mapping {tenant_b}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (verifier, statement, signing_key) = signed_create(tenant_id, workspace_id);
+        let store = UpstreamRelayMappingStore::with_provisioning_verifier(pool.clone(), verifier);
+
+        let (create_first, create_retry) =
+            tokio::join!(store.apply(&statement), store.apply(&statement));
+        create_first.unwrap();
+        create_retry.unwrap();
+        store.apply(&statement).await.unwrap();
+
+        let mut update = statement.clone();
+        update.operation_id = Uuid::new_v4();
+        update.change_reference_id = Uuid::new_v4();
+        update.action = MappingProvisioningAction::Update;
+        update.expected_generation = 1;
+        update.record.generation = 2;
+        update.record.audit_entry_id = Uuid::new_v4();
+        update.signature = signing_key
+            .sign(&update.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        let (update_first, update_retry) = tokio::join!(store.apply(&update), store.apply(&update));
+        update_first.unwrap();
+        update_retry.unwrap();
+
+        let mut substituted_replay = statement.clone();
+        substituted_replay.record.deployment_digest = format!("sha256:{}", "ee".repeat(32));
+        substituted_replay.signature = signing_key
+            .sign(&substituted_replay.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        assert_eq!(
+            store.apply(&substituted_replay).await.unwrap_err(),
+            UpstreamRelayMappingStoreError::Conflict
+        );
+
+        let mut cross_tenant = statement.clone();
+        cross_tenant.operation_id = Uuid::new_v4();
+        cross_tenant.change_reference_id = Uuid::new_v4();
+        cross_tenant.record = record(tenant_b, workspace_b);
+        cross_tenant.record.updated_by = statement.operator_service_id;
+        cross_tenant.record.valid_until = statement.issued_at + chrono::Duration::days(1);
+        cross_tenant.record.community_id = statement.record.community_id.clone();
+        cross_tenant.signature = signing_key
+            .sign(&cross_tenant.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        assert!(store.apply(&cross_tenant).await.is_err());
+        assert!(matches!(
+            store
+                .load(TenantId(tenant_b), WorkspaceId(workspace_b))
+                .await,
+            Err(UpstreamRelayMappingStoreError::Policy(
+                MappingError::MissingMapping
+            ))
+        ));
+
+        let mut tx = pool.begin().await.unwrap();
+        set_tenant(&mut tx, tenant_id).await.unwrap();
+        let operation_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM upstream_buzz_mapping_operations WHERE operation_id=$1",
+        )
+        .bind(statement.operation_id)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        let audit_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM upstream_buzz_relay_mapping_audit WHERE operation_id=$1",
+        )
+        .bind(statement.operation_id)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        assert_eq!(operation_count, 1);
+        assert_eq!(audit_count, 2);
+        tx.commit().await.unwrap();
     }
 
     #[tokio::test]
@@ -748,15 +1316,18 @@ mod tests {
         set_tenant(&mut tx, tenant_b).await.unwrap();
         sqlx::query(
             "INSERT INTO upstream_buzz_tenant_relays \
-             (mapping_id,tenant_id,relay_url,relay_host,community_id,relay_pubkey, \
+             (mapping_id,tenant_id,relay_url,relay_host,community_id,relay_deployment_id,endpoint_service_identity,tls_peer_spki_sha256,relay_pubkey, \
               deployment_digest,approved_ips,generation,active,valid_until,updated_by,audit_entry_id) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,true,$9,$10,$11)",
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1,true,$12,$13,$14)",
         )
         .bind(mismatched_create.mapping_id)
         .bind(tenant_b)
         .bind(&mismatched_create.relay_url)
         .bind(&mismatched_create.relay_host)
         .bind(&mismatched_create.community_id)
+        .bind(mismatched_create.relay_deployment_id)
+        .bind(&mismatched_create.endpoint_service_identity)
+        .bind(&mismatched_create.tls_peer_spki_sha256)
         .bind(&mismatched_create.relay_pubkey)
         .bind(&mismatched_create.deployment_digest)
         .bind(ip_strings(&mismatched_create.approved_ips))
@@ -815,6 +1386,7 @@ mod tests {
             "mapping_updated",
             Uuid::new_v4(),
             json!({"valid_until": expired_revision.valid_until}),
+            None,
         )
         .await
         .unwrap();

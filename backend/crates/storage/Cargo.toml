@@ -6,7 +6,7 @@ license.workspace = true
 
 [features]
 default = []
-upstream-buzz = []
+upstream-buzz = ["rustshare-resource-auth/upstream-relay-provisioning"]
 
 [dependencies]
 rustshare-core = { path = "../core" }
@@ -42,3 +42,4 @@ base64 = "0.23"
 [dev-dependencies]
 libc = "0.2"
 nostr.workspace = true
+ed25519-dalek = "2.2"

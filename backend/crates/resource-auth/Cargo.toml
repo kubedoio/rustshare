@@ -23,6 +23,12 @@ nostr = { workspace = true }
 ipnet = "2"
 url = "2.5"
 utoipa = { workspace = true }
+ed25519-dalek = { version = "2.2", optional = true }
+sha2 = { workspace = true, optional = true }
+
+[features]
+default = []
+upstream-relay-provisioning = ["dep:ed25519-dalek", "dep:sha2"]
 
 [dev-dependencies]
 tokio = { workspace = true }
