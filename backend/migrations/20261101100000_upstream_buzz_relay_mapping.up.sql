@@ -57,6 +57,28 @@ ALTER TABLE upstream_buzz_workspace_relay_bindings
     REFERENCES upstream_buzz_relay_mapping_audit (audit_entry_id)
     DEFERRABLE INITIALLY DEFERRED;
 
+CREATE FUNCTION verify_upstream_buzz_mapping_create_audit()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM upstream_buzz_relay_mapping_audit
+        WHERE audit_entry_id = NEW.audit_entry_id
+          AND tenant_id = NEW.tenant_id
+          AND mapping_id = NEW.mapping_id
+          AND generation = NEW.generation
+          AND action = 'mapping_created'
+    ) THEN
+        RAISE EXCEPTION 'upstream relay mapping creation audit does not match mapping';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+CREATE CONSTRAINT TRIGGER upstream_buzz_mapping_create_audit_matches_mapping
+    AFTER INSERT ON upstream_buzz_tenant_relays
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION verify_upstream_buzz_mapping_create_audit();
+
 CREATE FUNCTION reject_upstream_buzz_mapping_attribution_change()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
