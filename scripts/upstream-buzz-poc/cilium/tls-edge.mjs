@@ -46,7 +46,7 @@ const server = createServer({
 		if (end < 0) return;
 		const header = pending.subarray(0, end).toString('latin1');
 		const host = header.match(/^Host:\s*([^\r\n]+)$/im)?.[1]?.trim().toLowerCase();
-		if (host !== expectedHost || !/^GET |^POST |^HEAD /m.test(header)) return reject();
+		if ((host !== expectedHost && host !== `${expectedHost}:443`) || !/^GET |^POST |^HEAD /m.test(header)) return reject();
 		connecting = true;
 		clearTimeout(timeout);
 		upstream = connect({ host: upstreamHost, port: upstreamPort });
