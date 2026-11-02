@@ -172,7 +172,7 @@ def render_base(args):
                         {"name": "BUZZ_S3_ACCESS_KEY", "valueFrom": {"secretKeyRef": {"name": owner + "-config", "key": "BUZZ_S3_ACCESS_KEY"}}},
                         {"name": "BUZZ_S3_SECRET_KEY", "valueFrom": {"secretKeyRef": {"name": owner + "-config", "key": "BUZZ_S3_SECRET_KEY"}}},
                     ],
-                    "command": ["/bin/sh", "-euc", f"mc alias set local http://silo-{tenant}:9000 \"$BUZZ_S3_ACCESS_KEY\" \"$BUZZ_S3_SECRET_KEY\"; mc mb --ignore-existing local/buzz-media; mc anonymous set none local/buzz-media"],
+                    "command": ["/bin/sh", "-euc", f"attempt=0; until mc alias set local http://silo-{tenant}:9000 \"$BUZZ_S3_ACCESS_KEY\" \"$BUZZ_S3_SECRET_KEY\" && mc mb --ignore-existing local/buzz-media && mc anonymous set none local/buzz-media; do attempt=$((attempt+1)); [ \"$attempt\" -lt 15 ] || exit 1; sleep 2; done"],
                     "resources": {"requests": {"cpu": "25m", "memory": "32Mi"}, "limits": {"cpu": "200m", "memory": "128Mi"}},
                 }],
             }}},
