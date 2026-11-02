@@ -76,25 +76,30 @@ manifest.
 ## Latest executed qualification
 
 Run on 2026-11-02 from RustShare commit
-`065b220462257a9ffa90bde7664b0ac1dd01ef45`, using upstream Buzz commit
+`39d677c615678ee48b88801a4feb4eb5d8ed80f1`, using upstream Buzz commit
 `eafd77e9f6e96052476bdd88be732c046fdb7ab3` and tree
 `04e3a40545bd3b23510ec32b4c8cccee2acef7c5`. Cilium `v1.16.4` reached `OK`
 for Cilium, operator, Envoy and Hubble Relay. The isolated Buzz image digest
-was `sha256:fea922ebf6e3be59391a79b5d0435c8fafb41ec2516fe9f8499d15d48803f866`.
+was `sha256:c05d6a011d28f98a7fedf935a0815869007e8cb9970fea4cbfeb5cbeebd9cc50`.
 
-- Tenant-isolated NIP-29 private-DM transport passed: unauthorized histories
-  returned zero events and publishes in both cross-tenant directions were
-  rejected.
+- Member transport passed TLS/SNI/peer pin verification, NIP-11 identity
+  validation, WebSocket upgrade, NIP-42 authentication and private-channel DM
+  history retrieval.
+- While a NIP-29 private-DM subscription was active, the test stopped and
+  restored PostgreSQL. The session fenced during outage and remained fenced
+  after recovery; mapping revocation was also verified.
+- Tenant isolation passed: unauthorized histories returned zero events and
+  private publishes in both cross-tenant directions were rejected.
 - The poisoned multi-address DNS answer was rejected before a TCP socket dial.
 - Hubble recorded the connector Pod's TCP SYN to `1.1.1.1:443` as
   `EGRESS DENIED` / `DROPPED`; the in-Pod probe received no response.
-- Both ignored Rust tests passed. The disposable kind cluster and unique image
-  tags were removed after the run.
+- All three selected ignored Rust tests passed. The disposable kind cluster
+  and unique image tags were removed after the run.
 
 The sanitized evidence bundle is retained on the test runner at
-`/tmp/elembra-cilium-evidence-public-egress-fix-20261102-081842`. Its
+`/tmp/elembra-cilium-evidence-db-outage-isolated-20261102-094929`. Its
 `SHA256SUMS` file hash is
-`6f9ae741a8c2d731812f4ca83c2782934366b2f9da0b5bbaeb01db1dc4d26a6f`.
+`e076b82ac7de1e7dbaac1b26c9e0321920987ae8456bb1160f49e7073768c32a`.
 This evidence qualifies only the exercised disposable profile and tests; see
 the limits below.
 
