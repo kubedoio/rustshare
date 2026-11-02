@@ -769,12 +769,12 @@ mod tests {
         sqlx::query(
             "INSERT INTO upstream_buzz_relay_mapping_audit \
              (audit_entry_id,tenant_id,mapping_id,generation,action,actor_id,change_reference_id) \
-             VALUES ($1,$2,$3,2,'workspace_bound',$4,$5)",
+             VALUES ($1,$2,$3,1,'mapping_created',$4,$5)",
         )
         .bind(mismatched_create.audit_entry_id)
         .bind(tenant_b)
         .bind(mismatched_create.mapping_id)
-        .bind(mismatched_create.updated_by)
+        .bind(Uuid::nil())
         .bind(Uuid::new_v4())
         .execute(&mut *tx)
         .await
@@ -789,6 +789,41 @@ mod tests {
 
         let expired = record(tenant_b, workspace_b);
         store.create(&expired, Uuid::new_v4()).await.unwrap();
+        let mismatched_update_audit = Uuid::new_v4();
+        let mut tx = pool.begin().await.unwrap();
+        set_tenant(&mut tx, tenant_b).await.unwrap();
+        sqlx::query(
+            "UPDATE upstream_buzz_tenant_relays \
+             SET generation=2,updated_by=$2,audit_entry_id=$3 WHERE tenant_id=$1",
+        )
+        .bind(tenant_b)
+        .bind(Uuid::new_v4())
+        .bind(mismatched_update_audit)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO upstream_buzz_relay_mapping_audit \
+             (audit_entry_id,tenant_id,mapping_id,generation,action,actor_id,change_reference_id) \
+             VALUES ($1,$2,$3,2,'mapping_updated',$4,$5)",
+        )
+        .bind(mismatched_update_audit)
+        .bind(tenant_b)
+        .bind(expired.mapping_id)
+        .bind(Uuid::nil())
+        .bind(Uuid::new_v4())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        assert!(tx
+            .commit()
+            .await
+            .unwrap_err()
+            .as_database_error()
+            .unwrap()
+            .message()
+            .contains("update audit does not match generation"));
+
         let mut expired_revision = expired.clone();
         expired_revision.generation += 1;
         expired_revision.valid_until = Utc::now() - chrono::Duration::seconds(1);
