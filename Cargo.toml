@@ -41,7 +41,7 @@ tower-http = { version = "0.7", features = ["trace", "cors", "limit"] }
 
 # Database
 # Use OS trust roots instead of the unpatched webpki-roots 0.26 compatibility crate.
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "uuid", "chrono", "json", "macros", "migrate", "ipnetwork"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "uuid", "chrono", "json", "macros", "migrate", "ipnetwork"] }
 rusqlite = { version = "0.32", features = ["bundled", "chrono", "uuid"] }
 
 # Serialization
@@ -74,8 +74,8 @@ reqwest = { version = "0.12", features = ["json", "multipart", "stream", "rustls
 # Utilities
 uuid = { version = "1.23", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-chrono-tz = "0.9"
-rrule = "0.13"
+chrono-tz = "0.10"
+rrule = "0.14"
 icalendar = "0.17"
 anyhow = "1.0"
 thiserror = "2.0"
@@ -98,13 +98,13 @@ pathdiff = "0.2"
 
 # Configuration
 clap = { version = "4.6", features = ["derive", "env"] }
-dirs = "6.0"
+dirs = "7.0"
 
 # Process management
 nix = { version = "0.31", features = ["process", "signal"] }
 
 # OpenAPI generation
-utoipa = { version = "5.0", features = ["uuid", "chrono"] }
+utoipa = { version = "6.0", features = ["uuid", "chrono"] }
 utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
 
 # Testing
