@@ -61,7 +61,7 @@ usage() {
 	cat <<'HELP'
 Usage: scripts/upstream-buzz-poc/cilium/run.sh [--preflight-only]
 
-Runs two ignored Rust trusted-service tests in a new kind/Cilium cluster. It
+Runs three ignored Rust trusted-service tests in a new kind/Cilium cluster. It
 never connects to host Compose applications. The cluster, generated test keys,
 and unique local image tags are removed on exit; sanitized evidence remains
 under EVIDENCE_DIR or /tmp.
@@ -385,7 +385,7 @@ echo 'forbidden_public_tcp=denied_by_cilium' >"$EVIDENCE_DIR/public-egress-resul
 
 run_rust_test() {
 	local label="$1" filter="$2" capture="$3" log="$EVIDENCE_DIR/$1.log" test_status
-	if [[ "$capture" == tcp ]]; then
+	if [[ "$capture" == tcp || "$capture" == no-tcp ]]; then
 		timeout --signal=TERM 60s hubble observe --server 127.0.0.1:4245 --since 1s --follow --pod "$NAMESPACE/rust-connector" --protocol tcp --output compact >"$EVIDENCE_DIR/$1-hubble-tcp.log" 2>&1 &
 		TCP_PID=$!
 		timeout --signal=TERM 60s hubble observe --server 127.0.0.1:4245 --since 1s --follow --pod "$NAMESPACE/rust-connector" --protocol udp --output compact >"$EVIDENCE_DIR/$1-hubble-udp.log" 2>&1 &
@@ -404,11 +404,12 @@ run_rust_test() {
 	if [[ "$test_status" != 0 ]] || ! grep -q '1 passed; 0 failed' "$log"; then
 		echo "Rust test failed: $filter" >&2; tail -n 40 "$log" >&2; return 1
 	fi
-	if [[ "$capture" == tcp ]] && grep -q -- '->' "$EVIDENCE_DIR/$1-hubble-tcp.log"; then
+	if [[ "$capture" == no-tcp ]] && grep -q -- '->' "$EVIDENCE_DIR/$1-hubble-tcp.log"; then
 		echo 'unexpected TCP flow in DNS-rejection window' >&2; cat "$EVIDENCE_DIR/$1-hubble-tcp.log" >&2; return 1
 	fi
 }
 
+run_rust_test member-transport upstream_buzz_transport::disposable_service_tests::trusted_service_transport_connects_and_authenticates_member tcp
 run_rust_test cross-tenant upstream_buzz_transport::disposable_service_tests::trusted_service_tenant_sessions_are_isolated_across_private_dm_relays none
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$RUN_DIR/db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$RUN_DIR/db-reset.log" 2>&1
@@ -418,9 +419,9 @@ cp "$RUN_DIR/dns-poison.json" "$EVIDENCE_DIR/dns-poison.json"
 "${K[@]}" -n "$NAMESPACE" rollout restart deployment/controlled-dns >"$RUN_DIR/dns-restart.log"
 "${K[@]}" -n "$NAMESPACE" rollout status deployment/controlled-dns --timeout=90s >>"$RUN_DIR/dns-restart.log"
 sleep 2
-run_rust_test dns-poison upstream_buzz_transport::disposable_service_tests::trusted_service_rejects_an_unapproved_dns_answer_before_socket_dial tcp
+run_rust_test dns-poison upstream_buzz_transport::disposable_service_tests::trusted_service_rejects_an_unapproved_dns_answer_before_socket_dial no-tcp
 cp "$RUN_DIR/dns-restart.log" "$EVIDENCE_DIR/dns-restart.txt"
 "${K[@]}" get cnp -n "$NAMESPACE" -o yaml >"$EVIDENCE_DIR/cilium-policies.yaml"
 "${K[@]}" get pods -n "$NAMESPACE" -o wide >"$EVIDENCE_DIR/pods-final.txt"
-echo 'result=PASS: both ignored Rust trusted-service tests passed' >"$EVIDENCE_DIR/result.txt"
+echo 'result=PASS: all three selected ignored Rust trusted-service tests passed' >"$EVIDENCE_DIR/result.txt"
 echo "cluster=$CLUSTER" >>"$EVIDENCE_DIR/result.txt"

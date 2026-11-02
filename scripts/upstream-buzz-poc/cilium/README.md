@@ -1,6 +1,6 @@
 # Disposable Cilium trusted-service qualification
 
-This harness runs the two ignored Rust connector tests against two isolated
+This harness runs three ignored Rust connector tests against two isolated
 instances of **unmodified** upstream Buzz. It creates a fresh local kind
 cluster with Cilium, installs default-deny egress in the test namespace, and
 allows only the relay dependencies, controlled DNS, and the two TLS edges.
@@ -30,7 +30,7 @@ scripts/upstream-buzz-poc/cilium/run.sh
 
 The first command verifies the pinned source and local tools without creating
 a cluster. The second builds the Rust test binary and disposable images,
-creates a unique kind cluster, runs both ignored tests, and deletes that
+creates a unique kind cluster, runs the selected ignored tests, and deletes that
 cluster and its unique image tags on exit. `BUZZ_SOURCE_DIR` can point to an
 already fetched clean checkout at the exact source commit. Set `EVIDENCE_DIR`
 to a new empty directory to retain sanitized output at a chosen location; the
