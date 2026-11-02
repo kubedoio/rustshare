@@ -14,6 +14,7 @@ use rustshare_storage::upstream_relay_mapping_store::{
     UpstreamRelayMappingStore, UpstreamRelayMappingStoreError,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufStream};
 use tokio::net::{lookup_host, TcpStream};
@@ -123,6 +124,7 @@ pub(crate) async fn connect(
         .await
         .map_err(|_| UpstreamBuzzTransportError::Connection)?
         .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+        verify_tls_peer_spki(&tls, attempt.tls_peer_spki_sha256())?;
         let mut tls = BufStream::new(tls);
         verify_nip11(&attempt, &mut tls).await?;
         let (socket, _) =
@@ -220,6 +222,34 @@ fn tls_config() -> Arc<ClientConfig> {
         .with_no_client_auth();
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     Arc::new(config)
+}
+
+fn verify_tls_peer_spki(
+    tls: &tokio_rustls::client::TlsStream<TcpStream>,
+    expected_spki_sha256: &str,
+) -> Result<(), UpstreamBuzzTransportError> {
+    let (_, connection) = tls.get_ref();
+    let certificate = connection
+        .peer_certificates()
+        .and_then(|certificates| certificates.first())
+        .ok_or(UpstreamBuzzTransportError::Connection)?;
+    verify_peer_spki_certificate(certificate.as_ref(), expected_spki_sha256)
+}
+
+fn verify_peer_spki_certificate(
+    certificate_der: &[u8],
+    expected_spki_sha256: &str,
+) -> Result<(), UpstreamBuzzTransportError> {
+    let (_, certificate) = x509_parser::parse_x509_certificate(certificate_der)
+        .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+    let actual = format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(certificate.tbs_certificate.subject_pki.raw))
+    );
+    if actual != expected_spki_sha256 {
+        return Err(UpstreamBuzzTransportError::Connection);
+    }
+    Ok(())
 }
 
 async fn verify_nip11(
@@ -368,7 +398,7 @@ mod tests {
 
     use super::{
         connect_pinned, parse_nip11_headers, relay_identity, resolve_connection_attempt,
-        MappingError,
+        verify_peer_spki_certificate, MappingError,
     };
 
     fn mapping(host: &str, port: u16) -> TrustedRelayMapping {
@@ -396,6 +426,27 @@ mod tests {
             Utc::now(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn tls_peer_pin_matches_the_der_encoded_subject_public_key_info() {
+        use base64::Engine as _;
+
+        const CERT_DER_BASE64: &str = "MIIBjzCCATWgAwIBAgIUdMbNFuArtm57Cgl25oZOtQI0+y8wCgYIKoZIzj0EAwIwHTEbMBkGA1UEAwwScmVsYXkuZXhhbXBsZS50ZXN0MB4XDTI2MTEwMjIzMjUwMVoXDTM2MTAzMDIzMjUwMVowHTEbMBkGA1UEAwwScmVsYXkuZXhhbXBsZS50ZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOy1k2EYCgKsAfNuqCgDB55p75Q2NbfYTnumiffj9ePxaZ8d14o99kC53Gm8dAAl4/ChHLdGyKZFQSITxRXtIqKNTMFEwHQYDVR0OBBYEFIrlaGSx+/AW0Rg7gS+/P1Zf7Pe/MB8GA1UdIwQYMBaAFIrlaGSx+/AW0Rg7gS+/P1Zf7Pe/MA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIhAIy/WkYcXeN4atqHxt1yyB+1hPdffImMIr2EXtf3lR7wAiBTj3tIYSsORYol8g5YHlPaj2wKCmggPuhf0+Y9XRVPIw==";
+        let certificate = base64::engine::general_purpose::STANDARD
+            .decode(CERT_DER_BASE64)
+            .unwrap();
+
+        assert!(verify_peer_spki_certificate(
+            &certificate,
+            "sha256:7a657535651507e72be3bc200fcf5fb082366cfd42410855cc5419a2bf030826"
+        )
+        .is_ok());
+        assert!(verify_peer_spki_certificate(
+            &certificate,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        )
+        .is_err());
     }
 
     #[test]

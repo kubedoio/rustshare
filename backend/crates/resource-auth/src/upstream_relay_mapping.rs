@@ -256,6 +256,11 @@ impl ConnectionAttempt {
         &self.relay_host
     }
 
+    /// SHA-256 SPKI pin captured from signed deployment provenance.
+    pub fn tls_peer_spki_sha256(&self) -> &str {
+        &self.tls_peer_spki_sha256
+    }
+
     /// Community binding captured from the trusted mapping.
     pub fn community_id(&self) -> &str {
         &self.community_id

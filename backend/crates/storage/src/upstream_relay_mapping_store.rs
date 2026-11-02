@@ -73,6 +73,9 @@ impl UpstreamRelayMappingStore {
         let command = verifier
             .verify(statement, Utc::now())
             .map_err(|_| UpstreamRelayMappingStoreError::InvalidRecord)?;
+        if self.operation_was_applied(&command).await? {
+            return Ok(());
+        }
         let record = command.record().clone();
         let change_reference_id = command.change_reference_id();
         let expected_generation = command.expected_generation();
@@ -1128,6 +1131,21 @@ mod tests {
         let (update_first, update_retry) = tokio::join!(store.apply(&update), store.apply(&update));
         update_first.unwrap();
         update_retry.unwrap();
+
+        let mut deactivate = update.clone();
+        deactivate.operation_id = Uuid::new_v4();
+        deactivate.change_reference_id = Uuid::new_v4();
+        deactivate.action = MappingProvisioningAction::Deactivate;
+        deactivate.expected_generation = 2;
+        deactivate.record.generation = 3;
+        deactivate.record.active = false;
+        deactivate.record.audit_entry_id = Uuid::new_v4();
+        deactivate.signature = signing_key
+            .sign(&deactivate.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        store.apply(&deactivate).await.unwrap();
+        store.apply(&update).await.unwrap();
 
         let mut substituted_replay = statement.clone();
         substituted_replay.record.deployment_digest = format!("sha256:{}", "ee".repeat(32));
