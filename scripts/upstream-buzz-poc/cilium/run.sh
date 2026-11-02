@@ -25,11 +25,12 @@ CLUSTER_CREATED=0
 PF_PID=
 TCP_PID=
 UDP_PID=
+EGRESS_PID=
 
 cleanup() {
 	local status=$?
 	trap - EXIT INT TERM
-	for pid in "$TCP_PID" "$UDP_PID" "$PF_PID"; do
+	for pid in "$TCP_PID" "$UDP_PID" "$EGRESS_PID" "$PF_PID"; do
 		if [[ -n "$pid" ]]; then kill -INT "$pid" >/dev/null 2>&1 || true; wait "$pid" 2>/dev/null || true; fi
 	done
 	if [[ "$CLUSTER_CREATED" == 1 ]]; then kind delete cluster --name "$CLUSTER" >>"$EVIDENCE_DIR/cleanup.log" 2>&1 || true; fi
@@ -361,6 +362,26 @@ for _ in {1..30}; do
 	sleep 1
 done
 kill -0 "$PF_PID" 2>/dev/null || { echo 'Hubble port-forward failed' >&2; exit 1; }
+
+timeout --signal=TERM 10s hubble observe --server 127.0.0.1:4245 --since 1s --follow \
+	--pod "$NAMESPACE/rust-connector" --protocol tcp --to-ip 1.1.1.1 --verdict DROPPED --output compact \
+	>"$EVIDENCE_DIR/public-egress-hubble.log" 2>&1 &
+EGRESS_PID=$!
+sleep 1
+set +e
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- pg_isready -h 1.1.1.1 -p 443 -t 3 >"$EVIDENCE_DIR/public-egress-probe.log" 2>&1
+egress_status=$?
+set -e
+sleep 1
+kill -INT "$EGRESS_PID" >/dev/null 2>&1 || true
+wait "$EGRESS_PID" 2>/dev/null || true
+EGRESS_PID=
+if [[ "$egress_status" == 0 ]] || ! grep -Eq '1\.1\.1\.1:443.*(DENIED|DROPPED)|(DENIED|DROPPED).*1\.1\.1\.1:443' "$EVIDENCE_DIR/public-egress-hubble.log"; then
+	echo 'Cilium did not prove the forbidden public TCP destination was denied' >&2
+	cat "$EVIDENCE_DIR/public-egress-hubble.log" "$EVIDENCE_DIR/public-egress-probe.log" >&2
+	exit 1
+fi
+echo 'forbidden_public_tcp=denied_by_cilium' >"$EVIDENCE_DIR/public-egress-result.txt"
 
 run_rust_test() {
 	local label="$1" filter="$2" capture="$3" log="$EVIDENCE_DIR/$1.log" test_status

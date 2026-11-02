@@ -43,6 +43,8 @@ trusted_service_tenant_sessions_are_isolated_across_private_dm_relays
 trusted_service_rejects_an_unapproved_dns_answer_before_socket_dial
 ```
 
+Before the Rust tests, the harness attempts TCP to a forbidden public address
+from the connector Pod and requires Hubble to record Cilium's egress denial.
 The first test proves transport to two independent relays, tenant-bound
 private-channel reads, cross-tenant authentication denial, zero unauthorized
 events, and rejected cross-channel publishes. The second temporarily changes
