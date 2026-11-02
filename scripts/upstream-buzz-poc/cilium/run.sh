@@ -76,12 +76,17 @@ for command in git docker kind kubectl cilium hubble cargo rustc node npm openss
 [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || { echo 'qualified platform is linux/amd64' >&2; exit 2; }
 docker info >/dev/null 2>&1 || { echo 'Docker daemon unavailable' >&2; exit 2; }
 docker buildx version >/dev/null 2>&1 || { echo 'Docker Buildx unavailable' >&2; exit 2; }
-kind version | grep -Fq "$KIND_VERSION" || { echo "kind must be $KIND_VERSION" >&2; exit 2; }
-kubectl version --client -o yaml | grep -Fq "$KUBERNETES_VERSION" || { echo "kubectl must be $KUBERNETES_VERSION" >&2; exit 2; }
-cilium version | grep -Fq "$CILIUM_CLI_VERSION" || { echo "Cilium CLI must be $CILIUM_CLI_VERSION" >&2; exit 2; }
-cilium version | grep -Fq "$CILIUM_VERSION" || { echo "Cilium image must be $CILIUM_VERSION" >&2; exit 2; }
-hubble version | grep -Fq "$HUBBLE_CLI_VERSION" || { echo "Hubble CLI must be $HUBBLE_CLI_VERSION" >&2; exit 2; }
-rustc +1.97.1 --version | grep -Fq 1.97.1 || { echo 'Rust 1.97.1 is required' >&2; exit 2; }
+kind_version="$(kind version)"
+[[ "$kind_version" == *"$KIND_VERSION"* ]] || { echo "kind must be $KIND_VERSION" >&2; exit 2; }
+kubectl_version="$(kubectl version --client -o yaml)"
+[[ "$kubectl_version" == *"$KUBERNETES_VERSION"* ]] || { echo "kubectl must be $KUBERNETES_VERSION" >&2; exit 2; }
+cilium_version="$(cilium version)"
+[[ "$cilium_version" == *"$CILIUM_CLI_VERSION"* ]] || { echo "Cilium CLI must be $CILIUM_CLI_VERSION" >&2; exit 2; }
+[[ "$cilium_version" == *"$CILIUM_VERSION"* ]] || { echo "Cilium image must be $CILIUM_VERSION" >&2; exit 2; }
+hubble_version="$(hubble version)"
+[[ "$hubble_version" == *"$HUBBLE_CLI_VERSION"* ]] || { echo "Hubble CLI must be $HUBBLE_CLI_VERSION" >&2; exit 2; }
+rustc_version="$(rustc +1.97.1 --version)"
+[[ "$rustc_version" == *1.97.1* ]] || { echo 'Rust 1.97.1 is required' >&2; exit 2; }
 node --version | grep -Eq '^v22\.' || { echo 'Node.js 22 is required' >&2; exit 2; }
 npm --version | awk -F. '$1 >= 10 { ok=1 } END { exit !ok }' || { echo 'npm 10 or newer is required' >&2; exit 2; }
 
