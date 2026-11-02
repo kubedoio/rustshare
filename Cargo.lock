@@ -37,6 +37,7 @@ dependencies = [
  "cipher 0.5.2",
  "cpubits",
  "cpufeatures 0.3.0",
+ "zeroize",
 ]
 
 [[package]]
@@ -51,6 +52,7 @@ dependencies = [
  "ctr",
  "ctutils",
  "ghash",
+ "zeroize",
 ]
 
 [[package]]
@@ -2176,6 +2178,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2eecf2d5dc9b66b732b97707a0210906b1d30523eb773193ab777c0c84b3e8d5"
 dependencies = [
  "polyval",
+ "zeroize",
 ]
 
 [[package]]
@@ -3832,6 +3835,7 @@ dependencies = [
  "cpubits",
  "cpufeatures 0.3.0",
  "universal-hash 0.6.1",
+ "zeroize",
 ]
 
 [[package]]
@@ -4506,12 +4510,20 @@ version = "0.8.0-alpha.1"
 dependencies = [
  "aes-gcm",
  "argon2",
+ "async-trait",
  "base64 0.23.1",
  "hex",
  "hmac 0.13.0",
+ "libc",
+ "nostr",
+ "rand 0.10.2",
  "sha2 0.11.0",
  "subtle",
+ "tempfile",
  "thiserror 2.0.20",
+ "tokio",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -4592,6 +4604,7 @@ dependencies = [
  "bytes",
  "chrono",
  "futures-util",
+ "ipnet",
  "nostr",
  "percent-encoding",
  "rustshare-core",
@@ -4609,6 +4622,7 @@ dependencies = [
 name = "rustshare-server"
 version = "0.8.0-alpha.1"
 dependencies = [
+ "aes-gcm",
  "ammonia",
  "anyhow",
  "async-imap",
@@ -4628,6 +4642,7 @@ dependencies = [
  "governor",
  "hex",
  "hmac 0.13.0",
+ "httparse",
  "ical",
  "icalendar",
  "image",
@@ -4674,6 +4689,7 @@ dependencies = [
  "validator",
  "webpki-roots",
  "yaml_serde",
+ "zeroize",
  "zip",
 ]
 
@@ -4694,7 +4710,9 @@ dependencies = [
  "libc",
  "md5",
  "metrics",
+ "nostr",
  "rustshare-core",
+ "rustshare-crypto",
  "rustshare-integration-events",
  "rustshare-memory",
  "rustshare-resource-auth",
@@ -6908,18 +6926,18 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.8.2"
+version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
 dependencies = [
  "zeroize_derive",
 ]
 
 [[package]]
 name = "zeroize_derive"
-version = "1.4.3"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
 dependencies = [
  "proc-macro2",
  "quote",

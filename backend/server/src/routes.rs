@@ -848,6 +848,14 @@ pub fn chat_integration_routes() -> Router<AppState> {
             post(crate::handlers::chat_identity::verify_binding),
         )
         .route(
+            "/api/v1/applications/chat/identity-replacements",
+            post(crate::handlers::chat_identity::initiate_replacement),
+        )
+        .route(
+            "/api/v1/applications/chat/identity-replacements/{operation_id}",
+            get(crate::handlers::chat_identity::replacement_status),
+        )
+        .route(
             "/api/v1/applications/chat/admission",
             post(crate::handlers::chat_identity::admit_identity),
         )

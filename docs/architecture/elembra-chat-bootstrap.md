@@ -1,5 +1,7 @@
 # Elembra Chat Zero-Config Bootstrap
 
+> **2026-10-31 decision relationship:** ADR-0044 proposes a separate upstream-only profile. The signed HTTP contracts described here belong to the supported downstream Buzz implementation; they are not verified stock block/buzz capabilities. Existing deployments retain these checks until a separately approved replacement passes authorization and compatibility gates. See [ADR-0044](../adr/0044-managed-buzz-identity-upstream-only.md).
+
 > **Status:** Implemented v1alpha1 (branch `feat/chat-zero-config-bootstrap`)
 > **Decision record:** ADR-0036 (this design); boundary and gateway context: ADR-0034, ADR-0035
 > **Scope:** How a supported Elembra deployment obtains a correct, authoritative

@@ -15,6 +15,11 @@ path = "../tests/meeting_decisions_test.rs"
 
 [features]
 test-recording-provider = []
+# Non-distributable debug acceptance build. Fixture code is also gated on
+# debug_assertions, so release binaries cannot enable it.
+test-buzz-replacement-qualification = []
+# Inert connector foundation; no routes or runtime profile enable it.
+upstream-buzz-runtime = ["rustshare-storage/upstream-buzz"]
 
 [[bin]]
 name = "rustshare-server"
@@ -54,6 +59,7 @@ aws-config.workspace = true
 aws-sdk-s3.workspace = true
 futures-util = "0.3"
 tokio-tungstenite = "0.30"
+httparse = "1"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 tempfile = "3"
 dotenvy = "0.15"
@@ -439,11 +445,18 @@ path = "tests/share_authorization_parity.rs"
 name = "meeting_resource_links_test"
 path = "../tests/meeting_resource_links_test.rs"
 
+[[test]]
+name = "managed_identity_vault_test"
+path = "../tests/managed_identity_vault_test.rs"
+
 [dev-dependencies]
 ical = { version = "0.11", default-features = false, features = ["ical"] }
 rustshare-crypto = { path = "../crates/crypto" }
 hmac = { workspace = true }
 hex = { workspace = true }
+zeroize = "1"
+aes-gcm = { workspace = true }
+rand = { workspace = true }
 sha2 = { workspace = true }
 base64 = { workspace = true }
 libc = "0.2"

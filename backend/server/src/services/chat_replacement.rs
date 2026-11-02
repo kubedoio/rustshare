@@ -322,7 +322,8 @@ async fn queue_command(
         .data(serde_json::json!({"operation":if phase=="revoke"{"revoke"}else{"admit"},
             "admission_id":op.try_get::<Uuid,_>("replacement_binding_id").map_err(|_|BuzzAuthorityError::InvalidResponse("malformed replacement".into()))?,
             "community_id":community_id.to_string(),"relay_url":relay_url,"buzz_pubkey":target.pubkey,
-            "command_version":1,"command_id":command_id,"expected_revision":expected_revision}))
+            "command_version":1,"command_id":command_id,"expected_revision":expected_revision,
+            "staged":phase == "admit"}))
         .build().map_err(|_|BuzzAuthorityError::InvalidResponse("cannot create replacement event".into()))?;
     let mut event = event;
     event.id = outbox_event_id;
@@ -424,7 +425,9 @@ pub async fn process_next_replacement(
                         record_blocked_failure(pool, &lease, "replacement_revoked").await?;
                         Ok(false)
                     }
-                    BuzzMembership::Active => complete(pool, &lease, &old, &candidate).await,
+                    BuzzMembership::Active => {
+                        complete(pool, outbox, &lease, &old, &candidate).await
+                    }
                 }
             }
             _ => Ok(false),
@@ -574,6 +577,7 @@ async fn record_transient_failure(
 
 async fn complete(
     pool: &PgPool,
+    outbox: &OutboxStore,
     lease: &ReplacementLease,
     old: &MembershipRead,
     candidate: &MembershipRead,
@@ -630,6 +634,8 @@ async fn complete(
         .map_err(|_| BuzzAuthorityError::InvalidResponse("malformed operation".into()))?;
     if old.observation.membership != BuzzMembership::Revoked
         || candidate.observation.membership != BuzzMembership::Active
+        || candidate.observation.send_enabled
+        || candidate.observation.staged_operation_id.is_none()
         || old.observation.community_id != community.to_string()
         || candidate.observation.community_id != community.to_string()
         || old.observation.pubkey != lease.old_pubkey
@@ -686,6 +692,42 @@ async fn complete(
     }
     accept_read(&mut tx, lease, old).await?;
     accept_read(&mut tx, lease, candidate).await?;
+    let staged_command = candidate
+        .observation
+        .staged_operation_id
+        .ok_or_else(|| BuzzAuthorityError::InvalidResponse("candidate is not staged".into()))?;
+    let add_expected_revision = candidate
+        .observation
+        .membership_revision
+        .checked_sub(1)
+        .ok_or_else(|| {
+            BuzzAuthorityError::InvalidResponse("invalid staged membership revision".into())
+        })?;
+    let staged_command_matches: bool =
+        sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM chat_identity_replacement_commands
+         WHERE operation_id=$1 AND phase='admit' AND command_id=$2 AND community_id=$3
+           AND pubkey=$4 AND expected_revision=$5)",
+        )
+        .bind(lease.operation_id)
+        .bind(staged_command)
+        .bind(community)
+        .bind(&lease.replacement_pubkey)
+        .bind(i64::try_from(add_expected_revision).map_err(|_| {
+            BuzzAuthorityError::InvalidResponse("membership revision overflow".into())
+        })?)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|_| {
+            BuzzAuthorityError::Transport("cannot validate staged admission command".into())
+        })?;
+    if !staged_command_matches {
+        tx.rollback().await.map_err(|_| {
+            BuzzAuthorityError::Transport("cannot reject unbound staged admission".into())
+        })?;
+        record_blocked_failure(pool, lease, "replacement_staged_evidence_rejected").await?;
+        return Ok(false);
+    }
     let binding: Uuid = op
         .try_get("replacement_binding_id")
         .map_err(|_| BuzzAuthorityError::InvalidResponse("malformed replacement binding".into()))?;
@@ -696,8 +738,9 @@ async fn complete(
     if activated.rows_affected() != 1 {
         return Ok(false);
     }
+    let admission_id = Uuid::new_v4();
     sqlx::query("INSERT INTO chat_buzz_admissions(admission_id,tenant_id,mapping_id,binding_id,buzz_pubkey,active) VALUES($1,$2,$3,$4,$5,true)")
-        .bind(Uuid::new_v4()).bind(lease.tenant_id.0).bind(mapping_id).bind(binding).bind(&lease.replacement_pubkey).execute(&mut *tx).await
+        .bind(admission_id).bind(lease.tenant_id.0).bind(mapping_id).bind(binding).bind(&lease.replacement_pubkey).execute(&mut *tx).await
         .map_err(|_|BuzzAuthorityError::Transport("cannot activate local admission".into()))?;
     let done=sqlx::query("UPDATE chat_identity_replacements SET state='completed',generation=generation+1,completed_at=clock_timestamp(),updated_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,failure_code=NULL
         WHERE tenant_id=$1 AND operation_id=$2 AND state=$3 AND generation=$4 AND lease_token=$5 AND lease_expires_at>clock_timestamp()")
@@ -715,6 +758,31 @@ async fn complete(
     sqlx::query("INSERT INTO chat_identity_replacement_audit(audit_id,tenant_id,operation_id,actor_id,from_state,to_state) VALUES(gen_random_uuid(),$1,$2,$3,'pending_membership_verification','completed')")
         .bind(lease.tenant_id.0).bind(lease.operation_id).bind(actor).execute(&mut *tx).await
         .map_err(|_|BuzzAuthorityError::Transport("cannot write completion audit".into()))?;
+    let release = IntegrationEvent::builder()
+        .source("elembra://io.elembra.chat")
+        .r#type("io.elembra.chat.buzz.admission.released.v1")
+        .tenant_id(TenantId(lease.tenant_id.0))
+        .workspace_id(WorkspaceId(lease.workspace_id.0))
+        .actor(ActorRef::Principal(PrincipalId(lease.principal_id.0)))
+        .data(serde_json::json!({
+            "operation":"admit",
+            "admission_id":admission_id,
+            "community_id":community.to_string(),
+            "relay_url":relay_url,
+            "relay_pubkey":relay_pubkey,
+            "buzz_pubkey":lease.replacement_pubkey,
+            "command_version":1,
+            "command_id":Uuid::new_v4(),
+            "expected_revision":candidate.observation.membership_revision,
+            "release_of":staged_command
+        }))
+        .build()
+        .map_err(|_| {
+            BuzzAuthorityError::InvalidResponse("cannot create staged admission release".into())
+        })?;
+    outbox.insert_in_tx(&mut tx, &release).await.map_err(|_| {
+        BuzzAuthorityError::Transport("cannot persist staged admission release".into())
+    })?;
     tx.commit().await.map_err(|_| {
         BuzzAuthorityError::Transport("cannot commit replacement completion".into())
     })?;
@@ -766,8 +834,8 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO chat_workspace_communities(mapping_id,tenant_id,workspace_id,community_id,relay_url,relay_pubkey,active)
-            VALUES($1,$2,$3,$4,$5,$6,true)")
+        sqlx::query("INSERT INTO chat_workspace_communities(mapping_id,tenant_id,workspace_id,community_id,relay_url,relay_pubkey,membership_protocol_version,active)
+            VALUES($1,$2,$3,$4,$5,$6,'v1alpha2',true)")
             .bind(mapping).bind(tenant).bind(workspace).bind(community.to_string()).bind("wss://relay.example.test").bind(&relay_pubkey).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status,rotation_of,revoked_at)
             VALUES($1,$2,$3,$4,'revoked',NULL,clock_timestamp()),($5,$2,$3,$6,'pending',$1,NULL)")
@@ -798,7 +866,10 @@ mod tests {
             )
             .unwrap();
         let start_store = ChatIdentityStore::new(pool.clone());
-        start_store.insert_challenge(&expiring).await.unwrap();
+        assert!(start_store
+            .insert_challenge_for_mapping(&expiring, WorkspaceId(workspace))
+            .await
+            .unwrap());
         sqlx::query(
             "UPDATE chat_identity_bindings SET status='active',revoked_at=NULL WHERE binding_id=$1",
         )
@@ -808,6 +879,222 @@ mod tests {
         .unwrap();
         sqlx::query("INSERT INTO application_enablements(tenant_id,workspace_id,application_id,enabled) VALUES($1,$1,'io.elembra.chat',true)")
             .bind(tenant).execute(&pool).await.unwrap();
+        let valid_principal = Uuid::new_v4();
+        let valid_old_binding = Uuid::new_v4();
+        let valid_operation = Uuid::new_v4();
+        let valid_keys = Keys::generate();
+        let valid_old_key = Keys::generate().public_key().to_hex();
+        sqlx::query("INSERT INTO users(id,username,email,password_hash,tenant_id,display_name,storage_quota)
+            VALUES($1,$2,$3,'test-hash',$4,'valid replacement test',1048576)")
+            .bind(valid_principal)
+            .bind(format!("replacement-valid-{valid_principal}"))
+            .bind(format!("replacement-valid-{valid_principal}@example.test"))
+            .bind(tenant)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO chat_identity_bindings(binding_id,tenant_id,principal_id,buzz_pubkey,status)
+            VALUES($1,$2,$3,$4,'active')")
+            .bind(valid_old_binding)
+            .bind(tenant)
+            .bind(valid_principal)
+            .bind(valid_old_key)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let valid_challenge = rustshare_resource_auth::BindingChallenge::issue(
+            TenantId(tenant),
+            PrincipalId(valid_principal),
+            valid_keys.public_key().to_hex(),
+            "wss://relay.example.test",
+            Some(valid_old_binding),
+            chrono::Utc::now(),
+            chrono::Duration::minutes(5),
+        );
+        let valid_event = EventBuilder::new(Kind::Authentication, "")
+            .tags([
+                nostr::Tag::parse(["relay", "wss://relay.example.test"]).unwrap(),
+                nostr::Tag::parse(["challenge", valid_challenge.nonce.as_str()]).unwrap(),
+            ])
+            .sign_with_keys(&valid_keys)
+            .unwrap();
+        let valid_proof = valid_challenge
+            .verify_proof(
+                TenantId(tenant),
+                PrincipalId(valid_principal),
+                &valid_event,
+                chrono::Utc::now(),
+            )
+            .unwrap();
+        assert!(start_store
+            .insert_challenge_for_mapping(&valid_challenge, WorkspaceId(workspace))
+            .await
+            .unwrap());
+        let valid_start = rustshare_storage::ReplacementStart {
+            operation_id: valid_operation,
+            replacement_binding_id: valid_operation,
+            old_binding_id: valid_old_binding,
+            tenant_id: TenantId(tenant),
+            principal_id: PrincipalId(valid_principal),
+            workspace_id: WorkspaceId(workspace),
+            actor_id: valid_principal,
+        };
+        assert!(start_store
+            .begin_replacement(&valid_start, &valid_proof)
+            .await
+            .unwrap());
+        assert!(start_store
+            .begin_replacement(&valid_start, &valid_proof)
+            .await
+            .unwrap());
+        assert_eq!(
+            start_store
+                .replacement_request_matches(
+                    &valid_start,
+                    valid_challenge.challenge_id,
+                    valid_proof.event_id(),
+                )
+                .await
+                .unwrap(),
+            Some(true)
+        );
+        let mut conflict_start = valid_start.clone();
+        conflict_start.workspace_id = WorkspaceId(Uuid::new_v4());
+        assert_eq!(
+            start_store
+                .replacement_request_matches(
+                    &conflict_start,
+                    valid_challenge.challenge_id,
+                    valid_proof.event_id(),
+                )
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        let started: (bool, String, String, String, i64) = sqlx::query_as(
+            "SELECT c.consumed_at IS NOT NULL,old.status,new.status,r.state,
+                (SELECT count(*) FROM chat_identity_replacement_audit WHERE operation_id=r.operation_id)
+             FROM chat_identity_replacements r
+             JOIN chat_binding_challenges c ON c.challenge_id=r.challenge_id
+             JOIN chat_identity_bindings old ON old.binding_id=r.old_binding_id
+             JOIN chat_identity_bindings new ON new.binding_id=r.replacement_binding_id
+             WHERE r.operation_id=$1",
+        )
+        .bind(valid_operation)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            started,
+            (
+                true,
+                "revoked".into(),
+                "pending".into(),
+                "pending_revocation".into(),
+                1
+            )
+        );
+        let visible = start_store
+            .replacement_status(TenantId(tenant), valid_principal, valid_operation)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(visible.state, "pending_revocation");
+        assert!(start_store
+            .replacement_status(TenantId(tenant), principal, valid_operation)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(start_store
+            .replacement_status(TenantId(Uuid::new_v4()), valid_principal, valid_operation)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            start_store
+                .replacement_audit(TenantId(tenant), valid_principal, valid_operation)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(start_store
+            .replacement_audit(TenantId(tenant), principal, valid_operation)
+            .await
+            .unwrap()
+            .is_empty());
+        sqlx::query("DELETE FROM chat_identity_replacement_audit WHERE operation_id=$1")
+            .bind(valid_operation)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM chat_identity_replacements WHERE operation_id=$1")
+            .bind(valid_operation)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM chat_binding_challenges WHERE challenge_id=$1")
+            .bind(valid_challenge.challenge_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM chat_identity_bindings WHERE binding_id=ANY($1)")
+            .bind(vec![valid_operation, valid_old_binding])
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM users WHERE id=$1 AND tenant_id=$2")
+            .bind(valid_principal)
+            .bind(tenant)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let start = rustshare_storage::ReplacementStart {
+            operation_id: Uuid::new_v4(),
+            replacement_binding_id: Uuid::new_v4(),
+            old_binding_id: old_binding,
+            tenant_id: TenantId(tenant),
+            principal_id: PrincipalId(principal),
+            workspace_id: WorkspaceId(workspace),
+            actor_id: principal,
+        };
+        let mut wrong_old = start.clone();
+        wrong_old.old_binding_id = Uuid::new_v4();
+        assert!(!start_store
+            .begin_replacement(&wrong_old, &proof)
+            .await
+            .unwrap());
+        sqlx::query("UPDATE chat_workspace_communities SET relay_pubkey=$2 WHERE mapping_id=$1")
+            .bind(mapping)
+            .bind("a".repeat(64))
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(!start_store.begin_replacement(&start, &proof).await.unwrap());
+        sqlx::query("UPDATE chat_workspace_communities SET relay_pubkey=$2 WHERE mapping_id=$1")
+            .bind(mapping)
+            .bind(&relay_pubkey)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE chat_workspace_communities SET membership_protocol_version='v1alpha1' WHERE mapping_id=$1")
+            .bind(mapping).execute(&pool).await.unwrap();
+        assert!(!start_store.begin_replacement(&start, &proof).await.unwrap());
+        sqlx::query("UPDATE chat_workspace_communities SET membership_protocol_version='v1alpha2' WHERE mapping_id=$1")
+            .bind(mapping).execute(&pool).await.unwrap();
+        let untouched: (bool, String, i64) = sqlx::query_as(
+            "SELECT c.consumed_at IS NULL,b.status,
+                (SELECT count(*) FROM chat_identity_replacements WHERE operation_id=$2)
+             FROM chat_binding_challenges c JOIN chat_identity_bindings b ON b.binding_id=$3
+             WHERE c.challenge_id=$1",
+        )
+        .bind(expiring.challenge_id)
+        .bind(start.operation_id)
+        .bind(old_binding)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(untouched, (true, "active".into(), 0));
         let mut mapping_lock = pool.begin().await.unwrap();
         sqlx::query(
             "SELECT mapping_id FROM chat_workspace_communities WHERE mapping_id=$1 FOR UPDATE",
@@ -816,21 +1103,9 @@ mod tests {
         .execute(&mut *mapping_lock)
         .await
         .unwrap();
-        let starter = tokio::spawn(async move {
-            start_store
-                .begin_replacement(
-                    &rustshare_storage::ReplacementStart {
-                        operation_id: Uuid::new_v4(),
-                        replacement_binding_id: Uuid::new_v4(),
-                        tenant_id: TenantId(tenant),
-                        principal_id: PrincipalId(principal),
-                        workspace_id: WorkspaceId(workspace),
-                        actor_id: principal,
-                    },
-                    &proof,
-                )
-                .await
-        });
+        let start_operation_id = start.operation_id;
+        let starter =
+            tokio::spawn(async move { start_store.begin_replacement(&start, &proof).await });
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT mapping_id,community_id%')")
@@ -845,21 +1120,21 @@ mod tests {
             !starter.await.unwrap().unwrap(),
             "a challenge expiring during the mapping lock wait must not start replacement"
         );
-        let untouched: bool = sqlx::query_scalar(
-            "SELECT consumed_at IS NULL FROM chat_binding_challenges WHERE challenge_id=$1",
+        let rolled_back: (bool, String, i64, i64, i64) = sqlx::query_as(
+            "SELECT c.consumed_at IS NULL,b.status,
+                (SELECT count(*) FROM chat_identity_replacements WHERE operation_id=$2),
+                (SELECT count(*) FROM chat_identity_bindings WHERE buzz_pubkey=c.buzz_pubkey),
+                (SELECT count(*) FROM chat_identity_replacement_audit WHERE operation_id=$2)
+             FROM chat_binding_challenges c JOIN chat_identity_bindings b ON b.binding_id=$3
+             WHERE c.challenge_id=$1",
         )
         .bind(expiring.challenge_id)
+        .bind(start_operation_id)
+        .bind(old_binding)
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert!(untouched);
-        let old_status: String =
-            sqlx::query_scalar("SELECT status FROM chat_identity_bindings WHERE binding_id=$1")
-                .bind(old_binding)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(old_status, "active");
+        assert_eq!(rolled_back, (true, "active".into(), 0, 0, 0));
         sqlx::query("DELETE FROM chat_binding_challenges WHERE challenge_id=$1")
             .bind(expiring.challenge_id)
             .execute(&pool)
@@ -913,6 +1188,7 @@ mod tests {
         let response = serde_json::json!({
             "request_id": request_id.to_string(), "community_id": community.to_string(),
             "pubkey": old_key.clone(), "membership": "revoked", "membership_revision": 1,
+            "send_enabled": false, "staged_operation_id": null,
             "evaluated_at": chrono::Utc::now().timestamp()
         });
         let signed = EventBuilder::new(Kind::Custom(19_030), response.to_string())
@@ -1059,6 +1335,8 @@ mod tests {
             command_version: Some(1),
             command_id: Some(stale_command),
             expected_revision: Some(0),
+            staged: true,
+            release_of: None,
         };
         assert!(crate::buzz_bridge::validate_conditional_command(
             &pool,

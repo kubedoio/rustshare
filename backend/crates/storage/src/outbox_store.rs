@@ -3096,6 +3096,45 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires database"]
+    async fn buzz_bridge_release_migration_extends_existing_registration() {
+        let _db_guard = DB_TEST_LOCK.lock().await;
+        let (store, pool) = setup().await;
+        clean_slate(&pool).await;
+
+        let consumer_id = "io.elembra.chat.buzz-bridge.v1";
+        let legacy_subscriptions = vec![
+            "io.elembra.chat.buzz.admission.requested.v1".to_string(),
+            "io.elembra.chat.buzz.admission.revoked.v1".to_string(),
+        ];
+        store
+            .register_consumer(consumer_id, &legacy_subscriptions)
+            .await
+            .unwrap();
+
+        sqlx::query(include_str!(
+            "../../../migrations/20261030120000_buzz_bridge_release_subscription.up.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut current_subscriptions = legacy_subscriptions;
+        current_subscriptions.push("io.elembra.chat.buzz.admission.released.v1".to_string());
+        current_subscriptions.sort();
+        store
+            .register_consumer(consumer_id, &current_subscriptions)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.consumer_subscriptions(consumer_id).await.unwrap(),
+            current_subscriptions
+        );
+
+        clean_slate(&pool).await;
+    }
+
+    #[tokio::test]
     #[ignore] // Requires database
     async fn publish_creates_obligations_for_matching_registered_consumers() {
         let _db_guard = DB_TEST_LOCK.lock().await;

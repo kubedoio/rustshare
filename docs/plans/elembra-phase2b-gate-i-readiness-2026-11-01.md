@@ -1,0 +1,90 @@
+# Elembra Phase 2B Gate I Readiness
+
+**Review date:** 2026-11-01
+
+**Reviewed baseline:** protected `main`, `375135ffc316392fdf38843a3a7a798f8fcd2ef3` (merge PR #444)
+
+**Decision:** **NO-GO — Gate I prerequisites are not satisfied.**
+
+**Issue #442:** OPEN and deferred by the user as non-urgent; desktop acceptance remains **UNVERIFIED** and is still a Gate I prerequisite.
+
+**Phase 2B.1 implementation:** the inert default-off mapping store from [PR #445](https://github.com/kubedoio/rustshare/pull/445) is now in `main`. [PR #446](https://github.com/kubedoio/rustshare/pull/446) contains the default-off pinned transport foundation. Neither enables production runtime functionality.
+
+This report records the baseline audit and the work required to resume. It does not treat source inspection, policy unit tests, or an ordinary code review as runtime or independent security acceptance.
+
+## 1. Merged vault and mapping audit
+
+| Area | Implemented at this baseline | Test-only or missing for runtime |
+|---|---|---|
+| Envelope cryptography | [`managed_identity_vault.rs`](../../backend/crates/crypto/src/managed_identity_vault.rs) implements version-1 AES-256-GCM envelopes, random per-identity DEKs/nonces, AAD bound to tenant, principal, identity, generation, version, and public key, KMS encryption context, zeroization, recovery-context checks, and public-key verification. `RecoveredIdentity` intentionally has no signing or export API. | `DekKeyManagement` is only implemented by an in-memory test KMS. There is no approved production KMS provider or caller wired to this module. No KEK bytes are exposed by the trait contract. A provider must enforce wrap/unwrap permissions and recovery policy externally. |
+| Vault persistence | [`managed_identity_vault.rs`](../../backend/crates/storage/src/managed_identity_vault.rs) provides tenant-scoped insert/load, rewrap compare-and-swap, disable, and revoke operations. Transactions set `app.current_tenant_id` locally. The module explicitly says there is no runtime caller. | No route, worker, configuration, provisioning, signing, or export runtime path uses this store. Tenant scope is supplied by the caller/envelope; callers must authenticate and authorize before selecting it. |
+| Schema and RLS | [`20261101090000_managed_chat_identity_vault.up.sql`](../../backend/migrations/20261101090000_managed_chat_identity_vault.up.sql) constrains envelope fields, uniqueness and status, prevents attribution mutation/deletion, and enables and forces tenant RLS. | RLS depends on a trusted tenant context and a database role without `BYPASSRLS` or superuser privileges. No production role/configuration evidence or DB-plus-KMS recovery drill is established by this migration. |
+| Relay mapping and transport | [`upstream_relay_mapping.rs`](../../backend/crates/resource-auth/src/upstream_relay_mapping.rs) remains the policy model. The default-off mapping store enforces one strict-public relay per tenant, append-only workspace bindings/audit, tenant RLS, policy validation, generation CAS, audited deactivation, and matching audit attribution. PR #446 resolves and pins approved peers, validates TLS/SNI, reads NIP-11 `self` and upgrades WebSocket on the same TLS stream, then reloads the mapping. Its receive-only session fences mapping changes, expiry, deactivation, and database errors. | Neither slice has a production caller or authorized mapping writer. `community_id` is bound in provisioning state but not confirmed by a live deployment; NIP-11 `self` is an endpoint claim, not proof of signing-key possession. The session has no pool and polls idle mappings every five seconds. Runtime DB privilege separation remains unproven; owner/superuser privileges can disable triggers/RLS. |
+
+Do not duplicate the envelope, persistence, or mapping policy. The transport in [PR #446](https://github.com/kubedoio/rustshare/pull/446) remains unqualified; production KMS, trusted mapping authorization, live service proof, and the approvals below remain outstanding.
+
+## 2. Desktop interoperability gate — UNVERIFIED
+
+The repository procedure is [`desktop-acceptance.md`](../../scripts/upstream-buzz-poc/desktop-acceptance.md), with sanitized collector [`desktop-evidence.mjs`](../../scripts/upstream-buzz-poc/desktop-evidence.mjs). GitHub issue [#442](https://github.com/kubedoio/rustshare/issues/442) is still open. The host inspected for this report has no graphical session (`DISPLAY`, `WAYLAND_DISPLAY`, `DBUS_SESSION_BUS_ADDRESS`, and `XDG_RUNTIME_DIR` are unset). Installed GUI/keyring utilities do not provide an interactive desktop session or prove a functioning native keychain. No desktop test was claimed or fabricated.
+
+An authorized maintainer with a supported interactive desktop and unlocked native OS credential store must execute the existing procedure against its disposable harness. It requires unmodified `block/buzz-app` at `662e91800af8204ec0e492522b8f23ef23b19baa` and relay `block/buzz` at `eafd77e9f6e96052476bdd88be732c046fdb7ab3`:
+
+1. Read the harness [`README.md`](../../scripts/upstream-buzz-poc/README.md). Start its disposable relay and protocol client interactively with `POC_HOLD=1 scripts/upstream-buzz-poc/run.sh`; use only the printed mode-0600 disposable `nsec` in its mode-0700 temporary directory and the printed CA settings. Verify the native credential store's normal create/read/delete path before importing anything.
+2. In stock Buzz Desktop, import Alice's existing test `nsec`; compare its displayed public key with the harness `alice_pubkey`. Configure the exact printed `wss://` relay/community. Confirm the imported identity remains selected and no duplicate identity or unexpected enrollment appears.
+3. At the held protocol prompt, send a unique channel message and compare the desktop event ID/author. Send a separate desktop channel message and use `WAIT` to compare protocol-observed event ID/author.
+4. Exit and restart Buzz normally using the same native keychain. Confirm the same public key, relay reconnection, visible prior message, and independently retrieved `HISTORY <event_id>`.
+5. Use Buzz's native private-channel DM UI with Bob. Confirm the harness `dm_channel` is discovered. Run `SEND_DM` and compare the desktop event ID; send a desktop DM and compare `WAIT_DM` event ID, Alice author key, and channel ID. Confirm `HISTORY_DM <event_id>`. This covers native NIP-29 private-channel kind-9 messages only; it is not NIP-17/NIP-44 end-to-end encryption.
+6. Remove the disposable credential using Buzz's normal UI and verify its absence. Destroy only an explicitly disposable profile/keychain and the relay stack; never delete the host keychain. Set `credential_removed_after_test` only after verifying cleanup.
+7. Feed only sanitized observations to the committed collector: `node scripts/upstream-buzz-poc/desktop-evidence.mjs < sanitized-manual-observations.json > sanitized-desktop-evidence.json`. Keep no `nsec`, secret input, keychain/profile, screenshot containing secrets, or raw session transcript. `PASS_REVIEW_REQUIRED` means only that assertions are consistent; a human reviewer must attest that the observations occurred.
+
+Required result: all assertions in issue #442 pass, including public-key match, relay/community, both channel directions, both DM directions with matching event IDs/authors, restart/history, no duplicate identity/enrollment, and credential cleanup. Until then Gate I remains NO-GO.
+
+## 3. Independent security acceptance and named decisions
+
+ADR-0044 records project-owner direction on 2026-10-31 for managed custody and NIP-29 channel/private-channel DM scope. The record names no individual and explicitly says that direction is not authorization for production custody. **Independent security acceptance remains pending.** No personal names or approvals are inferred here. Before Gate I, decision records must identify the human by name, role, date, scope, decision, and conditions:
+
+| Decision required | Current resolution / required evidence |
+|---|---|
+| ADR-0044 custodial signing consequences | Product direction is recorded, but not by personal name. A named independent security reviewer must accept that Elembra/KMS administrators and a compromised signer can impersonate users, that this is not end-to-end key exclusivity, and the threat model and controls. Code review is not this approval. |
+| Production KMS, permissions, rotation and recovery | No production provider is implemented or approved. Name the KMS/security owner and independent reviewer; approve least-privilege wrap/unwrap identities, key/version/context binding, rotation and break-glass controls; demonstrate restore from DB backup plus KMS bindings. KEK material must never enter the application/database. KMS loss may make identities unrecoverable. |
+| Tenant-to-relay trust and source pinning | Approve a trusted mapping authority/store and named operator identity. Each tenant must use one isolated relay/community; pin exact URL/host, port, community, relay public key, deployment provenance/digest, approved DNS targets and mapping generation. Unauthenticated NIP-11 is not a trust source. |
+| Public versus trusted-service endpoints | Strict public-destination checks remain default. Any private/bundled `trusted_service` exception stays disabled until a named security/network owner approves immutable service identity and exact endpoint allowlists. No arbitrary private endpoint or broad RFC1918/loopback allowance. |
+| DNS/TLS, SSRF and egress | Independent reviewer must accept DNS answer allowlisting and direct socket pinning, exact hostname/SNI and certificate/peer validation, redirects and environment proxies disabled, network-level destination allowlisting, and negative DNS-rebinding, SSRF, host/peer substitution and cross-tenant tests. The policy module alone is not evidence of these controls. |
+| WebSocket lifecycle and generation fencing | Name the transport owner/reviewer. Connections must be tenant-isolated, bound to the mapping generation, rejected on any mapping change, and closed/fail-closed on stale authorization, endpoint verification failure, or reconnect. Require stale-generation and cross-tenant live-service tests. |
+| Exported `nsec`, offboarding and revocation | Named product/security decision must accept user disclosure that an exported key is permanently copyable and cannot be cryptographically revoked. Relay membership removal and live-session termination are distinct and may converge later; do not promise instant revocation without measured evidence. |
+| Backup, restore, audit and incident handling | Name operations and security approvers. Require tested DB-plus-KMS recovery, signing/export audit design, access and retention controls, incident/offboarding procedures, and a documented export/recovery policy before custody. |
+| Chat-backed Memory authorization | Keep unavailable unless each read has current-subject authorization proof from the trusted upstream source. No cached observation, local ACL, or stale proof may authorize a read. Name the Chat/Memory security approver for any future enablement. |
+| Legacy identity and replacement guard | Preserve no-silent-migration behavior and M4.1b2 replacement guards. Any migration, rotation, or replacement change requires its separately reviewed path and explicit user authorization. |
+
+NIP-17 remains disabled and out of v1. NIP-29 private DMs are relay-access-controlled and visible to the relay operator; the named product owner must ensure user-facing language continues to say so. The user key vault must not be used to imply message confidentiality from Elembra.
+
+## 4. Phase 2B.1 disposition
+
+**Integration remains gated.** #442 desktop evidence is deferred per user direction and remains unverified; named independent custody/security acceptance, production mapping authority, KMS provider/recovery approval, and live conformance/negative evidence are also outstanding. The default-off mapping store is in `main`; PR #446 adds a transport foundation with no handler, startup caller, pool, or production selector. Neither qualifies Gate I.
+
+After the external approvals, complete and qualify the feature-gated, non-production native upstream Buzz foundation: approved `DekKeyManagement` provider without KEK exposure; transport that enforces the mapping store/policy; URL/host/community validation; pinned DNS, TLS and peer verification; generation-fenced tenant-isolated WebSockets; separate relay-admin credentials; fail-closed lifecycle and sanitized observability; and disposable-service conformance plus negative tests. It must use unmodified upstream Buzz, one isolated relay/community per tenant, NIP-29 only, and no fork-specific relay endpoints. Automatic provisioning, user signing, `nsec` export, production Chat routing, NIP-17, production image pin changes, legacy migration, and any weakening of M4.1b2 guards remain excluded. Keep all new runtime functionality disabled until separately authorized.
+
+Before merge, require protected CI, disposable-service integration tests, DCO-signed commits, and independent security review recorded by name. Do not merge or deploy automatically.
+
+## 5. Exact next steps for Phase 2B.2 automatic identity provisioning
+
+Phase 2B.2 is a separate follow-up, not part of the foundation PR. Before generating any real-user signing key, require all of these predicates to hold in the same authorized request/workflow:
+
+1. The tenant and principal are authenticated from the current server-side session; current tenant/workspace membership and Chat entitlement are authorized, active, and not suspended.
+2. A named operator-approved, active tenant mapping exists and its generation, exact relay/community, pinned source identity, endpoint, and transport verification are current. No caller-supplied relay URL, identity, key ID, or community may choose the destination.
+3. The user has explicitly opted into the `upstream_managed` profile and acknowledged custodial signing, export-copy and revocation limits, and the non-E2E nature of NIP-29 private DMs. No silent import, rotation, or legacy identity migration occurs.
+4. A unique identity generation is authorized; idempotency and active-identity constraints prevent duplicate keys on retries. Existing binding/replacement rules pass without using a `rotation_of` bypass.
+5. Named independent security approval, approved production KMS and tested recovery are in force. KMS policy permits only the designated signer/provisioner to wrap/unwrap the relevant DEK under tenant/principal/identity/generation context; KEK bytes cannot be read by the application.
+6. A typed, narrowly scoped provisioning intent authorizes creation for this subject and tenant. Key generation happens only after authorization, with audit correlation and rate/abuse controls. A failed operation leaves Chat unavailable and must not fall back to a shared, legacy, or other-tenant identity.
+7. The isolated trusted relay/community is live and passes current DNS pin, TLS/peer, source-identity and generation checks; a separately protected relay-admin identity handles NIP-43 membership and cannot be used as a user signer.
+8. Provisioning is idempotently reconciled and audited without secrets. A current-subject authorization proof remains required for every Chat-backed Memory read; absent or stale proof means deny.
+
+Only after those predicates, protected CI, disposable conformance, negative tests, DCO sign-off and named independent review may a separate implementation request authorize real-user key creation. Export and user signing require their own explicit typed intents and review; this checklist does not grant that authorization.
+
+## Scope and validation record
+
+The mapping-store fixes are now in `main`, including generation fencing, expiry/deactivation, matching audit rows, and actor attribution. Its previous PostgreSQL 16/pgvector integration run covered RLS, tenant/workspace isolation, audit immutability, stale-generation rejection, renewal, and deactivation; the actor-mismatch regression assertions were added afterward and still need a disposable database run. The transport uses direct pinned-IP dialing with peer checks, retries only approved addresses, rejects unsafe DNS answers, and caps setup at 10 seconds. Four feature-enabled transport tests, the feature-enabled server library suite (609 passed, 20 ignored), and server all-target clippy passed on the reviewed transport head. These tests cover bounded NIP-11 parsing/identity, localhost rejection before socket dial, and retry through the next pinned address; they do not cover a full disposable-relay connection.
+
+Source review confirms DNS allowlisting and pinned dialing, TLS hostname/SNI checks, NIP-11 plus WebSocket over one TLS stream, redirect rejection, and mapping reload after handshake. Qualification gaps remain: the relay key is only an unsigned NIP-11 `self` claim; `community_id` has no authoritative live validation; there is no trusted mapping writer/provenance verifier or proven deployment egress allowlist; and no live DNS-to-WebSocket disposable-service conformance. The connector has no pool or runtime caller. These items remain **UNVERIFIED** and block qualification.
+
+PR #446 now targets `main`; no hosted checks were reported on the reviewed head, and the conflict-resolution commit must pass protected CI. No independent security acceptance, production KMS, custody approval, trusted-service exception, merge, or deployment is recorded. Issue #442 remains deferred and unverified. This is not a Gate I approval.

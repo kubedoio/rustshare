@@ -243,6 +243,8 @@ mod tests {
                         let mut content: Value = serde_json::from_slice(&body).unwrap();
                         content["membership"] = json!("active");
                         content["membership_revision"] = json!(version.load(Ordering::SeqCst));
+                        content["send_enabled"] = json!(true);
+                        content["staged_operation_id"] = Value::Null;
                         content["evaluated_at"] =
                             json!(Utc::now().timestamp() + offset.load(Ordering::SeqCst));
                         let response =

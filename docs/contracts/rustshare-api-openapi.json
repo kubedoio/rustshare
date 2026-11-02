@@ -2552,6 +2552,170 @@
         }
       }
     },
+    "/api/v1/applications/chat/identity-replacements": {
+      "post": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Start the durable, two-sided Buzz identity replacement operation.",
+        "operationId": "initiate_replacement",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplacementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Replacement queued for revocation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplacementInitiationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid replacement request or proof",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Replacement initiation is disabled or challenge unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Invalid or conflicting replacement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Challenge expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/chat/identity-replacements/{operation_id}": {
+      "get": {
+        "tags": [
+          "Chat"
+        ],
+        "summary": "Read operation status within the authenticated Principal's tenant scope.",
+        "operationId": "replacement_status",
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "description": "Replacement operation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Replacement status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplacementStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Operation unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Storage failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/applications/chat/messages": {
       "get": {
         "tags": [
@@ -26402,6 +26566,97 @@
           "vault_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "ReplacementInitiationResponse": {
+        "type": "object",
+        "required": [
+          "operation_id",
+          "state"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "ReplacementRequest": {
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "challenge_id",
+          "old_binding_id",
+          "event",
+          "operation_id"
+        ],
+        "properties": {
+          "challenge_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "event": {
+            "type": "object"
+          },
+          "old_binding_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "operation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ReplacementStatusResponse": {
+        "type": "object",
+        "required": [
+          "operation_id",
+          "state",
+          "generation",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error_category": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "generation": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "operation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
