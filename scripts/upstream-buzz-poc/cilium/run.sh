@@ -432,8 +432,12 @@ run_member_transport_test() {
 	local log="$EVIDENCE_DIR/member-transport.log" test_status db_stopped=0
 	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- /usr/local/bin/test-runner --ignored --exact "$filter" --nocapture >"$log" 2>&1 &
 	TEST_PID=$!
+	echo 'waiting for DB outage marker' >>"$EVIDENCE_DIR/member-transport-orchestration.log"
 	wait_for_test_marker "$log" BUZZ_TEST_DB_OUTAGE_READY
+	echo 'DB outage marker observed; stopping PostgreSQL' >>"$EVIDENCE_DIR/member-transport-orchestration.log"
 	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- pg_ctl -D /var/lib/postgresql/data/pgdata -m fast stop >"$RUN_DIR/postgres-stop.log" 2>&1
+	cp "$RUN_DIR/postgres-stop.log" "$EVIDENCE_DIR/postgres-stop.log"
+	echo 'pg_ctl stop returned' >>"$EVIDENCE_DIR/member-transport-orchestration.log"
 	for _ in {1..30}; do
 		if ! "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- pg_isready -h 127.0.0.1 -p 5432 -U postgres -d rustshare_test >/dev/null 2>&1; then
 			db_stopped=1
@@ -442,11 +446,18 @@ run_member_transport_test() {
 		sleep 1
 	done
 	[[ "$db_stopped" == 1 ]] || { echo 'PostgreSQL did not become unavailable' >&2; return 1; }
+	echo 'PostgreSQL outage verified' >>"$EVIDENCE_DIR/member-transport-orchestration.log"
 	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/db-outage.ack
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- test -f /tmp/db-outage.ack
+	echo 'outage acknowledgement visible in test container' >>"$EVIDENCE_DIR/member-transport-orchestration.log"
 	wait_for_test_marker "$log" BUZZ_TEST_DB_RESTORE_READY
+	echo 'restore-ready marker observed' >>"$EVIDENCE_DIR/member-transport-orchestration.log"
 	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- touch /run/db-control/restart
+	echo 'postgres restart gate released' >>"$EVIDENCE_DIR/member-transport-orchestration.log"
 	timeout --signal=TERM 90s "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- sh -ec 'until pg_isready -h 127.0.0.1 -p 5432 -U postgres -d rustshare_test; do sleep 1; done'
+	echo 'PostgreSQL restore verified' >>"$EVIDENCE_DIR/member-transport-orchestration.log"
 	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/db-restore.ack
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- test -f /tmp/db-restore.ack
 	set +e
 	wait "$TEST_PID"
 	test_status=$?
