@@ -4642,6 +4642,7 @@ dependencies = [
  "governor",
  "hex",
  "hmac 0.13.0",
+ "httparse",
  "ical",
  "icalendar",
  "image",

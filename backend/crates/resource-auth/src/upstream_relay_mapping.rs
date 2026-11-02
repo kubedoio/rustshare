@@ -199,6 +199,43 @@ pub struct ConnectionAttempt {
     valid_until: DateTime<Utc>,
 }
 
+impl ConnectionAttempt {
+    /// Tenant/workspace/generation scope captured for the attempt.
+    pub fn scope(&self) -> &MappingScope {
+        &self.scope
+    }
+
+    /// Canonical WebSocket endpoint from the validated mapping.
+    pub fn relay_url(&self) -> &str {
+        &self.relay_url
+    }
+
+    /// DNS name used for SNI and certificate hostname verification.
+    pub fn relay_host(&self) -> &str {
+        &self.relay_host
+    }
+
+    /// Community binding captured from the trusted mapping.
+    pub fn community_id(&self) -> &str {
+        &self.community_id
+    }
+
+    /// Relay public key pinned by trusted provisioning state.
+    pub fn relay_pubkey(&self) -> &str {
+        &self.relay_pubkey
+    }
+
+    /// Port from the validated WebSocket URL.
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// DNS addresses approved for this connection attempt.
+    pub fn pinned_ips(&self) -> &[IpAddr] {
+        &self.pinned_ips
+    }
+}
+
 /// Evidence returned by the actual transport after TLS and NIP-11 verification.
 /// These booleans/identifiers must be populated by the transport, not the user.
 #[derive(Debug, Clone, PartialEq, Eq)]
