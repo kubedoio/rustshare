@@ -259,9 +259,9 @@ kubectl -n "$NAMESPACE" create secret generic buzz-root-ders \
 
 python3 "$HERE/render.py" --phase base --namespace "$NAMESPACE" --buzz-image "$BUZZ_IMAGE" --poc-image "$POC_IMAGE" \
 	--postgres-image "$POSTGRES_IMAGE" --redis-image "$REDIS_IMAGE" --silo-image "$SILO_IMAGE" --mc-image "$MC_IMAGE" --coredns-image "$COREDNS_IMAGE" \
-	>"$RUN_DIR/base.json"
-cp "$RUN_DIR/base.json" "$EVIDENCE_DIR/base-resources.json"
-"${K[@]}" apply -f "$RUN_DIR/base.json" >"$EVIDENCE_DIR/base-apply.txt"
+	>"$RUN_DIR/base.yaml"
+cp "$RUN_DIR/base.yaml" "$EVIDENCE_DIR/base-resources.yaml"
+"${K[@]}" apply -f "$RUN_DIR/base.yaml" >"$EVIDENCE_DIR/base-apply.txt"
 for name in postgres-a postgres-b redis-a redis-b silo-a silo-b buzz-a buzz-b buzz-edge-a buzz-edge-b; do
 	"${K[@]}" -n "$NAMESPACE" rollout status "deployment/$name" --timeout=4m >"$RUN_DIR/rollout-$name.log"
 done
@@ -269,13 +269,13 @@ for tenant in a b; do "${K[@]}" -n "$NAMESPACE" wait --for=condition=complete "j
 EDGE_A_IP="$("${K[@]}" -n "$NAMESPACE" get svc buzz-edge-a -o jsonpath='{.spec.clusterIP}')"
 EDGE_B_IP="$("${K[@]}" -n "$NAMESPACE" get svc buzz-edge-b -o jsonpath='{.spec.clusterIP}')"
 DNS_IP="$("${K[@]}" -n "$NAMESPACE" get svc controlled-dns -o jsonpath='{.spec.clusterIP}')"
-python3 "$HERE/render.py" --phase dns --namespace "$NAMESPACE" --edge-a-ip "$EDGE_A_IP" --edge-b-ip "$EDGE_B_IP" >"$RUN_DIR/dns-normal.json"
-cp "$RUN_DIR/dns-normal.json" "$EVIDENCE_DIR/dns-normal.json"
-"${K[@]}" apply -f "$RUN_DIR/dns-normal.json" >"$EVIDENCE_DIR/dns-normal-apply.txt"
+python3 "$HERE/render.py" --phase dns --namespace "$NAMESPACE" --edge-a-ip "$EDGE_A_IP" --edge-b-ip "$EDGE_B_IP" >"$RUN_DIR/dns-normal.yaml"
+cp "$RUN_DIR/dns-normal.yaml" "$EVIDENCE_DIR/dns-normal.yaml"
+"${K[@]}" apply -f "$RUN_DIR/dns-normal.yaml" >"$EVIDENCE_DIR/dns-normal-apply.txt"
 "${K[@]}" -n "$NAMESPACE" rollout status deployment/controlled-dns --timeout=90s >"$RUN_DIR/dns-rollout.log"
 kubectl -n "$NAMESPACE" create configmap seed-config --from-env-file="$RUN_DIR/secrets/seed-config.env" >/dev/null
-python3 "$HERE/render.py" --phase seed --namespace "$NAMESPACE" --poc-image "$POC_IMAGE" --dns-ip "$DNS_IP" >"$RUN_DIR/seed-job.json"
-"${K[@]}" apply -f "$RUN_DIR/seed-job.json" >"$EVIDENCE_DIR/seed-apply.txt"
+python3 "$HERE/render.py" --phase seed --namespace "$NAMESPACE" --poc-image "$POC_IMAGE" --dns-ip "$DNS_IP" >"$RUN_DIR/seed-job.yaml"
+"${K[@]}" apply -f "$RUN_DIR/seed-job.yaml" >"$EVIDENCE_DIR/seed-apply.txt"
 if ! "${K[@]}" -n "$NAMESPACE" wait --for=condition=complete job/seed-private-dms --timeout=2m >"$RUN_DIR/seed-wait.log"; then
 	"${K[@]}" -n "$NAMESPACE" logs job/seed-private-dms >"$EVIDENCE_DIR/seed-failure.log" 2>&1 || true
 	echo 'upstream NIP-42/NIP-29 fixture seeding failed' >&2
@@ -324,9 +324,9 @@ PY
 cp "$RUN_DIR/connector-public.env" "$EVIDENCE_DIR/connector-public.env"
 kubectl -n "$NAMESPACE" create configmap connector-test-config --from-env-file="$RUN_DIR/connector-public.env" >/dev/null
 python3 "$HERE/render.py" --phase runner --namespace "$NAMESPACE" --runner-image "$RUNNER_IMAGE" \
-	--pgvector-image "$PGVECTOR_IMAGE" --dns-ip "$DNS_IP" >"$RUN_DIR/runner-pod.json"
-cp "$RUN_DIR/runner-pod.json" "$EVIDENCE_DIR/runner-pod.json"
-"${K[@]}" apply -f "$RUN_DIR/runner-pod.json" >"$EVIDENCE_DIR/runner-apply.txt"
+	--pgvector-image "$PGVECTOR_IMAGE" --dns-ip "$DNS_IP" >"$RUN_DIR/runner-pod.yaml"
+cp "$RUN_DIR/runner-pod.yaml" "$EVIDENCE_DIR/runner-pod.yaml"
+"${K[@]}" apply -f "$RUN_DIR/runner-pod.yaml" >"$EVIDENCE_DIR/runner-apply.txt"
 "${K[@]}" -n "$NAMESPACE" wait --for=condition=Ready pod/rust-connector --timeout=2m >"$RUN_DIR/runner-ready.log"
 
 "${K[@]}" -n kube-system port-forward --address 127.0.0.1 svc/hubble-relay 4245:80 >"$EVIDENCE_DIR/hubble-port-forward.log" 2>&1 &
@@ -366,9 +366,9 @@ run_rust_test() {
 run_rust_test cross-tenant upstream_buzz_transport::disposable_service_tests::trusted_service_tenant_sessions_are_isolated_across_private_dm_relays none
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$RUN_DIR/db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$RUN_DIR/db-reset.log" 2>&1
-python3 "$HERE/render.py" --phase dns --namespace "$NAMESPACE" --edge-a-ip "$EDGE_A_IP" --edge-b-ip "$EDGE_B_IP" --poison-dns >"$RUN_DIR/dns-poison.json"
-cp "$RUN_DIR/dns-poison.json" "$EVIDENCE_DIR/dns-poison.json"
-"${K[@]}" apply -f "$RUN_DIR/dns-poison.json" >"$EVIDENCE_DIR/dns-poison-apply.txt"
+python3 "$HERE/render.py" --phase dns --namespace "$NAMESPACE" --edge-a-ip "$EDGE_A_IP" --edge-b-ip "$EDGE_B_IP" --poison-dns >"$RUN_DIR/dns-poison.yaml"
+cp "$RUN_DIR/dns-poison.yaml" "$EVIDENCE_DIR/dns-poison.yaml"
+"${K[@]}" apply -f "$RUN_DIR/dns-poison.yaml" >"$EVIDENCE_DIR/dns-poison-apply.txt"
 "${K[@]}" -n "$NAMESPACE" rollout restart deployment/controlled-dns >"$RUN_DIR/dns-restart.log"
 "${K[@]}" -n "$NAMESPACE" rollout status deployment/controlled-dns --timeout=90s >>"$RUN_DIR/dns-restart.log"
 sleep 2
