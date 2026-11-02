@@ -364,7 +364,7 @@ done
 kill -0 "$PF_PID" 2>/dev/null || { echo 'Hubble port-forward failed' >&2; exit 1; }
 
 timeout --signal=TERM 10s hubble observe --server 127.0.0.1:4245 --since 1s --follow \
-	--pod "$NAMESPACE/rust-connector" --protocol tcp --to-ip 1.1.1.1 --verdict DROPPED --output compact \
+	--from-pod "$NAMESPACE/rust-connector" --protocol tcp --to-ip 1.1.1.1 --verdict DROPPED --output compact \
 	>"$EVIDENCE_DIR/public-egress-hubble.log" 2>&1 &
 EGRESS_PID=$!
 sleep 1
