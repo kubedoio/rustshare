@@ -435,7 +435,7 @@ run_member_transport_test() {
 	echo 'waiting for DB outage marker' >>"$EVIDENCE_DIR/member-transport-orchestration.log"
 	wait_for_test_marker "$log" BUZZ_TEST_DB_OUTAGE_READY
 	echo 'DB outage marker observed; stopping PostgreSQL' >>"$EVIDENCE_DIR/member-transport-orchestration.log"
-	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- pg_ctl -D /var/lib/postgresql/data/pgdata -m fast stop >"$RUN_DIR/postgres-stop.log" 2>&1
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- gosu postgres pg_ctl -D /var/lib/postgresql/data/pgdata -m fast stop >"$RUN_DIR/postgres-stop.log" 2>&1
 	cp "$RUN_DIR/postgres-stop.log" "$EVIDENCE_DIR/postgres-stop.log"
 	echo 'pg_ctl stop returned' >>"$EVIDENCE_DIR/member-transport-orchestration.log"
 	for _ in {1..30}; do
