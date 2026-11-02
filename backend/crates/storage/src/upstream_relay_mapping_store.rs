@@ -73,6 +73,9 @@ impl UpstreamRelayMappingStore {
         let command = verifier
             .verify(statement, Utc::now())
             .map_err(|_| UpstreamRelayMappingStoreError::InvalidRecord)?;
+        if self.operation_was_applied(&command).await? {
+            return Ok(());
+        }
         let record = command.record().clone();
         let change_reference_id = command.change_reference_id();
         let expected_generation = command.expected_generation();
@@ -1153,6 +1156,21 @@ mod tests {
         update_first.unwrap();
         update_retry.unwrap();
 
+        let mut deactivate = update.clone();
+        deactivate.operation_id = Uuid::new_v4();
+        deactivate.change_reference_id = Uuid::new_v4();
+        deactivate.action = MappingProvisioningAction::Deactivate;
+        deactivate.expected_generation = 2;
+        deactivate.record.generation = 3;
+        deactivate.record.active = false;
+        deactivate.record.audit_entry_id = Uuid::new_v4();
+        deactivate.signature = signing_key
+            .sign(&deactivate.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        store.apply(&deactivate).await.unwrap();
+        store.apply(&update).await.unwrap();
+
         let mut substituted_replay = statement.clone();
         substituted_replay.record.deployment_digest = format!("sha256:{}", "ee".repeat(32));
         substituted_replay.signature = signing_key
@@ -1397,12 +1415,12 @@ mod tests {
         sqlx::query(
             "INSERT INTO upstream_buzz_relay_mapping_audit \
              (audit_entry_id,tenant_id,mapping_id,generation,action,actor_id,change_reference_id) \
-             VALUES ($1,$2,$3,2,'workspace_bound',$4,$5)",
+             VALUES ($1,$2,$3,1,'mapping_created',$4,$5)",
         )
         .bind(mismatched_create.audit_entry_id)
         .bind(tenant_b)
         .bind(mismatched_create.mapping_id)
-        .bind(mismatched_create.updated_by)
+        .bind(Uuid::nil())
         .bind(Uuid::new_v4())
         .execute(&mut *tx)
         .await
@@ -1417,6 +1435,41 @@ mod tests {
 
         let expired = record(tenant_b, workspace_b);
         store.create(&expired, Uuid::new_v4()).await.unwrap();
+        let mismatched_update_audit = Uuid::new_v4();
+        let mut tx = pool.begin().await.unwrap();
+        set_tenant(&mut tx, tenant_b).await.unwrap();
+        sqlx::query(
+            "UPDATE upstream_buzz_tenant_relays \
+             SET generation=2,updated_by=$2,audit_entry_id=$3 WHERE tenant_id=$1",
+        )
+        .bind(tenant_b)
+        .bind(Uuid::new_v4())
+        .bind(mismatched_update_audit)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO upstream_buzz_relay_mapping_audit \
+             (audit_entry_id,tenant_id,mapping_id,generation,action,actor_id,change_reference_id) \
+             VALUES ($1,$2,$3,2,'mapping_updated',$4,$5)",
+        )
+        .bind(mismatched_update_audit)
+        .bind(tenant_b)
+        .bind(expired.mapping_id)
+        .bind(Uuid::nil())
+        .bind(Uuid::new_v4())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        assert!(tx
+            .commit()
+            .await
+            .unwrap_err()
+            .as_database_error()
+            .unwrap()
+            .message()
+            .contains("update audit does not match generation"));
+
         let mut expired_revision = expired.clone();
         expired_revision.generation += 1;
         expired_revision.valid_until = Utc::now() - chrono::Duration::seconds(1);
