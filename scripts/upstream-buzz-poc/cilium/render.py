@@ -306,10 +306,7 @@ def main():
         if not args.dns_ip:
             parser.error("runner phase requires --dns-ip")
         objects = render_runner(args)
-    for index, resource in enumerate(objects):
-        if index:
-            print("---")
-        print(json.dumps(resource, separators=(",", ":")))
+    print(json.dumps({"apiVersion": "v1", "kind": "List", "items": list(objects)}, separators=(",", ":")))
 
 
 if __name__ == "__main__":
