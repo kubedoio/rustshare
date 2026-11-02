@@ -655,7 +655,7 @@ mod disposable_service_tests {
     use chrono::{TimeZone, Utc};
     use ed25519_dalek::{Signer, SigningKey};
     use futures_util::SinkExt;
-    use nostr::{EventBuilder, Keys, RelayUrl};
+    use nostr::{Event, EventBuilder, Keys, Kind, RelayUrl, Tag};
     use rustshare_core::domain::{TenantId, WorkspaceId};
     use rustshare_resource_auth::upstream_relay_mapping::{
         RelayEndpointPolicy, RelayMappingRecord,
@@ -681,7 +681,7 @@ mod disposable_service_tests {
         session: &mut TenantRelaySession,
         user_keys: &Keys,
         relay_url: &str,
-    ) {
+    ) -> bool {
         let challenge = tokio::time::timeout(Duration::from_secs(15), session.receive())
             .await
             .expect("relay AUTH challenge timed out")
@@ -719,11 +719,7 @@ mod disposable_service_tests {
             };
             let response: Value = serde_json::from_str(&frame).unwrap();
             if response[0] == "OK" && response[1] == auth_id {
-                assert!(
-                    response[2].as_bool().unwrap_or(false),
-                    "upstream relay rejected member NIP-42"
-                );
-                return;
+                return response[2].as_bool().unwrap_or(false);
             }
         }
     }
@@ -750,11 +746,14 @@ mod disposable_service_tests {
             .unwrap();
         let mut events = Vec::new();
         let terminal = loop {
-            let frame = tokio::time::timeout(Duration::from_secs(15), session.receive())
+            let frame = match tokio::time::timeout(Duration::from_secs(15), session.receive())
                 .await
                 .expect("private-channel history timed out")
-                .unwrap()
-                .expect("relay closed before private-channel history completed");
+            {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break "SOCKET_CLOSED",
+                Err(error) => panic!("private-channel history failed: {error:?}"),
+            };
             let Message::Text(frame) = frame else {
                 continue;
             };
@@ -768,6 +767,12 @@ mod disposable_service_tests {
                 assert!(
                     has_channel,
                     "relay returned an event outside the requested channel"
+                );
+                let parsed: Event = serde_json::from_value(event.clone())
+                    .expect("relay event must deserialize as a signed Nostr event");
+                assert!(
+                    parsed.verify().is_ok(),
+                    "relay returned an event with an invalid ID or signature"
                 );
                 let id = event["id"].as_str().expect("event id");
                 let author = event["pubkey"].as_str().expect("event author");
@@ -784,6 +789,11 @@ mod disposable_service_tests {
                     .is_some_and(|reason| reason.starts_with("restricted:"))
                 {
                     "CLOSED_RESTRICTED"
+                } else if response[2]
+                    .as_str()
+                    .is_some_and(|reason| reason.starts_with("auth-required:"))
+                {
+                    "CLOSED_AUTH_REQUIRED"
                 } else {
                     "CLOSED_OTHER"
                 };
@@ -803,6 +813,54 @@ mod disposable_service_tests {
                 .unwrap();
         }
         (terminal.to_owned(), events)
+    }
+
+    async fn publish_channel_message(
+        session: &mut TenantRelaySession,
+        user_keys: &Keys,
+        channel_id: &str,
+    ) -> (String, bool) {
+        let event = EventBuilder::new(
+            Kind::Custom(9),
+            format!("disposable cross-tenant probe {channel_id}"),
+        )
+        .tags(vec![
+            Tag::parse(["h", channel_id]).expect("NIP-29 channel tag")
+        ])
+        .sign_with_keys(user_keys)
+        .expect("sign disposable cross-tenant probe");
+        event
+            .verify()
+            .expect("signed probe must have valid ID and signature");
+        let event_id = event.id.to_hex();
+        session
+            .socket
+            .as_mut()
+            .expect("connected socket")
+            .send(Message::Text(
+                serde_json::json!(["EVENT", event]).to_string().into(),
+            ))
+            .await
+            .unwrap();
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(15), session.receive())
+                .await
+                .expect("cross-tenant publish response timed out")
+                .unwrap()
+                .expect("relay closed before cross-tenant publish response");
+            let Message::Text(frame) = frame else {
+                continue;
+            };
+            let response: Value = serde_json::from_str(&frame).unwrap();
+            if response[0] == "OK" && response[1] == event_id {
+                return (
+                    event_id,
+                    response[2]
+                        .as_bool()
+                        .expect("relay OK response must carry an acceptance boolean"),
+                );
+            }
+        }
     }
 
     // Run only inside the Cilium-restricted connector namespace against disposable services.
@@ -1010,7 +1068,7 @@ mod disposable_service_tests {
         .unwrap();
         assert_eq!(session.scope().generation, 5);
 
-        authenticate_member(&mut session, &user_keys, &relay_url).await;
+        assert!(authenticate_member(&mut session, &user_keys, &relay_url).await);
 
         let dm_channel = required("BUZZ_TEST_DM_CHANNEL_ID");
         let expected_dm_id = required("BUZZ_TEST_EXPECTED_DM_EVENT_ID");
@@ -1113,7 +1171,7 @@ mod disposable_service_tests {
         )
         .await
         .unwrap();
-        authenticate_member(&mut subscribed_session, &user_keys, &relay_url).await;
+        assert!(authenticate_member(&mut subscribed_session, &user_keys, &relay_url).await);
         let outage_subscription = Uuid::new_v4().to_string();
         subscribed_session
             .socket
@@ -1446,8 +1504,39 @@ mod disposable_service_tests {
             session_b.scope().endpoint_service_identity
         );
 
-        authenticate_member(&mut session_a, &member_a, &relay_url_a).await;
-        authenticate_member(&mut session_b, &member_b, &relay_url_b).await;
+        assert!(authenticate_member(&mut session_a, &member_a, &relay_url_a).await);
+        assert!(authenticate_member(&mut session_b, &member_b, &relay_url_b).await);
+
+        let mut cross_tenant_auth = connect(
+            &store,
+            TenantId(tenant_a),
+            WorkspaceId(workspace_a),
+            &trust_a,
+        )
+        .await
+        .expect("tenant A mapping must open an isolated test connection");
+        assert_eq!(cross_tenant_auth.scope().tenant_id, TenantId(tenant_a));
+        assert!(
+            !authenticate_member(&mut cross_tenant_auth, &member_b, &relay_url_a).await,
+            "tenant B identity must not be admitted to tenant A relay"
+        );
+        let (cross_auth_terminal, cross_auth_events) =
+            read_channel_history(&mut cross_tenant_auth, &channel_a).await;
+        println!(
+            "cross_tenant_auth_history terminal={cross_auth_terminal} event_count={}",
+            cross_auth_events.len()
+        );
+        assert!(
+            matches!(
+                cross_auth_terminal.as_str(),
+                "EOSE" | "CLOSED_RESTRICTED" | "CLOSED_AUTH_REQUIRED" | "SOCKET_CLOSED"
+            ),
+            "unexpected terminal response for a non-member reading tenant A's private channel"
+        );
+        assert!(
+            cross_auth_events.is_empty(),
+            "tenant B identity received tenant A private-channel events"
+        );
 
         let (terminal_a, events_a) = read_channel_history(&mut session_a, &channel_a).await;
         assert_eq!(terminal_a, "EOSE");
@@ -1473,6 +1562,165 @@ mod disposable_service_tests {
         assert!(
             foreign_events.is_empty(),
             "tenant B's mapped relay returned tenant A private-channel events"
+        );
+
+        let (reverse_terminal, reverse_events) =
+            read_channel_history(&mut session_a, &channel_b).await;
+        println!(
+            "cross_tenant_reverse_private_history terminal={reverse_terminal} event_count={}",
+            reverse_events.len()
+        );
+        assert!(
+            matches!(reverse_terminal.as_str(), "EOSE" | "CLOSED_RESTRICTED"),
+            "unexpected terminal response for tenant A reading tenant B's private channel"
+        );
+        assert!(
+            reverse_events.is_empty(),
+            "tenant A's mapped relay returned tenant B private-channel events"
+        );
+
+        let (_, tenant_b_publish_to_a_accepted) =
+            publish_channel_message(&mut session_b, &member_b, &channel_a).await;
+        let (_, tenant_a_publish_to_b_accepted) =
+            publish_channel_message(&mut session_a, &member_a, &channel_b).await;
+        println!(
+            "cross_tenant_private_publish tenant_b_to_a_accepted={tenant_b_publish_to_a_accepted} tenant_a_to_b_accepted={tenant_a_publish_to_b_accepted}"
+        );
+        assert!(!tenant_b_publish_to_a_accepted);
+        assert!(!tenant_a_publish_to_b_accepted);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL and a Cilium-restricted connector Pod with a controlled DNS fixture"]
+    async fn trusted_service_rejects_an_unapproved_dns_answer_before_socket_dial() {
+        assert_eq!(
+            required("BUZZ_TEST_DISPOSABLE_CONFIRM"),
+            "DISPOSABLE_ONLY",
+            "this test creates permanent mapping audit rows; use a disposable database"
+        );
+        let database_url =
+            crate::test_guard::disposable_database_url_from_env().unwrap_or_else(|message| {
+                panic!("DNS-rebinding test requires disposable PostgreSQL: {message}")
+            });
+        let relay_url = required("BUZZ_TEST_DNS_REBIND_RELAY_URL");
+        let relay_host = required("BUZZ_TEST_DNS_REBIND_HOST");
+        let approved_ip = required("BUZZ_TEST_DNS_REBIND_APPROVED_IP")
+            .parse::<std::net::IpAddr>()
+            .unwrap();
+        let unapproved_ip = required("BUZZ_TEST_DNS_REBIND_UNAPPROVED_IP")
+            .parse::<std::net::IpAddr>()
+            .unwrap();
+        assert_ne!(approved_ip, unapproved_ip);
+        let port = url::Url::parse(&relay_url)
+            .unwrap()
+            .port_or_known_default()
+            .expect("WSS relay URL must provide a port");
+        assert_eq!(
+            url::Url::parse(&relay_url).unwrap().host_str(),
+            Some(relay_host.as_str())
+        );
+        let resolved = tokio::net::lookup_host((relay_host.as_str(), port))
+            .await
+            .expect("controlled DNS fixture must resolve the relay host")
+            .map(|address| address.ip())
+            .collect::<std::collections::BTreeSet<_>>();
+        let expected = std::collections::BTreeSet::from([approved_ip, unapproved_ip]);
+        assert_eq!(
+            resolved, expected,
+            "DNS fixture must return exactly both relay IPs"
+        );
+
+        let relay_host = required("BUZZ_TEST_DNS_REBIND_HOST");
+        let community_id = required("BUZZ_TEST_DNS_REBIND_COMMUNITY_ID");
+        let relay_pubkey = required("BUZZ_TEST_DNS_REBIND_RELAY_PUBKEY");
+        let deployment_digest = required("BUZZ_TEST_DNS_REBIND_DEPLOYMENT_DIGEST");
+        let service_identity = required("BUZZ_TEST_DNS_REBIND_SERVICE_IDENTITY");
+        let spki_pin = required("BUZZ_TEST_DNS_REBIND_TLS_SPKI_PIN");
+        let root_der = std::fs::read(required("BUZZ_TEST_DNS_REBIND_TLS_ROOT_DER"))
+            .expect("read the tenant A disposable service CA certificate");
+
+        let pool = PgPool::connect(&database_url).await.unwrap();
+        sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+        let tenant_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO tenants (id,name) VALUES ($1,$2)")
+            .bind(tenant_id)
+            .bind(format!("disposable DNS rebinding {tenant_id}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let operator_service_id = Uuid::new_v4();
+        let operator_key_id = "disposable-dns-rebinding-authority-v1".to_owned();
+        let operator_key = SigningKey::from_bytes(&rand::random());
+        let now = test_now();
+        let mut statement = MappingProvisioningStatement {
+            operator_service_id,
+            operator_key_id: operator_key_id.clone(),
+            operation_id: Uuid::new_v4(),
+            change_reference_id: Uuid::new_v4(),
+            action: MappingProvisioningAction::Create,
+            expected_generation: 0,
+            issued_at: now,
+            expires_at: now + chrono::Duration::minutes(2),
+            record: RelayMappingRecord {
+                mapping_id: Uuid::new_v4(),
+                tenant_id: TenantId(tenant_id),
+                workspace_id: WorkspaceId(workspace_id),
+                community_id,
+                endpoint_policy: RelayEndpointPolicy::TrustedService,
+                relay_deployment_id: Uuid::new_v4(),
+                endpoint_service_identity: service_identity.clone(),
+                tls_peer_spki_sha256: spki_pin,
+                relay_url,
+                relay_host,
+                relay_pubkey,
+                deployment_digest,
+                approved_ips: vec![approved_ip],
+                generation: 1,
+                active: true,
+                valid_until: now + chrono::Duration::hours(1),
+                updated_by: operator_service_id,
+                audit_entry_id: Uuid::new_v4(),
+            },
+            signature: Vec::new(),
+        };
+        statement.signature = operator_key
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        let verifier = Arc::new(
+            MappingProvisioningVerifier::new(
+                operator_service_id,
+                HashMap::from([(operator_key_id, operator_key.verifying_key())]),
+            )
+            .unwrap(),
+        );
+        let store = UpstreamRelayMappingStore::with_provisioning_verifier(pool, verifier);
+        store.apply(&statement).await.unwrap();
+        let trust = RelayTlsTrustConfig::TrustedService {
+            endpoint_service_identity: service_identity,
+            roots: vec![CertificateDer::from(root_der)],
+        };
+        let result = connect(
+            &store,
+            TenantId(tenant_id),
+            WorkspaceId(workspace_id),
+            &trust,
+        )
+        .await;
+        assert!(
+            matches!(
+                result,
+                Err(UpstreamBuzzTransportError::Mapping(
+                    MappingError::UnsafeDnsTargets
+                ))
+            ),
+            "connector must reject the unapproved DNS answer before dialing"
+        );
+        println!(
+            "dns_poison_rejected approved={approved_ip} unapproved={unapproved_ip} answer_count={}",
+            resolved.len()
         );
     }
 
