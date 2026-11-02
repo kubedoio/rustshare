@@ -1148,4 +1148,172 @@ mod disposable_service_tests {
             Err(UpstreamBuzzTransportError::SessionFenced)
         ));
     }
+
+    #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL and the TLS WebSocket handshake-stall service"]
+    async fn trusted_service_mapping_change_during_websocket_upgrade_is_rejected() {
+        assert_eq!(
+            required("BUZZ_TEST_DISPOSABLE_CONFIRM"),
+            "DISPOSABLE_ONLY",
+            "this test creates permanent mapping audit rows; use a disposable database"
+        );
+        let database_url = required("DATABASE_URL");
+        let relay_host = required("BUZZ_TEST_RACE_HOST");
+        let relay_url = required("BUZZ_TEST_RACE_RELAY_URL");
+        let approved_ip = required("BUZZ_TEST_RACE_APPROVED_IP")
+            .parse::<std::net::IpAddr>()
+            .unwrap();
+        let root_der = std::fs::read(required("BUZZ_TEST_RACE_TLS_ROOT_DER"))
+            .expect("read the disposable handshake-stall CA certificate");
+        let community_id = Uuid::new_v4().to_string();
+        let relay_pubkey = required("BUZZ_TEST_RACE_RELAY_PUBKEY");
+        let service_identity = required("BUZZ_TEST_RACE_SERVICE_IDENTITY");
+        let deployment_digest = required("BUZZ_TEST_RACE_DEPLOYMENT_DIGEST");
+        let spki_pin = required("BUZZ_TEST_RACE_TLS_SPKI_PIN");
+        let control_token = required("BUZZ_TEST_RACE_CONTROL_TOKEN");
+        assert!(control_token.len() >= 32, "provide a per-run control token");
+
+        let pool = PgPool::connect(&database_url).await.unwrap();
+        sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+        let tenant_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO tenants (id,name) VALUES ($1,$2)")
+            .bind(tenant_id)
+            .bind(format!("disposable handshake race {tenant_id}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let operator_service_id = Uuid::new_v4();
+        let operator_key_id = "disposable-handshake-race-authority-v1".to_owned();
+        let operator_key = SigningKey::from_bytes(&rand::random());
+        let now = test_now();
+        let mut statement = MappingProvisioningStatement {
+            operator_service_id,
+            operator_key_id: operator_key_id.clone(),
+            operation_id: Uuid::new_v4(),
+            change_reference_id: Uuid::new_v4(),
+            action: MappingProvisioningAction::Create,
+            expected_generation: 0,
+            issued_at: now,
+            expires_at: now + chrono::Duration::minutes(2),
+            record: RelayMappingRecord {
+                mapping_id: Uuid::new_v4(),
+                tenant_id: TenantId(tenant_id),
+                workspace_id: WorkspaceId(workspace_id),
+                community_id,
+                endpoint_policy: RelayEndpointPolicy::TrustedService,
+                relay_deployment_id: Uuid::new_v4(),
+                endpoint_service_identity: service_identity.clone(),
+                tls_peer_spki_sha256: spki_pin,
+                relay_url,
+                relay_host: relay_host.clone(),
+                relay_pubkey,
+                deployment_digest,
+                approved_ips: vec![approved_ip],
+                generation: 1,
+                active: true,
+                valid_until: now + chrono::Duration::hours(1),
+                updated_by: operator_service_id,
+                audit_entry_id: Uuid::new_v4(),
+            },
+            signature: Vec::new(),
+        };
+        statement.signature = operator_key
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        let verifier = Arc::new(
+            MappingProvisioningVerifier::new(
+                operator_service_id,
+                HashMap::from([(operator_key_id, operator_key.verifying_key())]),
+            )
+            .unwrap(),
+        );
+        let store = UpstreamRelayMappingStore::with_provisioning_verifier(pool.clone(), verifier);
+        store.apply(&statement).await.unwrap();
+
+        let connect_trust = RelayTlsTrustConfig::TrustedService {
+            endpoint_service_identity: service_identity,
+            roots: vec![CertificateDer::from(root_der.clone())],
+        };
+        let connect_store = store.clone();
+        let mut connection = tokio::spawn(async move {
+            connect(
+                &connect_store,
+                TenantId(tenant_id),
+                WorkspaceId(workspace_id),
+                &connect_trust,
+            )
+            .await
+        });
+
+        let control_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .add_root_certificate(reqwest::Certificate::from_der(&root_der).unwrap())
+            .resolve_to_addrs(&relay_host, &[std::net::SocketAddr::new(approved_ip, 443)])
+            .build()
+            .unwrap();
+        let status_url = format!("https://{relay_host}/__test/status");
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                if connection.is_finished() {
+                    panic!("connector completed before the test service held its upgrade");
+                }
+                if let Ok(response) = control_client
+                    .get(&status_url)
+                    .bearer_auth(&control_token)
+                    .send()
+                    .await
+                {
+                    if response
+                        .json::<Value>()
+                        .await
+                        .is_ok_and(|status| status["waiting"] == true)
+                    {
+                        break;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("test service did not hold the WebSocket upgrade");
+
+        statement.operation_id = Uuid::new_v4();
+        statement.change_reference_id = Uuid::new_v4();
+        statement.action = MappingProvisioningAction::Update;
+        statement.expected_generation = 1;
+        statement.record.generation = 2;
+        statement.record.audit_entry_id = Uuid::new_v4();
+        statement.issued_at = test_now();
+        statement.expires_at = statement.issued_at + chrono::Duration::minutes(2);
+        statement.signature = operator_key
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        store.apply(&statement).await.unwrap();
+
+        control_client
+            .post(format!("https://{relay_host}/__test/release"))
+            .bearer_auth(&control_token)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(5), &mut connection)
+            .await
+            .expect("connector did not finish after the test released the upgrade")
+            .unwrap();
+        assert!(matches!(
+            result,
+            Err(UpstreamBuzzTransportError::Mapping(
+                MappingError::MappingChangedDuringConnect
+            ))
+        ));
+    }
 }
