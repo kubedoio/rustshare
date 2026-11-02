@@ -1,0 +1,7 @@
+ARG NODE_BASE
+FROM ${NODE_BASE}
+WORKDIR /opt/cilium
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY cilium/seed-private-dms.mjs cilium/tls-edge.mjs cilium/derive-keys.mjs ./
+USER node

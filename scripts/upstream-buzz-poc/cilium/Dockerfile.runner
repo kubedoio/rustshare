@@ -1,0 +1,5 @@
+ARG RUNNER_BASE
+FROM ${RUNNER_BASE}
+COPY test-runner /usr/local/bin/test-runner
+RUN chmod 0555 /usr/local/bin/test-runner
+USER 65532:65532
