@@ -26,11 +26,12 @@ PF_PID=
 TCP_PID=
 UDP_PID=
 EGRESS_PID=
+TEST_PID=
 
 cleanup() {
 	local status=$?
 	trap - EXIT INT TERM
-	for pid in "$TCP_PID" "$UDP_PID" "$EGRESS_PID" "$PF_PID"; do
+	for pid in "$TCP_PID" "$UDP_PID" "$EGRESS_PID" "$PF_PID" "$TEST_PID"; do
 		if [[ -n "$pid" ]]; then kill -INT "$pid" >/dev/null 2>&1 || true; wait "$pid" 2>/dev/null || true; fi
 	done
 	if [[ "$CLUSTER_CREATED" == 1 ]]; then kind delete cluster --name "$CLUSTER" >>"$EVIDENCE_DIR/cleanup.log" 2>&1 || true; fi
@@ -341,6 +342,7 @@ values = {
  "BUZZ_TEST_DNS_REBIND_DEPLOYMENT_DIGEST":digest,
  "BUZZ_TEST_DNS_REBIND_SERVICE_IDENTITY":f"k8s://{cluster_uid}/{ns}/buzz-edge-a/{svc_a_uid}",
  "BUZZ_TEST_DNS_REBIND_TLS_SPKI_PIN":spki_a, "BUZZ_TEST_DNS_REBIND_TLS_ROOT_DER":"/run/trust/a.der",
+ "BUZZ_TEST_DB_OUTAGE_ACK_FILE":"/tmp/db-outage.ack", "BUZZ_TEST_DB_RESTORE_ACK_FILE":"/tmp/db-restore.ack",
 }
 path = Path(sys.argv[3]); path.write_text("".join(f"{k}={v}\n" for k,v in values.items())); path.chmod(0o600)
 public = {"tenant_a": {"community": a["community_id"], "channel": a["channel_id"], "event": a["event_id"], "author": a["author"]},
@@ -409,7 +411,56 @@ run_rust_test() {
 	fi
 }
 
-run_rust_test member-transport upstream_buzz_transport::disposable_service_tests::trusted_service_transport_connects_and_authenticates_member tcp
+wait_for_test_marker() {
+	local log="$1" marker="$2"
+	for _ in {1..120}; do
+		if grep -Fq "$marker" "$log"; then return 0; fi
+		if ! kill -0 "$TEST_PID" 2>/dev/null; then
+			echo "Disposable relay test exited before $marker" >&2
+			tail -n 30 "$log" >&2
+			return 1
+		fi
+		sleep 1
+	done
+	echo "Timed out waiting for disposable relay test marker $marker" >&2
+	tail -n 30 "$log" >&2
+	return 1
+}
+
+run_member_transport_test() {
+	local filter=upstream_buzz_transport::disposable_service_tests::trusted_service_transport_connects_and_authenticates_member
+	local log="$EVIDENCE_DIR/member-transport.log" test_status db_stopped=0
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- /usr/local/bin/test-runner --ignored --exact "$filter" --nocapture >"$log" 2>&1 &
+	TEST_PID=$!
+	wait_for_test_marker "$log" BUZZ_TEST_DB_OUTAGE_READY
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- pg_ctl -D /var/lib/postgresql/data/pgdata -m fast stop >"$RUN_DIR/postgres-stop.log" 2>&1
+	for _ in {1..30}; do
+		if ! "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- pg_isready -h 127.0.0.1 -p 5432 -U postgres -d rustshare_test >/dev/null 2>&1; then
+			db_stopped=1
+			break
+		fi
+		sleep 1
+	done
+	[[ "$db_stopped" == 1 ]] || { echo 'PostgreSQL did not become unavailable' >&2; return 1; }
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/db-outage.ack
+	wait_for_test_marker "$log" BUZZ_TEST_DB_RESTORE_READY
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- touch /run/db-control/restart
+	timeout --signal=TERM 90s "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- sh -ec 'until pg_isready -h 127.0.0.1 -p 5432 -U postgres -d rustshare_test; do sleep 1; done'
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/db-restore.ack
+	set +e
+	wait "$TEST_PID"
+	test_status=$?
+	set -e
+	TEST_PID=
+	echo "exit=$test_status" >>"$log"
+	if [[ "$test_status" != 0 ]] || ! grep -q '1 passed; 0 failed' "$log"; then
+		echo "Rust test failed: $filter" >&2
+		tail -n 40 "$log" >&2
+		return 1
+	fi
+}
+
+run_member_transport_test
 run_rust_test cross-tenant upstream_buzz_transport::disposable_service_tests::trusted_service_tenant_sessions_are_isolated_across_private_dm_relays none
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$RUN_DIR/db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$RUN_DIR/db-reset.log" 2>&1

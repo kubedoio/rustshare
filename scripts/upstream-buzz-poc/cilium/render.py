@@ -262,15 +262,17 @@ def render_runner(args):
                 "resources": {"requests": {"cpu": "500m", "memory": "768Mi"}, "limits": {"cpu": "2", "memory": "2Gi"}},
             },
             {"name": "postgres", "image": args.pgvector_image, "imagePullPolicy": "IfNotPresent",
+                "command": ["/bin/sh", "-ec"],
+                "args": ["while true; do /usr/local/bin/docker-entrypoint.sh postgres & server_pid=$!; wait \"$server_pid\" || true; while [ ! -f /run/db-control/restart ]; do sleep 0.2; done; rm -f /run/db-control/restart; done"],
                 "envFrom": [{"secretRef": {"name": "connector-test-credentials"}}],
                 "env": [{"name": "POSTGRES_DB", "value": "rustshare_test"}, {"name": "POSTGRES_USER", "value": "postgres"}, {"name": "PGDATA", "value": "/var/lib/postgresql/data/pgdata"}],
                 "ports": [{"name": "postgres", "containerPort": 5432}],
                 "readinessProbe": {"exec": {"command": ["pg_isready", "-U", "postgres", "-d", "rustshare_test"]}, "initialDelaySeconds": 3, "periodSeconds": 3},
-                "volumeMounts": [{"name": "pgdata", "mountPath": "/var/lib/postgresql/data"}],
+                "volumeMounts": [{"name": "pgdata", "mountPath": "/var/lib/postgresql/data"}, {"name": "db-control", "mountPath": "/run/db-control"}],
                 "resources": {"requests": {"cpu": "200m", "memory": "256Mi"}, "limits": {"cpu": "1", "memory": "1Gi"}},
             },
         ],
-        "volumes": [{"name": "roots", "secret": {"secretName": "buzz-root-ders", "defaultMode": 292}}, {"name": "pgdata", "emptyDir": {}}],
+        "volumes": [{"name": "roots", "secret": {"secretName": "buzz-root-ders", "defaultMode": 292}}, {"name": "pgdata", "emptyDir": {}}, {"name": "db-control", "emptyDir": {}}],
     })
 
 
