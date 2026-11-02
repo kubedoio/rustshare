@@ -398,14 +398,39 @@ try {
 		const joined = await connect(url, keys.BOB);
 		return result(explicitAuthDenial(joined.auth), { delay_ms: 1500, auth: joined.auth, private_content_read: false });
 	});
-	if (process.env.POC_RELAY_B_URL && process.env.POC_B_OWNER_SK && process.env.POC_B_USER_SK) {
+	if (process.env.POC_RELAY_B_URL && process.env.POC_B_OWNER_SK && process.env.POC_B_USER_SK && process.env.POC_B_OTHER_USER_SK) {
 		await check('tenant_b_member_nip42', async () => {
 			const joined = await connect(process.env.POC_RELAY_B_URL, process.env.POC_B_OWNER_SK);
 			const ownerB = joined.session;
 			if (!joined.auth.accepted) return result(false, joined.auth);
 			const add = await ownerB.publish(await event(process.env.POC_B_OWNER_SK, 9030, [['p', pubkey(process.env.POC_B_USER_SK)]]));
+			const addOther = await ownerB.publish(await event(process.env.POC_B_OWNER_SK, 9030, [['p', pubkey(process.env.POC_B_OTHER_USER_SK)]]));
 			const member = await connect(process.env.POC_RELAY_B_URL, process.env.POC_B_USER_SK);
-			return result(add.accepted && member.auth.accepted, { owner_auth: joined.auth, add, member_auth: member.auth });
+			const otherMember = await connect(process.env.POC_RELAY_B_URL, process.env.POC_B_OTHER_USER_SK);
+			return result(add.accepted && addOther.accepted && member.auth.accepted && otherMember.auth.accepted, { owner_auth: joined.auth, add, add_other: addOther, member_auth: member.auth, other_member_auth: otherMember.auth });
+		});
+		await check('tenant_b_nip29_private_dm', async () => {
+			const member = await connect(process.env.POC_RELAY_B_URL, process.env.POC_B_USER_SK);
+			const otherMember = await connect(process.env.POC_RELAY_B_URL, process.env.POC_B_OTHER_USER_SK);
+			if (!member.auth.accepted || !otherMember.auth.accepted) return result(false, { member_auth: member.auth, other_member_auth: otherMember.auth });
+			const opened = await member.session.publish(await event(process.env.POC_B_USER_SK, 41010, [['p', pubkey(process.env.POC_B_OTHER_USER_SK)]]));
+			const response = opened.relay_message?.startsWith('response:') ? JSON.parse(opened.relay_message.slice(9)) : null;
+			const channelId = response?.channel_id;
+			if (!opened.accepted || !/^[0-9a-f-]{36}$/.test(channelId || '')) return result(false, { accepted: opened.accepted, outcome: opened.outcome });
+			const kinds = [39000, 39001, 39002];
+			const discoveries = [];
+			for (const kind of kinds) discoveries.push(await otherMember.session.read({ kinds: [kind], '#d': [channelId], limit: 20 }, true));
+			const metadata = discoveries[0].events.find((item) => item.kind === 39000 && hasChannelTag(item, channelId));
+			const hidden = metadata?.tags?.some((tag) => tag[0] === 'hidden');
+			const privateChannel = metadata?.tags?.some((tag) => tag[0] === 'private');
+			const matchingChannelEvents = discoveries.map((read, index) => read.events.filter((item) => item.kind === kinds[index] && hasChannelTag(item, channelId)).length);
+			const discovered = discoveries.every((read, index) => read.outcome === 'EOSE' && matchingChannelEvents[index] > 0);
+			if (!discovered || hidden !== true || privateChannel !== true) return result(false, { channel_id: channelId, matching_channel_event_counts: matchingChannelEvents, discovery_outcomes: discoveries.map((read) => read.outcome), hidden: hidden === true, private: privateChannel === true });
+			const marker = await event(process.env.POC_B_USER_SK, 9, [['h', channelId]], `POC tenant B private DM ${randomUUID()}`);
+			const published = await member.session.publish(marker);
+			const history = await otherMember.session.read({ kinds: [9], '#h': [channelId], limit: 20 });
+			const observed = history.events.find((item) => item.id === marker.id);
+			return result(published.accepted && history.outcome === 'EOSE' && observed?.pubkey === pubkey(process.env.POC_B_USER_SK), { channel_id: channelId, private_dm_event_id: marker.id, private_dm_author: pubkey(process.env.POC_B_USER_SK), other_member_event_id: observed?.id, history_outcome: history.outcome, history_event_count: history.events.length, matching_channel_event_counts: matchingChannelEvents, hidden, private: privateChannel });
 		});
 		await check('cross_tenant_alice_denied', async () => {
 			const joined = await connect(process.env.POC_RELAY_B_URL, keys.ALICE);
@@ -415,7 +440,7 @@ try {
 			const joined = await connect(url, process.env.POC_B_USER_SK);
 			return result(explicitAuthDenial(joined.auth), joined.auth);
 		});
-	} else for (const name of ['tenant_b_member_nip42', 'cross_tenant_alice_denied', 'cross_tenant_b_user_denied']) results.push({ name, pass: null, outcome: 'UNVERIFIED_NO_SECOND_RELAY' });
+	} else for (const name of ['tenant_b_member_nip42', 'tenant_b_nip29_private_dm', 'cross_tenant_alice_denied', 'cross_tenant_b_user_denied']) results.push({ name, pass: null, outcome: 'UNVERIFIED_NO_SECOND_RELAY' });
 	if (process.env.POC_WRONG_HOST_URL) {
 		await check('wrong_host_denied', async () => {
 			const joined = await connect(process.env.POC_WRONG_HOST_URL, keys.ALICE);

@@ -68,7 +68,7 @@ pubkey() { node -e 'const e=require("node:crypto").createECDH("secp256k1"); e.se
 free_port() { node -e 'const s=require("node:net").createServer(); s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})'; }
 
 POC_OWNER_SK="$(new_key)" POC_ALICE_SK="$(new_key)" POC_BOB_SK="$(new_key)" POC_OUTSIDER_SK="$(new_key)"
-POC_B_OWNER_SK="$(new_key)" POC_B_USER_SK="$(new_key)"
+POC_B_OWNER_SK="$(new_key)" POC_B_USER_SK="$(new_key)" POC_B_OTHER_USER_SK="$(new_key)"
 start_stack() {
   local stack="$1" owner="$2" relay_key="$3" port="$4" tls_port="$5"
   mkdir -p "$RUN_DIR/$stack"
@@ -138,6 +138,7 @@ echo "tls_ca_path=$RUN_DIR/tls.crt"
 PROTOCOL_STATUS=0
 POC_OWNER_SK="$POC_OWNER_SK" POC_ALICE_SK="$POC_ALICE_SK" POC_BOB_SK="$POC_BOB_SK" \
 POC_OUTSIDER_SK="$POC_OUTSIDER_SK" POC_B_OWNER_SK="$POC_B_OWNER_SK" POC_B_USER_SK="$POC_B_USER_SK" \
+POC_B_OTHER_USER_SK="$POC_B_OTHER_USER_SK" \
 POC_RELAY_URL="$POC_RELAY_URL" POC_RELAY_B_URL="$POC_RELAY_B_URL" \
 POC_WRONG_HOST_URL="$POC_WRONG_HOST_URL" POC_TLS_FAILURE_URL="$POC_TLS_FAILURE_URL" \
 POC_GUI_NSEC_FILE="$POC_GUI_NSEC_FILE" \
