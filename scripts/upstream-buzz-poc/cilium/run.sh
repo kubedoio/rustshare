@@ -262,10 +262,35 @@ python3 "$HERE/render.py" --phase base --namespace "$NAMESPACE" --buzz-image "$B
 	>"$RUN_DIR/base.json"
 cp "$RUN_DIR/base.json" "$EVIDENCE_DIR/base-resources.json"
 "${K[@]}" apply -f "$RUN_DIR/base.json" >"$EVIDENCE_DIR/base-apply.txt"
-for name in postgres-a postgres-b redis-a redis-b silo-a silo-b buzz-a buzz-b buzz-edge-a buzz-edge-b; do
+for name in postgres-a postgres-b redis-a redis-b silo-a silo-b buzz-edge-a buzz-edge-b; do
 	"${K[@]}" -n "$NAMESPACE" rollout status "deployment/$name" --timeout=4m >"$RUN_DIR/rollout-$name.log"
 done
-for tenant in a b; do "${K[@]}" -n "$NAMESPACE" wait --for=condition=complete "job/silo-init-$tenant" --timeout=3m >"$RUN_DIR/silo-init-$tenant.log"; done
+for tenant in a b; do
+	if ! "${K[@]}" -n "$NAMESPACE" wait --for=condition=complete "job/silo-init-$tenant" --timeout=3m >"$RUN_DIR/silo-init-$tenant.log"; then
+		pod="$("${K[@]}" -n "$NAMESPACE" get pods -l "app=silo-init-$tenant" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+		if [[ -n "$pod" ]]; then
+			"${K[@]}" -n "$NAMESPACE" logs "$pod" -c mc >"$RUN_DIR/silo-init-$tenant-raw.log" 2>&1 || true
+		else
+			"${K[@]}" -n "$NAMESPACE" logs "job/silo-init-$tenant" >"$RUN_DIR/silo-init-$tenant-raw.log" 2>&1 || true
+		fi
+		python3 - "$RUN_DIR/silo-init-$tenant-raw.log" "$RUN_DIR/secrets/buzz-$tenant.env" "$EVIDENCE_DIR/silo-init-$tenant-failure.log" <<'PY'
+from pathlib import Path
+import sys
+log = Path(sys.argv[1]).read_text(errors="replace")
+secrets = [line.partition("=")[2].strip() for line in Path(sys.argv[2]).read_text().splitlines() if "=" in line]
+for secret in sorted((value for value in secrets if value), key=len, reverse=True):
+    log = log.replace(secret, "[redacted]")
+out = Path(sys.argv[3])
+out.write_text(log)
+out.chmod(0o600)
+PY
+		echo "Silo bucket initialization failed for tenant $tenant; see sanitized evidence $EVIDENCE_DIR/silo-init-$tenant-failure.log" >&2
+		exit 1
+	fi
+done
+for name in buzz-a buzz-b; do
+	"${K[@]}" -n "$NAMESPACE" rollout status "deployment/$name" --timeout=4m >"$RUN_DIR/rollout-$name.log"
+done
 EDGE_A_IP="$("${K[@]}" -n "$NAMESPACE" get svc buzz-edge-a -o jsonpath='{.spec.clusterIP}')"
 EDGE_B_IP="$("${K[@]}" -n "$NAMESPACE" get svc buzz-edge-b -o jsonpath='{.spec.clusterIP}')"
 DNS_IP="$("${K[@]}" -n "$NAMESPACE" get svc controlled-dns -o jsonpath='{.spec.clusterIP}')"

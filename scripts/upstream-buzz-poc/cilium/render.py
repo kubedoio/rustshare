@@ -165,8 +165,8 @@ def render_base(args):
         # Initialize the private per-tenant S3 bucket using the source Compose image.
         yield {
             "apiVersion": "batch/v1", "kind": "Job", "metadata": {"name": f"silo-init-{tenant}", "namespace": ns},
-            "spec": {"backoffLimit": 3, "template": {"metadata": {"labels": {"app": f"silo-init-{tenant}"}}, "spec": {
-                "restartPolicy": "OnFailure", "automountServiceAccountToken": False,
+            "spec": {"backoffLimit": 0, "ttlSecondsAfterFinished": 3600, "template": {"metadata": {"labels": {"app": f"silo-init-{tenant}"}}, "spec": {
+                "restartPolicy": "Never", "automountServiceAccountToken": False,
                 "containers": [{"name": "mc", "image": args.mc_image, "imagePullPolicy": "IfNotPresent",
                     "env": [
                         {"name": "BUZZ_S3_ACCESS_KEY", "valueFrom": {"secretKeyRef": {"name": owner + "-config", "key": "BUZZ_S3_ACCESS_KEY"}}},
