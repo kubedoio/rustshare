@@ -218,7 +218,7 @@ fn protected_file(path: &Path) -> Result<File, VaultError> {
 
     let file = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)
         .map_err(|_| VaultError::KeyManagement)?;
     let metadata = file.metadata().map_err(|_| VaultError::KeyManagement)?;
@@ -449,6 +449,24 @@ mod tests {
         .unwrap();
         assert!(LocalDekKeyManagement::load(LocalDekKeyProviderConfig {
             key_dir: permissive_file_directory.path().to_path_buf(),
+            key_id: "elembra-chat".into(),
+            active_key_version: "v1".into(),
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn provider_rejects_fifo_key_files_without_blocking() {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt};
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("v1.key");
+        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o400) }, 0);
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o500)).unwrap();
+
+        assert!(LocalDekKeyManagement::load(LocalDekKeyProviderConfig {
+            key_dir: directory.path().to_path_buf(),
             key_id: "elembra-chat".into(),
             active_key_version: "v1".into(),
         })

@@ -13,7 +13,7 @@ local-dek-key-provider = ["dep:libc"]
 [dependencies]
 argon2 = { workspace = true, features = ["std"] }
 thiserror.workspace = true
-aes-gcm.workspace = true
+aes-gcm = { workspace = true, features = ["zeroize"] }
 base64.workspace = true
 hmac.workspace = true
 sha2.workspace = true
