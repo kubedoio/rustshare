@@ -562,6 +562,8 @@ run_provisioning_relay_outage_test() {
 }
 
 run_member_transport_test
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$EVIDENCE_DIR/member-revocation-db-reset.log" 2>&1
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/member-revocation-db-reset.log" 2>&1
 run_rust_test member-revocation upstream_buzz_transport::disposable_service_tests::trusted_service_rejects_revoked_member_on_reconnect none
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$EVIDENCE_DIR/member-db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/member-db-reset.log" 2>&1
