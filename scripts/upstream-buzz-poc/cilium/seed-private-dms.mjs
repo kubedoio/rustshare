@@ -166,6 +166,14 @@ async function seed(label) {
 	await admin.auth(ownerKey);
 	await admin.publish(signed(ownerKey, 9030, [['p', memberPubkey], ['role', 'member']]));
 	await admin.publish(signed(ownerKey, 9030, [['p', friendPubkey], ['role', 'member']]));
+	const provisioningChannelId = randomUUID();
+	await admin.publish(signed(ownerKey, 9007, [
+		['h', provisioningChannelId],
+		['name', `Disposable provisioning qualification ${label}`],
+		['channel_type', 'stream'],
+	]));
+	await admin.publish(signed(ownerKey, 9002, [['h', provisioningChannelId], ['auto_join', 'true']]));
+	await admin.publish(signed(ownerKey, 9, [['h', provisioningChannelId]], `provisioning-channel-seed-${randomUUID()}`));
 	admin.close();
 
 	const user = new RelaySession(relayUrl, relayCa);
@@ -190,6 +198,7 @@ async function seed(label) {
 		community_id: communityId,
 		relay_pubkey: relayPubkey,
 		channel_id: channelId,
+		provisioning_channel_id: provisioningChannelId,
 		event_id: message.id,
 		author: memberPubkey,
 		friend_pubkey: friendPubkey,

@@ -2129,7 +2129,7 @@ mod tests {
         let spki_pin = required("BUZZ_TEST_TLS_SPKI_PIN");
         let approved_ip = required("BUZZ_TEST_APPROVED_IP").parse().unwrap();
         let root_der = std::fs::read(required("BUZZ_TEST_TLS_ROOT_DER")).unwrap();
-        let membership_channel = required("BUZZ_TEST_DM_CHANNEL_ID");
+        let membership_channel = required("BUZZ_TEST_PROVISIONING_CHANNEL_ID");
         let relay_admin = Keys::parse(&required("BUZZ_TEST_RELAY_ADMIN_NSEC")).unwrap();
 
         let pool = PgPool::connect(&database_url).await.unwrap();
