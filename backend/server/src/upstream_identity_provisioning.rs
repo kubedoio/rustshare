@@ -12,9 +12,7 @@ use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_crypto::managed_identity_vault::{
     DekKeyManagement, IdentityContext, ManagedIdentityEnvelope, RecoveredIdentity, WrappedDek,
 };
-use rustshare_resource_auth::chat_identity::{
-    build_buzz_admission_event_at, BuzzAdmissionOperation,
-};
+use rustshare_resource_auth::chat_identity::build_buzz_provisioning_admission_event_at;
 use rustshare_storage::{
     ChatIdentityStore, ManagedIdentityOperationError, ManagedIdentityOperationRecord,
     ManagedIdentityOperationStatus, ManagedIdentityOperationStore, ManagedIdentityRecord,
@@ -615,8 +613,7 @@ impl ManagedIdentityProvisioner {
         identity: &IdentityOutcome,
         relay_admin: &Keys,
     ) -> Result<(), ProvisioningError> {
-        let event = build_buzz_admission_event_at(
-            BuzzAdmissionOperation::Admit,
+        let event = build_buzz_provisioning_admission_event_at(
             &identity.public_key,
             relay_admin,
             Timestamp::from(operation.created_at.timestamp() as u64),
