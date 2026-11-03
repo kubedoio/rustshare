@@ -562,12 +562,14 @@ run_provisioning_relay_outage_test() {
 }
 
 run_member_transport_test
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$EVIDENCE_DIR/cross-tenant-db-reset.log" 2>&1
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/cross-tenant-db-reset.log" 2>&1
+run_rust_test cross-tenant upstream_buzz_transport::disposable_service_tests::trusted_service_tenant_sessions_are_isolated_across_private_dm_relays none
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$EVIDENCE_DIR/member-revocation-db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/member-revocation-db-reset.log" 2>&1
 run_rust_test member-revocation upstream_buzz_transport::disposable_service_tests::trusted_service_rejects_revoked_member_on_reconnect none
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$EVIDENCE_DIR/member-db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/member-db-reset.log" 2>&1
-run_rust_test cross-tenant upstream_buzz_transport::disposable_service_tests::trusted_service_tenant_sessions_are_isolated_across_private_dm_relays none
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$RUN_DIR/db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$RUN_DIR/db-reset.log" 2>&1
 run_rust_test provisioning upstream_identity_provisioning::tests::live_provisioning_reaches_ready_after_nip42_and_member_only_read none
