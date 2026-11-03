@@ -75,12 +75,12 @@ manifest.
 
 ## Latest executed qualification
 
-Run on 2026-11-02 from RustShare commit
-`39d677c615678ee48b88801a4feb4eb5d8ed80f1`, using upstream Buzz commit
+Run on 2026-11-03 from RustShare commit
+`045b7859a529b4e9d3e745a0ba62c0c6012b5139`, using upstream Buzz commit
 `eafd77e9f6e96052476bdd88be732c046fdb7ab3` and tree
 `04e3a40545bd3b23510ec32b4c8cccee2acef7c5`. Cilium `v1.16.4` reached `OK`
 for Cilium, operator, Envoy and Hubble Relay. The isolated Buzz image digest
-was `sha256:c05d6a011d28f98a7fedf935a0815869007e8cb9970fea4cbfeb5cbeebd9cc50`.
+was `sha256:17e9f54cf4c567e535cf51707e67cbd5726af714da46bee61dcab1645f3944a3`.
 
 - Member transport passed TLS/SNI/peer pin verification, NIP-11 identity
   validation, WebSocket upgrade, NIP-42 authentication and private-channel DM
@@ -97,9 +97,9 @@ was `sha256:c05d6a011d28f98a7fedf935a0815869007e8cb9970fea4cbfeb5cbeebd9cc50`.
   and unique image tags were removed after the run.
 
 The sanitized evidence bundle is retained on the test runner at
-`/tmp/elembra-cilium-evidence-db-outage-isolated-20261102-094929`. Its
-`SHA256SUMS` file hash is
-`e076b82ac7de1e7dbaac1b26c9e0321920987ae8456bb1160f49e7073768c32a`.
+`/tmp/elembra-cilium-evidence-20261103112720-1637415`. Its `SHA256SUMS` file
+hash is `e6bfdca9771bc3a6174f16e85dcd50e7e83c141d9701ae174a617dfaaa1034b5`;
+all 35 entries verified.
 This evidence qualifies only the exercised disposable profile and tests; see
 the limits below.
 

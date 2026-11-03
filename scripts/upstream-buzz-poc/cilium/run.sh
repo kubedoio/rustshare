@@ -304,8 +304,19 @@ kubectl -n "$NAMESPACE" create configmap seed-config --from-env-file="$RUN_DIR/s
 python3 "$HERE/render.py" --phase seed --namespace "$NAMESPACE" --poc-image "$POC_IMAGE" --dns-ip "$DNS_IP" >"$RUN_DIR/seed-job.json"
 "${K[@]}" apply -f "$RUN_DIR/seed-job.json" >"$EVIDENCE_DIR/seed-apply.txt"
 if ! "${K[@]}" -n "$NAMESPACE" wait --for=condition=complete job/seed-private-dms --timeout=2m >"$RUN_DIR/seed-wait.log"; then
-	"${K[@]}" -n "$NAMESPACE" logs job/seed-private-dms >"$EVIDENCE_DIR/seed-failure.log" 2>&1 || true
-	echo 'upstream NIP-42/NIP-29 fixture seeding failed' >&2
+	"${K[@]}" -n "$NAMESPACE" logs job/seed-private-dms >"$RUN_DIR/seed-raw.log" 2>&1 || true
+	python3 - "$RUN_DIR/seed-raw.log" "$RUN_DIR/secrets/seed.env" "$EVIDENCE_DIR/seed-failure.log" <<'PY'
+from pathlib import Path
+import sys
+log = Path(sys.argv[1]).read_text(errors="replace")
+secrets = [line.partition("=")[2].strip() for line in Path(sys.argv[2]).read_text().splitlines() if "=" in line]
+for secret in sorted((value for value in secrets if value), key=len, reverse=True):
+    log = log.replace(secret, "[redacted]")
+out = Path(sys.argv[3])
+out.write_text(log)
+out.chmod(0o600)
+PY
+	echo "upstream NIP-42/NIP-29 fixture seeding failed; see sanitized evidence $EVIDENCE_DIR/seed-failure.log" >&2
 	exit 1
 fi
 "${K[@]}" -n "$NAMESPACE" logs job/seed-private-dms >"$EVIDENCE_DIR/seed-metadata.json"
