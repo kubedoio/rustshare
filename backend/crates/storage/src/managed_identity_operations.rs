@@ -43,9 +43,10 @@ impl ManagedIdentityOperationStatus {
     }
 }
 
-/// Bounded catalog from the migration CHECK constraint; mark_failed must not
-/// persist free-form error text.
-const ERROR_CODES: [&str; 12] = [
+/// Bounded catalog from the migration CHECK constraint on error_code;
+/// mark_failed must not persist free-form error text. The integration test
+/// asserts the migration catalog and this catalog never drift apart.
+pub const MANAGED_IDENTITY_OPERATION_ERROR_CODES: [&str; 12] = [
     "invalid_subject",
     "mapping_unavailable",
     "stale_mapping_generation",
@@ -246,9 +247,10 @@ impl ManagedIdentityOperationStore {
         }
     }
 
-    /// CAS set-if-null of the admission event id while `provisioning`;
-    /// returns whether this call won. A fixed-format 64-hex event id keeps
-    /// key material out of the table by construction.
+    /// CAS set-if-null of the admission event id while `provisioning`,
+    /// stamping admitted_at alongside it; returns whether this call won. A
+    /// fixed-format 64-hex event id keeps key material out of the table by
+    /// construction.
     pub async fn record_admission_sent(
         &self,
         tenant_id: Uuid,
@@ -266,7 +268,7 @@ impl ManagedIdentityOperationStore {
         set_tenant(&mut tx, tenant_id).await?;
         let updated = sqlx::query_as::<_, ManagedIdentityOperationRecord>(&format!(
             "UPDATE managed_chat_identity_operations \
-             SET admission_event_id=$3, updated_at=now() \
+             SET admission_event_id=$3, admitted_at=now(), updated_at=now() \
              WHERE tenant_id=$1 AND operation_id=$2 AND status='provisioning' \
                AND admission_event_id IS NULL \
              RETURNING {COLUMNS}"
@@ -342,7 +344,7 @@ impl ManagedIdentityOperationStore {
         operation_id: Uuid,
         error_code: &str,
     ) -> Result<ManagedIdentityOperationRecord, ManagedIdentityOperationError> {
-        if !ERROR_CODES.contains(&error_code) {
+        if !MANAGED_IDENTITY_OPERATION_ERROR_CODES.contains(&error_code) {
             return Err(ManagedIdentityOperationError::InvalidRequest);
         }
         let mut tx = self.0.begin().await.map_err(map_database_error)?;
@@ -418,7 +420,7 @@ impl ManagedIdentityOperationStore {
             "SELECT {COLUMNS} FROM managed_chat_identity_operations \
              WHERE tenant_id=$1 AND status IN ('authorized','provisioning','failed') \
                AND attempt_count < max_attempts \
-             ORDER BY created_at LIMIT $2"
+             ORDER BY created_at, operation_id LIMIT $2"
         ))
         .bind(tenant_id)
         .bind(limit)

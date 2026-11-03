@@ -29,7 +29,7 @@ pub use chat_observation::{ChatObservationStore, UpsertOutcome};
 pub use event_store::EventStore;
 pub use managed_identity_operations::{
     ManagedIdentityOperationError, ManagedIdentityOperationRecord, ManagedIdentityOperationStatus,
-    ManagedIdentityOperationStore, ProvisioningRequest,
+    ManagedIdentityOperationStore, ProvisioningRequest, MANAGED_IDENTITY_OPERATION_ERROR_CODES,
 };
 pub use managed_identity_vault::{
     ManagedIdentityRecord, ManagedIdentityStatus, ManagedIdentityStoreError,
