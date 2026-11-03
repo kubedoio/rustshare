@@ -3,7 +3,7 @@
 //! Each operation binds a trusted subject to an upstream relay mapping and
 //! carries the pre-allocated identity attribution through to the actual vault
 //! row. Exactly one operation per subject stays in the one-active index
-//! (`authorized`/`provisioning`/`failed`) until it is ready or abandoned; the
+//! (`authorized`/`provisioning`/`failed`/`abandoning`) until it is ready or abandoned; the
 //! table cannot hold key material (see the Task 1 migration constraints).
 
 use chrono::{DateTime, Utc};
@@ -17,6 +17,7 @@ pub enum ManagedIdentityOperationStatus {
     Provisioning,
     Ready,
     Failed,
+    Abandoning,
     Abandoned,
 }
 
@@ -27,6 +28,7 @@ impl ManagedIdentityOperationStatus {
             Self::Provisioning => "provisioning",
             Self::Ready => "ready",
             Self::Failed => "failed",
+            Self::Abandoning => "abandoning",
             Self::Abandoned => "abandoned",
         }
     }
@@ -37,6 +39,7 @@ impl ManagedIdentityOperationStatus {
             "provisioning" => Some(Self::Provisioning),
             "ready" => Some(Self::Ready),
             "failed" => Some(Self::Failed),
+            "abandoning" => Some(Self::Abandoning),
             "abandoned" => Some(Self::Abandoned),
             _ => None,
         }
@@ -208,9 +211,34 @@ impl ManagedIdentityOperationStore {
         Ok(record)
     }
 
-    /// CAS `authorized`/`failed` -> `provisioning`, recording the actual
-    /// (reused or newly created) vault identity values over the preallocation
-    /// so no phantom generation ever remains attached.
+    /// Whether a ready operation already relies on this active identity.
+    pub async fn identity_is_ready(
+        &self,
+        tenant_id: Uuid,
+        principal_id: Uuid,
+        identity_id: Uuid,
+        identity_generation: i64,
+    ) -> Result<bool, ManagedIdentityOperationError> {
+        let mut tx = self.0.begin().await.map_err(map_database_error)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let ready = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM managed_chat_identity_operations \
+             WHERE tenant_id=$1 AND principal_id=$2 AND identity_id=$3 \
+               AND identity_generation=$4 AND status='ready')",
+        )
+        .bind(tenant_id)
+        .bind(principal_id)
+        .bind(identity_id)
+        .bind(identity_generation)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        tx.commit().await.map_err(map_database_error)?;
+        Ok(ready)
+    }
+
+    /// CAS `authorized`/`failed` -> `provisioning`, binding a reused active
+    /// identity or reserving the preallocated identity before KMS work.
     pub async fn attach_identity(
         &self,
         tenant_id: Uuid,
@@ -374,8 +402,38 @@ impl ManagedIdentityOperationStore {
         }
     }
 
-    /// CAS `failed` -> `abandoned`, leaving the one-active index. The
-    /// provisioner wrapper disables any attached never-ready identity first.
+    /// Claim a failed operation for abandonment without releasing its slot.
+    pub async fn begin_abandon(
+        &self,
+        tenant_id: Uuid,
+        operation_id: Uuid,
+    ) -> Result<ManagedIdentityOperationRecord, ManagedIdentityOperationError> {
+        let mut tx = self.0.begin().await.map_err(map_database_error)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let updated = sqlx::query_as::<_, ManagedIdentityOperationRecord>(&format!(
+            "UPDATE managed_chat_identity_operations \
+             SET status='abandoning', updated_at=now() \
+             WHERE tenant_id=$1 AND operation_id=$2 AND status='failed' \
+             RETURNING {COLUMNS}"
+        ))
+        .bind(tenant_id)
+        .bind(operation_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        match updated {
+            Some(record) => {
+                tx.commit().await.map_err(map_database_error)?;
+                Ok(record)
+            }
+            None => Err(self
+                .classify_failed_transition(tenant_id, operation_id, tx)
+                .await),
+        }
+    }
+
+    /// CAS `abandoning` -> `abandoned`, releasing the one-active index only
+    /// after the provisioner disables any attached never-ready identity.
     pub async fn abandon(
         &self,
         tenant_id: Uuid,
@@ -386,7 +444,23 @@ impl ManagedIdentityOperationStore {
         let updated = sqlx::query_as::<_, ManagedIdentityOperationRecord>(&format!(
             "UPDATE managed_chat_identity_operations \
              SET status='abandoned', updated_at=now() \
-             WHERE tenant_id=$1 AND operation_id=$2 AND status='failed' \
+             WHERE tenant_id=$1 AND operation_id=$2 AND status='abandoning' \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM managed_chat_identities AS identity \
+                   WHERE identity.tenant_id=managed_chat_identity_operations.tenant_id \
+                     AND identity.principal_id=managed_chat_identity_operations.principal_id \
+                     AND identity.identity_id=managed_chat_identity_operations.identity_id \
+                     AND identity.generation=managed_chat_identity_operations.identity_generation \
+                     AND identity.status='active' \
+                     AND NOT EXISTS ( \
+                         SELECT 1 FROM managed_chat_identity_operations AS ready_operation \
+                         WHERE ready_operation.tenant_id=identity.tenant_id \
+                           AND ready_operation.principal_id=identity.principal_id \
+                           AND ready_operation.identity_id=identity.identity_id \
+                           AND ready_operation.identity_generation=identity.generation \
+                           AND ready_operation.status='ready' \
+                     ) \
+               ) \
              RETURNING {COLUMNS}"
         ))
         .bind(tenant_id)

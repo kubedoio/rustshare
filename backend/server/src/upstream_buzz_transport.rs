@@ -684,6 +684,9 @@ mod disposable_service_tests {
     use futures_util::SinkExt;
     use nostr::{Event, EventBuilder, Keys, Kind, RelayUrl, Tag};
     use rustshare_core::domain::{TenantId, WorkspaceId};
+    use rustshare_resource_auth::chat_identity::{
+        build_buzz_admission_event, BuzzAdmissionOperation,
+    };
     use rustshare_resource_auth::upstream_relay_mapping::{
         RelayEndpointPolicy, RelayMappingRecord,
     };
@@ -1316,6 +1319,406 @@ mod disposable_service_tests {
             .expect("mapping revocation revalidation timed out"),
             Err(UpstreamBuzzTransportError::SessionFenced)
         ));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL and private Buzz service with relay-admin credentials"]
+    async fn trusted_service_rejects_revoked_member_on_reconnect() {
+        assert_eq!(required("BUZZ_TEST_DISPOSABLE_CONFIRM"), "DISPOSABLE_ONLY");
+        let database_url =
+            crate::test_guard::disposable_database_url_from_env().unwrap_or_else(|message| {
+                panic!("member-revocation test requires disposable PostgreSQL: {message}")
+            });
+        let relay_host = required("BUZZ_TEST_RELAY_HOST");
+        let relay_url = required("BUZZ_TEST_RELAY_URL");
+        let community_id = required("BUZZ_TEST_COMMUNITY_ID");
+        let relay_pubkey = required("BUZZ_TEST_RELAY_PUBKEY");
+        let deployment_digest = required("BUZZ_TEST_DEPLOYMENT_DIGEST");
+        let service_identity = required("BUZZ_TEST_SERVICE_IDENTITY");
+        let spki_pin = required("BUZZ_TEST_TLS_SPKI_PIN");
+        let approved_ip = required("BUZZ_TEST_APPROVED_IP").parse().unwrap();
+        let root_der = std::fs::read(required("BUZZ_TEST_TLS_ROOT_DER")).unwrap();
+        let channel_id = required("BUZZ_TEST_DM_CHANNEL_ID");
+        let member_keys = Keys::parse(&required("BUZZ_TEST_MEMBER_NSEC")).unwrap();
+        let relay_admin_keys = Keys::parse(&required("BUZZ_TEST_RELAY_ADMIN_NSEC")).unwrap();
+
+        let pool = PgPool::connect(&database_url).await.unwrap();
+        sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+        let tenant_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO tenants (id,name) VALUES ($1,$2)")
+            .bind(tenant_id)
+            .bind(format!("disposable member revocation {tenant_id}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let operator_service_id = Uuid::new_v4();
+        let operator_key_id = "disposable-member-revocation-authority-v1".to_owned();
+        let operator_key = SigningKey::from_bytes(&rand::random());
+        let now = test_now();
+        let mut statement = MappingProvisioningStatement {
+            operator_service_id,
+            operator_key_id: operator_key_id.clone(),
+            operation_id: Uuid::new_v4(),
+            change_reference_id: Uuid::new_v4(),
+            action: MappingProvisioningAction::Create,
+            expected_generation: 0,
+            issued_at: now,
+            expires_at: now + chrono::Duration::minutes(2),
+            record: RelayMappingRecord {
+                mapping_id: Uuid::new_v4(),
+                tenant_id: TenantId(tenant_id),
+                workspace_id: WorkspaceId(workspace_id),
+                community_id,
+                endpoint_policy: RelayEndpointPolicy::TrustedService,
+                relay_deployment_id: Uuid::new_v4(),
+                endpoint_service_identity: service_identity.clone(),
+                tls_peer_spki_sha256: spki_pin,
+                relay_url: relay_url.clone(),
+                relay_host,
+                relay_pubkey,
+                deployment_digest,
+                approved_ips: vec![approved_ip],
+                generation: 1,
+                active: true,
+                valid_until: now + chrono::Duration::hours(1),
+                updated_by: operator_service_id,
+                audit_entry_id: Uuid::new_v4(),
+            },
+            signature: Vec::new(),
+        };
+        statement.signature = operator_key
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        let verifier = Arc::new(
+            MappingProvisioningVerifier::new(
+                operator_service_id,
+                HashMap::from([(operator_key_id, operator_key.verifying_key())]),
+            )
+            .unwrap(),
+        );
+        let store = UpstreamRelayMappingStore::with_provisioning_verifier(pool, verifier);
+        store.apply(&statement).await.unwrap();
+        let trust = RelayTlsTrustConfig::TrustedService {
+            endpoint_service_identity: service_identity,
+            roots: vec![CertificateDer::from(root_der)],
+        };
+
+        let mut existing = connect(
+            &store,
+            TenantId(tenant_id),
+            WorkspaceId(workspace_id),
+            &trust,
+        )
+        .await
+        .unwrap();
+        assert!(authenticate_member(&mut existing, &member_keys, &relay_url).await);
+        let expected_event_id = required("BUZZ_TEST_EXPECTED_DM_EVENT_ID");
+        let subscription = Uuid::new_v4().to_string();
+        existing
+            .socket
+            .as_mut()
+            .expect("member socket")
+            .send(Message::Text(
+                serde_json::json!([
+                    "REQ",
+                    subscription,
+                    {"kinds": [9], "#h": [channel_id], "limit": 50}
+                ])
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let mut saw_pre_revocation_event = false;
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(15), existing.receive())
+                .await
+                .expect("pre-revocation subscription timed out")
+                .unwrap()
+                .expect("relay closed before pre-revocation EOSE");
+            if let Message::Text(frame) = frame {
+                let response: Value = serde_json::from_str(&frame).unwrap();
+                if response[0] == "EVENT" && response[1] == subscription {
+                    saw_pre_revocation_event |= response[2]["id"] == expected_event_id;
+                }
+                if response[0] == "EOSE" && response[1] == subscription {
+                    break;
+                }
+            }
+        }
+        assert!(
+            saw_pre_revocation_event,
+            "member-only channel must contain the seeded event before revocation"
+        );
+        let mut admin = connect(
+            &store,
+            TenantId(tenant_id),
+            WorkspaceId(workspace_id),
+            &trust,
+        )
+        .await
+        .unwrap();
+        assert!(authenticate_member(&mut admin, &relay_admin_keys, &relay_url).await);
+        let (pre_revocation_probe_id, accepted) =
+            publish_channel_message(&mut admin, &relay_admin_keys, &channel_id).await;
+        assert!(accepted, "owner's live-event positive control was rejected");
+        let received_live_probe = loop {
+            let frame = tokio::time::timeout(Duration::from_secs(15), existing.receive())
+                .await
+                .expect("pre-revocation live probe timed out")
+                .unwrap()
+                .expect("original subscription closed before its positive control");
+            if let Message::Text(frame) = frame {
+                let response: Value = serde_json::from_str(&frame).unwrap();
+                if response[0] == "EVENT"
+                    && response[1] == subscription
+                    && response[2]["id"] == pre_revocation_probe_id
+                {
+                    break true;
+                }
+                assert!(
+                    !(response[0] == "CLOSED" && response[1] == subscription),
+                    "original subscription closed before the positive control arrived"
+                );
+            }
+        };
+        assert!(
+            received_live_probe,
+            "original subscription did not receive its pre-revocation positive control"
+        );
+        let revoke = build_buzz_admission_event(
+            BuzzAdmissionOperation::Revoke,
+            &member_keys.public_key().to_hex(),
+            &relay_admin_keys,
+        )
+        .unwrap();
+        let revoke_id = revoke.id.to_hex();
+        admin
+            .send_text(&serde_json::json!(["EVENT", revoke]).to_string())
+            .await
+            .unwrap();
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(15), admin.receive())
+                .await
+                .expect("kind-9031 response timed out")
+                .unwrap()
+                .expect("relay closed before kind-9031 response");
+            if let Message::Text(frame) = frame {
+                let response: Value = serde_json::from_str(&frame).unwrap();
+                if response[0] == "OK" && response[1] == revoke_id {
+                    assert!(response[2].as_bool().unwrap_or(false), "{response}");
+                    break;
+                }
+            }
+        }
+
+        let mut original_subscription_closed =
+            match tokio::time::timeout(Duration::from_secs(3), existing.receive()).await {
+                Err(_) => false,
+                Ok(Ok(None)) | Ok(Ok(Some(Message::Close(_)))) => true,
+                Ok(Ok(Some(Message::Text(frame)))) => {
+                    let response: Value = serde_json::from_str(&frame).unwrap_or(Value::Null);
+                    response[0] == "CLOSED" && response[1] == subscription
+                }
+                Ok(Ok(Some(_))) => false,
+                Ok(Err(
+                    UpstreamBuzzTransportError::SessionFenced
+                    | UpstreamBuzzTransportError::Connection,
+                )) => true,
+                Ok(Err(_)) => false,
+            };
+        let probe = EventBuilder::new(
+            Kind::Custom(9),
+            format!("post-revocation subscription probe {}", Uuid::new_v4()),
+        )
+        .tags(vec![Tag::parse(["h", channel_id.as_str()]).unwrap()])
+        .sign_with_keys(&relay_admin_keys)
+        .unwrap();
+        let probe_id = probe.id.to_hex();
+        admin
+            .send_text(&serde_json::json!(["EVENT", probe]).to_string())
+            .await
+            .unwrap();
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(15), admin.receive())
+                .await
+                .expect("post-revocation probe publish timed out")
+                .unwrap()
+                .expect("relay closed before probe publish response");
+            if let Message::Text(frame) = frame {
+                let response: Value = serde_json::from_str(&frame).unwrap();
+                if response[0] == "OK" && response[1] == probe_id {
+                    assert!(response[2].as_bool().unwrap_or(false), "{response}");
+                    break;
+                }
+            }
+        }
+        let mut probe_delivered = false;
+        if !original_subscription_closed {
+            if let Ok(delivered) = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    match existing.receive().await {
+                        Ok(Some(Message::Text(frame))) => {
+                            let response: Value =
+                                serde_json::from_str(&frame).unwrap_or(Value::Null);
+                            if response[0] == "EVENT"
+                                && response[1] == subscription
+                                && response[2]["id"] == probe_id
+                            {
+                                break true;
+                            }
+                            if response[0] == "CLOSED" && response[1] == subscription {
+                                original_subscription_closed = true;
+                                break false;
+                            }
+                        }
+                        Ok(Some(Message::Close(_))) | Ok(None) => {
+                            original_subscription_closed = true;
+                            break false;
+                        }
+                        Err(
+                            UpstreamBuzzTransportError::SessionFenced
+                            | UpstreamBuzzTransportError::Connection,
+                        ) => {
+                            original_subscription_closed = true;
+                            break false;
+                        }
+                        Ok(Some(_)) => {}
+                        Err(_) => break false,
+                    }
+                }
+            })
+            .await
+            {
+                probe_delivered = delivered;
+            }
+        }
+        assert!(
+            !probe_delivered,
+            "revoked member's original subscription received a post-9031 private event"
+        );
+        let existing_read = Uuid::new_v4().to_string();
+        let read_sent = if let Some(socket) = existing.socket.as_mut() {
+            socket
+                .send(Message::Text(
+                    serde_json::json!([
+                        "REQ",
+                        existing_read,
+                        {"kinds": [9], "#h": [channel_id], "limit": 50}
+                    ])
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .is_ok()
+        } else {
+            false
+        };
+        let mut existing_read_events = 0usize;
+        let existing_read_terminal = if !read_sent {
+            "socket_closed"
+        } else {
+            loop {
+                match tokio::time::timeout(Duration::from_secs(15), existing.receive()).await {
+                    Err(_) => break "no_response",
+                    Ok(Err(UpstreamBuzzTransportError::SessionFenced)) => break "session_fenced",
+                    Ok(Err(_)) | Ok(Ok(None)) => break "socket_closed",
+                    Ok(Ok(Some(Message::Close(_)))) => break "close_frame",
+                    Ok(Ok(Some(Message::Text(frame)))) => {
+                        let response: Value = serde_json::from_str(&frame).unwrap_or(Value::Null);
+                        if response[0] == "EVENT"
+                            && response[1] == subscription
+                            && response[2]["id"] == probe_id
+                        {
+                            probe_delivered = true;
+                        } else if response[0] == "EVENT" && response[1] == existing_read {
+                            existing_read_events += 1;
+                        } else if response[0] == "CLOSED" && response[1] == existing_read {
+                            break "subscription_closed";
+                        } else if response[0] == "EOSE" && response[1] == existing_read {
+                            break "eose";
+                        }
+                    }
+                    Ok(Ok(Some(_))) => {}
+                }
+            }
+        };
+        assert_eq!(
+            existing_read_events, 0,
+            "existing member socket read events after kind-9031 removal"
+        );
+        assert_ne!(existing_read_terminal, "no_response");
+        assert!(
+            !probe_delivered,
+            "revoked member's original subscription received the post-9031 event while processing the new REQ"
+        );
+        if !original_subscription_closed {
+            let delivered = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    match existing.receive().await {
+                        Ok(Some(Message::Text(frame))) => {
+                            let response: Value =
+                                serde_json::from_str(&frame).unwrap_or(Value::Null);
+                            if response[0] == "EVENT"
+                                && response[1] == subscription
+                                && response[2]["id"] == probe_id
+                            {
+                                break true;
+                            }
+                            if response[0] == "CLOSED" && response[1] == subscription {
+                                original_subscription_closed = true;
+                                break false;
+                            }
+                        }
+                        Ok(Some(Message::Close(_))) | Ok(None) => {
+                            original_subscription_closed = true;
+                            break false;
+                        }
+                        Err(
+                            UpstreamBuzzTransportError::SessionFenced
+                            | UpstreamBuzzTransportError::Connection,
+                        ) => {
+                            original_subscription_closed = true;
+                            break false;
+                        }
+                        Ok(Some(_)) => {}
+                        Err(_) => break false,
+                    }
+                }
+            })
+            .await
+            .unwrap_or(false);
+            probe_delivered |= delivered;
+        }
+        assert!(
+            !probe_delivered,
+            "revoked member's original subscription received the post-9031 event during the post-read watch"
+        );
+        println!(
+            "post_9031_existing_socket_read terminal={existing_read_terminal} event_count={existing_read_events}"
+        );
+        println!(
+            "post_9031_original_subscription closed={original_subscription_closed} probe_delivered={probe_delivered}"
+        );
+
+        let mut reconnect = connect(
+            &store,
+            TenantId(tenant_id),
+            WorkspaceId(workspace_id),
+            &trust,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !authenticate_member(&mut reconnect, &member_keys, &relay_url).await,
+            "a fresh NIP-42 session must reject the revoked member"
+        );
+        let (terminal, events) = read_channel_history(&mut reconnect, &channel_id).await;
+        assert!(events.is_empty(), "revoked member received private events");
+        println!("post_9031_member_read terminal={terminal} event_count=0");
     }
 
     #[tokio::test]

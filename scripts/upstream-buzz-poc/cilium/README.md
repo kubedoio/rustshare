@@ -1,6 +1,6 @@
 # Disposable Cilium trusted-service qualification
 
-This harness runs three ignored Rust connector tests against two isolated
+This harness selects six ignored Rust connector tests against two isolated
 instances of **unmodified** upstream Buzz. It creates a fresh local kind
 cluster with Cilium, installs default-deny egress in the test namespace, and
 allows only the relay dependencies, controlled DNS, and the two TLS edges.
@@ -39,20 +39,37 @@ default is a mode-0700 directory under `/tmp`.
 The Rust tests run as:
 
 ```text
+trusted_service_transport_connects_and_authenticates_member
+trusted_service_rejects_revoked_member_on_reconnect
 trusted_service_tenant_sessions_are_isolated_across_private_dm_relays
+live_provisioning_reaches_ready_after_nip42_and_member_only_read
+live_provisioning_recovers_after_relay_outage
 trusted_service_rejects_an_unapproved_dns_answer_before_socket_dial
 ```
 
+The provisioning retry test scales only the tenant A TLS edge Deployment to
+zero replicas and back to one, keeping its Service, TLS Secret, and signed
+mapping generation unchanged. It verifies the first attempt is retryable, the
+same identity is reused, then runs reconciliation and `drive` after relay
+recovery before requiring the operation to reach `ready`.
+
 Before the Rust tests, the harness attempts TCP to a forbidden public address
 from the connector Pod and requires Hubble to record Cilium's egress denial.
-The first test proves transport to two independent relays, tenant-bound
+`trusted_service_tenant_sessions_are_isolated_across_private_dm_relays` proves
+transport to two independent relays, tenant-bound
 private-channel reads, cross-tenant authentication denial, zero unauthorized
-events, and rejected cross-channel publishes. The second temporarily changes
-the controlled resolver so the canonical tenant A service name returns the
-approved A address and unapproved B address. The Cilium policy allows both
+events, and rejected cross-channel publishes. The DNS rejection test temporarily
+changes the controlled resolver so the canonical tenant A service name returns
+the approved A address and unapproved B address. The Cilium policy allows both
 edge destinations during that test, so network policy cannot hide a connector
 failure. Hubble captures TCP and UDP flows; the test fails if a TCP flow is
 observed during the DNS rejection window.
+
+The member-revocation test confirms the already-authenticated member can read a
+seeded private event, publishes an owner-signed kind 9031 event, then verifies
+that the existing socket can no longer retrieve private events and a fresh
+NIP-42 authentication is rejected. It records whether Buzz closes or fences
+the existing socket.
 
 ## Runtime fixture and secret handling
 

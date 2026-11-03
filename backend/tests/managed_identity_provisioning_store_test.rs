@@ -8,91 +8,106 @@ use uuid::Uuid;
 
 const TABLE: &str = "managed_chat_identity_operations";
 const TENANT_POLICY: &str = "managed_chat_identity_operations_tenant_isolation";
-/// The only columns allowed to carry text; each is a bounded catalog value or
-/// a fixed-format event id, so key material cannot be persisted.
-const ALLOWED_TEXT_COLUMNS: [&str; 3] = ["admission_event_id", "error_code", "status"];
+const IDENTITY_TABLE: &str = "managed_chat_identities";
 
 #[tokio::test]
 #[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
-async fn operations_table_is_tenant_scoped_and_cannot_hold_plaintext() {
+async fn managed_identity_tables_are_tenant_scoped_and_cannot_hold_plaintext() {
     let database_url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must point at a disposable PostgreSQL database");
     let pool = PgPool::connect(&database_url).await.unwrap();
     sqlx::migrate!("../migrations").run(&pool).await.unwrap();
 
-    let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
-        .bind(TABLE)
+    for (table, tenant_policy, allowed_columns) in [
+        (
+            TABLE,
+            TENANT_POLICY,
+            &["admission_event_id", "error_code", "status"][..],
+        ),
+        (
+            IDENTITY_TABLE,
+            "managed_chat_identities_tenant_isolation",
+            &[
+                "ciphertext",
+                "kms_key_id",
+                "kms_key_version",
+                "nonce",
+                "public_key",
+                "status",
+                "wrapped_dek",
+            ][..],
+        ),
+    ] {
+        let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(exists, "{table} table is missing; run its migration");
+
+        // Only the explicitly listed ciphertext/envelope metadata or bounded
+        // catalog values may use plaintext-capable PostgreSQL types.
+        let plaintext_capable: Vec<(String, String)> = sqlx::query_as(
+            "SELECT column_name, data_type \
+             FROM information_schema.columns \
+             WHERE table_schema = current_schema() AND table_name = $1 \
+               AND (data_type IN ('bytea','text','character varying','character','json','jsonb') \
+                    OR (data_type = 'ARRAY' AND udt_name IN ('_text','_varchar','_json','_jsonb'))) \
+             ORDER BY column_name",
+        )
+        .bind(table)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            plaintext_capable
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            allowed_columns,
+            "unexpected plaintext-capable columns in {table} (column, type): {plaintext_capable:?}"
+        );
+
+        let (rowsecurity, forcerowsecurity): (bool, bool) = sqlx::query_as(
+            "SELECT c.relrowsecurity, c.relforcerowsecurity \
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = current_schema() AND c.relname = $1",
+        )
+        .bind(table)
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert!(
-        exists,
-        "{TABLE} table is missing; run the Phase 2B.2 Task 1 migration"
-    );
+        assert!(rowsecurity, "RLS must be enabled on {table}");
+        assert!(forcerowsecurity, "RLS must be forced on {table}");
 
-    // No bytea and no free-form text, varchar, json, or text-array columns:
-    // the only text-capable columns are the pinned allowlist.
-    let plaintext_capable: Vec<(String, String)> = sqlx::query_as(
-        "SELECT column_name, data_type \
-         FROM information_schema.columns \
-         WHERE table_schema = current_schema() AND table_name = $1 \
-           AND (data_type IN ('bytea','text','character varying','character','json','jsonb') \
-                OR (data_type = 'ARRAY' AND udt_name IN ('_text','_varchar','_json','_jsonb'))) \
-         ORDER BY column_name",
-    )
-    .bind(TABLE)
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        plaintext_capable
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .collect::<Vec<_>>(),
-        ALLOWED_TEXT_COLUMNS,
-        "unexpected plaintext-capable columns (column, type): {plaintext_capable:?}"
-    );
-
-    let (rowsecurity, forcerowsecurity): (bool, bool) = sqlx::query_as(
-        "SELECT c.relrowsecurity, c.relforcerowsecurity \
-         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-         WHERE n.nspname = current_schema() AND c.relname = $1",
-    )
-    .bind(TABLE)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert!(rowsecurity, "RLS must be enabled on {TABLE}");
-    assert!(forcerowsecurity, "RLS must be forced on {TABLE}");
-
-    // Exactly one tenant-isolation policy, in both qual and with_check.
-    let policies: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT policyname, qual, with_check \
-         FROM pg_policies \
-         WHERE schemaname = current_schema() AND tablename = $1 \
-         ORDER BY policyname",
-    )
-    .bind(TABLE)
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        policies.len(),
-        1,
-        "expected exactly one RLS policy on {TABLE}: {policies:?}"
-    );
-    let (policy_name, qual, with_check) = &policies[0];
-    assert_eq!(policy_name, TENANT_POLICY);
-    let qual = qual.as_deref().unwrap_or_default();
-    let with_check = with_check.as_deref().unwrap_or_default();
-    assert!(
-        qual.contains("app.current_tenant_id"),
-        "policy qual must reference app.current_tenant_id: {qual}"
-    );
-    assert!(
-        with_check.contains("app.current_tenant_id"),
-        "policy with_check must reference app.current_tenant_id: {with_check}"
-    );
+        let policies: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT policyname, qual, with_check \
+             FROM pg_policies \
+             WHERE schemaname = current_schema() AND tablename = $1 \
+             ORDER BY policyname",
+        )
+        .bind(table)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            policies.len(),
+            1,
+            "expected exactly one RLS policy on {table}: {policies:?}"
+        );
+        let (policy_name, qual, with_check) = &policies[0];
+        assert_eq!(policy_name, tenant_policy);
+        let qual = qual.as_deref().unwrap_or_default();
+        let with_check = with_check.as_deref().unwrap_or_default();
+        assert!(
+            qual.contains("app.current_tenant_id"),
+            "policy qual must reference app.current_tenant_id: {qual}"
+        );
+        assert!(
+            with_check.contains("app.current_tenant_id"),
+            "policy with_check must reference app.current_tenant_id: {with_check}"
+        );
+    }
 
     // The migration CHECK catalog on error_code must exactly match the store's
     // catalog: parse every quoted literal out of the rendered constraint so a
@@ -288,6 +303,24 @@ async fn failed_rows_stay_in_the_one_active_index_until_abandoned() {
         .await
         .unwrap();
     clock_tick().await;
+    let abandoning = store
+        .begin_abandon(tenant_id, operation.operation_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        abandoning.status,
+        ManagedIdentityOperationStatus::Abandoning.as_str()
+    );
+    assert_eq!(
+        store.authorize(competing.clone()).await.unwrap_err(),
+        ManagedIdentityOperationError::Conflict
+    );
+    assert!(!store
+        .list_retryable(tenant_id, 10)
+        .await
+        .unwrap()
+        .iter()
+        .any(|row| row.operation_id == operation.operation_id));
     let abandoned = store
         .abandon(tenant_id, operation.operation_id)
         .await
@@ -335,7 +368,7 @@ async fn failed_rows_stay_in_the_one_active_index_until_abandoned() {
         ManagedIdentityOperationError::InvalidTransition
     );
 
-    // Abandon is only valid from failed, never from authorized.
+    // The abandonment claim is only valid from failed, never from authorized.
     let authorized = store
         .authorize(provisioning_request(tenant_id, Uuid::new_v4()))
         .await
@@ -346,6 +379,107 @@ async fn failed_rows_stay_in_the_one_active_index_until_abandoned() {
             .await
             .unwrap_err(),
         ManagedIdentityOperationError::InvalidTransition
+    );
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
+async fn store_cannot_abandon_while_attached_identity_is_active() {
+    let pool = test_pool().await;
+    let store = ManagedIdentityOperationStore::new(pool.clone());
+    let tenant_id = Uuid::new_v4();
+    let principal_id = Uuid::new_v4();
+    let request = provisioning_request(tenant_id, principal_id);
+    let operation = store.authorize(request.clone()).await.unwrap();
+    let public_key = format!(
+        "{}{}",
+        operation.identity_id.simple(),
+        Uuid::new_v4().simple()
+    );
+    sqlx::query(
+        "INSERT INTO managed_chat_identities \
+         (identity_id, tenant_id, principal_id, generation, idempotency_key, public_key, \
+          envelope_version, nonce, ciphertext, wrapped_dek, kms_key_id, kms_key_version) \
+         VALUES ($1,$2,$3,$4,$5,$6,1,$7,$8,$9,'test-kek','v1')",
+    )
+    .bind(operation.identity_id)
+    .bind(tenant_id)
+    .bind(principal_id)
+    .bind(operation.identity_generation)
+    .bind(operation.idempotency_key)
+    .bind(public_key)
+    .bind(vec![0u8; 12])
+    .bind(vec![0u8; 48])
+    .bind(vec![0u8; 28])
+    .execute(&pool)
+    .await
+    .unwrap();
+    store
+        .attach_identity(
+            tenant_id,
+            operation.operation_id,
+            operation.identity_id,
+            operation.identity_generation,
+        )
+        .await
+        .unwrap();
+    store
+        .mark_failed(
+            tenant_id,
+            operation.operation_id,
+            "stale_mapping_generation",
+        )
+        .await
+        .unwrap();
+    store
+        .begin_abandon(tenant_id, operation.operation_id)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store
+            .abandon(tenant_id, operation.operation_id)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    assert_eq!(
+        store
+            .load(tenant_id, operation.operation_id)
+            .await
+            .unwrap()
+            .status,
+        ManagedIdentityOperationStatus::Abandoning.as_str()
+    );
+    let competing = ProvisioningRequest {
+        idempotency_key: Uuid::new_v4(),
+        ..request
+    };
+    assert_eq!(
+        store.authorize(competing.clone()).await.unwrap_err(),
+        ManagedIdentityOperationError::Conflict
+    );
+
+    sqlx::query(
+        "UPDATE managed_chat_identities SET status='disabled' \
+         WHERE tenant_id=$1 AND identity_id=$2 AND principal_id=$3 \
+           AND generation=$4 AND status='active'",
+    )
+    .bind(tenant_id)
+    .bind(operation.identity_id)
+    .bind(principal_id)
+    .bind(operation.identity_generation)
+    .execute(&pool)
+    .await
+    .unwrap();
+    store
+        .abandon(tenant_id, operation.operation_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.authorize(competing).await.unwrap().status,
+        ManagedIdentityOperationStatus::Authorized.as_str()
     );
     pool.close().await;
 }
@@ -476,8 +610,10 @@ async fn cas_transitions_are_monotonic() {
     assert!(after_first.admitted_at.is_some());
     assert!(after_first.updated_at > attached.updated_at);
     clock_tick().await;
+    let replay_event_id = format!("{:064x}", 0xBADu64);
+    assert_ne!(replay_event_id, event_id);
     assert!(!store
-        .record_admission_sent(tenant_id, operation.operation_id, &event_id)
+        .record_admission_sent(tenant_id, operation.operation_id, &replay_event_id)
         .await
         .unwrap());
     let admitted = store.load(tenant_id, operation.operation_id).await.unwrap();
@@ -592,6 +728,10 @@ async fn list_retryable_respects_bounds_and_order() {
         .unwrap();
     store
         .mark_failed(tenant_id, abandoned.operation_id, "internal_error")
+        .await
+        .unwrap();
+    store
+        .begin_abandon(tenant_id, abandoned.operation_id)
         .await
         .unwrap();
     store

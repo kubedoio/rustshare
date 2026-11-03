@@ -9,7 +9,7 @@ CREATE TABLE managed_chat_identity_operations (
     identity_generation BIGINT NOT NULL CHECK (identity_generation > 0),
     idempotency_key UUID NOT NULL,
     status TEXT NOT NULL DEFAULT 'authorized'
-        CHECK (status IN ('authorized', 'provisioning', 'ready', 'failed', 'abandoned')),
+        CHECK (status IN ('authorized', 'provisioning', 'ready', 'failed', 'abandoning', 'abandoned')),
     error_code TEXT CHECK (error_code IS NULL OR error_code IN (
         'invalid_subject',
         'mapping_unavailable',
@@ -39,7 +39,7 @@ CREATE TABLE managed_chat_identity_operations (
 -- cannot race reconciliation into a second operation; ready alone is terminal.
 CREATE UNIQUE INDEX managed_chat_identity_operations_one_active
     ON managed_chat_identity_operations(tenant_id, principal_id)
-    WHERE status IN ('authorized', 'provisioning', 'failed');
+    WHERE status IN ('authorized', 'provisioning', 'failed', 'abandoning');
 
 ALTER TABLE managed_chat_identity_operations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE managed_chat_identity_operations FORCE ROW LEVEL SECURITY;

@@ -483,7 +483,7 @@ mod tests {
             VaultError::KeyManagement
         );
 
-        let secret = [0xab; 32];
+        let secret = [1; 32];
         let recovered = RecoveredIdentity {
             _secret_key: Zeroizing::new(secret),
             public_key: "public".to_owned(),
@@ -584,7 +584,8 @@ mod tests {
     #[cfg(feature = "nip42-auth-signing")]
     #[tokio::test]
     async fn signed_auth_event_exposes_no_secret() {
-        let secret = [0xab; 32];
+        // A valid, deterministic secp256k1 scalar used only as a sentinel.
+        let secret = [1; 32];
         let recovered = RecoveredIdentity {
             _secret_key: Zeroizing::new(secret),
             public_key: "public".to_owned(),
@@ -598,11 +599,13 @@ mod tests {
             .unwrap();
 
         let secret_hex = hex::encode(secret);
-        let debug_output = format!("{event:?}");
-        let json_output = nostr::serde_json::to_string(&event).unwrap();
-        assert!(!debug_output.contains(&secret_hex));
-        assert!(!json_output.contains(&secret_hex));
-        assert!(!debug_output.contains("nsec"));
-        assert!(!json_output.contains("nsec"));
+        let identity_debug = format!("{recovered:?}");
+        let event_debug = format!("{event:?}");
+        let auth_frame = nostr::serde_json::json!(["AUTH", event]);
+        let relay_payload = nostr::serde_json::to_string(&auth_frame).unwrap();
+        for output in [&identity_debug, &event_debug, &relay_payload] {
+            assert!(!output.contains(&secret_hex));
+            assert!(!output.contains("nsec"));
+        }
     }
 }

@@ -16,7 +16,8 @@ use rustshare_resource_auth::chat_identity::build_buzz_provisioning_admission_ev
 use rustshare_storage::{
     ChatIdentityStore, ManagedIdentityOperationError, ManagedIdentityOperationRecord,
     ManagedIdentityOperationStatus, ManagedIdentityOperationStore, ManagedIdentityRecord,
-    ManagedIdentityStoreError, ManagedIdentityVaultStore, UpstreamRelayMappingStore,
+    ManagedIdentityStatus, ManagedIdentityStoreError, ManagedIdentityVaultStore,
+    UpstreamRelayMappingStore,
 };
 use serde_json::Value;
 use sqlx::PgPool;
@@ -271,6 +272,9 @@ impl ManagedIdentityProvisioner {
         kms: &K,
     ) -> Result<IdentityOutcome, ProvisioningError> {
         let operation = self.operations.load(tenant_id, operation_id).await?;
+        if operation.status == ManagedIdentityOperationStatus::Abandoning.as_str() {
+            return Err(ProvisioningError::Internal);
+        }
         if operation.attempt_count >= operation.max_attempts {
             return Err(self
                 .fail(
@@ -383,9 +387,32 @@ impl ManagedIdentityProvisioner {
             });
         }
 
-        if operation.status == ManagedIdentityOperationStatus::Provisioning.as_str() {
+        if operation.status != ManagedIdentityOperationStatus::Provisioning.as_str()
+            && self
+                .operations
+                .attach_identity(
+                    tenant_id,
+                    operation_id,
+                    operation.identity_id,
+                    operation.identity_generation,
+                )
+                .await
+                .is_err()
+            && !self
+                .identity_is_attached(
+                    tenant_id,
+                    operation_id,
+                    operation.identity_id,
+                    operation.identity_generation,
+                )
+                .await
+        {
             return Err(self
-                .fail(tenant_id, operation_id, ProvisioningError::IdentityConflict)
+                .fail(
+                    tenant_id,
+                    operation_id,
+                    ProvisioningError::DatabaseUnavailable,
+                )
                 .await);
         }
 
@@ -424,31 +451,12 @@ impl ManagedIdentityProvisioner {
                     .await)
             }
         };
-        if self
-            .operations
-            .attach_identity(
-                tenant_id,
-                operation_id,
-                stored.identity_id,
-                stored.generation,
-            )
-            .await
-            .is_err()
-            && !self
-                .identity_is_attached(
-                    tenant_id,
-                    operation_id,
-                    stored.identity_id,
-                    stored.generation,
-                )
-                .await
+        if stored.status != "active"
+            || stored.identity_id != operation.identity_id
+            || stored.generation != operation.identity_generation
         {
             return Err(self
-                .fail(
-                    tenant_id,
-                    operation_id,
-                    ProvisioningError::DatabaseUnavailable,
-                )
+                .fail(tenant_id, operation_id, ProvisioningError::IdentityConflict)
                 .await);
         }
         Ok(IdentityOutcome {
@@ -479,6 +487,82 @@ impl ManagedIdentityProvisioner {
             }
         }
         Ok(summary)
+    }
+
+    /// Disable this failed operation's attached identity before releasing its
+    /// one-active slot. Repeating an already completed abandon is harmless.
+    pub(crate) async fn abandon(
+        &self,
+        tenant_id: Uuid,
+        operation_id: Uuid,
+    ) -> Result<(), ProvisioningError> {
+        let operation = self.operations.load(tenant_id, operation_id).await?;
+        if operation.status == ManagedIdentityOperationStatus::Abandoned.as_str() {
+            return Ok(());
+        }
+        if operation.status == ManagedIdentityOperationStatus::Failed.as_str() {
+            if let Err(error) = self.operations.begin_abandon(tenant_id, operation_id).await {
+                let current = self.operations.load(tenant_id, operation_id).await?;
+                if current.status == ManagedIdentityOperationStatus::Abandoned.as_str() {
+                    return Ok(());
+                }
+                if current.status != ManagedIdentityOperationStatus::Abandoning.as_str() {
+                    return Err(error.into());
+                }
+            }
+        } else if operation.status != ManagedIdentityOperationStatus::Abandoning.as_str() {
+            return Err(ProvisioningError::Internal);
+        }
+
+        if let Some(active) = self
+            .vault
+            .load_active_by_principal(tenant_id, operation.principal_id)
+            .await?
+        {
+            if active.identity_id == operation.identity_id
+                && active.generation == operation.identity_generation
+                && !self
+                    .operations
+                    .identity_is_ready(
+                        tenant_id,
+                        operation.principal_id,
+                        active.identity_id,
+                        active.generation,
+                    )
+                    .await?
+            {
+                match self
+                    .vault
+                    .disable_or_revoke(
+                        tenant_id,
+                        active.identity_id,
+                        ManagedIdentityStatus::Disabled,
+                    )
+                    .await
+                {
+                    Ok(()) | Err(ManagedIdentityStoreError::NotFound) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+
+        match self.operations.abandon(tenant_id, operation_id).await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if self
+                    .operations
+                    .load(tenant_id, operation_id)
+                    .await
+                    .is_ok_and(|current| {
+                        current.status == ManagedIdentityOperationStatus::Abandoned.as_str()
+                    })
+                {
+                    Ok(())
+                } else {
+                    Err(error.into())
+                }
+            }
+        }
     }
 
     /// Drive identity storage, NIP-43 admission, fresh NIP-42 authentication,
@@ -516,6 +600,20 @@ impl ManagedIdentityProvisioner {
                     .await)
             }
         };
+        if !mapping_binding_matches(
+            operation.mapping_id,
+            operation.mapping_generation,
+            mapping.record().mapping_id,
+            mapping.record().generation as i64,
+        ) {
+            return Err(self
+                .fail(
+                    tenant_id,
+                    operation_id,
+                    ProvisioningError::StaleMappingGeneration,
+                )
+                .await);
+        }
         let record = match self
             .vault
             .load_active_by_principal(tenant_id, operation.principal_id)
@@ -528,6 +626,16 @@ impl ManagedIdentityProvisioner {
                     .await)
             }
         };
+        if !identity_binding_matches(
+            operation.identity_id,
+            operation.identity_generation,
+            &identity,
+            &record,
+        ) {
+            return Err(self
+                .fail(tenant_id, operation_id, ProvisioningError::IdentityConflict)
+                .await);
+        }
         let envelope = match envelope_from_record(&record) {
             Ok(envelope) => envelope,
             Err(error) => return Err(self.fail(tenant_id, operation_id, error).await),
@@ -570,6 +678,15 @@ impl ManagedIdentityProvisioner {
                     .await)
             }
         };
+        if session.scope() != &mapping.scope() {
+            return Err(self
+                .fail(
+                    tenant_id,
+                    operation_id,
+                    ProvisioningError::StaleMappingGeneration,
+                )
+                .await);
+        }
 
         if operation.admission_event_id.is_none() {
             if let Err(error) = self
@@ -684,6 +801,28 @@ impl ManagedIdentityProvisioner {
             .await;
         error
     }
+}
+
+fn mapping_binding_matches(
+    operation_mapping_id: Uuid,
+    operation_generation: i64,
+    mapping_id: Uuid,
+    mapping_generation: i64,
+) -> bool {
+    operation_mapping_id == mapping_id && operation_generation == mapping_generation
+}
+
+fn identity_binding_matches(
+    operation_identity_id: Uuid,
+    operation_generation: i64,
+    identity: &IdentityOutcome,
+    record: &ManagedIdentityRecord,
+) -> bool {
+    operation_identity_id == identity.identity_id
+        && operation_generation == identity.generation
+        && record.identity_id == identity.identity_id
+        && record.generation == identity.generation
+        && record.public_key == identity.public_key
 }
 
 fn envelope_from_record(
@@ -835,22 +974,107 @@ mod tests {
     use rustshare_resource_auth::upstream_relay_provisioning::{
         MappingProvisioningAction, MappingProvisioningStatement, MappingProvisioningVerifier,
     };
-    use rustshare_storage::{ManagedIdentityVaultStore, UpstreamRelayMappingStore};
+    use rustshare_storage::{
+        ManagedIdentityOperationError, ManagedIdentityRecord, ManagedIdentityVaultStore,
+        UpstreamRelayMappingStore,
+    };
     use sqlx::PgPool;
-    use tokio::sync::Barrier;
+    use tokio::sync::{Barrier, Notify};
     use tokio_rustls::rustls::pki_types::CertificateDer;
     use uuid::Uuid;
     use zeroize::Zeroizing;
 
     use super::{
-        AuthenticatedTestPrincipal, DriveOutcome, ManagedIdentityProvisioner,
-        ProvisioningContextResolver, ProvisioningError,
+        identity_binding_matches, mapping_binding_matches, AuthenticatedTestPrincipal,
+        DriveOutcome, IdentityOutcome, ManagedIdentityProvisioner, ProvisioningContextResolver,
+        ProvisioningError,
     };
     use crate::upstream_buzz_transport::RelayTlsTrustConfig;
+
+    #[test]
+    fn drive_rejects_changed_mapping_binding() {
+        let mapping_id = Uuid::new_v4();
+        assert!(mapping_binding_matches(mapping_id, 4, mapping_id, 4));
+        assert!(!mapping_binding_matches(mapping_id, 4, Uuid::new_v4(), 4));
+        assert!(!mapping_binding_matches(mapping_id, 4, mapping_id, 5));
+    }
+
+    #[test]
+    fn drive_rejects_replaced_active_identity() {
+        let identity_id = Uuid::new_v4();
+        let principal_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let identity = IdentityOutcome {
+            identity_id,
+            generation: 3,
+            public_key: "a".repeat(64),
+        };
+        let mut record = ManagedIdentityRecord {
+            identity_id,
+            tenant_id,
+            principal_id,
+            generation: 3,
+            idempotency_key: Uuid::new_v4(),
+            public_key: identity.public_key.clone(),
+            envelope_version: 1,
+            nonce: vec![0; 12],
+            ciphertext: vec![0; 48],
+            wrapped_dek: vec![0; 32],
+            kms_key_id: "test".into(),
+            kms_key_version: "v1".into(),
+            status: "active".into(),
+        };
+        assert!(identity_binding_matches(identity_id, 3, &identity, &record));
+        assert!(!identity_binding_matches(
+            Uuid::new_v4(),
+            3,
+            &identity,
+            &record
+        ));
+        assert!(!identity_binding_matches(
+            identity_id,
+            4,
+            &identity,
+            &record
+        ));
+
+        record.identity_id = Uuid::new_v4();
+        assert!(!identity_binding_matches(
+            identity_id,
+            3,
+            &identity,
+            &record
+        ));
+        record.identity_id = identity_id;
+        record.generation = 4;
+        assert!(!identity_binding_matches(
+            identity_id,
+            3,
+            &identity,
+            &record
+        ));
+    }
 
     fn required(name: &str) -> String {
         std::env::var(name)
             .unwrap_or_else(|_| panic!("{name} must be set for the disposable relay test"))
+    }
+
+    async fn pause_for_relay_harness(marker: &str, ack_env: &str) {
+        let ack = std::path::PathBuf::from(required(ack_env));
+        assert!(
+            !ack.exists(),
+            "relay outage acknowledgement must start absent"
+        );
+        println!("{marker}");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(120), async {
+            while !ack.exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("relay outage acknowledgement timed out");
     }
 
     #[derive(Clone)]
@@ -902,6 +1126,36 @@ mod tests {
                 .try_into()
                 .map_err(|_| VaultError::Recovery)?;
             Ok(Zeroizing::new(bytes))
+        }
+    }
+
+    struct BlockingKms {
+        started: Notify,
+        release: Notify,
+    }
+
+    #[async_trait::async_trait]
+    impl DekKeyManagement for BlockingKms {
+        async fn wrap_dek(
+            &self,
+            dek: &[u8; 32],
+            _context: &KeyEncryptionContext,
+        ) -> Result<WrappedDek, VaultError> {
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok(WrappedDek {
+                key_id: "test-kek".into(),
+                key_version: "v1".into(),
+                ciphertext: dek.to_vec(),
+            })
+        }
+
+        async fn unwrap_dek(
+            &self,
+            _wrapped: &WrappedDek,
+            _context: &KeyEncryptionContext,
+        ) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+            Err(VaultError::KeyManagement)
         }
     }
 
@@ -1111,6 +1365,155 @@ mod tests {
             .unwrap();
         assert_eq!(stored.identity_id, first.identity_id);
         assert_eq!(stored.identity_generation, first.generation);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL; exercised by the dedicated live provisioning run"]
+    async fn identity_claim_precedes_kms_and_resumes_after_interruption() {
+        let pool = pool().await;
+        let (tenant, user, workspace) = tenant_user_workspace(&pool).await;
+        let mapping = mapping_store(&pool, tenant, workspace).await;
+        let provisioner = ManagedIdentityProvisioner::new(pool.clone(), mapping);
+        let operation = provisioner
+            .authorize(
+                AuthenticatedTestPrincipal::new(user, tenant, workspace),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        provisioner
+            .operations()
+            .mark_failed(tenant, operation.operation_id, "kms_unavailable")
+            .await
+            .unwrap();
+
+        let kms = Arc::new(BlockingKms {
+            started: Notify::new(),
+            release: Notify::new(),
+        });
+        let task_provisioner = provisioner.clone();
+        let task_kms = kms.clone();
+        let operation_id = operation.operation_id;
+        let task = tokio::spawn(async move {
+            task_provisioner
+                .ensure_identity(tenant, operation_id, task_kms.as_ref())
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), kms.started.notified())
+            .await
+            .expect("KMS wrapping was not reached");
+
+        let claimed = provisioner
+            .operations()
+            .load(tenant, operation.operation_id)
+            .await
+            .unwrap();
+        assert_eq!(claimed.status, "provisioning");
+        assert_eq!(claimed.identity_id, operation.identity_id);
+        assert_eq!(claimed.identity_generation, operation.identity_generation);
+        assert!(provisioner
+            .vault
+            .load_active_by_principal(tenant, user)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            provisioner
+                .abandon(tenant, operation.operation_id)
+                .await
+                .unwrap_err(),
+            ProvisioningError::Internal
+        );
+
+        task.abort();
+        let _ = task.await;
+        let recovered = provisioner
+            .ensure_identity(tenant, operation.operation_id, &TestKms::new())
+            .await
+            .unwrap();
+        assert_eq!(recovered.identity_id, operation.identity_id);
+        assert_eq!(recovered.generation, operation.identity_generation);
+        let active = provisioner
+            .vault
+            .load_active_by_principal(tenant, user)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(active.identity_id, operation.identity_id);
+        assert_eq!(active.generation, operation.identity_generation);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL; exercised by the dedicated live provisioning run"]
+    async fn drive_rejects_mapping_generation_changed_after_authorize() {
+        let pool = pool().await;
+        let (tenant, user, workspace) = tenant_user_workspace(&pool).await;
+        let mapping = mapping_store(&pool, tenant, workspace).await;
+        let original = mapping
+            .load(TenantId(tenant), WorkspaceId(workspace))
+            .await
+            .unwrap()
+            .record()
+            .clone();
+        let provisioner = ManagedIdentityProvisioner::new(pool.clone(), mapping.clone());
+        let operation = provisioner
+            .authorize(
+                AuthenticatedTestPrincipal::new(user, tenant, workspace),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(operation.mapping_generation, 1);
+
+        let operator_service_id = original.updated_by;
+        let signing_key = SigningKey::from_bytes(&[21; 32]);
+        let now = Utc::now();
+        let issued_at = now
+            .with_nanosecond(now.timestamp_subsec_micros() * 1_000)
+            .unwrap();
+        let mut statement = MappingProvisioningStatement {
+            operator_service_id,
+            operator_key_id: "deployment-test-key-v1".into(),
+            operation_id: Uuid::new_v4(),
+            change_reference_id: Uuid::new_v4(),
+            action: MappingProvisioningAction::Update,
+            expected_generation: 1,
+            issued_at,
+            expires_at: issued_at + Duration::minutes(2),
+            record: original,
+            signature: Vec::new(),
+        };
+        statement.record.generation = 2;
+        statement.record.audit_entry_id = Uuid::new_v4();
+        statement.signature = signing_key
+            .sign(&statement.signing_bytes().unwrap())
+            .to_bytes()
+            .to_vec();
+        mapping.apply(&statement).await.unwrap();
+
+        assert_eq!(
+            provisioner
+                .drive(
+                    tenant,
+                    operation.operation_id,
+                    &TestKms::new(),
+                    &Keys::generate(),
+                    &RelayTlsTrustConfig::StrictPublic,
+                    "membership",
+                )
+                .await
+                .unwrap_err(),
+            ProvisioningError::StaleMappingGeneration
+        );
+        assert_eq!(
+            mapping
+                .load(TenantId(tenant), WorkspaceId(workspace))
+                .await
+                .unwrap()
+                .record()
+                .generation,
+            2
+        );
     }
 
     #[tokio::test]
@@ -1346,8 +1749,293 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires PostgreSQL; exercised by the dedicated live provisioning run"]
+    async fn abandon_stale_mapping_failure_disables_identity_and_releases_slot() {
+        let pool = pool().await;
+        let (tenant, user, workspace) = tenant_user_workspace(&pool).await;
+        let mapping = mapping_store(&pool, tenant, workspace).await;
+        let provisioner = ManagedIdentityProvisioner::new(pool.clone(), mapping);
+        let authenticated = AuthenticatedTestPrincipal::new(user, tenant, workspace);
+        let operation = provisioner
+            .authorize(authenticated.clone(), Uuid::new_v4())
+            .await
+            .unwrap();
+        let identity = provisioner
+            .ensure_identity(tenant, operation.operation_id, &TestKms::new())
+            .await
+            .unwrap();
+        provisioner
+            .operations()
+            .mark_failed(tenant, operation.operation_id, "stale_mapping_generation")
+            .await
+            .unwrap();
+
+        provisioner
+            .abandon(tenant, operation.operation_id)
+            .await
+            .unwrap();
+        provisioner
+            .abandon(tenant, operation.operation_id)
+            .await
+            .unwrap();
+        let identity_status: String = sqlx::query_scalar(
+            "SELECT status FROM managed_chat_identities WHERE tenant_id=$1 AND identity_id=$2",
+        )
+        .bind(tenant)
+        .bind(identity.identity_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(identity_status, "disabled");
+        assert_eq!(
+            provisioner
+                .operations()
+                .load(tenant, operation.operation_id)
+                .await
+                .unwrap()
+                .status,
+            "abandoned"
+        );
+        provisioner
+            .authorize(authenticated, Uuid::new_v4())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL; exercised by the dedicated live provisioning run"]
+    async fn abandon_exhausted_operation_disables_identity_and_releases_slot() {
+        let pool = pool().await;
+        let (tenant, user, workspace) = tenant_user_workspace(&pool).await;
+        let mapping = mapping_store(&pool, tenant, workspace).await;
+        let provisioner = ManagedIdentityProvisioner::new(pool.clone(), mapping);
+        let authenticated = AuthenticatedTestPrincipal::new(user, tenant, workspace);
+        let operation = provisioner
+            .authorize(authenticated.clone(), Uuid::new_v4())
+            .await
+            .unwrap();
+        let identity = provisioner
+            .ensure_identity(tenant, operation.operation_id, &TestKms::new())
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE managed_chat_identity_operations \
+             SET max_attempts=1, attempt_count=1, status='failed', error_code='attempts_exhausted' \
+             WHERE tenant_id=$1 AND operation_id=$2",
+        )
+        .bind(tenant)
+        .bind(operation.operation_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        provisioner
+            .abandon(tenant, operation.operation_id)
+            .await
+            .unwrap();
+        let identity_status: String = sqlx::query_scalar(
+            "SELECT status FROM managed_chat_identities WHERE tenant_id=$1 AND identity_id=$2",
+        )
+        .bind(tenant)
+        .bind(identity.identity_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(identity_status, "disabled");
+        provisioner
+            .authorize(authenticated, Uuid::new_v4())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL; exercised by the dedicated live provisioning run"]
+    async fn abandon_keeps_slot_claimed_when_identity_disable_fails() {
+        let pool = pool().await;
+        let (tenant, user, workspace) = tenant_user_workspace(&pool).await;
+        let mapping = mapping_store(&pool, tenant, workspace).await;
+        let provisioner = ManagedIdentityProvisioner::new(pool.clone(), mapping);
+        let authenticated = AuthenticatedTestPrincipal::new(user, tenant, workspace);
+        let operation = provisioner
+            .authorize(authenticated.clone(), Uuid::new_v4())
+            .await
+            .unwrap();
+        let identity = provisioner
+            .ensure_identity(tenant, operation.operation_id, &TestKms::new())
+            .await
+            .unwrap();
+        provisioner
+            .operations()
+            .mark_failed(tenant, operation.operation_id, "stale_mapping_generation")
+            .await
+            .unwrap();
+
+        let trigger = format!("test_abandon_{}", Uuid::new_v4().simple());
+        let function = format!("{trigger}_fn");
+        sqlx::query(&format!(
+            "CREATE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN IF OLD.identity_id = '{identity_id}' AND NEW.status = 'disabled' \
+             THEN RAISE EXCEPTION 'test disable failure'; END IF; RETURN NEW; END $$",
+            identity_id = identity.identity_id,
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(&format!(
+            "CREATE TRIGGER {trigger} BEFORE UPDATE OF status ON managed_chat_identities \
+             FOR EACH ROW EXECUTE FUNCTION {function}()"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            provisioner
+                .abandon(tenant, operation.operation_id)
+                .await
+                .unwrap_err(),
+            ProvisioningError::DatabaseUnavailable
+        );
+        assert_eq!(
+            provisioner
+                .operations()
+                .load(tenant, operation.operation_id)
+                .await
+                .unwrap()
+                .status,
+            "abandoning"
+        );
+        assert_eq!(
+            provisioner
+                .authorize(authenticated.clone(), Uuid::new_v4())
+                .await
+                .unwrap_err(),
+            ProvisioningError::IdentityConflict
+        );
+        assert_eq!(
+            provisioner
+                .ensure_identity(tenant, operation.operation_id, &TestKms::new())
+                .await
+                .unwrap_err(),
+            ProvisioningError::Internal
+        );
+
+        sqlx::query(&format!(
+            "DROP TRIGGER {trigger} ON managed_chat_identities"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(&format!("DROP FUNCTION {function}()"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        provisioner
+            .abandon(tenant, operation.operation_id)
+            .await
+            .unwrap();
+        provisioner
+            .authorize(authenticated, Uuid::new_v4())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL; exercised by the dedicated live provisioning run"]
+    async fn abandon_does_not_disable_a_ready_identity() {
+        let pool = pool().await;
+        let (tenant, user, workspace) = tenant_user_workspace(&pool).await;
+        let mapping = mapping_store(&pool, tenant, workspace).await;
+        let provisioner = ManagedIdentityProvisioner::new(pool.clone(), mapping);
+        let authenticated = AuthenticatedTestPrincipal::new(user, tenant, workspace);
+        let operation = provisioner
+            .authorize(authenticated.clone(), Uuid::new_v4())
+            .await
+            .unwrap();
+        let identity = provisioner
+            .ensure_identity(tenant, operation.operation_id, &TestKms::new())
+            .await
+            .unwrap();
+        provisioner
+            .operations()
+            .record_admission_sent(tenant, operation.operation_id, &"a".repeat(64))
+            .await
+            .unwrap();
+        provisioner
+            .operations()
+            .mark_ready(tenant, operation.operation_id)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            provisioner
+                .abandon(tenant, operation.operation_id)
+                .await
+                .unwrap_err(),
+            ProvisioningError::Internal
+        );
+        let status: String = sqlx::query_scalar(
+            "SELECT status FROM managed_chat_identities WHERE tenant_id=$1 AND identity_id=$2",
+        )
+        .bind(tenant)
+        .bind(identity.identity_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(status, "active");
+
+        let retry = provisioner
+            .authorize(authenticated.clone(), Uuid::new_v4())
+            .await
+            .unwrap();
+        let reused = provisioner
+            .ensure_identity(tenant, retry.operation_id, &TestKms::new())
+            .await
+            .unwrap();
+        assert_eq!(reused.identity_id, identity.identity_id);
+        provisioner
+            .operations()
+            .mark_failed(tenant, retry.operation_id, "stale_mapping_generation")
+            .await
+            .unwrap();
+        provisioner
+            .abandon(tenant, retry.operation_id)
+            .await
+            .unwrap();
+
+        let status: String = sqlx::query_scalar(
+            "SELECT status FROM managed_chat_identities WHERE tenant_id=$1 AND identity_id=$2",
+        )
+        .bind(tenant)
+        .bind(identity.identity_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(status, "active");
+        assert_eq!(
+            provisioner
+                .operations()
+                .load(tenant, operation.operation_id)
+                .await
+                .unwrap()
+                .status,
+            "ready"
+        );
+    }
+
+    #[tokio::test]
     #[ignore = "requires disposable PostgreSQL, relay-admin key, and private Buzz service"]
     async fn live_provisioning_reaches_ready_after_nip42_and_member_only_read() {
+        run_live_provisioning(false).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL, relay-admin key, and private Buzz service"]
+    async fn live_provisioning_recovers_after_relay_outage() {
+        run_live_provisioning(true).await;
+    }
+
+    async fn run_live_provisioning(with_relay_outage: bool) {
         assert_eq!(required("BUZZ_TEST_DISPOSABLE_CONFIRM"), "DISPOSABLE_ONLY");
         let database_url =
             crate::test_guard::disposable_database_url_from_env().unwrap_or_else(|message| {
@@ -1446,7 +2134,7 @@ mod tests {
         );
         let store = UpstreamRelayMappingStore::with_provisioning_verifier(pool.clone(), verifier);
         store.apply(&statement).await.unwrap();
-        let provisioner = ManagedIdentityProvisioner::new(pool.clone(), store);
+        let provisioner = ManagedIdentityProvisioner::new(pool.clone(), store.clone());
         let operation = provisioner
             .authorize(
                 AuthenticatedTestPrincipal::new(user, tenant, workspace),
@@ -1458,11 +2146,188 @@ mod tests {
             endpoint_service_identity: statement.record.endpoint_service_identity.clone(),
             roots: vec![CertificateDer::from(root_der)],
         };
+        let kms = TestKms::new();
+        let original_mapping = store
+            .load(TenantId(tenant), WorkspaceId(workspace))
+            .await
+            .unwrap()
+            .record()
+            .clone();
+        assert_eq!(operation.mapping_id, original_mapping.mapping_id);
+        assert_eq!(
+            operation.mapping_generation,
+            original_mapping.generation as i64
+        );
+        let identity = provisioner
+            .ensure_identity(tenant, operation.operation_id, &kms)
+            .await
+            .unwrap();
+
+        // A second entitled tenant may use its own mapping and operation, but
+        // tenant-scoped stores must hide the first tenant's operation/mapping/key.
+        let (other_tenant, other_user, other_workspace) = tenant_user_workspace(&pool).await;
+        let other_mappings = mapping_store(&pool, other_tenant, other_workspace).await;
+        let other_provisioner =
+            ManagedIdentityProvisioner::new(pool.clone(), other_mappings.clone());
+        let other_operation = other_provisioner
+            .authorize(
+                AuthenticatedTestPrincipal::new(other_user, other_tenant, other_workspace),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            other_provisioner
+                .operations()
+                .load(other_tenant, operation.operation_id)
+                .await
+                .unwrap_err(),
+            ManagedIdentityOperationError::NotFound
+        );
+        assert!(other_mappings
+            .load(TenantId(other_tenant), WorkspaceId(workspace))
+            .await
+            .is_err());
+        assert!(other_provisioner
+            .vault
+            .load_active_by_principal(other_tenant, user)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            other_provisioner
+                .drive(
+                    other_tenant,
+                    operation.operation_id,
+                    &kms,
+                    &relay_admin,
+                    &trust,
+                    &membership_channel,
+                )
+                .await
+                .unwrap_err(),
+            ProvisioningError::Internal
+        );
+        let untouched_other_operation = other_provisioner
+            .operations()
+            .load(other_tenant, other_operation.operation_id)
+            .await
+            .unwrap();
+        assert_eq!(untouched_other_operation.status, "authorized");
+        assert!(untouched_other_operation.admission_event_id.is_none());
+        assert!(other_provisioner
+            .vault
+            .load_active_by_principal(other_tenant, other_user)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            provisioner
+                .operations()
+                .load(tenant, operation.operation_id)
+                .await
+                .unwrap()
+                .status,
+            "provisioning"
+        );
+        assert_eq!(
+            provisioner
+                .vault
+                .load_active_by_principal(tenant, user)
+                .await
+                .unwrap()
+                .unwrap()
+                .identity_id,
+            identity.identity_id
+        );
+        let initial_identity = if with_relay_outage {
+            let identity = provisioner
+                .ensure_identity(tenant, operation.operation_id, &kms)
+                .await
+                .unwrap();
+            pause_for_relay_harness(
+                "BUZZ_TEST_RELAY_OUTAGE_READY",
+                "BUZZ_TEST_RELAY_OUTAGE_ACK_FILE",
+            )
+            .await;
+            assert_eq!(
+                provisioner
+                    .drive(
+                        tenant,
+                        operation.operation_id,
+                        &kms,
+                        &relay_admin,
+                        &trust,
+                        &membership_channel,
+                    )
+                    .await
+                    .unwrap_err(),
+                ProvisioningError::TransportUnavailable
+            );
+            let failed = provisioner
+                .operations()
+                .load(tenant, operation.operation_id)
+                .await
+                .unwrap();
+            assert_eq!(failed.status, "failed");
+            assert_eq!(failed.error_code.as_deref(), Some("transport_unavailable"));
+            assert_eq!(failed.attempt_count, 1);
+            assert!(failed.attempt_count < failed.max_attempts);
+            assert_eq!(failed.identity_id, identity.identity_id);
+            assert_eq!(failed.identity_generation, identity.generation);
+            assert!(failed.admission_event_id.is_none());
+            assert!(provisioner
+                .operations()
+                .list_retryable(tenant, 10)
+                .await
+                .unwrap()
+                .iter()
+                .any(|retryable| retryable.operation_id == operation.operation_id));
+            let still_active = provisioner
+                .vault
+                .load_active_by_principal(tenant, user)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(still_active.identity_id, identity.identity_id);
+            assert_eq!(still_active.generation, identity.generation);
+            let during_outage_mapping = store
+                .load(TenantId(tenant), WorkspaceId(workspace))
+                .await
+                .unwrap()
+                .record()
+                .clone();
+            assert_eq!(
+                during_outage_mapping.mapping_id,
+                original_mapping.mapping_id
+            );
+            assert_eq!(
+                during_outage_mapping.generation,
+                original_mapping.generation
+            );
+            pause_for_relay_harness(
+                "BUZZ_TEST_RELAY_RESTORE_READY",
+                "BUZZ_TEST_RELAY_RESTORE_ACK_FILE",
+            )
+            .await;
+            let summary = provisioner.reconcile(tenant, 10, &kms).await.unwrap();
+            assert_eq!(summary.attempted, 1);
+            assert_eq!(summary.advanced, 1);
+            assert_eq!(summary.failed, 0);
+            let recovered = provisioner
+                .ensure_identity(tenant, operation.operation_id, &kms)
+                .await
+                .unwrap();
+            assert_eq!(recovered, identity);
+            Some(identity)
+        } else {
+            None
+        };
         let outcome = provisioner
             .drive(
                 tenant,
                 operation.operation_id,
-                &TestKms::new(),
+                &kms,
                 &relay_admin,
                 &trust,
                 &membership_channel,
@@ -1472,6 +2337,9 @@ mod tests {
         let DriveOutcome::Ready(identity) = outcome else {
             panic!("provisioning did not reach ready")
         };
+        if let Some(initial_identity) = initial_identity {
+            assert_eq!(identity, initial_identity);
+        }
         assert_eq!(identity.public_key.len(), 64);
         assert_ne!(identity.public_key, relay_admin.public_key().to_hex());
         let ready = provisioner
@@ -1482,5 +2350,17 @@ mod tests {
         assert_eq!(ready.status, "ready");
         assert!(ready.admission_event_id.is_some());
         assert!(ready.ready_at.is_some());
+        let final_mapping = store
+            .load(TenantId(tenant), WorkspaceId(workspace))
+            .await
+            .unwrap();
+        assert_eq!(
+            final_mapping.record().mapping_id,
+            original_mapping.mapping_id
+        );
+        assert_eq!(
+            final_mapping.record().generation,
+            original_mapping.generation
+        );
     }
 }
