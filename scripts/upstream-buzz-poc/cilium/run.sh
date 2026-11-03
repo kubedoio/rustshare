@@ -219,6 +219,8 @@ seed = {f"{role.upper()}_{tenant.upper()}_SK": keys[f"{role}_{tenant}"] for tena
 f = out / "seed.env"; f.write_text("".join(f"{k}={v}\n" for k,v in seed.items())); f.chmod(0o600)
 dbpass = secrets.token_hex(32)
 creds = (p / "connector-credentials.env").read_text().rstrip().splitlines()
+# Disposable relay-admin identity for the NIP-43 provisioning qualification.
+creds += [f"BUZZ_TEST_RELAY_ADMIN_NSEC={keys['owner_a']}"]
 creds += [f"POSTGRES_PASSWORD={dbpass}", f"DATABASE_URL=postgres://postgres:{dbpass}@127.0.0.1/rustshare_test"]
 f = out / "connector.env"; f.write_text("\n".join(creds) + "\n"); f.chmod(0o600)
 f = out / "seed-config.env"; f.write_text(f"RELAY_A_URL=wss://buzz-edge-a.{ns}.svc.cluster.local\nRELAY_B_URL=wss://buzz-edge-b.{ns}.svc.cluster.local\nROOT_A_PEM=/run/roots/a.pem\nROOT_B_PEM=/run/roots/b.pem\n"); f.chmod(0o600)
@@ -516,6 +518,9 @@ run_member_transport_test
 run_rust_test cross-tenant upstream_buzz_transport::disposable_service_tests::trusted_service_tenant_sessions_are_isolated_across_private_dm_relays none
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$RUN_DIR/db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$RUN_DIR/db-reset.log" 2>&1
+run_rust_test provisioning upstream_identity_provisioning::tests::live_provisioning_reaches_ready_after_nip42_and_member_only_read none
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$RUN_DIR/db-reset-provisioning.log" 2>&1
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$RUN_DIR/db-reset-provisioning.log" 2>&1
 python3 "$HERE/render.py" --phase dns --namespace "$NAMESPACE" --edge-a-ip "$EDGE_A_IP" --edge-b-ip "$EDGE_B_IP" --poison-dns >"$RUN_DIR/dns-poison.json"
 cp "$RUN_DIR/dns-poison.json" "$EVIDENCE_DIR/dns-poison.json"
 "${K[@]}" apply -f "$RUN_DIR/dns-poison.json" >"$EVIDENCE_DIR/dns-poison-apply.txt"
@@ -526,5 +531,5 @@ run_rust_test dns-poison upstream_buzz_transport::disposable_service_tests::trus
 cp "$RUN_DIR/dns-restart.log" "$EVIDENCE_DIR/dns-restart.txt"
 "${K[@]}" get cnp -n "$NAMESPACE" -o yaml >"$EVIDENCE_DIR/cilium-policies.yaml"
 "${K[@]}" get pods -n "$NAMESPACE" -o wide >"$EVIDENCE_DIR/pods-final.txt"
-echo 'result=PASS: all three selected ignored Rust trusted-service tests passed' >"$EVIDENCE_DIR/result.txt"
+echo 'result=PASS: all four selected ignored Rust trusted-service and provisioning tests passed' >"$EVIDENCE_DIR/result.txt"
 echo "cluster=$CLUSTER" >>"$EVIDENCE_DIR/result.txt"
