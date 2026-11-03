@@ -1341,6 +1341,7 @@ mod disposable_service_tests {
         let channel_id = required("BUZZ_TEST_DM_CHANNEL_ID");
         let member_keys = Keys::parse(&required("BUZZ_TEST_MEMBER_NSEC")).unwrap();
         let relay_admin_keys = Keys::parse(&required("BUZZ_TEST_RELAY_ADMIN_NSEC")).unwrap();
+        let friend_keys = Keys::parse(&required("BUZZ_TEST_CHANNEL_FRIEND_NSEC")).unwrap();
 
         let pool = PgPool::connect(&database_url).await.unwrap();
         sqlx::migrate!("../migrations").run(&pool).await.unwrap();
@@ -1453,6 +1454,15 @@ mod disposable_service_tests {
             saw_pre_revocation_event,
             "member-only channel must contain the seeded event before revocation"
         );
+        let mut member_publisher = connect(
+            &store,
+            TenantId(tenant_id),
+            WorkspaceId(workspace_id),
+            &trust,
+        )
+        .await
+        .unwrap();
+        assert!(authenticate_member(&mut member_publisher, &member_keys, &relay_url).await);
         let mut admin = connect(
             &store,
             TenantId(tenant_id),
@@ -1463,8 +1473,11 @@ mod disposable_service_tests {
         .unwrap();
         assert!(authenticate_member(&mut admin, &relay_admin_keys, &relay_url).await);
         let (pre_revocation_probe_id, accepted) =
-            publish_channel_message(&mut admin, &relay_admin_keys, &channel_id).await;
-        assert!(accepted, "owner's live-event positive control was rejected");
+            publish_channel_message(&mut member_publisher, &member_keys, &channel_id).await;
+        assert!(
+            accepted,
+            "member's live-event positive control was rejected"
+        );
         let received_live_probe = loop {
             let frame = tokio::time::timeout(Duration::from_secs(15), existing.receive())
                 .await
@@ -1530,32 +1543,18 @@ mod disposable_service_tests {
                 )) => true,
                 Ok(Err(_)) => false,
             };
-        let probe = EventBuilder::new(
-            Kind::Custom(9),
-            format!("post-revocation subscription probe {}", Uuid::new_v4()),
+        let mut friend = connect(
+            &store,
+            TenantId(tenant_id),
+            WorkspaceId(workspace_id),
+            &trust,
         )
-        .tags(vec![Tag::parse(["h", channel_id.as_str()]).unwrap()])
-        .sign_with_keys(&relay_admin_keys)
+        .await
         .unwrap();
-        let probe_id = probe.id.to_hex();
-        admin
-            .send_text(&serde_json::json!(["EVENT", probe]).to_string())
-            .await
-            .unwrap();
-        loop {
-            let frame = tokio::time::timeout(Duration::from_secs(15), admin.receive())
-                .await
-                .expect("post-revocation probe publish timed out")
-                .unwrap()
-                .expect("relay closed before probe publish response");
-            if let Message::Text(frame) = frame {
-                let response: Value = serde_json::from_str(&frame).unwrap();
-                if response[0] == "OK" && response[1] == probe_id {
-                    assert!(response[2].as_bool().unwrap_or(false), "{response}");
-                    break;
-                }
-            }
-        }
+        assert!(authenticate_member(&mut friend, &friend_keys, &relay_url).await);
+        let (probe_id, accepted) =
+            publish_channel_message(&mut friend, &friend_keys, &channel_id).await;
+        assert!(accepted, "remaining channel member's probe was rejected");
         let mut probe_delivered = false;
         if !original_subscription_closed {
             if let Ok(delivered) = tokio::time::timeout(Duration::from_secs(5), async {

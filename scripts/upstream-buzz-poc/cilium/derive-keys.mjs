@@ -27,6 +27,9 @@ for (const tenant of ['a', 'b']) {
 			publicMetadata[`member_${tenant}_pubkey`] = pubkey;
 			credentials.push(`BUZZ_TEST_${tenant === 'a' ? '' : 'B_'}MEMBER_NSEC=${nip19.nsecEncode(secret)}`);
 		}
+		if (role === 'friend' && tenant === 'a') {
+			credentials.push(`BUZZ_TEST_CHANNEL_FRIEND_NSEC=${nip19.nsecEncode(secret)}`);
+		}
 		if (role === 'operator') publicMetadata[`operator_${suffix}_pubkey`] = pubkey;
 	}
 }
