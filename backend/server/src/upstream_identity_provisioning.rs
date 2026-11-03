@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use chrono::Utc;
-use nostr::{EventBuilder, Keys, RelayUrl, Timestamp};
+use nostr::{EventBuilder, Keys, Kind, RelayUrl, Tag, Timestamp};
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_crypto::managed_identity_vault::{
     DekKeyManagement, IdentityContext, ManagedIdentityEnvelope, RecoveredIdentity, WrappedDek,
@@ -731,6 +731,52 @@ impl ManagedIdentityProvisioner {
                     )
                     .await);
             }
+            if let Err(error) =
+                authenticate_relay_admin(&mut session, relay_admin, mapping.relay_url()).await
+            {
+                return Err(self.fail(tenant_id, operation_id, error).await);
+            }
+            if let Err(error) = add_nip29_member(
+                &mut session,
+                &operation,
+                &identity.public_key,
+                relay_admin,
+                membership_channel,
+            )
+            .await
+            {
+                return Err(self.fail(tenant_id, operation_id, error).await);
+            }
+            println!("upstream provisioning stage: private channel membership accepted");
+            drop(session);
+            session = match connect(
+                &self.mappings,
+                TenantId(operation.tenant_id),
+                WorkspaceId(operation.workspace_id),
+                trust,
+            )
+            .await
+            {
+                Ok(session) => session,
+                Err(_) => {
+                    return Err(self
+                        .fail(
+                            tenant_id,
+                            operation_id,
+                            ProvisioningError::TransportUnavailable,
+                        )
+                        .await)
+                }
+            };
+            if session.scope() != &mapping.scope() {
+                return Err(self
+                    .fail(
+                        tenant_id,
+                        operation_id,
+                        ProvisioningError::StaleMappingGeneration,
+                    )
+                    .await);
+            }
         }
         if let Err(error) = prove_membership(
             &mut session,
@@ -960,6 +1006,34 @@ async fn authenticate_relay_admin(
         return Err(ProvisioningError::AuthenticationRejected);
     }
     println!("upstream provisioning stage: relay-admin authenticated");
+    Ok(())
+}
+
+async fn add_nip29_member(
+    session: &mut TenantRelaySession,
+    operation: &ManagedIdentityOperationRecord,
+    identity_pubkey: &str,
+    relay_admin: &Keys,
+    membership_channel: &str,
+) -> Result<(), ProvisioningError> {
+    let event = EventBuilder::new(Kind::Custom(9000), "")
+        .tags([
+            Tag::parse(["h", membership_channel])
+                .map_err(|_| ProvisioningError::MembershipUnproven)?,
+            Tag::parse(["p", identity_pubkey])
+                .map_err(|_| ProvisioningError::MembershipUnproven)?,
+        ])
+        .custom_created_at(Timestamp::from(operation.created_at.timestamp() as u64))
+        .sign_with_keys(relay_admin)
+        .map_err(|_| ProvisioningError::MembershipUnproven)?;
+    let event_id = event.id.to_hex();
+    session
+        .send_text(&serde_json::json!(["EVENT", event]).to_string())
+        .await
+        .map_err(|_| ProvisioningError::TransportUnavailable)?;
+    if !await_ok(session, &event_id).await? {
+        return Err(ProvisioningError::MembershipUnproven);
+    }
     Ok(())
 }
 
