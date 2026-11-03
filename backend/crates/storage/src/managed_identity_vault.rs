@@ -34,6 +34,8 @@ pub enum ManagedIdentityStoreError {
     NotFound,
     #[error("managed identity envelope is invalid")]
     InvalidEnvelope,
+    #[error("managed identity operation no longer permits identity storage")]
+    OperationNotWritable,
 }
 
 #[derive(Clone, Debug, FromRow)]
@@ -104,64 +106,47 @@ impl ManagedIdentityVaultStore {
         idempotency_key: Uuid,
         envelope: &ManagedIdentityEnvelope,
     ) -> Result<ManagedIdentityRecord, ManagedIdentityStoreError> {
-        if envelope.context.generation <= 0
-            || envelope.version != ENVELOPE_VERSION
-            || envelope.ciphertext.len() != 48
-            || envelope.public_key.len() != 64
-            || !envelope
-                .public_key
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
-        {
-            return Err(ManagedIdentityStoreError::InvalidEnvelope);
-        }
+        validate_envelope(envelope)?;
         let mut tx = self.0.begin().await.map_err(map_database_error)?;
         set_tenant(&mut tx, envelope.context.tenant_id).await?;
-        let inserted = sqlx::query_as::<_, ManagedIdentityRecord>(
-            "INSERT INTO managed_chat_identities \
-             (identity_id, tenant_id, principal_id, generation, idempotency_key, public_key, \
-              envelope_version, nonce, ciphertext, wrapped_dek, kms_key_id, kms_key_version) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) \
-             ON CONFLICT (tenant_id, principal_id, idempotency_key) DO NOTHING \
-             RETURNING identity_id, tenant_id, principal_id, generation, idempotency_key, \
-              public_key, envelope_version, nonce, ciphertext, wrapped_dek, kms_key_id, \
-              kms_key_version, status",
+        let record = insert_or_load_in_tx(&mut tx, idempotency_key, envelope).await?;
+        tx.commit().await.map_err(map_database_error)?;
+        Ok(record)
+    }
+
+    /// Store an identity only while its operation still owns the lifecycle
+    /// slot. The row lock orders this insert against begin_abandon/abandon.
+    pub async fn insert_or_load_for_operation(
+        &self,
+        operation_id: Uuid,
+        envelope: &ManagedIdentityEnvelope,
+    ) -> Result<ManagedIdentityRecord, ManagedIdentityStoreError> {
+        validate_envelope(envelope)?;
+        let mut tx = self.0.begin().await.map_err(map_database_error)?;
+        set_tenant(&mut tx, envelope.context.tenant_id).await?;
+        let operation = sqlx::query_as::<_, (Uuid, Uuid, Uuid, i64)>(
+            "SELECT tenant_id, principal_id, identity_id, identity_generation \
+             FROM managed_chat_identity_operations \
+             WHERE tenant_id=$1 AND operation_id=$2 \
+               AND status='provisioning' \
+             FOR UPDATE",
         )
-        .bind(envelope.context.identity_id)
         .bind(envelope.context.tenant_id)
-        .bind(envelope.context.principal_id)
-        .bind(envelope.context.generation)
-        .bind(idempotency_key)
-        .bind(&envelope.public_key)
-        .bind(
-            i16::try_from(envelope.version)
-                .map_err(|_| ManagedIdentityStoreError::InvalidEnvelope)?,
-        )
-        .bind(envelope.nonce.as_slice())
-        .bind(&envelope.ciphertext)
-        .bind(&envelope.wrapped_dek.ciphertext)
-        .bind(&envelope.wrapped_dek.key_id)
-        .bind(&envelope.wrapped_dek.key_version)
+        .bind(operation_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(map_database_error)?;
-
-        let record = match inserted {
-            Some(record) => record,
-            None => sqlx::query_as::<_, ManagedIdentityRecord>(
-                "SELECT identity_id, tenant_id, principal_id, generation, idempotency_key, \
-                 public_key, envelope_version, nonce, ciphertext, wrapped_dek, kms_key_id, \
-                 kms_key_version, status FROM managed_chat_identities \
-                 WHERE tenant_id=$1 AND principal_id=$2 AND idempotency_key=$3",
-            )
-            .bind(envelope.context.tenant_id)
-            .bind(envelope.context.principal_id)
-            .bind(idempotency_key)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(map_database_error)?
-            .ok_or(ManagedIdentityStoreError::Conflict)?,
-        };
+        if operation
+            != Some((
+                envelope.context.tenant_id,
+                envelope.context.principal_id,
+                envelope.context.identity_id,
+                envelope.context.generation,
+            ))
+        {
+            return Err(ManagedIdentityStoreError::OperationNotWritable);
+        }
+        let record = insert_or_load_in_tx(&mut tx, operation_id, envelope).await?;
         tx.commit().await.map_err(map_database_error)?;
         Ok(record)
     }
@@ -287,6 +272,70 @@ impl ManagedIdentityVaultStore {
             return Err(ManagedIdentityStoreError::NotFound);
         }
         tx.commit().await.map_err(map_database_error)
+    }
+}
+
+fn validate_envelope(envelope: &ManagedIdentityEnvelope) -> Result<(), ManagedIdentityStoreError> {
+    if envelope.context.generation <= 0
+        || envelope.version != ENVELOPE_VERSION
+        || envelope.ciphertext.len() != 48
+        || envelope.public_key.len() != 64
+        || !envelope
+            .public_key
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(ManagedIdentityStoreError::InvalidEnvelope);
+    }
+    Ok(())
+}
+
+async fn insert_or_load_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    idempotency_key: Uuid,
+    envelope: &ManagedIdentityEnvelope,
+) -> Result<ManagedIdentityRecord, ManagedIdentityStoreError> {
+    let inserted = sqlx::query_as::<_, ManagedIdentityRecord>(
+        "INSERT INTO managed_chat_identities \
+         (identity_id, tenant_id, principal_id, generation, idempotency_key, public_key, \
+          envelope_version, nonce, ciphertext, wrapped_dek, kms_key_id, kms_key_version) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) \
+         ON CONFLICT (tenant_id, principal_id, idempotency_key) DO NOTHING \
+         RETURNING identity_id, tenant_id, principal_id, generation, idempotency_key, \
+          public_key, envelope_version, nonce, ciphertext, wrapped_dek, kms_key_id, \
+          kms_key_version, status",
+    )
+    .bind(envelope.context.identity_id)
+    .bind(envelope.context.tenant_id)
+    .bind(envelope.context.principal_id)
+    .bind(envelope.context.generation)
+    .bind(idempotency_key)
+    .bind(&envelope.public_key)
+    .bind(i16::try_from(envelope.version).map_err(|_| ManagedIdentityStoreError::InvalidEnvelope)?)
+    .bind(envelope.nonce.as_slice())
+    .bind(&envelope.ciphertext)
+    .bind(&envelope.wrapped_dek.ciphertext)
+    .bind(&envelope.wrapped_dek.key_id)
+    .bind(&envelope.wrapped_dek.key_version)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(map_database_error)?;
+
+    match inserted {
+        Some(record) => Ok(record),
+        None => sqlx::query_as::<_, ManagedIdentityRecord>(
+            "SELECT identity_id, tenant_id, principal_id, generation, idempotency_key, \
+             public_key, envelope_version, nonce, ciphertext, wrapped_dek, kms_key_id, \
+             kms_key_version, status FROM managed_chat_identities \
+             WHERE tenant_id=$1 AND principal_id=$2 AND idempotency_key=$3",
+        )
+        .bind(envelope.context.tenant_id)
+        .bind(envelope.context.principal_id)
+        .bind(idempotency_key)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(map_database_error)?
+        .ok_or(ManagedIdentityStoreError::Conflict),
     }
 }
 

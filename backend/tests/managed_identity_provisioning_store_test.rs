@@ -676,6 +676,48 @@ async fn cas_transitions_are_monotonic() {
 
 #[tokio::test]
 #[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
+async fn admitted_identity_cannot_be_rebound_after_failure() {
+    let pool = test_pool().await;
+    let store = ManagedIdentityOperationStore::new(pool.clone());
+    let tenant_id = Uuid::new_v4();
+    let operation = store
+        .authorize(provisioning_request(tenant_id, Uuid::new_v4()))
+        .await
+        .unwrap();
+    let admitted_identity = Uuid::new_v4();
+    let admission_event_id = "b".repeat(64);
+    store
+        .attach_identity(tenant_id, operation.operation_id, admitted_identity, 1)
+        .await
+        .unwrap();
+    store
+        .record_admission_sent(tenant_id, operation.operation_id, &admission_event_id)
+        .await
+        .unwrap();
+    store
+        .mark_failed(tenant_id, operation.operation_id, "authentication_rejected")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store
+            .attach_identity(tenant_id, operation.operation_id, Uuid::new_v4(), 2)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    let unchanged = store.load(tenant_id, operation.operation_id).await.unwrap();
+    assert_eq!(unchanged.identity_id, admitted_identity);
+    assert_eq!(unchanged.identity_generation, 1);
+    assert_eq!(
+        unchanged.admission_event_id.as_deref(),
+        Some(admission_event_id.as_str())
+    );
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
 async fn list_retryable_respects_bounds_and_order() {
     let pool = test_pool().await;
     let store = ManagedIdentityOperationStore::new(pool.clone());
@@ -723,6 +765,10 @@ async fn list_retryable_respects_bounds_and_order() {
         .unwrap();
     store
         .attach_identity(tenant_id, ready.operation_id, Uuid::new_v4(), 1)
+        .await
+        .unwrap();
+    store
+        .record_admission_sent(tenant_id, ready.operation_id, &"a".repeat(64))
         .await
         .unwrap();
     store

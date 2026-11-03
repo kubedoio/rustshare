@@ -219,6 +219,7 @@ impl From<ManagedIdentityStoreError> for ProvisioningError {
     fn from(error: ManagedIdentityStoreError) -> Self {
         match error {
             ManagedIdentityStoreError::Conflict => Self::IdentityConflict,
+            ManagedIdentityStoreError::OperationNotWritable => Self::Internal,
             ManagedIdentityStoreError::Database
             | ManagedIdentityStoreError::NotFound
             | ManagedIdentityStoreError::InvalidEnvelope => Self::DatabaseUnavailable,
@@ -337,6 +338,12 @@ impl ManagedIdentityProvisioner {
             }
         };
 
+        if operation.admission_event_id.is_some() && active.is_none() {
+            return Err(self
+                .fail(tenant_id, operation_id, ProvisioningError::IdentityConflict)
+                .await);
+        }
+
         if let Some(active) = active {
             if operation.status == ManagedIdentityOperationStatus::Provisioning.as_str() {
                 if active.identity_id != operation.identity_id
@@ -351,6 +358,14 @@ impl ManagedIdentityProvisioner {
                     generation: active.generation,
                     public_key: active.public_key,
                 });
+            }
+            if operation.admission_event_id.is_some()
+                && (active.identity_id != operation.identity_id
+                    || active.generation != operation.identity_generation)
+            {
+                return Err(self
+                    .fail(tenant_id, operation_id, ProvisioningError::IdentityConflict)
+                    .await);
             }
             if self
                 .operations
@@ -433,8 +448,15 @@ impl ManagedIdentityProvisioner {
                     .await)
             }
         };
-        let stored = match self.vault.insert_or_load(operation_id, &envelope).await {
+        let stored = match self
+            .vault
+            .insert_or_load_for_operation(operation_id, &envelope)
+            .await
+        {
             Ok(stored) => stored,
+            Err(ManagedIdentityStoreError::OperationNotWritable) => {
+                return Err(ProvisioningError::Internal)
+            }
             Err(ManagedIdentityStoreError::Conflict) => {
                 return Err(self
                     .fail(tenant_id, operation_id, ProvisioningError::IdentityConflict)
@@ -1150,8 +1172,8 @@ mod tests {
         MappingProvisioningAction, MappingProvisioningStatement, MappingProvisioningVerifier,
     };
     use rustshare_storage::{
-        ManagedIdentityOperationError, ManagedIdentityRecord, ManagedIdentityVaultStore,
-        UpstreamRelayMappingStore,
+        ManagedIdentityOperationError, ManagedIdentityRecord, ManagedIdentityStatus,
+        ManagedIdentityVaultStore, UpstreamRelayMappingStore,
     };
     use sqlx::PgPool;
     use tokio::sync::{Barrier, Notify};
@@ -1616,6 +1638,262 @@ mod tests {
             .unwrap();
         assert_eq!(active.identity_id, operation.identity_id);
         assert_eq!(active.generation, operation.identity_generation);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
+    async fn late_kms_result_cannot_insert_identity_after_abandonment() {
+        let pool = pool().await;
+        let (tenant, user, workspace) = tenant_user_workspace(&pool).await;
+        let mapping = mapping_store(&pool, tenant, workspace).await;
+        let provisioner = ManagedIdentityProvisioner::new(pool.clone(), mapping);
+        let operation = provisioner
+            .authorize(
+                AuthenticatedTestPrincipal::new(user, tenant, workspace),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        provisioner
+            .operations()
+            .mark_failed(tenant, operation.operation_id, "kms_unavailable")
+            .await
+            .unwrap();
+
+        let kms = Arc::new(BlockingKms {
+            started: Notify::new(),
+            release: Notify::new(),
+        });
+        let task_provisioner = provisioner.clone();
+        let task_kms = kms.clone();
+        let operation_id = operation.operation_id;
+        let task = tokio::spawn(async move {
+            task_provisioner
+                .ensure_identity(tenant, operation_id, task_kms.as_ref())
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), kms.started.notified())
+            .await
+            .expect("KMS wrapping was not reached");
+
+        // Model a competing attempt failing while this KMS request is pending.
+        provisioner
+            .operations()
+            .mark_failed(tenant, operation.operation_id, "kms_unavailable")
+            .await
+            .unwrap();
+        provisioner
+            .abandon(tenant, operation.operation_id)
+            .await
+            .unwrap();
+        kms.release.notify_one();
+        assert_eq!(
+            task.await.unwrap().unwrap_err(),
+            ProvisioningError::Internal
+        );
+        assert!(provisioner
+            .vault
+            .load_active_by_principal(tenant, user)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            provisioner
+                .operations()
+                .load(tenant, operation.operation_id)
+                .await
+                .unwrap()
+                .status,
+            "abandoned"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
+    async fn admitted_operation_cannot_rebind_to_a_replacement_identity() {
+        let pool = pool().await;
+        let (tenant, user, workspace) = tenant_user_workspace(&pool).await;
+        let mapping = mapping_store(&pool, tenant, workspace).await;
+        let provisioner = ManagedIdentityProvisioner::new(pool.clone(), mapping);
+        let operation = provisioner
+            .authorize(
+                AuthenticatedTestPrincipal::new(user, tenant, workspace),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        let kms = TestKms::new();
+        let admitted = provisioner
+            .ensure_identity(tenant, operation.operation_id, &kms)
+            .await
+            .unwrap();
+        let admission_event_id = "d".repeat(64);
+        provisioner
+            .operations()
+            .record_admission_sent(tenant, operation.operation_id, &admission_event_id)
+            .await
+            .unwrap();
+        provisioner
+            .operations()
+            .mark_failed(tenant, operation.operation_id, "authentication_rejected")
+            .await
+            .unwrap();
+        provisioner
+            .vault
+            .disable_or_revoke(
+                tenant,
+                admitted.identity_id,
+                ManagedIdentityStatus::Disabled,
+            )
+            .await
+            .unwrap();
+
+        let replacement_id = Uuid::new_v4();
+        let replacement = ManagedIdentityEnvelope::generate(
+            IdentityContext {
+                tenant_id: tenant,
+                principal_id: user,
+                identity_id: replacement_id,
+                generation: admitted.generation + 1,
+            },
+            &kms,
+        )
+        .await
+        .unwrap();
+        provisioner
+            .vault
+            .insert_or_load(Uuid::new_v4(), &replacement)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            provisioner
+                .ensure_identity(tenant, operation.operation_id, &kms)
+                .await
+                .unwrap_err(),
+            ProvisioningError::IdentityConflict
+        );
+        let unchanged = provisioner
+            .operations()
+            .load(tenant, operation.operation_id)
+            .await
+            .unwrap();
+        assert_eq!(unchanged.identity_id, admitted.identity_id);
+        assert_eq!(unchanged.identity_generation, admitted.generation);
+        assert_eq!(
+            unchanged.admission_event_id.as_deref(),
+            Some(admission_event_id.as_str())
+        );
+        let active = provisioner
+            .vault
+            .load_active_by_principal(tenant, user)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(active.identity_id, replacement_id);
+        provisioner
+            .vault
+            .disable_or_revoke(tenant, replacement_id, ManagedIdentityStatus::Disabled)
+            .await
+            .unwrap();
+        assert_eq!(
+            provisioner
+                .ensure_identity(tenant, operation.operation_id, &kms)
+                .await
+                .unwrap_err(),
+            ProvisioningError::IdentityConflict
+        );
+        assert!(provisioner
+            .vault
+            .load_active_by_principal(tenant, user)
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
+    async fn failed_admitted_operation_rejects_a_replacement_identity() {
+        let pool = pool().await;
+        let (tenant, user, workspace) = tenant_user_workspace(&pool).await;
+        let mapping = mapping_store(&pool, tenant, workspace).await;
+        let provisioner = ManagedIdentityProvisioner::new(pool.clone(), mapping);
+        let operation = provisioner
+            .authorize(
+                AuthenticatedTestPrincipal::new(user, tenant, workspace),
+                Uuid::new_v4(),
+            )
+            .await
+            .unwrap();
+        let kms = TestKms::new();
+        let admitted = provisioner
+            .ensure_identity(tenant, operation.operation_id, &kms)
+            .await
+            .unwrap();
+        let admission_event_id = "c".repeat(64);
+        provisioner
+            .operations()
+            .record_admission_sent(tenant, operation.operation_id, &admission_event_id)
+            .await
+            .unwrap();
+        provisioner
+            .operations()
+            .mark_failed(tenant, operation.operation_id, "authentication_rejected")
+            .await
+            .unwrap();
+        provisioner
+            .vault
+            .disable_or_revoke(
+                tenant,
+                admitted.identity_id,
+                ManagedIdentityStatus::Disabled,
+            )
+            .await
+            .unwrap();
+
+        let replacement_id = Uuid::new_v4();
+        let replacement = ManagedIdentityEnvelope::generate(
+            IdentityContext {
+                tenant_id: tenant,
+                principal_id: user,
+                identity_id: replacement_id,
+                generation: admitted.generation + 1,
+            },
+            &kms,
+        )
+        .await
+        .unwrap();
+        provisioner
+            .vault
+            .insert_or_load(Uuid::new_v4(), &replacement)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            provisioner
+                .ensure_identity(tenant, operation.operation_id, &kms)
+                .await
+                .unwrap_err(),
+            ProvisioningError::IdentityConflict
+        );
+        let unchanged = provisioner
+            .operations()
+            .load(tenant, operation.operation_id)
+            .await
+            .unwrap();
+        assert_eq!(unchanged.identity_id, admitted.identity_id);
+        assert_eq!(unchanged.identity_generation, admitted.generation);
+        assert_eq!(
+            unchanged.admission_event_id.as_deref(),
+            Some(admission_event_id.as_str())
+        );
+        let active = provisioner
+            .vault
+            .load_active_by_principal(tenant, user)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(active.identity_id, replacement_id);
     }
 
     #[tokio::test]

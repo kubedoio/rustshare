@@ -255,6 +255,8 @@ impl ManagedIdentityOperationStore {
             "UPDATE managed_chat_identity_operations \
              SET identity_id=$3, identity_generation=$4, status='provisioning', updated_at=now() \
              WHERE tenant_id=$1 AND operation_id=$2 AND status IN ('authorized','failed') \
+               AND (admission_event_id IS NULL OR \
+                    (identity_id=$3 AND identity_generation=$4)) \
              RETURNING {COLUMNS}"
         ))
         .bind(tenant_id)
