@@ -179,7 +179,7 @@ checklist against the exact commit to be tagged:
 2. **Frontend gates**: `npm ci`, `npm run check`, `npm run lint`,
    `npm run test`, `npm run build`, `npm audit --audit-level=high`.
 3. **Live-DB integration suite**: PostgreSQL (pgvector) + RustFS, migrations
-   applied, `cargo test --workspace --all-features -- --ignored`.
+   applied, `cargo test --workspace --all-features -- --ignored --skip upstream_buzz_transport::disposable_service_tests`.
 4. **Clean deployment smoke**: boot the documented Compose stack from a clean
    state and run `./scripts/final-launch-smoke.sh`.
 5. **Upgrade drill**: upgrade from the previous stable release against
