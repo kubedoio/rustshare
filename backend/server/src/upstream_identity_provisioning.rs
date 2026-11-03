@@ -575,7 +575,7 @@ impl ManagedIdentityProvisioner {
 
         if operation.admission_event_id.is_none() {
             if let Err(error) = self
-                .admit(&mut session, &operation, &identity, relay_admin, &mapping)
+                .admit(&mut session, &operation, &identity, relay_admin)
                 .await
             {
                 return Err(self.fail(tenant_id, operation_id, error).await);
@@ -614,7 +614,6 @@ impl ManagedIdentityProvisioner {
         operation: &ManagedIdentityOperationRecord,
         identity: &IdentityOutcome,
         relay_admin: &Keys,
-        mapping: &rustshare_resource_auth::upstream_relay_mapping::TrustedRelayMapping,
     ) -> Result<(), ProvisioningError> {
         let event = build_buzz_admission_event_at(
             BuzzAdmissionOperation::Admit,
