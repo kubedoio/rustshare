@@ -67,6 +67,7 @@ envy = "0.4"
 hmac = { workspace = true }
 hex = { workspace = true }
 sha2.workspace = true
+x509-parser = "0.18"
 md5 = "0.8"
 reqwest = { workspace = true }
 governor = "0.10"
