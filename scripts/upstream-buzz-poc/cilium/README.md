@@ -76,11 +76,11 @@ manifest.
 ## Latest executed qualification
 
 Run on 2026-11-03 from RustShare commit
-`045b7859a529b4e9d3e745a0ba62c0c6012b5139`, using upstream Buzz commit
+`d9c650a61a38595122a8499302a8cd81d849c896`, using upstream Buzz commit
 `eafd77e9f6e96052476bdd88be732c046fdb7ab3` and tree
 `04e3a40545bd3b23510ec32b4c8cccee2acef7c5`. Cilium `v1.16.4` reached `OK`
 for Cilium, operator, Envoy and Hubble Relay. The isolated Buzz image digest
-was `sha256:17e9f54cf4c567e535cf51707e67cbd5726af714da46bee61dcab1645f3944a3`.
+was `sha256:294e91d414b9337ba340abae5faf721797664661d01b922216de1b86314b8ccc`.
 
 - Member transport passed TLS/SNI/peer pin verification, NIP-11 identity
   validation, WebSocket upgrade, NIP-42 authentication and private-channel DM
@@ -91,14 +91,16 @@ was `sha256:17e9f54cf4c567e535cf51707e67cbd5726af714da46bee61dcab1645f3944a3`.
 - Tenant isolation passed: unauthorized histories returned zero events and
   private publishes in both cross-tenant directions were rejected.
 - The poisoned multi-address DNS answer was rejected before a TCP socket dial.
+  Hubble observer startup and continued coverage are required; observer failure
+  rejects the qualification instead of making an empty capture appear valid.
 - Hubble recorded the connector Pod's TCP SYN to `1.1.1.1:443` as
   `EGRESS DENIED` / `DROPPED`; the in-Pod probe received no response.
 - All three selected ignored Rust tests passed. The disposable kind cluster
   and unique image tags were removed after the run.
 
 The sanitized evidence bundle is retained on the test runner at
-`/tmp/elembra-cilium-evidence-20261103112720-1637415`. Its `SHA256SUMS` file
-hash is `e6bfdca9771bc3a6174f16e85dcd50e7e83c141d9701ae174a617dfaaa1034b5`;
+`/tmp/elembra-cilium-evidence-20261103114758-1685206`. Its `SHA256SUMS` file
+hash is `bd95448ef49654558ee007a0cca49cdfa0116fb959511b5c6bcd6e73b5d1deae`;
 all 35 entries verified.
 This evidence qualifies only the exercised disposable profile and tests; see
 the limits below.
