@@ -13,7 +13,7 @@ use rustshare_crypto::managed_identity_vault::{
     DekKeyManagement, IdentityContext, ManagedIdentityEnvelope, RecoveredIdentity, WrappedDek,
 };
 use rustshare_resource_auth::chat_identity::{
-    build_buzz_conditional_admission_event_at, BuzzAdmissionOperation,
+    build_buzz_admission_event_at, BuzzAdmissionOperation,
 };
 use rustshare_storage::{
     ChatIdentityStore, ManagedIdentityOperationError, ManagedIdentityOperationRecord,
@@ -616,13 +616,11 @@ impl ManagedIdentityProvisioner {
         relay_admin: &Keys,
         mapping: &rustshare_resource_auth::upstream_relay_mapping::TrustedRelayMapping,
     ) -> Result<(), ProvisioningError> {
-        let event = build_buzz_conditional_admission_event_at(
+        let event = build_buzz_admission_event_at(
             BuzzAdmissionOperation::Admit,
             &identity.public_key,
             relay_admin,
             Timestamp::from(operation.created_at.timestamp() as u64),
-            operation.operation_id,
-            mapping.record().generation,
         )
         .map_err(|_| ProvisioningError::AdmissionRejected)?;
         let event_id = event.id.to_hex();
