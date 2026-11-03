@@ -1714,7 +1714,10 @@ mod disposable_service_tests {
             "DISPOSABLE_ONLY",
             "this test creates permanent mapping audit rows; use a disposable database"
         );
-        let database_url = required("DATABASE_URL");
+        let database_url =
+            crate::test_guard::disposable_database_url_from_env().unwrap_or_else(|message| {
+                panic!("handshake-race test requires disposable PostgreSQL: {message}")
+            });
         let relay_host = required("BUZZ_TEST_RACE_HOST");
         let relay_url = required("BUZZ_TEST_RACE_RELAY_URL");
         let approved_ip = required("BUZZ_TEST_RACE_APPROVED_IP")
