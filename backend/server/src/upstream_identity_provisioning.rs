@@ -731,52 +731,53 @@ impl ManagedIdentityProvisioner {
                     )
                     .await);
             }
-            if let Err(error) =
-                authenticate_relay_admin(&mut session, relay_admin, mapping.relay_url()).await
-            {
-                return Err(self.fail(tenant_id, operation_id, error).await);
-            }
-            if let Err(error) = add_nip29_member(
-                &mut session,
-                &operation,
-                &identity.public_key,
-                relay_admin,
-                membership_channel,
-            )
-            .await
-            {
-                return Err(self.fail(tenant_id, operation_id, error).await);
-            }
-            println!("upstream provisioning stage: private channel membership accepted");
-            drop(session);
-            session = match connect(
-                &self.mappings,
-                TenantId(operation.tenant_id),
-                WorkspaceId(operation.workspace_id),
-                trust,
-            )
-            .await
-            {
-                Ok(session) => session,
-                Err(_) => {
-                    return Err(self
-                        .fail(
-                            tenant_id,
-                            operation_id,
-                            ProvisioningError::TransportUnavailable,
-                        )
-                        .await)
-                }
-            };
-            if session.scope() != &mapping.scope() {
+        }
+        // Replaying this deterministic event repairs a prior failure after NIP-43 admission.
+        if let Err(error) =
+            authenticate_relay_admin(&mut session, relay_admin, mapping.relay_url()).await
+        {
+            return Err(self.fail(tenant_id, operation_id, error).await);
+        }
+        if let Err(error) = add_nip29_member(
+            &mut session,
+            &operation,
+            &identity.public_key,
+            relay_admin,
+            membership_channel,
+        )
+        .await
+        {
+            return Err(self.fail(tenant_id, operation_id, error).await);
+        }
+        println!("upstream provisioning stage: private channel membership accepted");
+        drop(session);
+        session = match connect(
+            &self.mappings,
+            TenantId(operation.tenant_id),
+            WorkspaceId(operation.workspace_id),
+            trust,
+        )
+        .await
+        {
+            Ok(session) => session,
+            Err(_) => {
                 return Err(self
                     .fail(
                         tenant_id,
                         operation_id,
-                        ProvisioningError::StaleMappingGeneration,
+                        ProvisioningError::TransportUnavailable,
                     )
-                    .await);
+                    .await)
             }
+        };
+        if session.scope() != &mapping.scope() {
+            return Err(self
+                .fail(
+                    tenant_id,
+                    operation_id,
+                    ProvisioningError::StaleMappingGeneration,
+                )
+                .await);
         }
         if let Err(error) = prove_membership(
             &mut session,
