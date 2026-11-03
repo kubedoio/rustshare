@@ -1,4 +1,10 @@
+use rustshare_storage::{
+    ManagedIdentityOperationError, ManagedIdentityOperationStatus, ManagedIdentityOperationStore,
+    ProvisioningRequest,
+};
 use sqlx::PgPool;
+use std::time::Duration;
+use uuid::Uuid;
 
 const TABLE: &str = "managed_chat_identity_operations";
 const TENANT_POLICY: &str = "managed_chat_identity_operations_tenant_isolation";
@@ -87,5 +93,559 @@ async fn operations_table_is_tenant_scoped_and_cannot_hold_plaintext() {
         with_check.contains("app.current_tenant_id"),
         "policy with_check must reference app.current_tenant_id: {with_check}"
     );
+    pool.close().await;
+}
+
+async fn test_pool() -> PgPool {
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("DATABASE_URL must point at a disposable PostgreSQL database");
+    let pool = PgPool::connect(&database_url).await.unwrap();
+    sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+    pool
+}
+
+fn provisioning_request(tenant_id: Uuid, principal_id: Uuid) -> ProvisioningRequest {
+    ProvisioningRequest {
+        tenant_id,
+        principal_id,
+        workspace_id: Uuid::new_v4(),
+        mapping_id: Uuid::new_v4(),
+        mapping_generation: 1,
+        idempotency_key: Uuid::new_v4(),
+    }
+}
+
+/// Let the database clock move so `updated_at` comparisons stay strict.
+async fn clock_tick() {
+    tokio::time::sleep(Duration::from_millis(5)).await;
+}
+
+/// Raw-insert a syntactically valid vault row so authorize can observe an
+/// existing generation for the subject (the envelope contents are irrelevant
+/// to the operation store).
+async fn seed_vault_identity(pool: &PgPool, tenant_id: Uuid, principal_id: Uuid, generation: i64) {
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("SELECT set_config('app.current_tenant_id', $1, true)")
+        .bind(tenant_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let public_key = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    sqlx::query(
+        "INSERT INTO managed_chat_identities \
+         (identity_id, tenant_id, principal_id, generation, idempotency_key, public_key, \
+          envelope_version, nonce, ciphertext, wrapped_dek, kms_key_id, kms_key_version) \
+         VALUES ($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(tenant_id)
+    .bind(principal_id)
+    .bind(generation)
+    .bind(Uuid::new_v4())
+    .bind(public_key)
+    .bind(vec![0u8; 12])
+    .bind(vec![0u8; 48])
+    .bind(vec![0u8; 28])
+    .bind("test-kms")
+    .bind("v1")
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
+async fn authorize_is_idempotent_per_key_and_rejects_second_active_operation() {
+    let pool = test_pool().await;
+    let store = ManagedIdentityOperationStore::new(pool.clone());
+    let tenant_id = Uuid::new_v4();
+    let principal_id = Uuid::new_v4();
+    seed_vault_identity(&pool, tenant_id, principal_id, 3).await;
+
+    let request = provisioning_request(tenant_id, principal_id);
+    let first = store.authorize(request.clone()).await.unwrap();
+    assert_eq!(
+        first.status,
+        ManagedIdentityOperationStatus::Authorized.as_str()
+    );
+    assert_eq!(
+        first.identity_generation, 4,
+        "generation must be max(existing vault generation) + 1"
+    );
+
+    let replayed = store.authorize(request.clone()).await.unwrap();
+    assert_eq!(replayed.operation_id, first.operation_id);
+    assert_eq!(replayed.identity_id, first.identity_id);
+    assert_eq!(replayed.identity_generation, first.identity_generation);
+    assert_eq!(replayed.workspace_id, first.workspace_id);
+
+    let loaded = store.load(tenant_id, first.operation_id).await.unwrap();
+    assert_eq!(loaded.operation_id, first.operation_id);
+
+    let competing = ProvisioningRequest {
+        idempotency_key: Uuid::new_v4(),
+        ..request.clone()
+    };
+    assert_eq!(
+        store.authorize(competing).await.unwrap_err(),
+        ManagedIdentityOperationError::Conflict
+    );
+    assert_eq!(store.list_retryable(tenant_id, 10).await.unwrap().len(), 1);
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
+async fn failed_rows_stay_in_the_one_active_index_until_abandoned() {
+    let pool = test_pool().await;
+    let store = ManagedIdentityOperationStore::new(pool.clone());
+    let tenant_id = Uuid::new_v4();
+    let principal_id = Uuid::new_v4();
+    let request = provisioning_request(tenant_id, principal_id);
+    let operation = store.authorize(request.clone()).await.unwrap();
+
+    clock_tick().await;
+    let failed = store
+        .mark_failed(tenant_id, operation.operation_id, "kms_unavailable")
+        .await
+        .unwrap();
+    assert_eq!(
+        failed.status,
+        ManagedIdentityOperationStatus::Failed.as_str()
+    );
+    assert_eq!(failed.attempt_count, 1);
+    assert_eq!(failed.error_code.as_deref(), Some("kms_unavailable"));
+
+    // The failed row still occupies the one-active index: a different key
+    // cannot race reconciliation into a second operation.
+    let competing = ProvisioningRequest {
+        idempotency_key: Uuid::new_v4(),
+        ..request.clone()
+    };
+    assert_eq!(
+        store.authorize(competing.clone()).await.unwrap_err(),
+        ManagedIdentityOperationError::Conflict
+    );
+
+    // A failed row is resumable and still blocks re-authorization while resumed.
+    let resumed = store
+        .attach_identity(tenant_id, operation.operation_id, Uuid::new_v4(), 1)
+        .await
+        .unwrap();
+    assert_eq!(
+        resumed.status,
+        ManagedIdentityOperationStatus::Provisioning.as_str()
+    );
+    assert_eq!(
+        store.authorize(competing.clone()).await.unwrap_err(),
+        ManagedIdentityOperationError::Conflict
+    );
+
+    clock_tick().await;
+    store
+        .mark_failed(tenant_id, operation.operation_id, "transport_unavailable")
+        .await
+        .unwrap();
+    let abandoned = store
+        .abandon(tenant_id, operation.operation_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        abandoned.status,
+        ManagedIdentityOperationStatus::Abandoned.as_str()
+    );
+
+    // Leaving the index permits a fresh authorize for the same subject.
+    let fresh = store.authorize(competing).await.unwrap();
+    assert_ne!(fresh.operation_id, operation.operation_id);
+
+    // An abandoned operation never resumes: every transition is rejected.
+    assert_eq!(
+        store
+            .attach_identity(tenant_id, operation.operation_id, Uuid::new_v4(), 1)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    assert_eq!(
+        store
+            .mark_failed(tenant_id, operation.operation_id, "internal_error")
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    assert_eq!(
+        store
+            .mark_ready(tenant_id, operation.operation_id)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    assert_eq!(
+        store
+            .abandon(tenant_id, operation.operation_id)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+
+    // Abandon is only valid from failed, never from authorized.
+    let authorized = store
+        .authorize(provisioning_request(tenant_id, Uuid::new_v4()))
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .abandon(tenant_id, authorized.operation_id)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
+async fn cas_transitions_are_monotonic() {
+    let pool = test_pool().await;
+    let store = ManagedIdentityOperationStore::new(pool.clone());
+    let tenant_id = Uuid::new_v4();
+    let principal_id = Uuid::new_v4();
+
+    // Authorize preallocates generation 1 when the subject has no vault row.
+    let operation = store
+        .authorize(provisioning_request(tenant_id, principal_id))
+        .await
+        .unwrap();
+    assert_eq!(operation.identity_generation, 1);
+    let preallocated = operation.identity_id;
+
+    // attach_identity moves authorized -> provisioning and records the actual
+    // identity values, replacing the preallocation (no phantom generation).
+    let actual_identity_id = Uuid::new_v4();
+    clock_tick().await;
+    let attached = store
+        .attach_identity(tenant_id, operation.operation_id, actual_identity_id, 7)
+        .await
+        .unwrap();
+    assert_eq!(
+        attached.status,
+        ManagedIdentityOperationStatus::Provisioning.as_str()
+    );
+    assert_ne!(attached.identity_id, preallocated);
+    assert_eq!(attached.identity_id, actual_identity_id);
+    assert_eq!(attached.identity_generation, 7);
+    assert!(attached.updated_at > operation.updated_at);
+
+    // A second attach_identity is not monotonic.
+    assert_eq!(
+        store
+            .attach_identity(tenant_id, operation.operation_id, Uuid::new_v4(), 8)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    assert_eq!(
+        store
+            .attach_identity(tenant_id, operation.operation_id, Uuid::new_v4(), 0)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidRequest
+    );
+
+    // mark_ready only accepts provisioning; mark_failed accepts any nonterminal
+    // status, increments attempts, and records a bounded catalog error code.
+    let other = store
+        .authorize(provisioning_request(tenant_id, Uuid::new_v4()))
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .mark_ready(tenant_id, other.operation_id)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    clock_tick().await;
+    let failed = store
+        .mark_failed(tenant_id, other.operation_id, "mapping_unavailable")
+        .await
+        .unwrap();
+    assert_eq!(
+        failed.status,
+        ManagedIdentityOperationStatus::Failed.as_str()
+    );
+    assert_eq!(failed.attempt_count, 1);
+    assert_eq!(failed.error_code.as_deref(), Some("mapping_unavailable"));
+    assert!(failed.last_attempt_at.is_some());
+    assert!(failed.updated_at > other.updated_at);
+    assert_eq!(
+        store
+            .mark_ready(tenant_id, other.operation_id)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    clock_tick().await;
+    let failed_again = store
+        .mark_failed(tenant_id, other.operation_id, "database_unavailable")
+        .await
+        .unwrap();
+    assert_eq!(failed_again.attempt_count, 2);
+    assert_eq!(
+        failed_again.error_code.as_deref(),
+        Some("database_unavailable")
+    );
+    assert!(failed_again.updated_at > failed.updated_at);
+    assert_eq!(
+        store
+            .mark_failed(tenant_id, other.operation_id, "not_a_catalog_code")
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidRequest
+    );
+    let unchanged = store.load(tenant_id, other.operation_id).await.unwrap();
+    assert_eq!(unchanged.attempt_count, 2);
+
+    // record_admission_sent wins exactly once and preserves the stored event id.
+    assert_eq!(
+        store
+            .record_admission_sent(tenant_id, other.operation_id, "not-hex")
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidRequest
+    );
+    let event_id = format!("{:064x}", 0xC0FFEEu64);
+    clock_tick().await;
+    assert!(store
+        .record_admission_sent(tenant_id, operation.operation_id, &event_id)
+        .await
+        .unwrap());
+    clock_tick().await;
+    assert!(!store
+        .record_admission_sent(tenant_id, operation.operation_id, &event_id)
+        .await
+        .unwrap());
+    let admitted = store.load(tenant_id, operation.operation_id).await.unwrap();
+    assert_eq!(
+        admitted.admission_event_id.as_deref(),
+        Some(event_id.as_str())
+    );
+    assert!(admitted.updated_at > attached.updated_at);
+
+    // mark_ready moves provisioning -> ready exactly once and is terminal.
+    clock_tick().await;
+    let ready = store
+        .mark_ready(tenant_id, operation.operation_id)
+        .await
+        .unwrap();
+    assert_eq!(ready.status, ManagedIdentityOperationStatus::Ready.as_str());
+    assert!(ready.ready_at.is_some());
+    assert!(ready.updated_at > admitted.updated_at);
+    assert_eq!(
+        store
+            .mark_ready(tenant_id, operation.operation_id)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    // Terminal rows reject every remaining transition; mark_failed must not
+    // reopen ready (or abandoned) rows.
+    assert_eq!(
+        store
+            .mark_failed(tenant_id, operation.operation_id, "internal_error")
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    assert_eq!(
+        store
+            .attach_identity(tenant_id, operation.operation_id, Uuid::new_v4(), 9)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    assert_eq!(
+        store
+            .abandon(tenant_id, operation.operation_id)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition
+    );
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
+async fn list_retryable_respects_bounds_and_order() {
+    let pool = test_pool().await;
+    let store = ManagedIdentityOperationStore::new(pool.clone());
+    let tenant_id = Uuid::new_v4();
+
+    let authorized = store
+        .authorize(provisioning_request(tenant_id, Uuid::new_v4()))
+        .await
+        .unwrap();
+    clock_tick().await;
+    let provisioning = store
+        .authorize(provisioning_request(tenant_id, Uuid::new_v4()))
+        .await
+        .unwrap();
+    store
+        .attach_identity(tenant_id, provisioning.operation_id, Uuid::new_v4(), 1)
+        .await
+        .unwrap();
+    clock_tick().await;
+    let failed = store
+        .authorize(provisioning_request(tenant_id, Uuid::new_v4()))
+        .await
+        .unwrap();
+    store
+        .mark_failed(tenant_id, failed.operation_id, "kms_unavailable")
+        .await
+        .unwrap();
+    clock_tick().await;
+    let exhausted = store
+        .authorize(provisioning_request(tenant_id, Uuid::new_v4()))
+        .await
+        .unwrap();
+    for _ in 0..5 {
+        store
+            .mark_failed(tenant_id, exhausted.operation_id, "transport_unavailable")
+            .await
+            .unwrap();
+    }
+    let exhausted_row = store.load(tenant_id, exhausted.operation_id).await.unwrap();
+    assert_eq!(exhausted_row.attempt_count, exhausted_row.max_attempts);
+    clock_tick().await;
+    let ready = store
+        .authorize(provisioning_request(tenant_id, Uuid::new_v4()))
+        .await
+        .unwrap();
+    store
+        .attach_identity(tenant_id, ready.operation_id, Uuid::new_v4(), 1)
+        .await
+        .unwrap();
+    store
+        .mark_ready(tenant_id, ready.operation_id)
+        .await
+        .unwrap();
+    clock_tick().await;
+    let abandoned = store
+        .authorize(provisioning_request(tenant_id, Uuid::new_v4()))
+        .await
+        .unwrap();
+    store
+        .mark_failed(tenant_id, abandoned.operation_id, "internal_error")
+        .await
+        .unwrap();
+    store
+        .abandon(tenant_id, abandoned.operation_id)
+        .await
+        .unwrap();
+
+    let retryable = store.list_retryable(tenant_id, 50).await.unwrap();
+    let ids: Vec<Uuid> = retryable.iter().map(|row| row.operation_id).collect();
+    assert_eq!(
+        ids,
+        vec![
+            authorized.operation_id,
+            provisioning.operation_id,
+            failed.operation_id
+        ],
+        "ready, abandoned, and exhausted rows must not be retryable"
+    );
+
+    let limited = store.list_retryable(tenant_id, 2).await.unwrap();
+    assert_eq!(limited.len(), 2);
+    assert_eq!(limited[0].operation_id, authorized.operation_id);
+    assert_eq!(limited[1].operation_id, provisioning.operation_id);
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
+async fn operations_are_tenant_isolated() {
+    let pool = test_pool().await;
+    let store = ManagedIdentityOperationStore::new(pool.clone());
+    let tenant_id = Uuid::new_v4();
+    let other_tenant = Uuid::new_v4();
+    let principal_id = Uuid::new_v4();
+
+    let operation = store
+        .authorize(provisioning_request(tenant_id, principal_id))
+        .await
+        .unwrap();
+
+    // Cross-tenant store calls see nothing: RLS filters before the predicates.
+    assert_eq!(
+        store
+            .load(other_tenant, operation.operation_id)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::NotFound
+    );
+    assert!(store
+        .list_retryable(other_tenant, 10)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(store.list_retryable(tenant_id, 10).await.unwrap().len(), 1);
+
+    // A real NOSUPERUSER NOBYPASSRLS role cannot bypass the tenant policy.
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query(
+        "CREATE ROLE managed_identity_operations_rls_probe \
+         NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query(
+        "GRANT SELECT ON managed_chat_identity_operations \
+         TO managed_identity_operations_rls_probe",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("GRANT managed_identity_operations_rls_probe TO CURRENT_USER")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SET LOCAL ROLE managed_identity_operations_rls_probe")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let unscoped: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM managed_chat_identity_operations WHERE tenant_id=$1",
+    )
+    .bind(tenant_id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(unscoped, 0);
+    sqlx::query("SELECT set_config('app.current_tenant_id', $1, true)")
+        .bind(other_tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let cross_tenant: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM managed_chat_identity_operations")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+    assert_eq!(cross_tenant, 0);
+    sqlx::query("SELECT set_config('app.current_tenant_id', $1, true)")
+        .bind(tenant_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let scoped: i64 = sqlx::query_scalar("SELECT count(*) FROM managed_chat_identity_operations")
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(scoped, 1);
+    tx.rollback().await.unwrap();
     pool.close().await;
 }
