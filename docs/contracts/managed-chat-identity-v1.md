@@ -13,9 +13,12 @@ not Phase 2A implementation authorization. Existing browser-held and
 fork-backed records remain unchanged.
 
 Phase 2B.2 disposable provisioning work is implemented on an unmerged branch;
-its live qualification and independent security review remain pending. It does
-not authorize production provisioning, user-message signing, key export, Gate I
-acceptance, or production activation. Issue #442 remains open and unverified.
+its six-test Cilium qualification passed at source commit
+`f349605a13f3a1c076e47e246660fe9c1c370210`, with all 48/48 sanitized evidence
+manifest entries verified. Independent security review and Gate I acceptance
+remain pending. This does not authorize production provisioning, user-message
+signing, key export, or production activation. Issue #442 remains open and
+unapproved.
 
 ## Identity invariant
 
