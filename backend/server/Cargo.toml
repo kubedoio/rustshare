@@ -19,7 +19,11 @@ test-recording-provider = []
 # debug_assertions, so release binaries cannot enable it.
 test-buzz-replacement-qualification = []
 # Inert connector foundation; no routes or runtime profile enable it.
-upstream-buzz-runtime = ["rustshare-storage/upstream-buzz", "dep:x509-parser"]
+upstream-buzz-runtime = [
+    "rustshare-storage/upstream-buzz",
+    "rustshare-crypto/nip42-auth-signing",
+    "dep:x509-parser",
+]
 
 [[bin]]
 name = "rustshare-server"
