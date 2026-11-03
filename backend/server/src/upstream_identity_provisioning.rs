@@ -700,6 +700,7 @@ impl ManagedIdentityProvisioner {
             {
                 return Err(self.fail(tenant_id, operation_id, error).await);
             }
+            println!("upstream provisioning stage: relay admission accepted");
         }
         if let Err(error) = prove_membership(
             &mut session,
@@ -914,6 +915,7 @@ async fn authenticate_relay_admin(
             return Err(ProvisioningError::AuthenticationRejected);
         }
     };
+    println!("upstream provisioning stage: relay-admin AUTH challenge received");
     let relay =
         RelayUrl::parse(relay_url).map_err(|_| ProvisioningError::AuthenticationRejected)?;
     let event = EventBuilder::auth(&challenge, relay)
@@ -927,6 +929,7 @@ async fn authenticate_relay_admin(
     if !await_ok(session, &event_id).await? {
         return Err(ProvisioningError::AuthenticationRejected);
     }
+    println!("upstream provisioning stage: relay-admin authenticated");
     Ok(())
 }
 
@@ -953,6 +956,7 @@ async fn prove_membership(
             return Err(ProvisioningError::AuthenticationRejected);
         }
     };
+    println!("upstream provisioning stage: managed-identity AUTH challenge received");
     let event = recovered
         .sign_nip42_authentication(
             &challenge,
