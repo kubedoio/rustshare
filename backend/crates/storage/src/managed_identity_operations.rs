@@ -345,6 +345,7 @@ impl ManagedIdentityOperationStore {
             "UPDATE managed_chat_identity_operations \
              SET status='ready', ready_at=now(), updated_at=now() \
              WHERE tenant_id=$1 AND operation_id=$2 AND status='provisioning' \
+               AND admission_event_id IS NOT NULL \
              RETURNING {COLUMNS}"
         ))
         .bind(tenant_id)

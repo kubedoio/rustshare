@@ -32,6 +32,7 @@ CREATE TABLE managed_chat_identity_operations (
     admitted_at TIMESTAMPTZ,
     ready_at TIMESTAMPTZ,
     last_attempt_at TIMESTAMPTZ,
+    CHECK (status <> 'ready' OR (admission_event_id IS NOT NULL AND admitted_at IS NOT NULL)),
     UNIQUE (tenant_id, principal_id, idempotency_key)
 );
 

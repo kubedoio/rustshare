@@ -25,6 +25,11 @@ use thiserror::Error;
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
+// shortcut: this foundation has no runtime caller, so a process-wide lock
+// prevents overlapping test drives; replace it with a durable lease before
+// wiring a multi-process worker.
+static DRIVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 use crate::upstream_buzz_transport::{
     connect, RelayTlsTrustConfig, TenantRelaySession, UpstreamBuzzTransportError,
 };
@@ -276,13 +281,7 @@ impl ManagedIdentityProvisioner {
             return Err(ProvisioningError::Internal);
         }
         if operation.attempt_count >= operation.max_attempts {
-            return Err(self
-                .fail(
-                    tenant_id,
-                    operation_id,
-                    ProvisioningError::AttemptsExhausted,
-                )
-                .await);
+            return Err(ProvisioningError::AttemptsExhausted);
         }
         if operation.status == ManagedIdentityOperationStatus::Ready.as_str() {
             return self.active_identity_for_operation(&operation).await;
@@ -466,23 +465,34 @@ impl ManagedIdentityProvisioner {
         })
     }
 
-    /// Resume retryable operations sequentially. It never invents an
-    /// operation and is called only by tests in this phase.
+    /// Resume retryable operations sequentially through relay admission and
+    /// membership proof. It never invents an operation and is test-called only.
     pub(crate) async fn reconcile<K: DekKeyManagement>(
         &self,
         tenant_id: Uuid,
         limit: i64,
         kms: &K,
+        relay_admin: &Keys,
+        trust: &RelayTlsTrustConfig,
+        membership_channel: &str,
     ) -> Result<ReconcileSummary, ProvisioningError> {
         let operations = self.operations.list_retryable(tenant_id, limit).await?;
         let mut summary = ReconcileSummary::default();
         for operation in operations {
             summary.attempted += 1;
             match self
-                .ensure_identity(tenant_id, operation.operation_id, kms)
+                .drive(
+                    tenant_id,
+                    operation.operation_id,
+                    kms,
+                    relay_admin,
+                    trust,
+                    membership_channel,
+                )
                 .await
             {
-                Ok(_) => summary.advanced += 1,
+                Ok(DriveOutcome::Ready(_)) => summary.advanced += 1,
+                Ok(DriveOutcome::NotReady { .. }) => summary.failed += 1,
                 Err(_) => summary.failed += 1,
             }
         }
@@ -576,6 +586,7 @@ impl ManagedIdentityProvisioner {
         trust: &RelayTlsTrustConfig,
         membership_channel: &str,
     ) -> Result<DriveOutcome, ProvisioningError> {
+        let _drive_guard = DRIVE_LOCK.lock().await;
         let identity = self.ensure_identity(tenant_id, operation_id, kms).await?;
         let operation = self.operations.load(tenant_id, operation_id).await?;
         if operation.status == ManagedIdentityOperationStatus::Ready.as_str() {
@@ -1718,7 +1729,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires PostgreSQL; exercised by the dedicated live provisioning run"]
-    async fn kms_outage_fails_closed_then_reconcile_recovers() {
+    async fn kms_outage_fails_closed_then_identity_retry_recovers() {
         let pool = pool().await;
         let (tenant, user, workspace) = tenant_user_workspace(&pool).await;
         let mapping = mapping_store(&pool, tenant, workspace).await;
@@ -1757,9 +1768,6 @@ mod tests {
         assert_eq!(count, 0);
 
         kms.set_unavailable(false);
-        let summary = provisioner.reconcile(tenant, 10, &kms).await.unwrap();
-        assert_eq!(summary.attempted, 1);
-        assert_eq!(summary.advanced, 1);
         let outcome = provisioner
             .ensure_identity(tenant, operation.operation_id, &kms)
             .await
@@ -1837,9 +1845,10 @@ mod tests {
             restored.clone(),
             UpstreamRelayMappingStore::new(restored.clone()),
         );
-        let summary = recovered.reconcile(tenant, 10, &kms).await.unwrap();
-        assert_eq!(summary.attempted, 1);
-        assert_eq!(summary.advanced, 1);
+        recovered
+            .ensure_identity(tenant, operation.operation_id, &kms)
+            .await
+            .unwrap();
         let status: String = sqlx::query_scalar(
             "SELECT status FROM managed_chat_identity_operations WHERE tenant_id=$1 AND operation_id=$2",
         )
@@ -1889,6 +1898,15 @@ mod tests {
                 .await
                 .unwrap_err(),
             ProvisioningError::AttemptsExhausted
+        );
+        assert_eq!(
+            provisioner
+                .operations()
+                .load(tenant, operation.operation_id)
+                .await
+                .unwrap()
+                .attempt_count,
+            1
         );
         assert_eq!(
             provisioner
@@ -2464,10 +2482,19 @@ mod tests {
                 "BUZZ_TEST_RELAY_RESTORE_ACK_FILE",
             )
             .await;
-            let summary = provisioner.reconcile(tenant, 10, &kms).await.unwrap();
+            let summary = provisioner
+                .reconcile(tenant, 10, &kms, &relay_admin, &trust, &membership_channel)
+                .await
+                .unwrap();
             assert_eq!(summary.attempted, 1);
             assert_eq!(summary.advanced, 1);
             assert_eq!(summary.failed, 0);
+            let ready_after_reconcile = provisioner
+                .operations()
+                .load(tenant, operation.operation_id)
+                .await
+                .unwrap();
+            assert_eq!(ready_after_reconcile.status, "ready");
             let recovered = provisioner
                 .ensure_identity(tenant, operation.operation_id, &kms)
                 .await
@@ -2477,17 +2504,26 @@ mod tests {
         } else {
             None
         };
-        let outcome = provisioner
-            .drive(
+        let (outcome, concurrent_outcome) = tokio::join!(
+            provisioner.drive(
                 tenant,
                 operation.operation_id,
                 &kms,
                 &relay_admin,
                 &trust,
                 &membership_channel,
-            )
-            .await
-            .unwrap();
+            ),
+            provisioner.drive(
+                tenant,
+                operation.operation_id,
+                &kms,
+                &relay_admin,
+                &trust,
+                &membership_channel,
+            ),
+        );
+        let outcome = outcome.unwrap();
+        assert_eq!(concurrent_outcome.unwrap(), outcome);
         let DriveOutcome::Ready(identity) = outcome else {
             panic!("provisioning did not reach ready")
         };

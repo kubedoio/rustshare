@@ -516,6 +516,14 @@ async fn cas_transitions_are_monotonic() {
     assert_eq!(attached.identity_id, actual_identity_id);
     assert_eq!(attached.identity_generation, 7);
     assert!(attached.updated_at > operation.updated_at);
+    assert_eq!(
+        store
+            .mark_ready(tenant_id, operation.operation_id)
+            .await
+            .unwrap_err(),
+        ManagedIdentityOperationError::InvalidTransition,
+        "an operation cannot become ready before relay admission is recorded"
+    );
 
     // A second attach_identity is not monotonic.
     assert_eq!(
