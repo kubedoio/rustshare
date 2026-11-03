@@ -877,9 +877,14 @@ async fn await_ok(
             continue;
         };
         if value[0] == "OK" && value[1] == event_id {
-            return Ok(value[2].as_bool().unwrap_or(false));
+            let accepted = value[2].as_bool().unwrap_or(false);
+            if !accepted {
+                println!("upstream relay rejected event: {value}");
+            }
+            return Ok(accepted);
         }
         if value[0] == "CLOSED" {
+            println!("upstream relay closed subscription: {value}");
             return Ok(false);
         }
     }
