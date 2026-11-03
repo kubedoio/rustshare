@@ -7,7 +7,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use rustshare_core::domain::{TenantId, WorkspaceId};
 use rustshare_resource_auth::upstream_relay_mapping::{
     MappingError, RelayEndpointPolicy, TrustedRelayMapping,
@@ -72,8 +72,29 @@ impl TenantRelaySession {
         &self.scope
     }
 
+    /// Send one test-called provisioning frame. A closed socket fails closed;
+    /// otherwise the mapping is revalidated before sending.
+    pub(crate) async fn send_text(&mut self, text: &str) -> Result<(), UpstreamBuzzTransportError> {
+        if self.socket.is_none() {
+            return Err(UpstreamBuzzTransportError::Connection);
+        }
+        self.revalidate().await?;
+        let send_result = self
+            .socket
+            .as_mut()
+            .ok_or(UpstreamBuzzTransportError::Connection)?
+            .send(Message::Text(text.into()))
+            .await;
+        if send_result.is_err() {
+            self.socket.take();
+            return Err(UpstreamBuzzTransportError::Connection);
+        }
+        self.last_revalidation = tokio::time::Instant::now();
+        Ok(())
+    }
+
     /// Receive frames while fencing the session against mapping updates,
-    /// deactivation and expiry. This transport foundation exposes no raw send.
+    /// deactivation and expiry. This foundation exposes no production send.
     pub(crate) async fn receive(&mut self) -> Result<Option<Message>, UpstreamBuzzTransportError> {
         loop {
             tokio::select! {
@@ -466,6 +487,7 @@ fn relay_identity(nip11: &Value) -> Option<&str> {
 mod tests {
     use chrono::{Duration as ChronoDuration, Utc};
     use serde_json::json;
+    use sqlx::postgres::PgPoolOptions;
     use std::time::Duration;
     use uuid::Uuid;
 
@@ -477,7 +499,8 @@ mod tests {
 
     use super::{
         connect_pinned, parse_nip11_headers, relay_identity, resolve_connection_attempt,
-        tls_config, validate_trust_profile, MappingError, RelayTlsTrustConfig,
+        tls_config, validate_trust_profile, MappingError, RelayTlsTrustConfig, TenantRelaySession,
+        UpstreamBuzzTransportError, UpstreamRelayMappingStore,
     };
 
     fn mapping(host: &str, port: u16) -> TrustedRelayMapping {
@@ -510,6 +533,28 @@ mod tests {
             Utc::now(),
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn send_text_without_socket_fails_closed() {
+        let mapping = mapping("relay.example.test", 443);
+        let record = mapping.record().clone();
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://unused:unused@127.0.0.1/unused")
+            .unwrap();
+        let mut session = TenantRelaySession {
+            store: UpstreamRelayMappingStore::new(pool),
+            tenant_id: record.tenant_id,
+            workspace_id: record.workspace_id,
+            scope: mapping.scope(),
+            socket: None,
+            last_revalidation: tokio::time::Instant::now(),
+        };
+
+        assert!(matches!(
+            session.send_text("[]").await,
+            Err(UpstreamBuzzTransportError::Connection)
+        ));
     }
 
     #[test]
