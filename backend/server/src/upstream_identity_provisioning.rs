@@ -701,6 +701,36 @@ impl ManagedIdentityProvisioner {
                 return Err(self.fail(tenant_id, operation_id, error).await);
             }
             println!("upstream provisioning stage: relay admission accepted");
+            // Buzz closes the socket after the membership event changes relay state.
+            drop(session);
+            session = match connect(
+                &self.mappings,
+                TenantId(operation.tenant_id),
+                WorkspaceId(operation.workspace_id),
+                trust,
+            )
+            .await
+            {
+                Ok(session) => session,
+                Err(_) => {
+                    return Err(self
+                        .fail(
+                            tenant_id,
+                            operation_id,
+                            ProvisioningError::TransportUnavailable,
+                        )
+                        .await)
+                }
+            };
+            if session.scope() != &mapping.scope() {
+                return Err(self
+                    .fail(
+                        tenant_id,
+                        operation_id,
+                        ProvisioningError::StaleMappingGeneration,
+                    )
+                    .await);
+            }
         }
         if let Err(error) = prove_membership(
             &mut session,
