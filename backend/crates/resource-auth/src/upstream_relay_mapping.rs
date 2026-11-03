@@ -432,6 +432,7 @@ pub fn verify_tenant_mappings(mappings: &[TrustedRelayMapping]) -> Result<(), Ma
                 || (earlier.record.tenant_id == mapping.record.tenant_id
                     && (earlier.record.workspace_id == mapping.record.workspace_id
                         || earlier.canonical_url != mapping.canonical_url
+                        || earlier.record.endpoint_policy != mapping.record.endpoint_policy
                         || earlier.record.community_id != mapping.record.community_id
                         || earlier.record.relay_deployment_id
                             != mapping.record.relay_deployment_id
@@ -804,6 +805,32 @@ mod tests {
         assert_eq!(
             TrustedRelayMapping::validate(record, Utc::now()).unwrap_err(),
             MappingError::InvalidDeploymentProvenance
+        );
+    }
+
+    #[test]
+    fn trusted_service_connected_relay_requires_private_pinned_peer() {
+        let (tenant, workspace) = ids();
+        let mut record = valid_record(tenant, workspace, "buzz.tenant-a.svc.cluster.local");
+        record.endpoint_policy = RelayEndpointPolicy::TrustedService;
+        record.endpoint_service_identity =
+            format!("k8s://{}/tenant-a/buzz/{}", Uuid::new_v4(), Uuid::new_v4());
+        record.approved_ips = vec!["10.96.32.10".parse().unwrap()];
+        let mapping = TrustedRelayMapping::validate(record, Utc::now()).unwrap();
+        let attempt = mapping
+            .begin_connection(
+                mapping.scope(),
+                &["10.96.32.10".parse().unwrap()],
+                Utc::now(),
+            )
+            .unwrap();
+        let mut evidence = valid_connection(&mapping, "10.96.32.10".parse().unwrap());
+        assert!(verify_connected_relay(&attempt, &mapping, &evidence, Utc::now()).is_ok());
+
+        evidence.peer_ip = "8.8.8.8".parse().unwrap();
+        assert_eq!(
+            verify_connected_relay(&attempt, &mapping, &evidence, Utc::now()).unwrap_err(),
+            MappingError::PeerAddressMismatch
         );
     }
 

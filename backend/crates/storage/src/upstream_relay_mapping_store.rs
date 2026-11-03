@@ -1,8 +1,8 @@
 //! Default-off persistence for trusted upstream Buzz relay mappings.
 //!
-//! This store is not called by a route, worker, or relay connector. Only
-//! `strict_public` mappings are representable until the trusted-service
-//! exception has independent approval and network-enforced egress controls.
+//! This store persists signed endpoint policies without selecting a runtime
+//! profile. Trusted-service activation still requires independent approval and
+//! network-enforced egress controls.
 
 use std::net::IpAddr;
 use std::str::FromStr;

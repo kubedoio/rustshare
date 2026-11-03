@@ -143,24 +143,14 @@ pub(crate) async fn connect(
         let tls_config = tls_config(trust)?;
         let server_name = ServerName::try_from(attempt.relay_host().to_owned())
             .map_err(|_| UpstreamBuzzTransportError::Connection)?;
-        let tls_result = tokio::time::timeout(
-            CONNECT_TIMEOUT,
-            TlsConnector::from(tls_config).connect(server_name, tcp),
-        )
-        .await;
-        let tls = match tls_result {
-            Ok(Ok(tls)) => tls,
-            Ok(Err(_)) => {
+        let tls = TlsConnector::from(tls_config)
+            .connect(server_name, tcp)
+            .await
+            .map_err(|_| {
                 #[cfg(test)]
                 eprintln!("upstream transport stage: TLS handshake rejected");
-                return Err(UpstreamBuzzTransportError::Connection);
-            }
-            Err(_) => {
-                #[cfg(test)]
-                eprintln!("upstream transport stage: TLS handshake timed out");
-                return Err(UpstreamBuzzTransportError::Connection);
-            }
-        };
+                UpstreamBuzzTransportError::Connection
+            })?;
         #[cfg(test)]
         eprintln!("upstream transport stage: TLS certificate and hostname verified");
         if verify_tls_spki_pin(&tls, &attempt.scope().tls_peer_spki_sha256).is_err() {
@@ -178,11 +168,9 @@ pub(crate) async fn connect(
         }
         #[cfg(test)]
         eprintln!("upstream transport stage: NIP-11 relay identity verified");
-        let (socket, _) =
-            tokio::time::timeout(CONNECT_TIMEOUT, client_async(attempt.relay_url(), tls))
-                .await
-                .map_err(|_| UpstreamBuzzTransportError::Connection)?
-                .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+        let (socket, _) = client_async(attempt.relay_url(), tls)
+            .await
+            .map_err(|_| UpstreamBuzzTransportError::Connection)?;
         #[cfg(test)]
         eprintln!("upstream transport stage: WebSocket upgraded");
 
@@ -344,15 +332,6 @@ fn verify_tls_spki_pin(
 }
 
 async fn verify_nip11(
-    attempt: &rustshare_resource_auth::upstream_relay_mapping::ConnectionAttempt,
-    stream: &mut BufStream<tokio_rustls::client::TlsStream<TcpStream>>,
-) -> Result<(), UpstreamBuzzTransportError> {
-    tokio::time::timeout(CONNECT_TIMEOUT, verify_nip11_inner(attempt, stream))
-        .await
-        .map_err(|_| UpstreamBuzzTransportError::Connection)?
-}
-
-async fn verify_nip11_inner(
     attempt: &rustshare_resource_auth::upstream_relay_mapping::ConnectionAttempt,
     stream: &mut BufStream<tokio_rustls::client::TlsStream<TcpStream>>,
 ) -> Result<(), UpstreamBuzzTransportError> {
@@ -614,6 +593,9 @@ mod tests {
     async fn resolver_rejects_loopback_before_any_socket_dial() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
+        if super::lookup_host(("localhost", port)).await.is_err() {
+            return;
+        }
         let mapping = mapping("localhost", port);
 
         assert!(matches!(

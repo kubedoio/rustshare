@@ -4,7 +4,7 @@ BEGIN
         SELECT 1 FROM upstream_buzz_tenant_relays
         WHERE endpoint_policy <> 'strict_public'
     ) THEN
-        RAISE EXCEPTION 'trusted_service mappings must be deactivated before rollback';
+        RAISE EXCEPTION 'trusted_service mapping rows (active or inactive) prevent rollback';
     END IF;
 END;
 $$;

@@ -44,6 +44,17 @@ pub struct MappingProvisioningStatement {
 impl MappingProvisioningStatement {
     /// Deterministic, domain-separated bytes the deployment signer must sign.
     pub fn signing_bytes(&self) -> Result<Vec<u8>, MappingProvisioningError> {
+        self.signing_bytes_with_policy(true)
+    }
+
+    fn legacy_v1_signing_bytes(&self) -> Result<Vec<u8>, MappingProvisioningError> {
+        self.signing_bytes_with_policy(false)
+    }
+
+    fn signing_bytes_with_policy(
+        &self,
+        include_endpoint_policy: bool,
+    ) -> Result<Vec<u8>, MappingProvisioningError> {
         let mut out = Vec::with_capacity(1024);
         out.extend_from_slice(DOMAIN);
         out.extend_from_slice(self.operator_service_id.as_bytes());
@@ -60,7 +71,9 @@ impl MappingProvisioningStatement {
         out.extend_from_slice(record.tenant_id.0.as_bytes());
         out.extend_from_slice(record.workspace_id.0.as_bytes());
         put_string(&mut out, &record.community_id)?;
-        out.push(record.endpoint_policy as u8);
+        if include_endpoint_policy {
+            out.push(record.endpoint_policy as u8);
+        }
         out.extend_from_slice(record.relay_deployment_id.as_bytes());
         put_string(&mut out, &record.endpoint_service_identity)?;
         put_string(&mut out, &record.tls_peer_spki_sha256)?;
@@ -176,8 +189,20 @@ impl MappingProvisioningVerifier {
         let signature = Signature::from_slice(&statement.signature)
             .map_err(|_| MappingProvisioningError::InvalidSignature)?;
         let signing_bytes = statement.signing_bytes()?;
-        key.verify_strict(&signing_bytes, &signature)
-            .map_err(|_| MappingProvisioningError::InvalidSignature)?;
+        let signing_bytes = match key.verify_strict(&signing_bytes, &signature) {
+            Ok(()) => signing_bytes,
+            Err(_)
+                if statement.record.endpoint_policy
+                    == crate::upstream_relay_mapping::RelayEndpointPolicy::StrictPublic =>
+            {
+                // PR #449 strict-public statements did not include endpoint_policy.
+                let legacy_bytes = statement.legacy_v1_signing_bytes()?;
+                key.verify_strict(&legacy_bytes, &signature)
+                    .map_err(|_| MappingProvisioningError::InvalidSignature)?;
+                legacy_bytes
+            }
+            Err(_) => return Err(MappingProvisioningError::InvalidSignature),
+        };
         verify_generation_action(statement)?;
         validate_record(statement, now)?;
         let statement_digest = Sha256::digest(&signing_bytes).into();
@@ -358,6 +383,65 @@ mod tests {
         )
         .unwrap();
         (verifier, statement, now)
+    }
+
+    fn legacy_v1_signing_bytes(statement: &MappingProvisioningStatement) -> Vec<u8> {
+        let mut out = Vec::with_capacity(1024);
+        out.extend_from_slice(DOMAIN);
+        out.extend_from_slice(statement.operator_service_id.as_bytes());
+        put_string(&mut out, &statement.operator_key_id).unwrap();
+        out.extend_from_slice(statement.operation_id.as_bytes());
+        out.extend_from_slice(statement.change_reference_id.as_bytes());
+        out.push(statement.action as u8);
+        out.extend_from_slice(&statement.expected_generation.to_be_bytes());
+        out.extend_from_slice(&statement.issued_at.timestamp_micros().to_be_bytes());
+        out.extend_from_slice(&statement.expires_at.timestamp_micros().to_be_bytes());
+
+        let record = &statement.record;
+        out.extend_from_slice(record.mapping_id.as_bytes());
+        out.extend_from_slice(record.tenant_id.0.as_bytes());
+        out.extend_from_slice(record.workspace_id.0.as_bytes());
+        put_string(&mut out, &record.community_id).unwrap();
+        out.extend_from_slice(record.relay_deployment_id.as_bytes());
+        put_string(&mut out, &record.endpoint_service_identity).unwrap();
+        put_string(&mut out, &record.tls_peer_spki_sha256).unwrap();
+        put_string(&mut out, &record.relay_url).unwrap();
+        put_string(&mut out, &record.relay_host).unwrap();
+        put_string(&mut out, &record.relay_pubkey).unwrap();
+        put_string(&mut out, &record.deployment_digest).unwrap();
+        put_count(&mut out, record.approved_ips.len()).unwrap();
+        for ip in &record.approved_ips {
+            match ip {
+                IpAddr::V4(ip) => {
+                    out.push(4);
+                    out.extend_from_slice(&ip.octets());
+                }
+                IpAddr::V6(ip) => {
+                    out.push(6);
+                    out.extend_from_slice(&ip.octets());
+                }
+            }
+        }
+        out.extend_from_slice(&record.generation.to_be_bytes());
+        out.push(u8::from(record.active));
+        out.extend_from_slice(&record.valid_until.timestamp_micros().to_be_bytes());
+        out.extend_from_slice(record.updated_by.as_bytes());
+        out.extend_from_slice(record.audit_entry_id.as_bytes());
+        out
+    }
+
+    #[test]
+    fn legacy_strict_public_signatures_keep_their_original_digest() {
+        let (verifier, mut statement, now) = signed(MappingProvisioningAction::Create);
+        let legacy_bytes = legacy_v1_signing_bytes(&statement);
+        statement.signature = SigningKey::from_bytes(&[7; 32])
+            .sign(&legacy_bytes)
+            .to_bytes()
+            .to_vec();
+
+        let verified = verifier.verify(&statement, now).unwrap();
+        let expected_digest: [u8; 32] = Sha256::digest(&legacy_bytes).into();
+        assert_eq!(verified.statement_digest(), &expected_digest);
     }
 
     #[test]
