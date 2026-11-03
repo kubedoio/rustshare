@@ -189,6 +189,29 @@ impl ManagedIdentityVaultStore {
         Ok(record)
     }
 
+    /// Resolve the single active identity for a tenant subject, if any.
+    pub async fn load_active_by_principal(
+        &self,
+        tenant_id: Uuid,
+        principal_id: Uuid,
+    ) -> Result<Option<ManagedIdentityRecord>, ManagedIdentityStoreError> {
+        let mut tx = self.0.begin().await.map_err(map_database_error)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let record = sqlx::query_as::<_, ManagedIdentityRecord>(
+            "SELECT identity_id, tenant_id, principal_id, generation, idempotency_key, \
+             public_key, envelope_version, nonce, ciphertext, wrapped_dek, kms_key_id, \
+             kms_key_version, status FROM managed_chat_identities \
+             WHERE tenant_id=$1 AND principal_id=$2 AND status='active'",
+        )
+        .bind(tenant_id)
+        .bind(principal_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+        tx.commit().await.map_err(map_database_error)?;
+        Ok(record)
+    }
+
     /// Persist KMS rewrapping while matching the immutable identity envelope.
     pub async fn persist_rewrapped_dek(
         &self,
