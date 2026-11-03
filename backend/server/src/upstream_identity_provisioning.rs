@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use chrono::Utc;
-use nostr::{Keys, Timestamp};
+use nostr::{EventBuilder, Keys, RelayUrl, Timestamp};
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_crypto::managed_identity_vault::{
     DekKeyManagement, IdentityContext, ManagedIdentityEnvelope, RecoveredIdentity, WrappedDek,
@@ -689,6 +689,11 @@ impl ManagedIdentityProvisioner {
         }
 
         if operation.admission_event_id.is_none() {
+            if let Err(error) =
+                authenticate_relay_admin(&mut session, relay_admin, mapping.relay_url()).await
+            {
+                return Err(self.fail(tenant_id, operation_id, error).await);
+            }
             if let Err(error) = self
                 .admit(&mut session, &operation, &identity, relay_admin)
                 .await
@@ -888,6 +893,41 @@ async fn await_ok(
             return Ok(false);
         }
     }
+}
+
+async fn authenticate_relay_admin(
+    session: &mut TenantRelaySession,
+    relay_admin: &Keys,
+    relay_url: &str,
+) -> Result<(), ProvisioningError> {
+    let challenge = loop {
+        let Some(value) = receive_json(session).await? else {
+            continue;
+        };
+        if value[0] == "AUTH" {
+            break value[1]
+                .as_str()
+                .ok_or(ProvisioningError::AuthenticationRejected)?
+                .to_owned();
+        }
+        if value[0] == "CLOSED" {
+            return Err(ProvisioningError::AuthenticationRejected);
+        }
+    };
+    let relay =
+        RelayUrl::parse(relay_url).map_err(|_| ProvisioningError::AuthenticationRejected)?;
+    let event = EventBuilder::auth(&challenge, relay)
+        .sign_with_keys(relay_admin)
+        .map_err(|_| ProvisioningError::AuthenticationRejected)?;
+    let event_id = event.id.to_hex();
+    session
+        .send_text(&serde_json::json!(["AUTH", event]).to_string())
+        .await
+        .map_err(|_| ProvisioningError::TransportUnavailable)?;
+    if !await_ok(session, &event_id).await? {
+        return Err(ProvisioningError::AuthenticationRejected);
+    }
+    Ok(())
 }
 
 async fn prove_membership(
