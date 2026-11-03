@@ -90,7 +90,7 @@ pub enum VaultError {
     Recovery,
     #[error("key management operation failed")]
     KeyManagement,
-    #[error("authentication signing failed")]
+    #[error("managed identity authentication signing failed")]
     AuthenticationSigning,
 }
 
@@ -131,10 +131,9 @@ impl RecoveredIdentity {
     ) -> Result<nostr::Event, VaultError> {
         let relay =
             nostr::RelayUrl::parse(relay_url).map_err(|_| VaultError::AuthenticationSigning)?;
-        let mut encoded_secret = hex::encode(&self._secret_key[..]);
-        let parsed_keys = Keys::parse(&encoded_secret);
-        encoded_secret.zeroize();
-        let keys = parsed_keys.map_err(|_| VaultError::AuthenticationSigning)?;
+        let secret_key = nostr::SecretKey::from_slice(&self._secret_key[..])
+            .map_err(|_| VaultError::AuthenticationSigning)?;
+        let keys = Keys::new(secret_key);
         nostr::EventBuilder::auth(challenge, relay)
             .custom_created_at(created_at)
             .sign_with_keys(&keys)
@@ -572,12 +571,14 @@ mod tests {
             .unwrap();
         assert_eq!(first.id, second.id);
 
-        assert_eq!(
-            recovered
-                .sign_nip42_authentication("challenge", "not a url", created_at)
-                .unwrap_err(),
-            VaultError::AuthenticationSigning
-        );
+        for bad_relay in ["not a url", "http://relay.example.com"] {
+            assert_eq!(
+                recovered
+                    .sign_nip42_authentication("challenge", bad_relay, created_at)
+                    .unwrap_err(),
+                VaultError::AuthenticationSigning
+            );
+        }
     }
 
     #[cfg(feature = "nip42-auth-signing")]
