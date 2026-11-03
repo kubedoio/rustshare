@@ -9,6 +9,7 @@ license.workspace = true
 [features]
 default = []
 local-dek-key-provider = ["dep:libc"]
+nip42-auth-signing = []
 
 [dependencies]
 argon2 = { workspace = true, features = ["std"] }
