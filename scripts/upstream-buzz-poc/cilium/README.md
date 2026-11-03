@@ -76,11 +76,11 @@ manifest.
 ## Latest executed qualification
 
 Run on 2026-11-03 from RustShare commit
-`d9c650a61a38595122a8499302a8cd81d849c896`, using upstream Buzz commit
+`966f7abc175f9c2f480d17399461a1ffc83b4328`, using upstream Buzz commit
 `eafd77e9f6e96052476bdd88be732c046fdb7ab3` and tree
 `04e3a40545bd3b23510ec32b4c8cccee2acef7c5`. Cilium `v1.16.4` reached `OK`
 for Cilium, operator, Envoy and Hubble Relay. The isolated Buzz image digest
-was `sha256:294e91d414b9337ba340abae5faf721797664661d01b922216de1b86314b8ccc`.
+was `sha256:952a594a72a003581f0b694a412f3841992df5f25cf80e8ec2dd5e4f803bf85e`.
 
 - Member transport passed TLS/SNI/peer pin verification, NIP-11 identity
   validation, WebSocket upgrade, NIP-42 authentication and private-channel DM
@@ -91,16 +91,17 @@ was `sha256:294e91d414b9337ba340abae5faf721797664661d01b922216de1b86314b8ccc`.
 - Tenant isolation passed: unauthorized histories returned zero events and
   private publishes in both cross-tenant directions were rejected.
 - The poisoned multi-address DNS answer was rejected before a TCP socket dial.
-  Hubble observer startup and continued coverage are required; observer failure
-  rejects the qualification instead of making an empty capture appear valid.
+  Hubble observer startup and continued coverage are required, and a positive
+  connector-to-controlled-DNS UDP exchange must be present; observer failure or
+  an empty capture rejects the qualification instead of appearing valid.
 - Hubble recorded the connector Pod's TCP SYN to `1.1.1.1:443` as
   `EGRESS DENIED` / `DROPPED`; the in-Pod probe received no response.
 - All three selected ignored Rust tests passed. The disposable kind cluster
   and unique image tags were removed after the run.
 
 The sanitized evidence bundle is retained on the test runner at
-`/tmp/elembra-cilium-evidence-20261103114758-1685206`. Its `SHA256SUMS` file
-hash is `bd95448ef49654558ee007a0cca49cdfa0116fb959511b5c6bcd6e73b5d1deae`;
+`/tmp/elembra-cilium-evidence-20261103115927-1709078`. Its `SHA256SUMS` file
+hash is `7cac51842b60b52c30a2cca1c6c4832574048c3cb1f365e09710225eff560774`;
 all 35 entries verified.
 This evidence qualifies only the exercised disposable profile and tests; see
 the limits below.
