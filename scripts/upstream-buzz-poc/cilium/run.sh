@@ -370,11 +370,16 @@ cp "$RUN_DIR/runner-pod.json" "$EVIDENCE_DIR/runner-pod.json"
 
 "${K[@]}" -n kube-system port-forward --address 127.0.0.1 svc/hubble-relay 4245:80 >"$EVIDENCE_DIR/hubble-port-forward.log" 2>&1 &
 PF_PID=$!
+hubble_ready=0
 for _ in {1..30}; do
-	if hubble observe --server 127.0.0.1:4245 --last 1 --output compact >"$RUN_DIR/hubble-ready.log" 2>&1; then break; fi
+	if hubble observe --server 127.0.0.1:4245 --last 1 --output compact >"$RUN_DIR/hubble-ready.log" 2>&1; then
+		hubble_ready=1
+		break
+	fi
 	sleep 1
 done
 kill -0 "$PF_PID" 2>/dev/null || { echo 'Hubble port-forward failed' >&2; exit 1; }
+[[ "$hubble_ready" == 1 ]] || { echo 'Hubble observer readiness failed' >&2; exit 1; }
 
 timeout --signal=TERM 10s hubble observe --server 127.0.0.1:4245 --since 1s --follow \
 	--from-pod "$NAMESPACE/rust-connector" --protocol tcp --to-ip 1.1.1.1 --verdict DROPPED --output compact \
@@ -397,13 +402,20 @@ fi
 echo 'forbidden_public_tcp=denied_by_cilium' >"$EVIDENCE_DIR/public-egress-result.txt"
 
 run_rust_test() {
-	local label="$1" filter="$2" capture="$3" log="$EVIDENCE_DIR/$1.log" test_status
+	local label="$1" filter="$2" capture="$3" log="$EVIDENCE_DIR/$1.log" test_status capture_alive=1
 	if [[ "$capture" == tcp || "$capture" == no-tcp ]]; then
 		timeout --signal=TERM 60s hubble observe --server 127.0.0.1:4245 --since 1s --follow --pod "$NAMESPACE/rust-connector" --protocol tcp --output compact >"$EVIDENCE_DIR/$1-hubble-tcp.log" 2>&1 &
 		TCP_PID=$!
 		timeout --signal=TERM 60s hubble observe --server 127.0.0.1:4245 --since 1s --follow --pod "$NAMESPACE/rust-connector" --protocol udp --output compact >"$EVIDENCE_DIR/$1-hubble-udp.log" 2>&1 &
 		UDP_PID=$!
 		sleep 1
+		for name in TCP_PID UDP_PID; do
+			local pid="${!name}"
+			if ! kill -0 "$pid" 2>/dev/null; then
+				echo "Hubble $name observer failed before $label" >&2
+				return 1
+			fi
+		done
 	fi
 	set +e
 	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- /usr/local/bin/test-runner --ignored --exact "$filter" --nocapture >"$log" 2>&1
@@ -412,11 +424,20 @@ run_rust_test() {
 	echo "exit=$test_status" >>"$log"
 	for name in TCP_PID UDP_PID; do
 		local pid="${!name}"
-		if [[ -n "$pid" ]]; then kill -INT "$pid" >/dev/null 2>&1 || true; wait "$pid" 2>/dev/null || true; printf -v "$name" ''; fi
+		if [[ -n "$pid" ]]; then
+			if ! kill -0 "$pid" 2>/dev/null; then
+				echo "Hubble $name observer exited during $label" >&2
+				capture_alive=0
+			fi
+			kill -INT "$pid" >/dev/null 2>&1 || true
+			wait "$pid" 2>/dev/null || true
+			printf -v "$name" ''
+		fi
 	done
 	if [[ "$test_status" != 0 ]] || ! grep -q '1 passed; 0 failed' "$log"; then
 		echo "Rust test failed: $filter" >&2; tail -n 40 "$log" >&2; return 1
 	fi
+	[[ "$capture_alive" == 1 ]] || return 1
 	if [[ "$capture" == no-tcp ]] && grep -q -- '->' "$EVIDENCE_DIR/$1-hubble-tcp.log"; then
 		echo 'unexpected TCP flow in DNS-rejection window' >&2; cat "$EVIDENCE_DIR/$1-hubble-tcp.log" >&2; return 1
 	fi
