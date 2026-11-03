@@ -204,8 +204,9 @@ jobs:
           export RUSTSHARE_TEST_BUZZ_TARGET_DIR="${RUNNER_TEMP}/buzz-membership-target"
           export RUSTSHARE_TEST_BUZZ_BINARY="${BUZZ_TEST_RELAY_BINARY}"
           export RUSTSHARE_TEST_BUZZ_BINARY_SHA256="$(sha256sum "${BUZZ_TEST_RELAY_BINARY}" | cut -d ' ' -f 1)"
+          # Dedicated Buzz/Cilium fixtures use their own separately provisioned harness.
           RUSTSHARE_SCIM_BEARER_TOKEN="$(openssl rand -hex 32)" \
-            cargo test --workspace --all-features -j 1 -- --ignored --test-threads=1
+            cargo test --workspace --all-features -j 1 -- --ignored --skip upstream_buzz_transport::disposable_service_tests --test-threads=1
 
       - name: Ask Workspace security matrix (repeated)
         # Keep this explicit: the recording-provider matrix is the security

@@ -182,8 +182,10 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres ru
 sqlx migrate run --source backend/migrations
 
 # Run ignored tests
-cargo test --workspace --all-features -- --ignored
+cargo test --workspace --all-features -- --ignored --skip upstream_buzz_transport::disposable_service_tests
 ```
+
+The dedicated Buzz/Cilium fixtures are excluded because they require their own separately provisioned disposable environment.
 
 ### Run specific contract tests
 
@@ -205,7 +207,7 @@ For deeper testing guidance, see [`backend/TESTING.md`](../backend/TESTING.md).
 | `cargo build --workspace` | Debug build |
 | `cargo build --workspace --release` | Optimized release build |
 | `SQLX_OFFLINE=true cargo test --workspace --all-features --lib` | Unit tests only |
-| `cargo test --workspace --all-features -- --ignored` | Integration + contract tests |
+| `cargo test --workspace --all-features -- --ignored --skip upstream_buzz_transport::disposable_service_tests` | Integration + contract tests |
 | `cargo fmt --all` | Format code |
 | `SQLX_OFFLINE=true cargo clippy --workspace --all-targets --all-features -- -D warnings` | Lint (zero warnings policy) |
 | `cargo doc --open` | Build and open docs |
