@@ -806,6 +806,16 @@ impl ManagedIdentityProvisioner {
             .await
             .is_err()
         {
+            if self
+                .operations
+                .load(tenant_id, operation_id)
+                .await
+                .is_ok_and(|current| {
+                    current.status == ManagedIdentityOperationStatus::Ready.as_str()
+                })
+            {
+                return Ok(DriveOutcome::Ready(identity));
+            }
             return Err(self
                 .fail(
                     tenant_id,
