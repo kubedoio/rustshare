@@ -1,6 +1,6 @@
 # Disposable Cilium trusted-service qualification
 
-This harness runs three ignored Rust connector tests against two isolated
+This harness selects six ignored Rust connector tests against two isolated
 instances of **unmodified** upstream Buzz. It creates a fresh local kind
 cluster with Cilium, installs default-deny egress in the test namespace, and
 allows only the relay dependencies, controlled DNS, and the two TLS edges.
@@ -39,20 +39,37 @@ default is a mode-0700 directory under `/tmp`.
 The Rust tests run as:
 
 ```text
+trusted_service_transport_connects_and_authenticates_member
+trusted_service_rejects_revoked_member_on_reconnect
 trusted_service_tenant_sessions_are_isolated_across_private_dm_relays
+live_provisioning_reaches_ready_after_nip42_and_member_only_read
+live_provisioning_recovers_after_relay_outage
 trusted_service_rejects_an_unapproved_dns_answer_before_socket_dial
 ```
 
+The provisioning retry test scales only the tenant A TLS edge Deployment to
+zero replicas and back to one, keeping its Service, TLS Secret, and signed
+mapping generation unchanged. It verifies the first attempt is retryable, the
+same identity is reused, then runs reconciliation and `drive` after relay
+recovery before requiring the operation to reach `ready`.
+
 Before the Rust tests, the harness attempts TCP to a forbidden public address
 from the connector Pod and requires Hubble to record Cilium's egress denial.
-The first test proves transport to two independent relays, tenant-bound
+`trusted_service_tenant_sessions_are_isolated_across_private_dm_relays` proves
+transport to two independent relays, tenant-bound
 private-channel reads, cross-tenant authentication denial, zero unauthorized
-events, and rejected cross-channel publishes. The second temporarily changes
-the controlled resolver so the canonical tenant A service name returns the
-approved A address and unapproved B address. The Cilium policy allows both
+events, and rejected cross-channel publishes. The DNS rejection test temporarily
+changes the controlled resolver so the canonical tenant A service name returns
+the approved A address and unapproved B address. The Cilium policy allows both
 edge destinations during that test, so network policy cannot hide a connector
 failure. Hubble captures TCP and UDP flows; the test fails if a TCP flow is
 observed during the DNS rejection window.
+
+The member-revocation test confirms the already-authenticated member can read a
+seeded private event, publishes an owner-signed kind 9031 event, then verifies
+that the existing socket can no longer retrieve private events and a fresh
+NIP-42 authentication is rejected. It records whether Buzz closes or fences
+the existing socket.
 
 ## Runtime fixture and secret handling
 
@@ -76,33 +93,20 @@ manifest.
 ## Latest executed qualification
 
 Run on 2026-11-03 from RustShare commit
-`966f7abc175f9c2f480d17399461a1ffc83b4328`, using upstream Buzz commit
+`f349605a13f3a1c076e47e246660fe9c1c370210`, using upstream Buzz commit
 `eafd77e9f6e96052476bdd88be732c046fdb7ab3` and tree
-`04e3a40545bd3b23510ec32b4c8cccee2acef7c5`. Cilium `v1.16.4` reached `OK`
-for Cilium, operator, Envoy and Hubble Relay. The isolated Buzz image digest
-was `sha256:952a594a72a003581f0b694a412f3841992df5f25cf80e8ec2dd5e4f803bf85e`.
+`04e3a40545bd3b23510ec32b4c8cccee2acef7c5`. The locally built Buzz image
+digest was
+`sha256:501c3223fe04387dd0a3dd1dcf9912d2b4bf3deb8691ba6f073bc9511984b91e`.
 
-- Member transport passed TLS/SNI/peer pin verification, NIP-11 identity
-  validation, WebSocket upgrade, NIP-42 authentication and private-channel DM
-  history retrieval.
-- While a NIP-29 private-DM subscription was active, the test stopped and
-  restored PostgreSQL. The session fenced during outage and remained fenced
-  after recovery; mapping revocation was also verified.
-- Tenant isolation passed: unauthorized histories returned zero events and
-  private publishes in both cross-tenant directions were rejected.
-- The poisoned multi-address DNS answer was rejected before a TCP socket dial.
-  Hubble observer startup and continued coverage are required, and a positive
-  connector-to-controlled-DNS UDP exchange must be present; observer failure or
-  an empty capture rejects the qualification instead of appearing valid.
-- Hubble recorded the connector Pod's TCP SYN to `1.1.1.1:443` as
-  `EGRESS DENIED` / `DROPPED`; the in-Pod probe received no response.
-- All three selected ignored Rust tests passed. The disposable kind cluster
-  and unique image tags were removed after the run.
+- All six selected ignored Rust tests passed.
+- The member flow exercised private-channel membership and reads. Relay outage,
+  recovery, and kind-9031 revocation behavior were also exercised.
 
-The sanitized evidence bundle is retained on the test runner at
-`/tmp/elembra-cilium-evidence-20261103115927-1709078`. Its `SHA256SUMS` file
-hash is `7cac51842b60b52c30a2cca1c6c4832574048c3cb1f365e09710225eff560774`;
-all 35 entries verified.
+The sanitized evidence bundle is retained at
+`/tmp/elembra-cilium-evidence-20261103180651-2276002`. Its `SHA256SUMS` file
+hash is `b6ab377519dfd479b2a3a6eb4ab4557dd9b6cf23c913320a4fd1eac943f038e0`;
+all 48 entries verified.
 This evidence qualifies only the exercised disposable profile and tests; see
 the limits below.
 

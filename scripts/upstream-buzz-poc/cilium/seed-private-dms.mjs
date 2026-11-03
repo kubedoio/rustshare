@@ -166,6 +166,14 @@ async function seed(label) {
 	await admin.auth(ownerKey);
 	await admin.publish(signed(ownerKey, 9030, [['p', memberPubkey], ['role', 'member']]));
 	await admin.publish(signed(ownerKey, 9030, [['p', friendPubkey], ['role', 'member']]));
+	const provisioningChannelId = randomUUID();
+	await admin.publish(signed(ownerKey, 9007, [
+		['h', provisioningChannelId],
+		['name', `Disposable provisioning qualification ${label}`],
+		['channel_type', 'dm'],
+		['visibility', 'private'],
+	]));
+	await admin.publish(signed(ownerKey, 9, [['h', provisioningChannelId]], `provisioning-channel-seed-${randomUUID()}`));
 	admin.close();
 
 	const user = new RelaySession(relayUrl, relayCa);
@@ -190,6 +198,7 @@ async function seed(label) {
 		community_id: communityId,
 		relay_pubkey: relayPubkey,
 		channel_id: channelId,
+		provisioning_channel_id: provisioningChannelId,
 		event_id: message.id,
 		author: memberPubkey,
 		friend_pubkey: friendPubkey,
@@ -202,7 +211,7 @@ async function seed(label) {
 try {
 	const [a, b] = await Promise.all([seed('a'), seed('b')]);
 	process.stdout.write(`${JSON.stringify({ ok: true, tenants: { a, b } })}\n`);
-} catch {
-	process.stderr.write('private_dm_seed_failed\n');
+} catch (error) {
+process.stderr.write(`private_dm_seed_failed: ${error instanceof Error ? error.message : 'unknown error'}\n`);
 	process.exitCode = 1;
 }

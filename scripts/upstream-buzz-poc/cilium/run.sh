@@ -62,7 +62,7 @@ usage() {
 	cat <<'HELP'
 Usage: scripts/upstream-buzz-poc/cilium/run.sh [--preflight-only]
 
-Runs three ignored Rust trusted-service tests in a new kind/Cilium cluster. It
+Runs six ignored Rust trusted-service tests in a new kind/Cilium cluster. It
 never connects to host Compose applications. The cluster, generated test keys,
 and unique local image tags are removed on exit; sanitized evidence remains
 under EVIDENCE_DIR or /tmp.
@@ -219,6 +219,8 @@ seed = {f"{role.upper()}_{tenant.upper()}_SK": keys[f"{role}_{tenant}"] for tena
 f = out / "seed.env"; f.write_text("".join(f"{k}={v}\n" for k,v in seed.items())); f.chmod(0o600)
 dbpass = secrets.token_hex(32)
 creds = (p / "connector-credentials.env").read_text().rstrip().splitlines()
+# Disposable relay-admin identity for the NIP-43 provisioning qualification.
+creds += [f"BUZZ_TEST_RELAY_ADMIN_NSEC={keys['owner_a']}"]
 creds += [f"POSTGRES_PASSWORD={dbpass}", f"DATABASE_URL=postgres://postgres:{dbpass}@127.0.0.1/rustshare_test"]
 f = out / "connector.env"; f.write_text("\n".join(creds) + "\n"); f.chmod(0o600)
 f = out / "seed-config.env"; f.write_text(f"RELAY_A_URL=wss://buzz-edge-a.{ns}.svc.cluster.local\nRELAY_B_URL=wss://buzz-edge-b.{ns}.svc.cluster.local\nROOT_A_PEM=/run/roots/a.pem\nROOT_B_PEM=/run/roots/b.pem\n"); f.chmod(0o600)
@@ -341,6 +343,7 @@ values = {
  "BUZZ_TEST_RELAY_PUBKEY":a["relay_pubkey"], "BUZZ_TEST_DEPLOYMENT_DIGEST":digest,
  "BUZZ_TEST_SERVICE_IDENTITY":f"k8s://{cluster_uid}/{ns}/buzz-edge-a/{svc_a_uid}", "BUZZ_TEST_TLS_SPKI_PIN":spki_a,
  "BUZZ_TEST_APPROVED_IP":ip_a, "BUZZ_TEST_DM_CHANNEL_ID":a["channel_id"], "BUZZ_TEST_EXPECTED_DM_EVENT_ID":a["event_id"],
+ "BUZZ_TEST_PROVISIONING_CHANNEL_ID":a["provisioning_channel_id"],
  "BUZZ_TEST_EXPECTED_DM_AUTHOR":a["author"], "BUZZ_TEST_OTHER_MEMBER_PUBKEY":keys["member_b_pubkey"], "BUZZ_TEST_TLS_ROOT_DER":"/run/trust/a.der",
  "BUZZ_TEST_B_RELAY_URL":f"wss://{host_b}", "BUZZ_TEST_B_RELAY_HOST":host_b, "BUZZ_TEST_B_COMMUNITY_ID":b["community_id"],
  "BUZZ_TEST_B_RELAY_PUBKEY":b["relay_pubkey"], "BUZZ_TEST_B_DEPLOYMENT_DIGEST":digest,
@@ -354,6 +357,7 @@ values = {
  "BUZZ_TEST_DNS_REBIND_SERVICE_IDENTITY":f"k8s://{cluster_uid}/{ns}/buzz-edge-a/{svc_a_uid}",
  "BUZZ_TEST_DNS_REBIND_TLS_SPKI_PIN":spki_a, "BUZZ_TEST_DNS_REBIND_TLS_ROOT_DER":"/run/trust/a.der",
  "BUZZ_TEST_DB_OUTAGE_ACK_FILE":"/tmp/db-outage.ack", "BUZZ_TEST_DB_RESTORE_ACK_FILE":"/tmp/db-restore.ack",
+ "BUZZ_TEST_RELAY_OUTAGE_ACK_FILE":"/tmp/relay-outage.ack", "BUZZ_TEST_RELAY_RESTORE_ACK_FILE":"/tmp/relay-restore.ack",
 }
 path = Path(sys.argv[3]); path.write_text("".join(f"{k}={v}\n" for k,v in values.items())); path.chmod(0o600)
 public = {"tenant_a": {"community": a["community_id"], "channel": a["channel_id"], "event": a["event_id"], "author": a["author"]},
@@ -510,12 +514,78 @@ run_member_transport_test() {
 	fi
 }
 
+run_provisioning_relay_outage_test() {
+	local filter=upstream_identity_provisioning::tests::live_provisioning_recovers_after_relay_outage
+	local log="$EVIDENCE_DIR/provisioning-relay-outage.log" test_status outage_verified=0 restore_verified=0
+	local endpoints pods service_ip_before service_ip_after
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- /usr/local/bin/test-runner --ignored --exact "$filter" --nocapture >"$log" 2>&1 &
+	TEST_PID=$!
+	wait_for_test_marker "$log" BUZZ_TEST_RELAY_OUTAGE_READY
+	endpoints="$("${K[@]}" -n "$NAMESPACE" get endpoints buzz-edge-a -o jsonpath='{.subsets[*].addresses[*].ip}')"
+	[[ -n "$endpoints" ]] || { echo 'relay service had no endpoint before outage' >&2; return 1; }
+	service_ip_before="$("${K[@]}" -n "$NAMESPACE" get service buzz-edge-a -o jsonpath='{.spec.clusterIP}')"
+	"${K[@]}" -n "$NAMESPACE" scale deployment/buzz-edge-a --replicas=0 >"$RUN_DIR/relay-outage-scale-down.log"
+	for _ in {1..60}; do
+		endpoints="$("${K[@]}" -n "$NAMESPACE" get endpoints buzz-edge-a -o jsonpath='{.subsets[*].addresses[*].ip}')"
+		if [[ -z "$endpoints" ]]; then outage_verified=1; break; fi
+		sleep 1
+	done
+	[[ "$outage_verified" == 1 ]] || { echo 'relay Service endpoint remained during scale-down' >&2; return 1; }
+	cp "$RUN_DIR/relay-outage-scale-down.log" "$EVIDENCE_DIR/relay-outage-scale-down.log"
+	for _ in {1..90}; do
+		pods="$(${K[@]} -n "$NAMESPACE" get pods -l app=buzz-edge-a -o name)"
+		[[ -z "$pods" ]] && break
+		sleep 1
+	done
+	[[ -z "$pods" ]] || { echo 'relay pod remained after scale-down' >&2; return 1; }
+	echo 'relay_pod_deleted=true' >"$EVIDENCE_DIR/relay-outage-pod-deletion.log"
+	"${K[@]}" -n "$NAMESPACE" get deployment,service,endpoints buzz-edge-a -o wide >"$EVIDENCE_DIR/relay-outage-down-state.txt"
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/relay-outage.ack
+	wait_for_test_marker "$log" BUZZ_TEST_RELAY_RESTORE_READY
+	"${K[@]}" -n "$NAMESPACE" scale deployment/buzz-edge-a --replicas=1 >"$RUN_DIR/relay-outage-scale-up.log"
+	"${K[@]}" -n "$NAMESPACE" rollout status deployment/buzz-edge-a --timeout=120s >"$RUN_DIR/relay-outage-rollout.log"
+	for _ in {1..60}; do
+		endpoints="$("${K[@]}" -n "$NAMESPACE" get endpoints buzz-edge-a -o jsonpath='{.subsets[*].addresses[*].ip}')"
+		if [[ -n "$endpoints" ]]; then restore_verified=1; break; fi
+		sleep 1
+	done
+	[[ "$restore_verified" == 1 ]] || { echo 'relay Service endpoint did not return after scale-up' >&2; return 1; }
+	service_ip_after="$("${K[@]}" -n "$NAMESPACE" get service buzz-edge-a -o jsonpath='{.spec.clusterIP}')"
+	[[ "$service_ip_before" == "$service_ip_after" ]] || { echo 'relay Service identity changed across the outage' >&2; return 1; }
+	cp "$RUN_DIR/relay-outage-scale-up.log" "$EVIDENCE_DIR/relay-outage-scale-up.log"
+	cp "$RUN_DIR/relay-outage-rollout.log" "$EVIDENCE_DIR/relay-outage-rollout.log"
+	"${K[@]}" -n "$NAMESPACE" get deployment,service,endpoints buzz-edge-a -o wide >"$EVIDENCE_DIR/relay-outage-up-state.txt"
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/relay-restore.ack
+	set +e
+	wait "$TEST_PID"
+	test_status=$?
+	set -e
+	TEST_PID=
+	echo "exit=$test_status" >>"$log"
+	if [[ "$test_status" != 0 ]] || ! grep -q '1 passed; 0 failed' "$log"; then
+		echo "Rust test failed: $filter" >&2
+		tail -n 40 "$log" >&2
+		return 1
+	fi
+}
+
 run_member_transport_test
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$EVIDENCE_DIR/cross-tenant-db-reset.log" 2>&1
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/cross-tenant-db-reset.log" 2>&1
+run_rust_test cross-tenant upstream_buzz_transport::disposable_service_tests::trusted_service_tenant_sessions_are_isolated_across_private_dm_relays none
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$EVIDENCE_DIR/member-revocation-db-reset.log" 2>&1
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/member-revocation-db-reset.log" 2>&1
+run_rust_test member-revocation upstream_buzz_transport::disposable_service_tests::trusted_service_rejects_revoked_member_on_reconnect none
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$EVIDENCE_DIR/member-db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/member-db-reset.log" 2>&1
-run_rust_test cross-tenant upstream_buzz_transport::disposable_service_tests::trusted_service_tenant_sessions_are_isolated_across_private_dm_relays none
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$RUN_DIR/db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$RUN_DIR/db-reset.log" 2>&1
+run_rust_test provisioning upstream_identity_provisioning::tests::live_provisioning_reaches_ready_after_nip42_and_member_only_read none
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$EVIDENCE_DIR/provisioning-relay-outage-db-reset.log" 2>&1
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/provisioning-relay-outage-db-reset.log" 2>&1
+run_provisioning_relay_outage_test
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$RUN_DIR/db-reset-provisioning.log" 2>&1
+"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$RUN_DIR/db-reset-provisioning.log" 2>&1
 python3 "$HERE/render.py" --phase dns --namespace "$NAMESPACE" --edge-a-ip "$EDGE_A_IP" --edge-b-ip "$EDGE_B_IP" --poison-dns >"$RUN_DIR/dns-poison.json"
 cp "$RUN_DIR/dns-poison.json" "$EVIDENCE_DIR/dns-poison.json"
 "${K[@]}" apply -f "$RUN_DIR/dns-poison.json" >"$EVIDENCE_DIR/dns-poison-apply.txt"
@@ -526,5 +596,34 @@ run_rust_test dns-poison upstream_buzz_transport::disposable_service_tests::trus
 cp "$RUN_DIR/dns-restart.log" "$EVIDENCE_DIR/dns-restart.txt"
 "${K[@]}" get cnp -n "$NAMESPACE" -o yaml >"$EVIDENCE_DIR/cilium-policies.yaml"
 "${K[@]}" get pods -n "$NAMESPACE" -o wide >"$EVIDENCE_DIR/pods-final.txt"
-echo 'result=PASS: all three selected ignored Rust trusted-service tests passed' >"$EVIDENCE_DIR/result.txt"
+python3 - "$EVIDENCE_DIR" "$RUN_DIR/private/connector-credentials.env" "$RUN_DIR/secrets/connector.env" <<'PY'
+from pathlib import Path
+import sys
+
+evidence = Path(sys.argv[1])
+secrets = set()
+for name in sys.argv[2:]:
+    for line in Path(name).read_text().splitlines():
+        key, separator, value = line.partition("=")
+        if separator and "NSEC" in key and value:
+            secrets.add(value.encode())
+
+leaks = []
+for path in evidence.iterdir():
+    if not path.is_file():
+        continue
+    data = path.read_bytes()
+    original = data
+    for secret in secrets:
+        if secret in data:
+            data = data.replace(secret, b"[redacted-test-key]")
+    if data != original:
+        path.write_bytes(data)
+        leaks.append(path.name)
+
+if leaks:
+    print("test private-key material found and redacted in evidence: " + ", ".join(leaks), file=sys.stderr)
+    raise SystemExit(1)
+PY
+echo 'result=PASS: all six selected ignored Rust trusted-service and provisioning tests passed' >"$EVIDENCE_DIR/result.txt"
 echo "cluster=$CLUSTER" >>"$EVIDENCE_DIR/result.txt"

@@ -394,3 +394,85 @@ async fn managed_identity_vault_postgres_invariants_and_recovery() {
     assert!(immutable);
     pool.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires PostgreSQL; exercised by the integration-tests workflow"]
+async fn load_active_by_principal_returns_none_then_active_record() {
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("DATABASE_URL must point at a disposable PostgreSQL database");
+    let pool = PgPool::connect(&database_url).await.unwrap();
+    sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+
+    let store = ManagedIdentityVaultStore::new(pool.clone());
+    let tenant = Uuid::new_v4();
+    let principal = Uuid::new_v4();
+    let key_manager = kms(47);
+
+    // An absent subject has no active identity.
+    assert!(store
+        .load_active_by_principal(tenant, principal)
+        .await
+        .unwrap()
+        .is_none());
+
+    // The active row resolves with the exact stored attribution and key.
+    let identity_context = context(tenant, principal, 1);
+    let envelope = ManagedIdentityEnvelope::generate(identity_context, &key_manager)
+        .await
+        .unwrap();
+    let stored = store
+        .insert_or_load(Uuid::new_v4(), &envelope)
+        .await
+        .unwrap();
+    let active = store
+        .load_active_by_principal(tenant, principal)
+        .await
+        .unwrap()
+        .expect("active identity must resolve by principal");
+    assert_eq!(active.identity_id, stored.identity_id);
+    assert_eq!(active.generation, stored.generation);
+    assert_eq!(active.public_key, stored.public_key);
+
+    // A disabled identity no longer resolves by principal.
+    store
+        .disable_or_revoke(tenant, stored.identity_id, ManagedIdentityStatus::Disabled)
+        .await
+        .unwrap();
+    assert!(store
+        .load_active_by_principal(tenant, principal)
+        .await
+        .unwrap()
+        .is_none());
+
+    // A replacement identity resolves until it is revoked.
+    let replacement_context = context(tenant, principal, 2);
+    let replacement = ManagedIdentityEnvelope::generate(replacement_context, &key_manager)
+        .await
+        .unwrap();
+    let replacement = store
+        .insert_or_load(Uuid::new_v4(), &replacement)
+        .await
+        .unwrap();
+    let active = store
+        .load_active_by_principal(tenant, principal)
+        .await
+        .unwrap()
+        .expect("replacement identity must resolve by principal");
+    assert_eq!(active.identity_id, replacement.identity_id);
+    assert_eq!(active.public_key, replacement.public_key);
+    store
+        .disable_or_revoke(
+            tenant,
+            replacement.identity_id,
+            ManagedIdentityStatus::Revoked,
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .load_active_by_principal(tenant, principal)
+        .await
+        .unwrap()
+        .is_none());
+
+    pool.close().await;
+}

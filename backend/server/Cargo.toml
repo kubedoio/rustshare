@@ -19,7 +19,11 @@ test-recording-provider = []
 # debug_assertions, so release binaries cannot enable it.
 test-buzz-replacement-qualification = []
 # Inert connector foundation; no routes or runtime profile enable it.
-upstream-buzz-runtime = ["rustshare-storage/upstream-buzz", "dep:x509-parser"]
+upstream-buzz-runtime = [
+    "rustshare-storage/upstream-buzz",
+    "rustshare-crypto/nip42-auth-signing",
+    "dep:x509-parser",
+]
 
 [[bin]]
 name = "rustshare-server"
@@ -449,6 +453,10 @@ path = "../tests/meeting_resource_links_test.rs"
 [[test]]
 name = "managed_identity_vault_test"
 path = "../tests/managed_identity_vault_test.rs"
+
+[[test]]
+name = "managed_identity_provisioning_store_test"
+path = "../tests/managed_identity_provisioning_store_test.rs"
 
 [dev-dependencies]
 ical = { version = "0.11", default-features = false, features = ["ical"] }
