@@ -517,7 +517,7 @@ run_member_transport_test() {
 run_provisioning_relay_outage_test() {
 	local filter=upstream_identity_provisioning::tests::live_provisioning_recovers_after_relay_outage
 	local log="$EVIDENCE_DIR/provisioning-relay-outage.log" test_status outage_verified=0 restore_verified=0
-	local endpoints service_ip_before service_ip_after
+	local endpoints pods service_ip_before service_ip_after
 	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- /usr/local/bin/test-runner --ignored --exact "$filter" --nocapture >"$log" 2>&1 &
 	TEST_PID=$!
 	wait_for_test_marker "$log" BUZZ_TEST_RELAY_OUTAGE_READY
@@ -532,6 +532,13 @@ run_provisioning_relay_outage_test() {
 	done
 	[[ "$outage_verified" == 1 ]] || { echo 'relay Service endpoint remained during scale-down' >&2; return 1; }
 	cp "$RUN_DIR/relay-outage-scale-down.log" "$EVIDENCE_DIR/relay-outage-scale-down.log"
+	for _ in {1..90}; do
+		pods="$(${K[@]} -n "$NAMESPACE" get pods -l app=buzz-edge-a -o name)"
+		[[ -z "$pods" ]] && break
+		sleep 1
+	done
+	[[ -z "$pods" ]] || { echo 'relay pod remained after scale-down' >&2; return 1; }
+	echo 'relay_pod_deleted=true' >"$EVIDENCE_DIR/relay-outage-pod-deletion.log"
 	"${K[@]}" -n "$NAMESPACE" get deployment,service,endpoints buzz-edge-a -o wide >"$EVIDENCE_DIR/relay-outage-down-state.txt"
 	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/relay-outage.ack
 	wait_for_test_marker "$log" BUZZ_TEST_RELAY_RESTORE_READY
