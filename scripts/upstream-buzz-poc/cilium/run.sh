@@ -438,8 +438,15 @@ run_rust_test() {
 		echo "Rust test failed: $filter" >&2; tail -n 40 "$log" >&2; return 1
 	fi
 	[[ "$capture_alive" == 1 ]] || return 1
-	if [[ "$capture" == no-tcp ]] && grep -q -- '->' "$EVIDENCE_DIR/$1-hubble-tcp.log"; then
-		echo 'unexpected TCP flow in DNS-rejection window' >&2; cat "$EVIDENCE_DIR/$1-hubble-tcp.log" >&2; return 1
+	if [[ "$capture" == no-tcp ]]; then
+		if ! grep -Eq 'rust-connector.*->.*controlled-dns.*:53' "$EVIDENCE_DIR/$1-hubble-udp.log"; then
+			echo 'no positive DNS exchange in the rejection-window capture' >&2
+			cat "$EVIDENCE_DIR/$1-hubble-udp.log" >&2
+			return 1
+		fi
+		if grep -q -- '->' "$EVIDENCE_DIR/$1-hubble-tcp.log"; then
+			echo 'unexpected TCP flow in DNS-rejection window' >&2; cat "$EVIDENCE_DIR/$1-hubble-tcp.log" >&2; return 1
+		fi
 	fi
 }
 
