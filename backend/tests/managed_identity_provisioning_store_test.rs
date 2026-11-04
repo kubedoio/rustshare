@@ -643,6 +643,20 @@ async fn cas_transitions_are_monotonic() {
     assert!(ready.updated_at > admitted.updated_at);
     assert_eq!(
         store
+            .ready_for_identity(
+                tenant_id,
+                operation.principal_id,
+                operation.workspace_id,
+                attached.identity_id,
+                attached.identity_generation,
+            )
+            .await
+            .unwrap()
+            .operation_id,
+        operation.operation_id
+    );
+    assert_eq!(
+        store
             .mark_ready(tenant_id, operation.operation_id)
             .await
             .unwrap_err(),

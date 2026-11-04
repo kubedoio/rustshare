@@ -53,6 +53,14 @@ mapping generation unchanged. It verifies the first attempt is retryable, the
 same identity is reused, then runs reconciliation and `drive` after relay
 recovery before requiring the operation to reach `ready`.
 
+`live_provisioning_reaches_ready_after_nip42_and_member_only_read` also calls
+the internal managed-identity history reader and requires the exact seeded
+event ID and original author after authorized kind-39000 discovery. It checks
+that an undiscoverable channel is denied and that audit entries contain no
+message body. It does not publish kind-9 messages: pinned Buzz evaluates the
+current write role and channel state only after receiving a signed `EVENT`, so
+there is no safe pre-sign permission check for this backend boundary.
+
 Before the Rust tests, the harness attempts TCP to a forbidden public address
 from the connector Pod and requires Hubble to record Cilium's egress denial.
 `trusted_service_tenant_sessions_are_isolated_across_private_dm_relays` proves
