@@ -408,7 +408,7 @@ fi
 echo 'forbidden_public_tcp=denied_by_cilium' >"$EVIDENCE_DIR/public-egress-result.txt"
 
 run_rust_test() {
-	local label="$1" filter="$2" capture="$3" log="$EVIDENCE_DIR/$1.log" test_status capture_alive=1
+	local label="$1" filter="$2" capture="$3" log="$EVIDENCE_DIR/$1.log" test_status capture_alive=1 warmup_port=
 	if [[ "$capture" == tcp || "$capture" == no-tcp ]]; then
 		timeout --signal=TERM 60s hubble observe --server 127.0.0.1:4245 --since 1s --follow --pod "$NAMESPACE/rust-connector" --protocol tcp --output compact >"$EVIDENCE_DIR/$1-hubble-tcp.log" 2>&1 &
 		TCP_PID=$!
@@ -423,6 +423,24 @@ run_rust_test() {
 				return 1
 			fi
 		done
+		if [[ "$capture" == no-tcp ]]; then
+			local dns_host="buzz-edge-a.$NAMESPACE.svc.cluster.local"
+			"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- getent ahostsv4 "$dns_host" \
+				>"$EVIDENCE_DIR/dns-observer-preflight.txt" || {
+				echo 'controlled DNS preflight failed before the DNS-rejection test' >&2
+				return 1
+			}
+			for _ in {1..20}; do
+				if grep -Eq 'rust-connector.*->.*controlled-dns.*:53' "$EVIDENCE_DIR/$1-hubble-udp.log"; then break; fi
+				sleep 0.25
+			done
+			warmup_port="$(grep -Eo 'rust-connector:[0-9]+' "$EVIDENCE_DIR/$1-hubble-udp.log" | head -n 1 | cut -d: -f2 || true)"
+			if [[ -z "$warmup_port" ]]; then
+				echo 'Hubble did not capture the controlled DNS preflight' >&2
+				cat "$EVIDENCE_DIR/$1-hubble-udp.log" >&2
+				return 1
+			fi
+		fi
 	fi
 	set +e
 	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- /usr/local/bin/test-runner --ignored --exact "$filter" --nocapture >"$log" 2>&1
@@ -448,6 +466,11 @@ run_rust_test() {
 	if [[ "$capture" == no-tcp ]]; then
 		if ! grep -Eq 'rust-connector.*->.*controlled-dns.*:53' "$EVIDENCE_DIR/$1-hubble-udp.log"; then
 			echo 'no positive DNS exchange in the rejection-window capture' >&2
+			cat "$EVIDENCE_DIR/$1-hubble-udp.log" >&2
+			return 1
+		fi
+		if ! grep -Eo 'rust-connector:[0-9]+' "$EVIDENCE_DIR/$1-hubble-udp.log" | cut -d: -f2 | grep -Fvxq "$warmup_port"; then
+			echo 'Hubble did not capture a second DNS source port during the rejection test' >&2
 			cat "$EVIDENCE_DIR/$1-hubble-udp.log" >&2
 			return 1
 		fi
