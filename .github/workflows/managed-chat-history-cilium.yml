@@ -32,10 +32,8 @@ jobs:
     timeout-minutes: 90
     env:
       BUZZ_CILIUM_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
-      TMPDIR: ${{ runner.temp }}
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
-      EVIDENCE_DIR: ${{ runner.temp }}/managed-chat-history-evidence-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Checkout source
@@ -62,11 +60,15 @@ jobs:
 
       - name: Run disposable unmodified Buzz and managed-history suite
         timeout-minutes: 75
+        env:
+          TMPDIR: ${{ runner.temp }}
+          EVIDENCE_DIR: ${{ runner.temp }}/managed-chat-history-evidence-${{ github.run_id }}-${{ github.run_attempt }}
         run: scripts/upstream-buzz-poc/cilium/run.sh
 
       - name: Verify and bind sanitized evidence to this CI run
         if: success()
         env:
+          EVIDENCE_DIR: ${{ runner.temp }}/managed-chat-history-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           GH_RUN_ID: ${{ github.run_id }}
           GH_RUN_ATTEMPT: ${{ github.run_attempt }}
           GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -120,6 +122,7 @@ jobs:
         if: always()
         env:
           BUZZ_CILIUM_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+          TMPDIR: ${{ runner.temp }}
           EVIDENCE_DIR: ${{ runner.temp }}/managed-chat-history-evidence-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           cluster="ec-${BUZZ_CILIUM_RUN_ID}"
