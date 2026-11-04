@@ -85,6 +85,7 @@ impl ProvisioningContextResolver {
         if authenticated.user_id.is_nil()
             || authenticated.tenant_id.is_nil()
             || authenticated.workspace_id.is_nil()
+            || authenticated.workspace_id != authenticated.tenant_id
         {
             return Err(ProvisioningError::InvalidSubject);
         }
@@ -1993,7 +1994,7 @@ mod tests {
     async fn tenant_user_workspace(pool: &PgPool) -> (Uuid, Uuid, Uuid) {
         let tenant = Uuid::new_v4();
         let user = Uuid::new_v4();
-        let workspace = Uuid::new_v4();
+        let workspace = tenant;
         sqlx::query("INSERT INTO tenants (id,name) VALUES ($1,$2)")
             .bind(tenant)
             .bind(format!("Provisioning test {tenant}"))
@@ -2044,6 +2045,12 @@ mod tests {
         assert_eq!(subject.tenant_id, TenantId(tenant));
         assert_eq!(subject.principal_id, PrincipalId(user));
         assert_eq!(subject.workspace_id, WorkspaceId(workspace));
+
+        let mismatched_workspace = AuthenticatedTestPrincipal::new(user, tenant, Uuid::new_v4());
+        assert_eq!(
+            resolver.resolve(&mismatched_workspace).await.unwrap_err(),
+            ProvisioningError::InvalidSubject
+        );
     }
 
     #[tokio::test]
