@@ -424,12 +424,9 @@ run_rust_test() {
 			fi
 		done
 		if [[ "$capture" == no-tcp ]]; then
-			local dns_host="buzz-edge-a.$NAMESPACE.svc.cluster.local"
+			local dns_host="hubble-ready-$RUN_ID.$NAMESPACE.svc.cluster.local"
 			"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- getent ahostsv4 "$dns_host" \
-				>"$EVIDENCE_DIR/dns-observer-preflight.txt" || {
-				echo 'controlled DNS preflight failed before the DNS-rejection test' >&2
-				return 1
-			}
+				>"$EVIDENCE_DIR/dns-observer-preflight.txt" 2>&1 || true
 			for _ in {1..20}; do
 				if grep -Eq 'rust-connector.*->.*controlled-dns.*:53' "$EVIDENCE_DIR/$1-hubble-udp.log"; then break; fi
 				sleep 0.25
