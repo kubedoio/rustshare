@@ -254,3 +254,70 @@ At code head `6d140a323482c235dd8598b967350e2b08cbca55`, all 12 branch-protectio
 The CI results do not include the disposable kind/Cilium harness. The current host has no `kind` executable, and this repository has no Cilium Actions workflow or designated runner; the new managed-history Cilium test was not run and remains **UNVERIFIED**. Dedicated evidence tracking is [issue #458](https://github.com/kubedoio/rustshare/issues/458). Independent security acceptance to defer this evidence until #458 passes is **PENDING**; the ordinary PR approval is not that acceptance. Request recorded at [PR comment #6635007265](https://github.com/kubedoio/rustshare/pull/457#issuecomment-6635007265). Issue #442 remains a distinct stock-desktop interoperability gate.
 
 The PR remains an inert, internal, one-shot history-reader foundation: the upstream modules are feature-gated and have no production caller; this change adds no publish/signing API, Chat route or activation, migration, or deployment change. Phase 2B.3 publish/read integration remains incomplete, production Chat remains disabled, issues #442 and #458 remain open, and Gate I remains **NO-GO / NOT ACCEPTED**. Do not merge until the independent security review and Cilium-deferral acceptance are recorded.
+
+## 2026-11-04 PR #457 merge and acceptance reconciliation
+
+PR #457 merged through GitHub's protected process on 2026-11-04. The PR head
+was `308997a434c5c96a3acaf207aee37ffd0fdb920e`; the exact squash merge commit
+on protected `main` is `a6ec3d98c1d397e59596585f1badab716165691b`. All 12
+required branch-protection contexts passed on the final head, along with
+CodeQL and OpenAPI Contract. The protected runs were CI
+[`41872935656`](https://github.com/kubedoio/rustshare/actions/runs/41872935656),
+Integration Tests
+[`41872935823`](https://github.com/kubedoio/rustshare/actions/runs/41872935823),
+Frontend CI
+[`41872935738`](https://github.com/kubedoio/rustshare/actions/runs/41872935738),
+Vault Sync Compliance
+[`41872935735`](https://github.com/kubedoio/rustshare/actions/runs/41872935735),
+DCO Check
+[`41872935622`](https://github.com/kubedoio/rustshare/actions/runs/41872935622),
+and CodeQL
+[`41872935628`](https://github.com/kubedoio/rustshare/actions/runs/41872935628).
+The PR-tier workflow skipped Build Release, Test, SQLx Prepare Check and Code
+Coverage; these are not reported as executed. Buzz Live Conformance and Chat
+Product Acceptance passing do not count as a run of the new managed-history
+Cilium test.
+
+Project-owner `senolcolak` recorded `ACCEPT` in [PR #457 comment
+#6637880199](https://github.com/kubedoio/rustshare/pull/457#issuecomment-6637880199).
+Its scope is the inert history reader's reliance on the pinned relay for
+historical write enforcement/current private-channel read ACLs, and deferral of
+the new history Cilium evidence to issue #458. This is project-owner acceptance
+only, not independent security/custody approval, not a publishing decision, and
+not permission for production Chat. No independent security verdict was
+recorded by that comment.
+
+The managed-history Cilium test remains **UNVERIFIED**. The development host's
+preflight failed with `missing required command: kind`; no Cilium run was
+claimed. Issue [#458](https://github.com/kubedoio/rustshare/issues/458) is a
+mandatory live qualification gate before managed Chat activation and tracks
+authorized history, private denial, cross-tenant/wrong-identity reads,
+revocation, mapping generation, database/KMS failure, zero unauthorized EVENT
+frames and real Cilium network isolation. Issue
+[#442](https://github.com/kubedoio/rustshare/issues/442) remains the separate
+mandatory stock-desktop interoperability gate. Gate I remains **NO-GO / NOT
+ACCEPTED**. Phase 2B.4 runtime integration and production Chat remain disabled.
+
+The project owner explicitly selected Option A as the publishing target and
+accepted the portable signed-artifact, replay, plaintext-visibility and
+revocation risks in [PR #459 comment
+#6640798406](https://github.com/kubedoio/rustshare/pull/459#issuecomment-6640798406).
+This is a product architecture decision, not implementation or activation
+approval. A separate independent security verdict remains pending. The #457
+`ACCEPT` remains limited to the history-reader trust model and Cilium deferral.
+
+Source review identified an upstream membership-cache/role-transition
+authorization defect. Its reproduction details were submitted through Buzz's
+private vulnerability-reporting process and are omitted from this public
+report. The managed publisher is blocked until upstream triages and fixes the
+finding in an official unmodified Buzz pin and regression tests pass. ADR-0046
+now selects typed Elembra-side authorization with Buzz final ingest enforcement,
+preserves Option B as a deferred alternative, and specifies durable exact-event
+recovery and publisher conformance tests. No signing, publishing, production
+authorization, or Phase 2B.4 integration follows from this decision. Gate I
+remains **NO-GO**.
+
+Publisher-specific upstream-fix and live conformance tracking is separate in
+[issue #460](https://github.com/kubedoio/rustshare/issues/460). Issue #458
+remains the mandatory managed-history Cilium gate; neither issue substitutes
+for the other or for desktop acceptance in #442.
