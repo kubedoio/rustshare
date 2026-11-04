@@ -414,7 +414,8 @@ run_rust_test() {
 		TCP_PID=$!
 		timeout --signal=TERM 60s hubble observe --server 127.0.0.1:4245 --since 1s --follow --pod "$NAMESPACE/rust-connector" --protocol udp --output compact >"$EVIDENCE_DIR/$1-hubble-udp.log" 2>&1 &
 		UDP_PID=$!
-		sleep 1
+		# Let both Hubble streams subscribe before the test's first network request.
+		sleep 3
 		for name in TCP_PID UDP_PID; do
 			local pid="${!name}"
 			if ! kill -0 "$pid" 2>/dev/null; then
