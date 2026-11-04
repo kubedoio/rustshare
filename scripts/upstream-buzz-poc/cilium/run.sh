@@ -10,7 +10,8 @@ source "$HERE/versions.env"
 SOURCE_SHA=eafd77e9f6e96052476bdd88be732c046fdb7ab3
 SOURCE_TREE=04e3a40545bd3b23510ec32b4c8cccee2acef7c5
 NAMESPACE=elembra-buzz-test
-RUN_ID="$(date -u +%Y%m%d%H%M%S)-$$"
+RUN_ID="${BUZZ_CILIUM_RUN_ID:-$(date -u +%Y%m%d%H%M%S)-$$}"
+[[ "$RUN_ID" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || { echo 'BUZZ_CILIUM_RUN_ID must be a short lowercase tag-safe value' >&2; exit 2; }
 CLUSTER="ec-${RUN_ID}"
 BUZZ_IMAGE="local/elembra-cilium-buzz:${RUN_ID}"
 POC_IMAGE="local/elembra-cilium-tools:${RUN_ID}"
@@ -89,7 +90,7 @@ hubble_version="$(hubble version)"
 [[ "$hubble_version" == *"$HUBBLE_CLI_VERSION"* ]] || { echo "Hubble CLI must be $HUBBLE_CLI_VERSION" >&2; exit 2; }
 rustc_version="$(rustc +1.97.1 --version)"
 [[ "$rustc_version" == *1.97.1* ]] || { echo 'Rust 1.97.1 is required' >&2; exit 2; }
-node --version | grep -Eq '^v22\.' || { echo 'Node.js 22 is required' >&2; exit 2; }
+[[ "$(node --version)" == "v$NODE_VERSION" ]] || { echo "Node.js $NODE_VERSION is required" >&2; exit 2; }
 npm --version | awk -F. '$1 >= 10 { ok=1 } END { exit !ok }' || { echo 'npm 10 or newer is required' >&2; exit 2; }
 
 default_source="${BUZZ_SOURCE_DIR:-$RUN_DIR/buzz-source}"
@@ -104,6 +105,7 @@ fi
 [[ -z "$(git -C "$default_source" status --porcelain)" && -z "$(git -C "$default_source" clean -ndX)" ]] || { echo 'Buzz checkout must be clean, including ignored files' >&2; exit 2; }
 [[ -z "$(git -C "$ROOT" status --porcelain)" ]] || { echo 'RustShare worktree must be clean to bind test evidence to a commit' >&2; exit 2; }
 git -C "$ROOT" rev-parse HEAD >"$EVIDENCE_DIR/rustshare-source.txt"
+cp "$HERE/versions.env" "$EVIDENCE_DIR/tool-image-pins.env"
 {
 	echo "buzz_source=$SOURCE_SHA"
 	echo "buzz_tree=$SOURCE_TREE"
