@@ -77,6 +77,11 @@ impl TenantRelaySession {
         &self.scope
     }
 
+    /// Fence and discard this session after a timed-out operation.
+    pub(crate) fn abort(&mut self) {
+        drop(self.socket.take());
+    }
+
     /// Send one test-called provisioning frame. A closed socket fails closed;
     /// otherwise the mapping is revalidated before sending.
     pub(crate) async fn send_text(&mut self, text: &str) -> Result<(), UpstreamBuzzTransportError> {

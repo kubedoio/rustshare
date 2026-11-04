@@ -25,6 +25,8 @@ use thiserror::Error;
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
+const HISTORY_SUBSCRIPTION_TIMEOUT: Duration = Duration::from_secs(30);
+
 // shortcut: this foundation has no runtime caller, so a process-wide lock
 // prevents overlapping test drives; replace it with a durable lease before
 // wiring a multi-process worker.
@@ -382,7 +384,7 @@ impl ManagedIdentityProvisioner {
         if session.scope() != &mapping.scope() {
             return Err(ProvisioningError::StaleMappingGeneration);
         }
-        authenticate_managed_identity(&mut session, &recovered, mapping.relay_url()).await?;
+        authenticate_managed_identity(&mut session, recovered, mapping.relay_url()).await?;
         let discovery = read_discovery_event(&mut session, &channel.to_string()).await?;
         validate_nip29_discovery(
             &discovery,
@@ -1022,7 +1024,7 @@ impl ManagedIdentityProvisioner {
         }
         if let Err(error) = prove_membership(
             &mut session,
-            &recovered,
+            recovered,
             mapping.relay_url(),
             membership_channel,
         )
@@ -1304,7 +1306,7 @@ async fn add_nip29_member(
 
 async fn prove_membership(
     session: &mut TenantRelaySession,
-    recovered: &RecoveredIdentity,
+    recovered: RecoveredIdentity,
     relay_url: &str,
     membership_channel: &str,
 ) -> Result<(), ProvisioningError> {
@@ -1314,30 +1316,42 @@ async fn prove_membership(
     authenticate_managed_identity(session, recovered, relay_url).await?;
 
     let subscription = format!("provision-{}", Uuid::new_v4());
-    session
-        .send_text(
-            &serde_json::json!([
-                "REQ",
-                subscription,
-                {"kinds": [9], "#h": [membership_channel], "limit": 50}
-            ])
-            .to_string(),
-        )
-        .await
-        .map_err(|_| ProvisioningError::TransportUnavailable)?;
-    let mut saw_event = false;
-    loop {
-        let Some(value) = receive_json(session).await? else {
-            continue;
-        };
-        if value[0] == "EVENT" && value[1] == subscription {
-            saw_event = true;
-        } else if value[0] == "EOSE" && value[1] == subscription {
-            break;
-        } else if value[0] == "CLOSED" && value[1] == subscription {
-            return Err(ProvisioningError::MembershipUnproven);
+    let saw_event = match tokio::time::timeout(HISTORY_SUBSCRIPTION_TIMEOUT, async {
+        session
+            .send_text(
+                &serde_json::json!([
+                    "REQ",
+                    subscription,
+                    {"kinds": [9], "#h": [membership_channel], "limit": 50}
+                ])
+                .to_string(),
+            )
+            .await
+            .map_err(|_| ProvisioningError::TransportUnavailable)?;
+        let mut saw_event = false;
+        loop {
+            let Some(value) = receive_json(session).await? else {
+                continue;
+            };
+            if value[0] == "EVENT" && value[1] == subscription {
+                saw_event = true;
+            } else if value[0] == "EOSE" && value[1] == subscription {
+                break;
+            } else if value[0] == "CLOSED" && value[1] == subscription {
+                return Err(ProvisioningError::MembershipUnproven);
+            }
         }
-    }
+        close_history_subscription(session, &subscription).await?;
+        Ok::<bool, ProvisioningError>(saw_event)
+    })
+    .await
+    {
+        Ok(result) => result?,
+        Err(_) => {
+            session.abort();
+            return Err(ProvisioningError::TransportUnavailable);
+        }
+    };
     if !saw_event {
         return Err(ProvisioningError::MembershipUnproven);
     }
@@ -1346,7 +1360,26 @@ async fn prove_membership(
 
 async fn authenticate_managed_identity(
     session: &mut TenantRelaySession,
-    recovered: &RecoveredIdentity,
+    recovered: RecoveredIdentity,
+    relay_url: &str,
+) -> Result<(), ProvisioningError> {
+    match tokio::time::timeout(
+        HISTORY_SUBSCRIPTION_TIMEOUT,
+        authenticate_managed_identity_inner(session, recovered, relay_url),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            session.abort();
+            Err(ProvisioningError::TransportUnavailable)
+        }
+    }
+}
+
+async fn authenticate_managed_identity_inner(
+    session: &mut TenantRelaySession,
+    recovered: RecoveredIdentity,
     relay_url: &str,
 ) -> Result<(), ProvisioningError> {
     let challenge = loop {
@@ -1377,6 +1410,7 @@ async fn authenticate_managed_identity(
         return Err(ProvisioningError::AuthenticationRejected);
     }
     let event_id = event.id.to_hex();
+    drop(recovered);
     session
         .send_text(&serde_json::json!(["AUTH", event]).to_string())
         .await
@@ -1388,6 +1422,24 @@ async fn authenticate_managed_identity(
 }
 
 async fn read_discovery_event(
+    session: &mut TenantRelaySession,
+    channel_id: &str,
+) -> Result<Event, ProvisioningError> {
+    match tokio::time::timeout(
+        HISTORY_SUBSCRIPTION_TIMEOUT,
+        read_discovery_event_inner(session, channel_id),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            session.abort();
+            Err(ProvisioningError::TransportUnavailable)
+        }
+    }
+}
+
+async fn read_discovery_event_inner(
     session: &mut TenantRelaySession,
     channel_id: &str,
 ) -> Result<Event, ProvisioningError> {
@@ -1425,10 +1477,7 @@ async fn read_discovery_event(
             _ => {}
         }
     }
-    session
-        .send_text(&serde_json::json!(["CLOSE", subscription]).to_string())
-        .await
-        .map_err(|_| ProvisioningError::TransportUnavailable)?;
+    close_history_subscription(session, &subscription).await?;
     match events.as_slice() {
         [event] => Ok(event.clone()),
         _ => Err(ProvisioningError::ReadDenied),
@@ -1441,8 +1490,26 @@ async fn read_nip29_messages(
     max_events: usize,
     max_content_bytes: usize,
 ) -> Result<Vec<Event>, ProvisioningError> {
-    const MAX_EVENT_FRAME_BYTES: usize = 128 * 1024;
-    const MAX_HISTORY_BYTES: usize = 8 * 1024 * 1024;
+    match tokio::time::timeout(
+        HISTORY_SUBSCRIPTION_TIMEOUT,
+        read_nip29_messages_inner(session, channel_id, max_events, max_content_bytes),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            session.abort();
+            Err(ProvisioningError::TransportUnavailable)
+        }
+    }
+}
+
+async fn read_nip29_messages_inner(
+    session: &mut TenantRelaySession,
+    channel_id: &str,
+    max_events: usize,
+    max_content_bytes: usize,
+) -> Result<Vec<Event>, ProvisioningError> {
     let subscription = format!("history-{}", Uuid::new_v4());
     session
         .send_text(
@@ -1461,38 +1528,69 @@ async fn read_nip29_messages(
         let Some(value) = receive_json(session).await? else {
             continue;
         };
-        match value.get(0).and_then(Value::as_str) {
-            Some("EVENT") if value.get(1).and_then(Value::as_str) == Some(&subscription) => {
-                if events.len() >= max_events {
-                    return Err(ProvisioningError::ReadDenied);
-                }
-                let raw = value.get(2).cloned().ok_or(ProvisioningError::ReadDenied)?;
-                let event_bytes = serde_json::to_vec(&raw)
-                    .map_err(|_| ProvisioningError::ReadDenied)?
-                    .len();
-                total_bytes = total_bytes
-                    .checked_add(event_bytes)
-                    .filter(|size| {
-                        event_bytes <= MAX_EVENT_FRAME_BYTES && *size <= MAX_HISTORY_BYTES
-                    })
-                    .ok_or(ProvisioningError::ReadDenied)?;
-                let event: Event =
-                    serde_json::from_value(raw).map_err(|_| ProvisioningError::ReadDenied)?;
-                validate_nip29_message(&event, channel_id, max_content_bytes)?;
-                events.push(event);
-            }
-            Some("EOSE") if value.get(1).and_then(Value::as_str) == Some(&subscription) => break,
-            Some("CLOSED") if value.get(1).and_then(Value::as_str) == Some(&subscription) => {
-                return Err(ProvisioningError::ReadDenied)
-            }
-            _ => {}
+        if append_nip29_history_frame(
+            &value,
+            &subscription,
+            channel_id,
+            max_events,
+            max_content_bytes,
+            &mut events,
+            &mut total_bytes,
+        )? {
+            break;
         }
     }
+    close_history_subscription(session, &subscription).await?;
+    Ok(events)
+}
+
+fn append_nip29_history_frame(
+    value: &Value,
+    subscription: &str,
+    channel_id: &str,
+    max_events: usize,
+    max_content_bytes: usize,
+    events: &mut Vec<Event>,
+    total_bytes: &mut usize,
+) -> Result<bool, ProvisioningError> {
+    const MAX_EVENT_FRAME_BYTES: usize = 128 * 1024;
+    const MAX_HISTORY_BYTES: usize = 8 * 1024 * 1024;
+
+    match value.get(0).and_then(Value::as_str) {
+        Some("EVENT") if value.get(1).and_then(Value::as_str) == Some(subscription) => {
+            if events.len() >= max_events {
+                return Err(ProvisioningError::ReadDenied);
+            }
+            let raw = value.get(2).cloned().ok_or(ProvisioningError::ReadDenied)?;
+            let event_bytes = serde_json::to_vec(&raw)
+                .map_err(|_| ProvisioningError::ReadDenied)?
+                .len();
+            *total_bytes = total_bytes
+                .checked_add(event_bytes)
+                .filter(|size| event_bytes <= MAX_EVENT_FRAME_BYTES && *size <= MAX_HISTORY_BYTES)
+                .ok_or(ProvisioningError::ReadDenied)?;
+            let event: Event =
+                serde_json::from_value(raw).map_err(|_| ProvisioningError::ReadDenied)?;
+            validate_nip29_message(&event, channel_id, max_content_bytes)?;
+            events.push(event);
+            Ok(false)
+        }
+        Some("EOSE") if value.get(1).and_then(Value::as_str) == Some(subscription) => Ok(true),
+        Some("CLOSED") if value.get(1).and_then(Value::as_str) == Some(subscription) => {
+            Err(ProvisioningError::ReadDenied)
+        }
+        _ => Ok(false),
+    }
+}
+
+async fn close_history_subscription(
+    session: &mut TenantRelaySession,
+    subscription: &str,
+) -> Result<(), ProvisioningError> {
     session
         .send_text(&serde_json::json!(["CLOSE", subscription]).to_string())
         .await
-        .map_err(|_| ProvisioningError::TransportUnavailable)?;
-    Ok(events)
+        .map_err(|_| ProvisioningError::TransportUnavailable)
 }
 
 fn validate_nip29_discovery(
@@ -1576,9 +1674,10 @@ mod tests {
     use zeroize::Zeroizing;
 
     use super::{
-        identity_binding_matches, mapping_binding_matches, validate_nip29_discovery,
-        validate_nip29_message, AuthenticatedTestPrincipal, DriveOutcome, IdentityOutcome,
-        ManagedIdentityProvisioner, ProvisioningContextResolver, ProvisioningError,
+        append_nip29_history_frame, identity_binding_matches, mapping_binding_matches,
+        validate_nip29_discovery, validate_nip29_message, AuthenticatedTestPrincipal, DriveOutcome,
+        IdentityOutcome, ManagedIdentityProvisioner, ProvisioningContextResolver,
+        ProvisioningError,
     };
     use crate::upstream_buzz_transport::RelayTlsTrustConfig;
 
@@ -1608,6 +1707,47 @@ mod tests {
         let mut tampered = message;
         tampered.content.push('!');
         assert!(validate_nip29_message(&tampered, &channel, 64).is_err());
+    }
+
+    #[test]
+    fn closed_history_subscription_denies_after_buffered_event() {
+        let author = Keys::generate();
+        let channel = Uuid::new_v4().to_string();
+        let subscription = "history-test";
+        let event = nostr::EventBuilder::new(nostr::Kind::TextNote, "private message")
+            .tags([nostr::Tag::parse(["h", channel.as_str()]).unwrap()])
+            .sign_with_keys(&author)
+            .unwrap();
+        let event_frame = serde_json::json!(["EVENT", subscription, event]);
+        let closed_frame = serde_json::json!(["CLOSED", subscription, "not authorized"]);
+        let result = (|| {
+            let mut events = Vec::new();
+            let mut total_bytes = 0;
+            assert!(!append_nip29_history_frame(
+                &event_frame,
+                subscription,
+                &channel,
+                100,
+                64 * 1024,
+                &mut events,
+                &mut total_bytes,
+            )?);
+            assert_eq!(events.len(), 1);
+            if append_nip29_history_frame(
+                &closed_frame,
+                subscription,
+                &channel,
+                100,
+                64 * 1024,
+                &mut events,
+                &mut total_bytes,
+            )? {
+                Ok(events)
+            } else {
+                Err(ProvisioningError::ReadDenied)
+            }
+        })();
+        assert!(matches!(result, Err(ProvisioningError::ReadDenied)));
     }
 
     #[test]
