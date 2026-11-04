@@ -362,8 +362,14 @@ values = {
  "BUZZ_TEST_RELAY_OUTAGE_ACK_FILE":"/tmp/relay-outage.ack", "BUZZ_TEST_RELAY_RESTORE_ACK_FILE":"/tmp/relay-restore.ack",
 }
 path = Path(sys.argv[3]); path.write_text("".join(f"{k}={v}\n" for k,v in values.items())); path.chmod(0o600)
-public = {"tenant_a": {"community": a["community_id"], "channel": a["channel_id"], "event": a["event_id"], "author": a["author"]},
-          "tenant_b": {"community": b["community_id"], "channel": b["channel_id"], "event": b["event_id"], "author": b["author"]}}
+public = {
+    "tenant_a": {"community": a["community_id"], "channel": a["channel_id"], "event": a["event_id"], "author": a["author"],
+                 "provisioning_channel": a["provisioning_channel_id"], "provisioning_event": a["provisioning_event_id"],
+                 "provisioning_author": a["provisioning_author"]},
+    "tenant_b": {"community": b["community_id"], "channel": b["channel_id"], "event": b["event_id"], "author": b["author"],
+                 "provisioning_channel": b["provisioning_channel_id"], "provisioning_event": b["provisioning_event_id"],
+                 "provisioning_author": b["provisioning_author"]},
+}
 Path(sys.argv[1]).write_text(json.dumps(public, indent=2) + "\n")
 PY
 cp "$RUN_DIR/connector-public.env" "$EVIDENCE_DIR/connector-public.env"

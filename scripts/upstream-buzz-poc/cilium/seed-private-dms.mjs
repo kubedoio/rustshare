@@ -201,6 +201,7 @@ async function seed(label) {
 		channel_id: channelId,
 		provisioning_channel_id: provisioningChannelId,
 		provisioning_event_id: provisioningMessage.id,
+		provisioning_author: ownerPubkey,
 		event_id: message.id,
 		author: memberPubkey,
 		friend_pubkey: friendPubkey,
