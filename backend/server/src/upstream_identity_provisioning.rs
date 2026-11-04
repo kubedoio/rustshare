@@ -3085,7 +3085,7 @@ mod tests {
         let pool = PgPool::connect(&database_url).await.unwrap();
         sqlx::migrate!("../migrations").run(&pool).await.unwrap();
         let tenant = Uuid::new_v4();
-        let workspace = Uuid::new_v4();
+        let workspace = tenant;
         let user = Uuid::new_v4();
         sqlx::query("INSERT INTO tenants (id,name) VALUES ($1,$2)")
             .bind(tenant)
