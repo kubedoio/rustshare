@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use chrono::Utc;
-use nostr::{EventBuilder, Keys, Kind, RelayUrl, Tag, Timestamp};
+use nostr::{Event, EventBuilder, Keys, Kind, RelayUrl, Tag, Timestamp};
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_crypto::managed_identity_vault::{
     DekKeyManagement, IdentityContext, ManagedIdentityEnvelope, RecoveredIdentity, WrappedDek,
@@ -16,8 +16,8 @@ use rustshare_resource_auth::chat_identity::build_buzz_provisioning_admission_ev
 use rustshare_storage::{
     ChatIdentityStore, ManagedIdentityOperationError, ManagedIdentityOperationRecord,
     ManagedIdentityOperationStatus, ManagedIdentityOperationStore, ManagedIdentityRecord,
-    ManagedIdentityStatus, ManagedIdentityStoreError, ManagedIdentityVaultStore,
-    UpstreamRelayMappingStore,
+    ManagedIdentityStatus, ManagedIdentityStoreError, ManagedIdentityVaultStore, MetadataStore,
+    UpstreamRelayMappingStore, UserSecurityEventRecord,
 };
 use serde_json::Value;
 use sqlx::PgPool;
@@ -43,6 +43,7 @@ pub(crate) struct AuthenticatedTestPrincipal {
 }
 
 impl AuthenticatedTestPrincipal {
+    #[cfg(test)]
     pub(crate) fn new(user_id: Uuid, tenant_id: Uuid, workspace_id: Uuid) -> Self {
         Self {
             user_id,
@@ -164,6 +165,8 @@ pub(crate) enum ProvisioningError {
     AuthenticationRejected,
     #[error("relay membership could not be proven")]
     MembershipUnproven,
+    #[error("upstream channel history is not authorized")]
+    ReadDenied,
     #[error("provisioning database is unavailable")]
     DatabaseUnavailable,
     #[error("provisioning attempts are exhausted")]
@@ -184,6 +187,7 @@ impl ProvisioningError {
             Self::AdmissionRejected => "admission_rejected",
             Self::AuthenticationRejected => "authentication_rejected",
             Self::MembershipUnproven => "membership_unproven",
+            Self::ReadDenied => "read_denied",
             Self::DatabaseUnavailable => "database_unavailable",
             Self::AttemptsExhausted => "attempts_exhausted",
             Self::Internal => "internal_error",
@@ -239,6 +243,210 @@ impl ManagedIdentityProvisioner {
 
     pub(crate) fn operations(&self) -> &ManagedIdentityOperationStore {
         &self.operations
+    }
+
+    /// One-shot history read using the managed identity and the relay's own
+    /// NIP-42 authorization. Results are withheld unless the complete response
+    /// reaches EOSE and the local subject, identity, operation and mapping are
+    /// still current. This intentionally exposes no persistent subscription.
+    pub(crate) async fn read_channel_history<K: DekKeyManagement>(
+        &self,
+        authenticated: &AuthenticatedTestPrincipal,
+        channel_id: &str,
+        kms: &K,
+        trust: &RelayTlsTrustConfig,
+    ) -> Result<Vec<Event>, ProvisioningError> {
+        let result = self
+            .read_channel_history_inner(authenticated, channel_id, kms, trust)
+            .await;
+        let channel = Uuid::parse_str(channel_id)
+            .ok()
+            .filter(|id| id.to_string() == channel_id)
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "invalid".to_owned());
+        let description = match &result {
+            Ok(history) => format!(
+                "allowed tenant={} workspace={} channel={} operation={} identity={}:{} mapping={}:{} events={}",
+                authenticated.tenant_id,
+                authenticated.workspace_id,
+                channel,
+                history.operation_id,
+                history.identity_id,
+                history.identity_generation,
+                history.mapping_id,
+                history.mapping_generation,
+                history.events.len()
+            ),
+            Err(error) => format!(
+                "denied tenant={} workspace={} channel={} reason={}",
+                authenticated.tenant_id,
+                authenticated.workspace_id,
+                channel,
+                error.code()
+            ),
+        };
+        MetadataStore::new(self.resolver.pool.clone())
+            .create_user_security_event(UserSecurityEventRecord {
+                user_id: authenticated.user_id,
+                event_type: "managed_chat_history_access",
+                description: &description,
+                ip_address: None,
+                user_agent: None,
+                session_id: None,
+            })
+            .await
+            .map_err(|_| ProvisioningError::DatabaseUnavailable)?;
+        result.map(|history| history.events)
+    }
+
+    async fn read_channel_history_inner<K: DekKeyManagement>(
+        &self,
+        authenticated: &AuthenticatedTestPrincipal,
+        channel_id: &str,
+        kms: &K,
+        trust: &RelayTlsTrustConfig,
+    ) -> Result<AuthorizedHistoryRead, ProvisioningError> {
+        const MAX_HISTORY_EVENTS: usize = 100;
+        const MAX_EVENT_CONTENT_BYTES: usize = 64 * 1024;
+
+        let channel = Uuid::parse_str(channel_id)
+            .ok()
+            .filter(|id| id.to_string() == channel_id)
+            .ok_or(ProvisioningError::ReadDenied)?;
+        let subject = self.resolver.resolve(authenticated).await?;
+        let identity_record = self
+            .vault
+            .load_active_by_principal(subject.tenant_id.0, subject.principal_id.0)
+            .await
+            .map_err(|_| ProvisioningError::DatabaseUnavailable)?
+            .ok_or(ProvisioningError::ReadDenied)?;
+        let identity = IdentityOutcome {
+            identity_id: identity_record.identity_id,
+            generation: identity_record.generation,
+            public_key: identity_record.public_key.clone(),
+        };
+        let operation = self
+            .operations
+            .ready_for_identity(
+                subject.tenant_id.0,
+                subject.principal_id.0,
+                subject.workspace_id.0,
+                identity.identity_id,
+                identity.generation,
+            )
+            .await
+            .map_err(|_| ProvisioningError::ReadDenied)?;
+        if !identity_binding_matches(
+            operation.identity_id,
+            operation.identity_generation,
+            &identity,
+            &identity_record,
+        ) {
+            return Err(ProvisioningError::IdentityConflict);
+        }
+        let mapping = self
+            .mappings
+            .load(subject.tenant_id, subject.workspace_id)
+            .await
+            .map_err(|_| ProvisioningError::MappingUnavailable)?;
+        let mapping_id = mapping.record().mapping_id;
+        let mapping_generation = mapping.record().generation as i64;
+        if !mapping_binding_matches(
+            operation.mapping_id,
+            operation.mapping_generation,
+            mapping_id,
+            mapping_generation,
+        ) {
+            return Err(ProvisioningError::StaleMappingGeneration);
+        }
+        let context = IdentityContext {
+            tenant_id: subject.tenant_id.0,
+            principal_id: subject.principal_id.0,
+            identity_id: identity.identity_id,
+            generation: identity.generation,
+        };
+        let envelope = identity_record
+            .envelope()
+            .map_err(|_| ProvisioningError::IdentityConflict)?;
+        let recovered = envelope
+            .recover(context, kms)
+            .await
+            .map_err(|_| ProvisioningError::KmsUnavailable)?;
+        let mut session = connect(
+            &self.mappings,
+            subject.tenant_id,
+            subject.workspace_id,
+            trust,
+        )
+        .await?;
+        if session.scope() != &mapping.scope() {
+            return Err(ProvisioningError::StaleMappingGeneration);
+        }
+        authenticate_managed_identity(&mut session, &recovered, mapping.relay_url()).await?;
+        let discovery = read_discovery_event(&mut session, &channel.to_string()).await?;
+        validate_nip29_discovery(
+            &discovery,
+            &channel.to_string(),
+            &mapping.record().relay_pubkey,
+        )?;
+        let events = read_nip29_messages(
+            &mut session,
+            &channel.to_string(),
+            MAX_HISTORY_EVENTS,
+            MAX_EVENT_CONTENT_BYTES,
+        )
+        .await?;
+
+        let current_subject = self.resolver.resolve(authenticated).await?;
+        let current_identity = self
+            .vault
+            .load_active_by_principal(current_subject.tenant_id.0, current_subject.principal_id.0)
+            .await
+            .map_err(|_| ProvisioningError::DatabaseUnavailable)?
+            .ok_or(ProvisioningError::ReadDenied)?;
+        let current_operation = self
+            .operations
+            .ready_for_identity(
+                current_subject.tenant_id.0,
+                current_subject.principal_id.0,
+                current_subject.workspace_id.0,
+                current_identity.identity_id,
+                current_identity.generation,
+            )
+            .await
+            .map_err(|_| ProvisioningError::ReadDenied)?;
+        let current_mapping = self
+            .mappings
+            .load(current_subject.tenant_id, current_subject.workspace_id)
+            .await
+            .map_err(|_| ProvisioningError::MappingUnavailable)?;
+        if current_subject.tenant_id != subject.tenant_id
+            || current_subject.principal_id != subject.principal_id
+            || current_subject.workspace_id != subject.workspace_id
+            || current_operation.operation_id != operation.operation_id
+            || !identity_binding_matches(
+                operation.identity_id,
+                operation.identity_generation,
+                &identity,
+                &current_identity,
+            )
+            || !mapping_binding_matches(
+                operation.mapping_id,
+                operation.mapping_generation,
+                current_mapping.record().mapping_id,
+                current_mapping.record().generation as i64,
+            )
+        {
+            return Err(ProvisioningError::ReadDenied);
+        }
+        Ok(AuthorizedHistoryRead {
+            events,
+            operation_id: operation.operation_id,
+            identity_id: identity.identity_id,
+            identity_generation: identity.generation,
+            mapping_id,
+            mapping_generation,
+        })
     }
 
     pub(crate) async fn authorize(
@@ -929,6 +1137,15 @@ impl ManagedIdentityProvisioner {
     }
 }
 
+struct AuthorizedHistoryRead {
+    events: Vec<Event>,
+    operation_id: Uuid,
+    identity_id: Uuid,
+    identity_generation: i64,
+    mapping_id: Uuid,
+    mapping_generation: i64,
+}
+
 fn mapping_binding_matches(
     operation_mapping_id: Uuid,
     operation_generation: i64,
@@ -989,6 +1206,9 @@ async fn receive_json(
     let Message::Text(frame) = frame else {
         return Ok(None);
     };
+    if frame.len() > 2 * 1024 * 1024 {
+        return Err(ProvisioningError::ReadDenied);
+    }
     serde_json::from_str(&frame)
         .map(Some)
         .map_err(|_| ProvisioningError::TransportUnavailable)
@@ -1026,8 +1246,9 @@ async fn authenticate_relay_admin(
             continue;
         };
         if value[0] == "AUTH" {
-            break value[1]
-                .as_str()
+            break value
+                .get(1)
+                .and_then(Value::as_str)
                 .ok_or(ProvisioningError::AuthenticationRejected)?
                 .to_owned();
         }
@@ -1090,36 +1311,7 @@ async fn prove_membership(
     if membership_channel.is_empty() {
         return Err(ProvisioningError::MembershipUnproven);
     }
-    let challenge = loop {
-        let Some(value) = receive_json(session).await? else {
-            continue;
-        };
-        if value[0] == "AUTH" {
-            break value[1]
-                .as_str()
-                .ok_or(ProvisioningError::AuthenticationRejected)?
-                .to_owned();
-        }
-        if value[0] == "CLOSED" {
-            return Err(ProvisioningError::AuthenticationRejected);
-        }
-    };
-    println!("upstream provisioning stage: managed-identity AUTH challenge received");
-    let event = recovered
-        .sign_nip42_authentication(
-            &challenge,
-            relay_url,
-            Timestamp::from(Utc::now().timestamp() as u64),
-        )
-        .map_err(|_| ProvisioningError::AuthenticationRejected)?;
-    let event_id = event.id.to_hex();
-    session
-        .send_text(&serde_json::json!(["AUTH", event]).to_string())
-        .await
-        .map_err(|_| ProvisioningError::TransportUnavailable)?;
-    if !await_ok(session, &event_id).await? {
-        return Err(ProvisioningError::AuthenticationRejected);
-    }
+    authenticate_managed_identity(session, recovered, relay_url).await?;
 
     let subscription = format!("provision-{}", Uuid::new_v4());
     session
@@ -1148,6 +1340,208 @@ async fn prove_membership(
     }
     if !saw_event {
         return Err(ProvisioningError::MembershipUnproven);
+    }
+    Ok(())
+}
+
+async fn authenticate_managed_identity(
+    session: &mut TenantRelaySession,
+    recovered: &RecoveredIdentity,
+    relay_url: &str,
+) -> Result<(), ProvisioningError> {
+    let challenge = loop {
+        let Some(value) = receive_json(session).await? else {
+            continue;
+        };
+        if value.get(0).and_then(Value::as_str) == Some("AUTH") {
+            break value[1]
+                .as_str()
+                .ok_or(ProvisioningError::AuthenticationRejected)?
+                .to_owned();
+        }
+        if value.get(0).and_then(Value::as_str) == Some("CLOSED") {
+            return Err(ProvisioningError::AuthenticationRejected);
+        }
+    };
+    if challenge.is_empty() || challenge.len() > 1024 {
+        return Err(ProvisioningError::AuthenticationRejected);
+    }
+    let event = recovered
+        .sign_nip42_authentication(
+            &challenge,
+            relay_url,
+            Timestamp::from(Utc::now().timestamp() as u64),
+        )
+        .map_err(|_| ProvisioningError::AuthenticationRejected)?;
+    if event.pubkey.to_hex() != recovered.public_key() || event.verify().is_err() {
+        return Err(ProvisioningError::AuthenticationRejected);
+    }
+    let event_id = event.id.to_hex();
+    session
+        .send_text(&serde_json::json!(["AUTH", event]).to_string())
+        .await
+        .map_err(|_| ProvisioningError::TransportUnavailable)?;
+    if !await_ok(session, &event_id).await? {
+        return Err(ProvisioningError::AuthenticationRejected);
+    }
+    Ok(())
+}
+
+async fn read_discovery_event(
+    session: &mut TenantRelaySession,
+    channel_id: &str,
+) -> Result<Event, ProvisioningError> {
+    let subscription = format!("history-discovery-{}", Uuid::new_v4());
+    session
+        .send_text(
+            &serde_json::json!([
+                "REQ",
+                subscription,
+                {"kinds": [39000], "#d": [channel_id], "limit": 2}
+            ])
+            .to_string(),
+        )
+        .await
+        .map_err(|_| ProvisioningError::TransportUnavailable)?;
+    let mut events = Vec::new();
+    loop {
+        let Some(value) = receive_json(session).await? else {
+            continue;
+        };
+        match value.get(0).and_then(Value::as_str) {
+            Some("EVENT") if value.get(1).and_then(Value::as_str) == Some(&subscription) => {
+                let raw = value.get(2).cloned().ok_or(ProvisioningError::ReadDenied)?;
+                let event: Event =
+                    serde_json::from_value(raw).map_err(|_| ProvisioningError::ReadDenied)?;
+                if events.len() >= 2 {
+                    return Err(ProvisioningError::ReadDenied);
+                }
+                events.push(event);
+            }
+            Some("EOSE") if value.get(1).and_then(Value::as_str) == Some(&subscription) => break,
+            Some("CLOSED") if value.get(1).and_then(Value::as_str) == Some(&subscription) => {
+                return Err(ProvisioningError::ReadDenied)
+            }
+            _ => {}
+        }
+    }
+    session
+        .send_text(&serde_json::json!(["CLOSE", subscription]).to_string())
+        .await
+        .map_err(|_| ProvisioningError::TransportUnavailable)?;
+    match events.as_slice() {
+        [event] => Ok(event.clone()),
+        _ => Err(ProvisioningError::ReadDenied),
+    }
+}
+
+async fn read_nip29_messages(
+    session: &mut TenantRelaySession,
+    channel_id: &str,
+    max_events: usize,
+    max_content_bytes: usize,
+) -> Result<Vec<Event>, ProvisioningError> {
+    const MAX_EVENT_FRAME_BYTES: usize = 128 * 1024;
+    const MAX_HISTORY_BYTES: usize = 8 * 1024 * 1024;
+    let subscription = format!("history-{}", Uuid::new_v4());
+    session
+        .send_text(
+            &serde_json::json!([
+                "REQ",
+                subscription,
+                {"kinds": [9], "#h": [channel_id], "limit": max_events}
+            ])
+            .to_string(),
+        )
+        .await
+        .map_err(|_| ProvisioningError::TransportUnavailable)?;
+    let mut events = Vec::new();
+    let mut total_bytes = 0usize;
+    loop {
+        let Some(value) = receive_json(session).await? else {
+            continue;
+        };
+        match value.get(0).and_then(Value::as_str) {
+            Some("EVENT") if value.get(1).and_then(Value::as_str) == Some(&subscription) => {
+                if events.len() >= max_events {
+                    return Err(ProvisioningError::ReadDenied);
+                }
+                let raw = value.get(2).cloned().ok_or(ProvisioningError::ReadDenied)?;
+                let event_bytes = serde_json::to_vec(&raw)
+                    .map_err(|_| ProvisioningError::ReadDenied)?
+                    .len();
+                total_bytes = total_bytes
+                    .checked_add(event_bytes)
+                    .filter(|size| {
+                        event_bytes <= MAX_EVENT_FRAME_BYTES && *size <= MAX_HISTORY_BYTES
+                    })
+                    .ok_or(ProvisioningError::ReadDenied)?;
+                let event: Event =
+                    serde_json::from_value(raw).map_err(|_| ProvisioningError::ReadDenied)?;
+                validate_nip29_message(&event, channel_id, max_content_bytes)?;
+                events.push(event);
+            }
+            Some("EOSE") if value.get(1).and_then(Value::as_str) == Some(&subscription) => break,
+            Some("CLOSED") if value.get(1).and_then(Value::as_str) == Some(&subscription) => {
+                return Err(ProvisioningError::ReadDenied)
+            }
+            _ => {}
+        }
+    }
+    session
+        .send_text(&serde_json::json!(["CLOSE", subscription]).to_string())
+        .await
+        .map_err(|_| ProvisioningError::TransportUnavailable)?;
+    Ok(events)
+}
+
+fn validate_nip29_discovery(
+    event: &Event,
+    channel_id: &str,
+    relay_pubkey: &str,
+) -> Result<(), ProvisioningError> {
+    let d_tags: Vec<_> = event
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            let fields = tag.as_slice();
+            (fields.first().map(String::as_str) == Some("d"))
+                .then(|| fields.get(1).map(String::as_str))
+                .flatten()
+        })
+        .collect();
+    if event.kind != Kind::Custom(39000)
+        || event.pubkey.to_hex() != relay_pubkey
+        || event.content.len() > 1024 * 1024
+        || d_tags.as_slice() != [channel_id]
+        || event.verify().is_err()
+    {
+        return Err(ProvisioningError::ReadDenied);
+    }
+    Ok(())
+}
+
+fn validate_nip29_message(
+    event: &Event,
+    channel_id: &str,
+    max_content_bytes: usize,
+) -> Result<(), ProvisioningError> {
+    let h_tags: Vec<_> = event
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            let fields = tag.as_slice();
+            (fields.first().map(String::as_str) == Some("h"))
+                .then(|| fields.get(1).map(String::as_str))
+                .flatten()
+        })
+        .collect();
+    if event.kind != Kind::TextNote
+        || event.content.len() > max_content_bytes
+        || h_tags.as_slice() != [channel_id]
+        || event.verify().is_err()
+    {
+        return Err(ProvisioningError::ReadDenied);
     }
     Ok(())
 }
@@ -1182,11 +1576,39 @@ mod tests {
     use zeroize::Zeroizing;
 
     use super::{
-        identity_binding_matches, mapping_binding_matches, AuthenticatedTestPrincipal,
-        DriveOutcome, IdentityOutcome, ManagedIdentityProvisioner, ProvisioningContextResolver,
-        ProvisioningError,
+        identity_binding_matches, mapping_binding_matches, validate_nip29_discovery,
+        validate_nip29_message, AuthenticatedTestPrincipal, DriveOutcome, IdentityOutcome,
+        ManagedIdentityProvisioner, ProvisioningContextResolver, ProvisioningError,
     };
     use crate::upstream_buzz_transport::RelayTlsTrustConfig;
+
+    #[test]
+    fn upstream_history_validates_relay_signed_discovery_and_kind9_scope() {
+        let relay = Keys::generate();
+        let author = Keys::generate();
+        let channel = Uuid::new_v4().to_string();
+        let discovery = nostr::EventBuilder::new(nostr::Kind::Custom(39000), "{}")
+            .tags([nostr::Tag::parse(["d", channel.as_str()]).unwrap()])
+            .sign_with_keys(&relay)
+            .unwrap();
+        assert!(
+            validate_nip29_discovery(&discovery, &channel, &relay.public_key().to_hex()).is_ok()
+        );
+        assert!(
+            validate_nip29_discovery(&discovery, &channel, &author.public_key().to_hex()).is_err()
+        );
+
+        let message = nostr::EventBuilder::new(nostr::Kind::TextNote, "test message")
+            .tags([nostr::Tag::parse(["h", channel.as_str()]).unwrap()])
+            .sign_with_keys(&author)
+            .unwrap();
+        assert!(validate_nip29_message(&message, &channel, 64).is_ok());
+        assert!(validate_nip29_message(&message, &Uuid::new_v4().to_string(), 64).is_err());
+        assert!(validate_nip29_message(&message, &channel, 4).is_err());
+        let mut tampered = message;
+        tampered.content.push('!');
+        assert!(validate_nip29_message(&tampered, &channel, 64).is_err());
+    }
 
     #[test]
     fn drive_rejects_changed_mapping_binding() {
@@ -2828,6 +3250,34 @@ mod tests {
         assert_eq!(ready.status, "ready");
         assert!(ready.admission_event_id.is_some());
         assert!(ready.ready_at.is_some());
+        let authenticated = AuthenticatedTestPrincipal::new(user, tenant, workspace);
+        let history = provisioner
+            .read_channel_history(&authenticated, &membership_channel, &kms, &trust)
+            .await
+            .unwrap();
+        let expected_event_id = required("BUZZ_TEST_PROVISIONING_EVENT_ID");
+        assert!(history.iter().any(|event| {
+            event.id.to_hex() == expected_event_id
+                && event.pubkey.to_hex() == relay_admin.public_key().to_hex()
+        }));
+        let denied = provisioner
+            .read_channel_history(&authenticated, &Uuid::new_v4().to_string(), &kms, &trust)
+            .await;
+        assert!(matches!(denied, Err(ProvisioningError::ReadDenied)));
+        let audits: Vec<String> = sqlx::query_scalar(
+            "SELECT description FROM user_security_events \
+             WHERE user_id=$1 AND event_type='managed_chat_history_access'",
+        )
+        .bind(user)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(audits.len(), 2);
+        assert!(audits.iter().any(|entry| entry.starts_with("allowed ")));
+        assert!(audits.iter().any(|entry| entry.starts_with("denied ")));
+        assert!(audits
+            .iter()
+            .all(|entry| !entry.contains("provisioning-channel-seed")));
         let final_mapping = store
             .load(TenantId(tenant), WorkspaceId(workspace))
             .await

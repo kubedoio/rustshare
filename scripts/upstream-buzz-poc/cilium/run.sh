@@ -343,7 +343,7 @@ values = {
  "BUZZ_TEST_RELAY_PUBKEY":a["relay_pubkey"], "BUZZ_TEST_DEPLOYMENT_DIGEST":digest,
  "BUZZ_TEST_SERVICE_IDENTITY":f"k8s://{cluster_uid}/{ns}/buzz-edge-a/{svc_a_uid}", "BUZZ_TEST_TLS_SPKI_PIN":spki_a,
  "BUZZ_TEST_APPROVED_IP":ip_a, "BUZZ_TEST_DM_CHANNEL_ID":a["channel_id"], "BUZZ_TEST_EXPECTED_DM_EVENT_ID":a["event_id"],
- "BUZZ_TEST_PROVISIONING_CHANNEL_ID":a["provisioning_channel_id"],
+ "BUZZ_TEST_PROVISIONING_CHANNEL_ID":a["provisioning_channel_id"], "BUZZ_TEST_PROVISIONING_EVENT_ID":a["provisioning_event_id"],
  "BUZZ_TEST_EXPECTED_DM_AUTHOR":a["author"], "BUZZ_TEST_OTHER_MEMBER_PUBKEY":keys["member_b_pubkey"], "BUZZ_TEST_TLS_ROOT_DER":"/run/trust/a.der",
  "BUZZ_TEST_B_RELAY_URL":f"wss://{host_b}", "BUZZ_TEST_B_RELAY_HOST":host_b, "BUZZ_TEST_B_COMMUNITY_ID":b["community_id"],
  "BUZZ_TEST_B_RELAY_PUBKEY":b["relay_pubkey"], "BUZZ_TEST_B_DEPLOYMENT_DIGEST":digest,

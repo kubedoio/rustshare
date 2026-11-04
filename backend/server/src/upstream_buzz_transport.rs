@@ -25,12 +25,17 @@ use tokio_rustls::rustls::{
     ClientConfig, RootCertStore,
 };
 use tokio_rustls::TlsConnector;
-use tokio_tungstenite::{client_async, tungstenite::Message, WebSocketStream};
+use tokio_tungstenite::{
+    client_async_with_config,
+    tungstenite::{protocol::WebSocketConfig, Message},
+    WebSocketStream,
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 const SESSION_REVALIDATE_INTERVAL: Duration = Duration::from_secs(5);
 const NIP11_MAX_BYTES: usize = 64 * 1024;
+const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_TRUSTED_SERVICE_ROOTS: usize = 8;
 
 type RelaySocket = WebSocketStream<BufStream<tokio_rustls::client::TlsStream<TcpStream>>>;
@@ -189,9 +194,13 @@ pub(crate) async fn connect(
         }
         #[cfg(test)]
         eprintln!("upstream transport stage: NIP-11 relay identity verified");
-        let (socket, _) = client_async(attempt.relay_url(), tls)
-            .await
-            .map_err(|_| UpstreamBuzzTransportError::Connection)?;
+        let mut websocket_config = WebSocketConfig::default();
+        websocket_config.max_message_size = Some(MAX_WEBSOCKET_MESSAGE_BYTES);
+        websocket_config.max_frame_size = Some(MAX_WEBSOCKET_MESSAGE_BYTES);
+        let (socket, _) =
+            client_async_with_config(attempt.relay_url(), tls, Some(websocket_config))
+                .await
+                .map_err(|_| UpstreamBuzzTransportError::Connection)?;
         #[cfg(test)]
         eprintln!("upstream transport stage: WebSocket upgraded");
 
