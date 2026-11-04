@@ -1628,16 +1628,12 @@ fn validate_nip29_message(
     let h_tags: Vec<_> = event
         .tags
         .iter()
-        .filter_map(|tag| {
-            let fields = tag.as_slice();
-            (fields.first().map(String::as_str) == Some("h"))
-                .then(|| fields.get(1).map(String::as_str))
-                .flatten()
-        })
+        .filter(|tag| tag.as_slice().first().map(String::as_str) == Some("h"))
         .collect();
-    if event.kind != Kind::TextNote
+    if event.kind != Kind::ChatMessage
         || event.content.len() > max_content_bytes
-        || h_tags.as_slice() != [channel_id]
+        || h_tags.len() != 1
+        || h_tags[0].as_slice() != ["h", channel_id]
         || event.verify().is_err()
     {
         return Err(ProvisioningError::ReadDenied);
@@ -1698,13 +1694,33 @@ mod tests {
             validate_nip29_discovery(&discovery, &channel, &author.public_key().to_hex()).is_err()
         );
 
-        let message = nostr::EventBuilder::new(nostr::Kind::TextNote, "test message")
+        let message = nostr::EventBuilder::new(nostr::Kind::ChatMessage, "test message")
             .tags([nostr::Tag::parse(["h", channel.as_str()]).unwrap()])
             .sign_with_keys(&author)
             .unwrap();
         assert!(validate_nip29_message(&message, &channel, 64).is_ok());
+        let text_note = nostr::EventBuilder::new(nostr::Kind::TextNote, "not a NIP-29 message")
+            .tags([nostr::Tag::parse(["h", channel.as_str()]).unwrap()])
+            .sign_with_keys(&author)
+            .unwrap();
+        assert!(validate_nip29_message(&text_note, &channel, 64).is_err());
         assert!(validate_nip29_message(&message, &Uuid::new_v4().to_string(), 64).is_err());
         assert!(validate_nip29_message(&message, &channel, 4).is_err());
+        let malformed_channel_tag =
+            nostr::EventBuilder::new(nostr::Kind::ChatMessage, "test message")
+                .tags([nostr::Tag::parse(["h", channel.as_str(), "extra"]).unwrap()])
+                .sign_with_keys(&author)
+                .unwrap();
+        assert!(validate_nip29_message(&malformed_channel_tag, &channel, 64).is_err());
+        let duplicate_channel_tags =
+            nostr::EventBuilder::new(nostr::Kind::ChatMessage, "test message")
+                .tags([
+                    nostr::Tag::parse(["h", channel.as_str()]).unwrap(),
+                    nostr::Tag::parse(["h", channel.as_str()]).unwrap(),
+                ])
+                .sign_with_keys(&author)
+                .unwrap();
+        assert!(validate_nip29_message(&duplicate_channel_tags, &channel, 64).is_err());
         let mut tampered = message;
         tampered.content.push('!');
         assert!(validate_nip29_message(&tampered, &channel, 64).is_err());
@@ -1715,7 +1731,7 @@ mod tests {
         let author = Keys::generate();
         let channel = Uuid::new_v4().to_string();
         let subscription = "history-test";
-        let event = nostr::EventBuilder::new(nostr::Kind::TextNote, "private message")
+        let event = nostr::EventBuilder::new(nostr::Kind::ChatMessage, "private message")
             .tags([nostr::Tag::parse(["h", channel.as_str()]).unwrap()])
             .sign_with_keys(&author)
             .unwrap();
