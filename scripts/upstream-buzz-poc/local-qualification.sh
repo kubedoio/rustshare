@@ -47,7 +47,7 @@ inventory() {
 import json, subprocess, sys
 def run(*args): return subprocess.check_output(args, text=True)
 def inspect(ids):
-  ids = [item for item in ids.splitlines() if item]
+  ids = [item for item in (ids.splitlines() if isinstance(ids, str) else ids) if item]
   return json.loads(run('docker', 'inspect', *ids)) if ids else []
 containers = []
 for item in inspect(run('docker', 'ps', '-aq', '--no-trunc')):
