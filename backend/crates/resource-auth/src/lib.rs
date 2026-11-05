@@ -39,6 +39,8 @@ pub mod principal;
 pub mod registry;
 pub mod resource_ref;
 pub mod upstream_relay_mapping;
+#[cfg(feature = "upstream-relay-provisioning")]
+pub mod upstream_relay_provisioning;
 
 pub use actions::*;
 pub use authorizer::SourceAuthorizer;

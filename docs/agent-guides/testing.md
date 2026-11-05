@@ -59,7 +59,7 @@ credentials target disposable services:
 ```bash
 export RUSTSHARE_TEST_DISPOSABLE_DB=1
 export RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE=1
-cargo test --workspace --all-features -j 1 -- --ignored --test-threads=1
+cargo test --workspace --all-features -j 1 -- --ignored --skip upstream_buzz_transport::disposable_service_tests --test-threads=1
 cargo test --workspace --test contracts -j 1 -- --ignored --test-threads=1
 ```
 
@@ -107,7 +107,7 @@ Requires the full local stack to be running.
 | Command                                             | Needs running services          |
 | --------------------------------------------------- | ------------------------------- |
 | `SQLX_OFFLINE=true cargo test --workspace --all-features --lib` | No (with `SQLX_OFFLINE=true`)   |
-| `cargo test --workspace --all-features -j 1 -- --ignored --test-threads=1` | Yes (disposable PostgreSQL + RustFS) |
+| `cargo test --workspace --all-features -j 1 -- --ignored --skip upstream_buzz_transport::disposable_service_tests --test-threads=1` | Yes (disposable PostgreSQL + RustFS) |
 | `cargo test --workspace --test contracts -- --ignored`          | Yes (PostgreSQL + RustFS)       |
 | `npm run test`                             | No                              |
 | `npm run test:e2e`                         | Yes (running backend)           |

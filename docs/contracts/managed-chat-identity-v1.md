@@ -1,6 +1,6 @@
 # CONTRACT: Managed Chat Identity and User Credential Export v1
 
-**Status:** Target contract accepted for planning; interfaces are **not** currently implemented. Normative words MUST/SHOULD specify intended implementation. See ADR-0044.
+**Status:** Target identity contract accepted for planning; interfaces are **not** currently implemented. Normative words MUST/SHOULD specify intended implementation. See ADR-0044 and ADR-0046 (Option A selected by the project owner; independent security acceptance and upstream fix pending).
 
 ## Phase boundaries
 
@@ -11,6 +11,21 @@ export a key, enroll in Buzz, or activate `upstream_managed`. The API and
 provisioning sections below describe later Phase 2B/R target behavior and are
 not Phase 2A implementation authorization. Existing browser-held and
 fork-backed records remain unchanged.
+
+Phase 2B.2 managed provisioning merged through PR #456. Its six-test Cilium
+qualification passed at source commit `f349605a13f3a1c076e47e246660fe9c1c370210`,
+with all 48/48 sanitized evidence manifest entries verified. PR #457 later
+merged the feature-gated, internal, one-shot managed NIP-29 history reader at
+merge commit `a6ec3d98c1d397e59596585f1badab716165691b`; it has no production
+caller. Project-owner `senolcolak` accepted only that reader's limited reliance
+on Buzz's relay authorization and the proposed Cilium deferral; this is not
+independent security acceptance and does not authorize production provisioning,
+user-message signing, key export, or activation. The dedicated reader Cilium
+qualification passed in [run 41936521775](https://github.com/kubedoio/rustshare/actions/runs/41936521775)
+against PR #461 head `b97bb229d9e9f1d05b0b77596063fff4d435e20a`. Issue #458
+remains open for its tracked qualification and acceptance requirements before
+managed Chat activation. Issue #442 remains the separate stock-desktop
+interoperability gate.
 
 ## Identity invariant
 
@@ -87,9 +102,9 @@ Successful one-time response after completed challenge (illustrative):
 
 Over TLS only; `Cache-Control: no-store`, `Pragma: no-cache`, `Referrer-Policy: no-referrer`, restrictive CSP. Never emit the key in redirect URLs, asynchronous job payloads, audit text, analytics, traces, error strings, exception snapshots or test fixtures. Frontend must show masked value with a deliberate reveal/copy and clear it on navigation, account switch, timeout and logout. Key export produces an audit event (actor, tenant, identity ID, destination format, timestamp; NOT the key). Confirmation must explicitly state exports can be copied and cannot be remotely erased.
 
-### POST `/api/v1/applications/chat/messages` (illustrative)
+### POST `/api/v1/applications/chat/messages` (illustrative only; not authorized)
 
-Trusted request fields: mapped channel or DM identifier, message content, optional Files ResourceRef/metadata, idempotency key. No caller-provided pubkey, `nsec`, arbitrary event kind, private event tags or signing-key selection. Resolve identity from session, validate channel/tenant and attachment authorization, sign canonical upstream Nostr kind for this message type, send to relay with bounded retries, return `accepted_by_relay` distinct from `observed`/`delivered`. Native Buzz event wire formats MUST be determined by conformance against pinned upstream.
+This example is a future interface sketch, not an implemented or approved route. Trusted request fields would be a mapped channel or DM identifier, message content, optional authorized Files ResourceRef/metadata and an idempotency key. No caller-provided pubkey, `nsec`, arbitrary event kind, private event tags or signing-key selection is permitted. The project owner selected Option A in [PR #459](https://github.com/kubedoio/rustshare/pull/459#issuecomment-6640798406): a typed internal signer performs Elembra-side authorization while unmodified Buzz remains final ingest authority. Independent security acceptance remains pending. No route or signing API is authorized, and publisher implementation is blocked by the privately reported upstream membership-cache/role-transition defect tracked publicly in #460 without reproduction details. Native Buzz event wire formats MUST be determined by conformance against a fixed, official upstream pin.
 
 ## Managed key custody and signing contract
 
@@ -104,8 +119,40 @@ Trusted request fields: mapped channel or DM identifier, message content, option
 The target initial release supports NIP-29 channel messages and native
 NIP-29 private-channel DMs. Private-channel DMs rely on Buzz relay ACLs and
 are not end-to-end encrypted. NIP-17/NIP-44 encrypted gift-wrap DMs are
-excluded and must remain disabled. No signing behavior is implemented in
-Phase 2A; typed signing is a separate Gate I/Phase 2B change after review.
+excluded and must remain disabled. No kind-9 publishing behavior is
+implemented. The project owner selected Option A and accepted its signed
+artifact portability, plaintext visibility, replay and revocation tradeoffs
+in PR #459. Typed signing still requires an independent security ACCEPT, the
+upstream membership-cache fix tracked with publisher conformance in issue
+[#460](https://github.com/kubedoio/rustshare/issues/460), and the
+implementation/live acceptance gates in ADR-0046. The Phase 2B.3 history
+reader is not a publisher or a publish authorization proof.
+
+## NIP-29 publishing authorization status
+
+At pinned stock Buzz commit `eafd77e9f6e96052476bdd88be732c046fdb7ab3`, kind-9
+write authorization is performed after an already signed event reaches
+`ingest_event_inner`. Kind-39000/39002 relay-signed snapshots and successful
+NIP-42 private-channel reads are advisory/read authorization only; they are not
+fresh, operation-bound write permits. Buzz's ingest-time membership cache,
+role, channel state and persistence are not transactionally bound to an
+Elembra pre-sign check. See ADR-0046 for the source audit, Option A/Option B
+analysis, replay consequences and durable operation design.
+
+Option A is the owner-selected target, not an implementation authorization.
+The typed precheck is conservative but advisory; Buzz remains final authority
+and can reject a valid signed event. Managed publishing stays blocked until
+the privately reported upstream membership-cache/role-transition defect is
+fixed at an official
+unmodified pin and independent security acceptance is recorded. Issue #458
+remains the separate managed-history Cilium gate; #460 tracks publisher
+conformance. Any later implementation must preserve exact signed-event
+recovery, encrypted durable
+storage with operation-bound AEAD context, scoped idempotency, authorization
+revalidation before send/retry, body-free audit, separate
+relay-accepted/observed/delivered states and the tests in ADR-0046. Option B's
+atomic pre-sign permit is unavailable in the pinned source and remains a
+deferred alternative.
 
 ## Must-pass security tests
 

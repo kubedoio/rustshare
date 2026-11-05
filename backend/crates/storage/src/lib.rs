@@ -9,6 +9,7 @@ pub mod chat_identity;
 pub mod chat_integration_impl;
 pub mod chat_observation;
 pub mod event_store;
+pub mod managed_identity_operations;
 pub mod managed_identity_vault;
 pub mod memory_catalog;
 pub mod metadata;
@@ -17,6 +18,8 @@ pub mod outbox_store;
 pub mod repos;
 pub mod upload_doc_store;
 pub mod upload_impl;
+#[cfg(feature = "upstream-buzz")]
+pub mod upstream_relay_mapping_store;
 
 pub use chat_identity::{
     ChatIdentityStore, CommunityMappingError, ReplacementAuditEntry, ReplacementLease,
@@ -24,6 +27,10 @@ pub use chat_identity::{
 };
 pub use chat_observation::{ChatObservationStore, UpsertOutcome};
 pub use event_store::EventStore;
+pub use managed_identity_operations::{
+    ManagedIdentityOperationError, ManagedIdentityOperationRecord, ManagedIdentityOperationStatus,
+    ManagedIdentityOperationStore, ProvisioningRequest, MANAGED_IDENTITY_OPERATION_ERROR_CODES,
+};
 pub use managed_identity_vault::{
     ManagedIdentityRecord, ManagedIdentityStatus, ManagedIdentityStoreError,
     ManagedIdentityVaultStore,
@@ -40,6 +47,8 @@ pub use object_store::{
 pub use outbox_store::{
     ClaimedEvent, ConsumerCount, DeadLetterEntry, OutboxConfig, OutboxStore, OutboxStoreError,
 };
+#[cfg(feature = "upstream-buzz")]
+pub use upstream_relay_mapping_store::{UpstreamRelayMappingStore, UpstreamRelayMappingStoreError};
 
 // Service-layer trait bridges for EventStore, MetadataStore, ObjectStore and
 // ShareNotificationRepoImpl now live next to their concrete types (see

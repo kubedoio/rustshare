@@ -4,12 +4,13 @@ set -euo pipefail
 umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SHA=eafd77e9f6e96052476bdd88be732c046fdb7ab3
-TREE=04e3a40545bd3b23510ec32b4c8cccee2acef7c5
+SHA="${BUZZ_POC_SOURCE_SHA:-eafd77e9f6e96052476bdd88be732c046fdb7ab3}"
+TREE="${BUZZ_POC_SOURCE_TREE:-04e3a40545bd3b23510ec32b4c8cccee2acef7c5}"
+[[ "$SHA" =~ ^[0-9a-f]{40}$ && "$TREE" =~ ^[0-9a-f]{40}$ ]] || { echo 'Upstream SHA and tree must be explicit 40-character hex values' >&2; exit 1; }
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/upstream-buzz-poc.XXXXXX")"
-PROJECT="buzzpoc$(basename "$RUN_DIR" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]')"
+PROJECT="${BUZZ_POC_PROJECT_PREFIX:-buzzpoc$(basename "$RUN_DIR" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]')}"
 SOURCE="${BUZZ_SOURCE_DIR:-$RUN_DIR/source}"
-IMAGE="local/buzz-upstream-poc:${SHA:0:12}"
+IMAGE="local/buzz-upstream-poc:${SHA:0:12}-${PROJECT}"
 STACKS=()
 PROXIES=()
 POC_GUI_NSEC_FILE="$RUN_DIR/alice.nsec"
@@ -25,6 +26,7 @@ cleanup() {
       failed=1
     fi
   done
+  docker image rm "$IMAGE" >/dev/null 2>&1 || true
   rm -rf -- "$RUN_DIR"
   if [[ "$failed" == 1 && "$status" == 0 ]]; then status=1; fi
   exit "$status"
@@ -68,7 +70,7 @@ pubkey() { node -e 'const e=require("node:crypto").createECDH("secp256k1"); e.se
 free_port() { node -e 'const s=require("node:net").createServer(); s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})'; }
 
 POC_OWNER_SK="$(new_key)" POC_ALICE_SK="$(new_key)" POC_BOB_SK="$(new_key)" POC_OUTSIDER_SK="$(new_key)"
-POC_B_OWNER_SK="$(new_key)" POC_B_USER_SK="$(new_key)"
+POC_B_OWNER_SK="$(new_key)" POC_B_USER_SK="$(new_key)" POC_B_OTHER_USER_SK="$(new_key)"
 start_stack() {
   local stack="$1" owner="$2" relay_key="$3" port="$4" tls_port="$5"
   mkdir -p "$RUN_DIR/$stack"
@@ -138,11 +140,14 @@ echo "tls_ca_path=$RUN_DIR/tls.crt"
 PROTOCOL_STATUS=0
 POC_OWNER_SK="$POC_OWNER_SK" POC_ALICE_SK="$POC_ALICE_SK" POC_BOB_SK="$POC_BOB_SK" \
 POC_OUTSIDER_SK="$POC_OUTSIDER_SK" POC_B_OWNER_SK="$POC_B_OWNER_SK" POC_B_USER_SK="$POC_B_USER_SK" \
+POC_B_OTHER_USER_SK="$POC_B_OTHER_USER_SK" \
 POC_RELAY_URL="$POC_RELAY_URL" POC_RELAY_B_URL="$POC_RELAY_B_URL" \
 POC_WRONG_HOST_URL="$POC_WRONG_HOST_URL" POC_TLS_FAILURE_URL="$POC_TLS_FAILURE_URL" \
 POC_GUI_NSEC_FILE="$POC_GUI_NSEC_FILE" \
 POC_TEST_PACKAGE="$RUN_DIR/test-deps/package.json" \
 POC_HOLD="${POC_HOLD:-0}" \
+POC_COMPATIBILITY_ONLY="${POC_COMPATIBILITY_ONLY:-0}" \
+POC_EVIDENCE_FILE="${POC_EVIDENCE_FILE:-}" \
 NODE_EXTRA_CA_CERTS="$RUN_DIR/tls.crt" G_TLS_CA_FILE="$RUN_DIR/tls.crt" \
   node "$ROOT/scripts/upstream-buzz-poc/protocol.mjs" || PROTOCOL_STATUS=$?
 relay_identity() {
