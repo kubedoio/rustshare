@@ -8,9 +8,12 @@ evidence for a publisher.
 
 The deterministic fixture uses a fixed authenticated principal, tenant,
 workspace, channel, typed `ChannelMessage` intent, empty attachment list, and
-canonical UTF-8 request bytes. Its SHA-256 digest is only a fixture checksum;
-the future implementation must define and test the production canonical
-encoding and atomic idempotency scope.
+canonical UTF-8 request bytes. Tests verify stable serialization and that
+changing request fields changes the fixture digest. A separate scope fixture
+binds tenant, workspace, Principal, identity and mapping IDs/generations,
+channel, and idempotency key. These fixtures do not implement an atomic claim;
+the future implementation must still test database concurrency and conflict
+behavior against its real operation store.
 
 ## Contract inventory
 
@@ -34,15 +37,7 @@ between preparation and retry, and exact event-ID reuse. No fixture invents
 relay acceptance or delivery. The existing reader does not implement any of
 these publisher contracts.
 
-## Gate I matrix — 2026-11-05
-
-| Gate | Result | Remaining condition |
-| --- | --- | --- |
-| Protected `main` baseline | PASS at `894813735b3a6828149d7216fee4b79ed5d0823d` | Final CI on this commit was still running at review time; report its terminal result separately. |
-| #458 managed-history Cilium execution | PASS, run [42056855474](https://github.com/kubedoio/rustshare/actions/runs/42056855474) | Independent issue-level security decision is pending. Execution, ordinary PR approval, and security acceptance are separate. |
-| #460 publisher boundary | NO-GO; contracts remain NOT IMPLEMENTED | Upstream-confirmed remediation, official unmodified fixed pin, verified provenance, accepted membership/role regressions, and independent security acceptance are all required. |
-| #442 stock Buzz Desktop | UNVERIFIED | No interactive display/session bus is available here. Complete the committed procedure with unmodified stock Buzz Desktop and a working native OS keychain. |
-| Gate I / managed Chat activation | NO-GO | Do not activate managed Chat, signing, publishing, or Phase 2B.4. |
+The current Gate I matrix is maintained in the [readiness report](elembra-phase2b-gate-i-readiness-2026-11-01.md).
 
 Beginning signing or publishing implementation requires the ADR-0046 entry
 criteria: the existing owner Option A decision; a named independent security
