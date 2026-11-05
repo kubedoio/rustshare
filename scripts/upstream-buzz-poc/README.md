@@ -25,6 +25,14 @@ digest and `upstream_image_build_digest` is Buildx's build digest; neither is a
 published registry digest. The disposable TLS CA path is printed for the GUI
 test.
 
+The protocol seed adds two separate members to tenant B's relay, creates a
+native kind-41010 private-channel DM, checks member discovery for kinds
+39000/39001/39002 and the kind-39000 `private`/`hidden` tags, then confirms the
+second member retrieves the exact kind-9 event ID. This loopback TLS proxy
+harness proves upstream protocol behavior only; trusted private-service
+connector and Cilium egress qualification use the separate ignored Rust test
+`trusted_service_tenant_sessions_are_isolated_across_private_dm_relays`.
+
 For the GUI test, use a private desktop profile and a real unlocked OS
 credential service (the upstream client must use its normal secure-storage
 implementation). Run the harness interactively with `POC_HOLD=1`. It pauses
@@ -56,6 +64,33 @@ be exercised, report desktop interoperability as **unverified**.
 The script does not claim GUI interoperability or revocation safety merely
 because the relays start. Record every protocol and GUI result in the Phase 1
 evidence report; a missing GUI run is **unverified**, not passed.
+
+## Local qualification modes
+
+`local-qualification.sh compatibility` runs the historical source baseline in
+two uniquely named disposable Compose projects and writes a sanitized report
+under `docs/pilot/evidence/`. Its compatibility-only switch omits the
+post-removal and revocation sequence because it overlaps the privately
+reported authorization issue. Those checks remain unverified. No Compose
+deployment from the RustShare checkout is used, and the wrapper compares
+container, named-volume, network, and Compose-project inventories before and
+after the run.
+
+The report keeps NIP-29 core, native private-DM, NIP-42, NIP-43, cross-tenant,
+NIP-17 exploratory, and full-suite outcomes separate. `product_scope_exit_status`
+is `0` for a passing supported scope, `1` for a failure, and `2` when unverified.
+The command still exits with the full exploratory suite's status, so an excluded
+NIP-17 failure remains visible and nonzero.
+
+The default SHA/tree remain this historical interoperability baseline, not a
+fixed security release. To check another source revision, set both
+`BUZZ_FIXED_UPSTREAM_SHA` and `BUZZ_FIXED_UPSTREAM_TREE`; the wrapper clones
+the official source and verifies both values and a clean checkout before
+building. `BUZZ_FIXED_UPSTREAM_PROVENANCE_URL` is recorded as a review
+reference only. `local-qualification.sh security` reports
+`UPSTREAM_SECURITY_REMEDIATION=BLOCKED` until an authorized fixed source and
+its provenance have been independently verified. Compatibility results never
+qualify managed publishing or production Gate I.
 
 For the full GUI checklist and sanitized-only evidence format, see
 [`desktop-acceptance.md`](desktop-acceptance.md). The structured evidence

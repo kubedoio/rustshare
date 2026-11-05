@@ -6,10 +6,15 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+default = []
+local-dek-key-provider = ["dep:libc"]
+nip42-auth-signing = []
+
 [dependencies]
 argon2 = { workspace = true, features = ["std"] }
 thiserror.workspace = true
-aes-gcm.workspace = true
+aes-gcm = { workspace = true, features = ["zeroize"] }
 base64.workspace = true
 hmac.workspace = true
 sha2.workspace = true
@@ -20,6 +25,8 @@ zeroize = "1"
 async-trait = "0.1"
 uuid.workspace = true
 rand.workspace = true
+libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
+tempfile.workspace = true

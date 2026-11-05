@@ -14,6 +14,14 @@ use rustshare_core::domain::{TenantId, WorkspaceId};
 use url::Url;
 use uuid::Uuid;
 
+/// Endpoint validation policy selected only by the signed deployment authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RelayEndpointPolicy {
+    StrictPublic = 1,
+    TrustedService = 2,
+}
+
 /// Trusted, versioned tenant/workspace binding to one upstream relay.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayMappingRecord {
@@ -25,6 +33,14 @@ pub struct RelayMappingRecord {
     pub workspace_id: WorkspaceId,
     /// Buzz community provisioned on this isolated relay.
     pub community_id: String,
+    /// Signed endpoint policy; no client input selects this value.
+    pub endpoint_policy: RelayEndpointPolicy,
+    /// Unique deployment identity allocated by the trusted operator service.
+    pub relay_deployment_id: Uuid,
+    /// Immutable orchestrator identity, including namespace and service UID.
+    pub endpoint_service_identity: String,
+    /// SHA-256 digest of the expected TLS peer public key (SPKI).
+    pub tls_peer_spki_sha256: String,
     /// Exact operator-configured WebSocket URL; callers never supply this.
     pub relay_url: String,
     /// Canonical DNS host expected in both the URL and TLS certificate.
@@ -41,7 +57,7 @@ pub struct RelayMappingRecord {
     pub active: bool,
     /// Mapping must be revalidated before this time.
     pub valid_until: DateTime<Utc>,
-    /// Human/operator identity that recorded this versioned update.
+    /// Authenticated deployment/operator service identity that signed this update.
     pub updated_by: Uuid,
     /// Append-only audit record for this exact generation.
     pub audit_entry_id: Uuid,
@@ -58,19 +74,49 @@ pub struct TrustedRelayMapping {
 impl TrustedRelayMapping {
     /// Validate a record loaded from the trusted mapping store.
     pub fn validate(record: RelayMappingRecord, now: DateTime<Utc>) -> Result<Self, MappingError> {
+        if !record.active || now >= record.valid_until {
+            return Err(MappingError::InactiveOrStale);
+        }
+        Self::validate_record_structure(&record)?;
+
+        let url = Url::parse(&record.relay_url).map_err(|_| MappingError::InvalidRelayUrl)?;
+        let host = url.host_str().ok_or(MappingError::InvalidRelayUrl)?;
+        let port = url
+            .port_or_known_default()
+            .ok_or(MappingError::InvalidRelayUrl)?;
+        Ok(Self {
+            canonical_url: canonical_relay_url(host, url.port()),
+            port,
+            record,
+        })
+    }
+
+    /// Validate immutable deployment fields for signed update and deactivation statements.
+    pub fn validate_record_structure(record: &RelayMappingRecord) -> Result<(), MappingError> {
         if record.mapping_id.is_nil()
             || record.tenant_id.0.is_nil()
             || record.workspace_id.0.is_nil()
             || record.updated_by.is_nil()
             || record.audit_entry_id.is_nil()
             || record.generation == 0
-            || !record.active
-            || now >= record.valid_until
         {
             return Err(MappingError::InactiveOrStale);
         }
-        if record.community_id.trim().is_empty() || record.community_id.len() > 128 {
+        let community_id =
+            Uuid::parse_str(&record.community_id).map_err(|_| MappingError::InvalidCommunity)?;
+        if community_id.to_string() != record.community_id {
             return Err(MappingError::InvalidCommunity);
+        }
+        if record.relay_deployment_id.is_nil()
+            || record.endpoint_service_identity.is_empty()
+            || record.endpoint_service_identity.len() > 512
+            || !record
+                .endpoint_service_identity
+                .bytes()
+                .all(|byte| byte.is_ascii_graphic())
+            || !is_canonical_sha256_digest(&record.tls_peer_spki_sha256)
+        {
+            return Err(MappingError::InvalidDeploymentProvenance);
         }
         PublicKey::from_hex(&record.relay_pubkey)
             .map_err(|_| MappingError::InvalidRelayIdentity)?;
@@ -97,30 +143,42 @@ impl TrustedRelayMapping {
         {
             return Err(MappingError::RelayHostMismatch);
         }
-        let port = url
-            .port_or_known_default()
+        url.port_or_known_default()
             .ok_or(MappingError::InvalidRelayUrl)?;
         let canonical_url = canonical_relay_url(host, url.port());
         if record.relay_url != canonical_url {
             return Err(MappingError::InvalidRelayUrl);
         }
+        let unsafe_ip = match record.endpoint_policy {
+            RelayEndpointPolicy::StrictPublic => is_unsafe_relay_ip,
+            RelayEndpointPolicy::TrustedService => is_forbidden_service_ip,
+        };
         if record.approved_ips.is_empty()
-            || record.approved_ips.iter().any(is_unsafe_relay_ip)
+            || record.approved_ips.len() > 64
+            || record.approved_ips.iter().any(unsafe_ip)
             || has_duplicates(&record.approved_ips)
         {
             return Err(MappingError::UnsafeDnsTargets);
         }
-
-        Ok(Self {
-            canonical_url,
-            port,
-            record,
-        })
+        if record.endpoint_policy == RelayEndpointPolicy::TrustedService
+            && !trusted_kubernetes_service_identity(
+                &record.endpoint_service_identity,
+                &record.relay_host,
+            )
+        {
+            return Err(MappingError::InvalidDeploymentProvenance);
+        }
+        Ok(())
     }
 
     /// The exact canonical URL the transport must use.
     pub fn relay_url(&self) -> &str {
         &self.canonical_url
+    }
+
+    /// The immutable record snapshot that was validated by this policy model.
+    pub fn record(&self) -> &RelayMappingRecord {
+        &self.record
     }
 
     /// Scope of this relay mapping.
@@ -129,6 +187,10 @@ impl TrustedRelayMapping {
             tenant_id: self.record.tenant_id,
             workspace_id: self.record.workspace_id,
             mapping_id: self.record.mapping_id,
+            relay_deployment_id: self.record.relay_deployment_id,
+            endpoint_policy: self.record.endpoint_policy,
+            endpoint_service_identity: self.record.endpoint_service_identity.clone(),
+            tls_peer_spki_sha256: self.record.tls_peer_spki_sha256.clone(),
             generation: self.record.generation,
             community_id: self.record.community_id.clone(),
         }
@@ -149,10 +211,14 @@ impl TrustedRelayMapping {
         if now >= self.record.valid_until {
             return Err(MappingError::InactiveOrStale);
         }
+        let unsafe_ip = match self.record.endpoint_policy {
+            RelayEndpointPolicy::StrictPublic => is_unsafe_relay_ip,
+            RelayEndpointPolicy::TrustedService => is_forbidden_service_ip,
+        };
         if resolved_ips.is_empty()
             || resolved_ips
                 .iter()
-                .any(|ip| is_unsafe_relay_ip(ip) || !self.record.approved_ips.contains(ip))
+                .any(|ip| unsafe_ip(ip) || !self.record.approved_ips.contains(ip))
         {
             return Err(MappingError::UnsafeDnsTargets);
         }
@@ -163,6 +229,8 @@ impl TrustedRelayMapping {
             relay_host: self.record.relay_host.clone(),
             community_id: self.record.community_id.clone(),
             relay_pubkey: self.record.relay_pubkey.clone(),
+            endpoint_service_identity: self.record.endpoint_service_identity.clone(),
+            tls_peer_spki_sha256: self.record.tls_peer_spki_sha256.clone(),
             port: self.port,
             pinned_ips: resolved_ips.to_vec(),
             valid_until: self.record.valid_until,
@@ -176,6 +244,10 @@ pub struct MappingScope {
     pub tenant_id: TenantId,
     pub workspace_id: WorkspaceId,
     pub mapping_id: Uuid,
+    pub relay_deployment_id: Uuid,
+    pub endpoint_policy: RelayEndpointPolicy,
+    pub endpoint_service_identity: String,
+    pub tls_peer_spki_sha256: String,
     pub generation: u64,
     pub community_id: String,
 }
@@ -189,9 +261,53 @@ pub struct ConnectionAttempt {
     relay_host: String,
     community_id: String,
     relay_pubkey: String,
+    endpoint_service_identity: String,
+    tls_peer_spki_sha256: String,
     port: u16,
     pinned_ips: Vec<IpAddr>,
     valid_until: DateTime<Utc>,
+}
+
+impl ConnectionAttempt {
+    /// Tenant/workspace/generation scope captured for the attempt.
+    pub fn scope(&self) -> &MappingScope {
+        &self.scope
+    }
+
+    /// Canonical WebSocket endpoint from the validated mapping.
+    pub fn relay_url(&self) -> &str {
+        &self.relay_url
+    }
+
+    /// DNS name used for SNI and certificate hostname verification.
+    pub fn relay_host(&self) -> &str {
+        &self.relay_host
+    }
+
+    /// SHA-256 SPKI pin captured from signed deployment provenance.
+    pub fn tls_peer_spki_sha256(&self) -> &str {
+        &self.tls_peer_spki_sha256
+    }
+
+    /// Community binding captured from the trusted mapping.
+    pub fn community_id(&self) -> &str {
+        &self.community_id
+    }
+
+    /// Relay public key pinned by trusted provisioning state.
+    pub fn relay_pubkey(&self) -> &str {
+        &self.relay_pubkey
+    }
+
+    /// Port from the validated WebSocket URL.
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// DNS addresses approved for this connection attempt.
+    pub fn pinned_ips(&self) -> &[IpAddr] {
+        &self.pinned_ips
+    }
 }
 
 /// Evidence returned by the actual transport after TLS and NIP-11 verification.
@@ -206,6 +322,8 @@ pub struct ConnectedRelayEvidence {
     pub peer_port: u16,
     pub community_id: String,
     pub relay_pubkey: String,
+    pub endpoint_service_identity: String,
+    pub tls_peer_spki_sha256: String,
 }
 
 /// Verify the completed connection against the mapping snapshot and current
@@ -234,17 +352,25 @@ pub fn verify_connected_relay(
     if !evidence.tls_certificate_and_hostname_verified {
         return Err(MappingError::TlsVerificationFailed);
     }
+    let unsafe_ip = match attempt.scope.endpoint_policy {
+        RelayEndpointPolicy::StrictPublic => is_unsafe_relay_ip,
+        RelayEndpointPolicy::TrustedService => is_forbidden_service_ip,
+    };
     if evidence.peer_port != attempt.port
         || !attempt.pinned_ips.contains(&evidence.peer_ip)
         || !current.record.approved_ips.contains(&evidence.peer_ip)
-        || is_unsafe_relay_ip(&evidence.peer_ip)
+        || unsafe_ip(&evidence.peer_ip)
     {
         return Err(MappingError::PeerAddressMismatch);
     }
     if evidence.community_id != attempt.community_id
         || evidence.relay_pubkey != attempt.relay_pubkey
+        || evidence.endpoint_service_identity != attempt.endpoint_service_identity
+        || evidence.tls_peer_spki_sha256 != attempt.tls_peer_spki_sha256
         || evidence.community_id != current.record.community_id
         || evidence.relay_pubkey != current.record.relay_pubkey
+        || evidence.endpoint_service_identity != current.record.endpoint_service_identity
+        || evidence.tls_peer_spki_sha256 != current.record.tls_peer_spki_sha256
     {
         return Err(MappingError::RelayIdentityMismatch);
     }
@@ -258,22 +384,43 @@ pub fn verify_mapping_update(
     expected_generation: u64,
     now: DateTime<Utc>,
 ) -> Result<TrustedRelayMapping, MappingError> {
-    if current.record.generation != expected_generation {
+    verify_mapping_revision(current, &next, expected_generation)?;
+    TrustedRelayMapping::validate(next, now)
+}
+
+/// Check immutable identity and monotonic generation for any mapping revision.
+/// Callers still validate the endpoint policy before making an active mapping usable.
+pub fn verify_mapping_revision(
+    current: &TrustedRelayMapping,
+    next: &RelayMappingRecord,
+    expected_generation: u64,
+) -> Result<(), MappingError> {
+    verify_mapping_revision_record(&current.record, next, expected_generation)
+}
+
+/// Check a revision when the current record is expired or inactive and cannot
+/// be represented as a trusted, connectable mapping.
+pub fn verify_mapping_revision_record(
+    current: &RelayMappingRecord,
+    next: &RelayMappingRecord,
+    expected_generation: u64,
+) -> Result<(), MappingError> {
+    if current.generation != expected_generation {
         return Err(MappingError::StaleMappingGeneration);
     }
-    if next.mapping_id != current.record.mapping_id
-        || next.tenant_id != current.record.tenant_id
-        || next.workspace_id != current.record.workspace_id
+    if next.mapping_id != current.mapping_id
+        || next.tenant_id != current.tenant_id
+        || next.workspace_id != current.workspace_id
         || next.generation
             != expected_generation
                 .checked_add(1)
                 .ok_or(MappingError::StaleMappingGeneration)?
-        || next.audit_entry_id == current.record.audit_entry_id
+        || next.audit_entry_id == current.audit_entry_id
         || next.updated_by.is_nil()
     {
         return Err(MappingError::InvalidMappingUpdate);
     }
-    TrustedRelayMapping::validate(next, now)
+    Ok(())
 }
 
 /// Require all active workspaces in a tenant to use one isolated relay and
@@ -285,7 +432,14 @@ pub fn verify_tenant_mappings(mappings: &[TrustedRelayMapping]) -> Result<(), Ma
                 || (earlier.record.tenant_id == mapping.record.tenant_id
                     && (earlier.record.workspace_id == mapping.record.workspace_id
                         || earlier.canonical_url != mapping.canonical_url
+                        || earlier.record.endpoint_policy != mapping.record.endpoint_policy
                         || earlier.record.community_id != mapping.record.community_id
+                        || earlier.record.relay_deployment_id
+                            != mapping.record.relay_deployment_id
+                        || earlier.record.endpoint_service_identity
+                            != mapping.record.endpoint_service_identity
+                        || earlier.record.tls_peer_spki_sha256
+                            != mapping.record.tls_peer_spki_sha256
                         || earlier.record.relay_pubkey != mapping.record.relay_pubkey
                         || earlier.record.deployment_digest != mapping.record.deployment_digest
                         || earlier.record.approved_ips != mapping.record.approved_ips))
@@ -311,7 +465,10 @@ pub fn verify_tenant_mappings(mappings: &[TrustedRelayMapping]) -> Result<(), Ma
                 && (earlier.canonical_url == mapping.canonical_url
                     || earlier.record.community_id == mapping.record.community_id
                     || earlier.record.relay_host == mapping.record.relay_host
-                    || earlier.record.relay_pubkey == mapping.record.relay_pubkey)
+                    || earlier.record.relay_pubkey == mapping.record.relay_pubkey
+                    || earlier.record.relay_deployment_id == mapping.record.relay_deployment_id
+                    || earlier.record.endpoint_service_identity
+                        == mapping.record.endpoint_service_identity)
         }) {
             return Err(MappingError::CrossTenantRelayReuse);
         }
@@ -325,6 +482,58 @@ fn is_unsafe_relay_ip(ip: &IpAddr) -> bool {
     rustshare_core::validation::is_internal_ip(ip)
         || matches!(ip, IpAddr::V6(ipv6) if ipv6.segments()[0] & 0xe000 != 0x2000)
         || SPECIAL_USE_IP_RANGES.iter().any(|range| range.contains(ip))
+}
+
+fn is_forbidden_service_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            !ip.is_private()
+                || ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_multicast()
+                || ip.is_broadcast()
+        }
+        IpAddr::V6(ip) => {
+            !ip.is_unique_local()
+                || ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_unicast_link_local()
+                || ip.is_multicast()
+        }
+    }
+}
+
+fn trusted_kubernetes_service_identity(identity: &str, host: &str) -> bool {
+    let Some(identity) = identity.strip_prefix("k8s://") else {
+        return false;
+    };
+    let mut parts = identity.split('/');
+    let (Some(cluster), Some(namespace), Some(service), Some(uid), None) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
+        return false;
+    };
+    let canonical_uuid =
+        |value: &str| Uuid::parse_str(value).is_ok_and(|parsed| parsed.to_string() == value);
+    let dns_label = |value: &str| {
+        !value.is_empty()
+            && value.len() <= 63
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            && value.as_bytes()[0].is_ascii_alphanumeric()
+            && value.as_bytes()[value.len() - 1].is_ascii_alphanumeric()
+    };
+    canonical_uuid(cluster)
+        && canonical_uuid(uid)
+        && dns_label(namespace)
+        && dns_label(service)
+        && host == format!("{service}.{namespace}.svc.cluster.local")
 }
 
 static SPECIAL_USE_IP_RANGES: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
@@ -362,6 +571,15 @@ fn canonical_relay_url(host: &str, explicit_port: Option<u16>) -> String {
 fn is_sha256_digest(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(|digest| {
         digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
+
+fn is_canonical_sha256_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
     })
 }
 
@@ -429,7 +647,14 @@ mod tests {
             mapping_id: Uuid::new_v4(),
             tenant_id,
             workspace_id,
-            community_id: format!("community-{tenant_id}"),
+            community_id: Uuid::new_v4().to_string(),
+            endpoint_policy: RelayEndpointPolicy::StrictPublic,
+            relay_deployment_id: Uuid::new_v4(),
+            endpoint_service_identity: format!(
+                "cluster/test-ns/buzz-{tenant_id}#{}",
+                Uuid::new_v4()
+            ),
+            tls_peer_spki_sha256: format!("sha256:{}", "b2".repeat(32)),
             relay_url: format!("wss://{host}"),
             relay_host: host.to_string(),
             relay_pubkey: "22".repeat(32),
@@ -457,6 +682,8 @@ mod tests {
             peer_port: 443,
             community_id: mapping.record.community_id.clone(),
             relay_pubkey: mapping.record.relay_pubkey.clone(),
+            endpoint_service_identity: mapping.record.endpoint_service_identity.clone(),
+            tls_peer_spki_sha256: mapping.record.tls_peer_spki_sha256.clone(),
         }
     }
 
@@ -544,6 +771,67 @@ mod tests {
                 MappingError::UnsafeDnsTargets
             );
         }
+    }
+
+    #[test]
+    fn trusted_service_requires_exact_service_identity_and_private_target() {
+        let (tenant, workspace) = ids();
+        let cluster = Uuid::new_v4();
+        let service_uid = Uuid::new_v4();
+        let mut record = valid_record(tenant, workspace, "buzz.tenant-a.svc.cluster.local");
+        record.endpoint_policy = RelayEndpointPolicy::TrustedService;
+        record.endpoint_service_identity = format!("k8s://{cluster}/tenant-a/buzz/{service_uid}");
+        record.approved_ips = vec!["10.96.32.10".parse().unwrap()];
+        let mapping = TrustedRelayMapping::validate(record.clone(), Utc::now()).unwrap();
+        assert!(mapping
+            .begin_connection(
+                mapping.scope(),
+                &["10.96.32.10".parse().unwrap()],
+                Utc::now()
+            )
+            .is_ok());
+
+        for ip in ["127.0.0.1", "169.254.169.254", "224.0.0.1"] {
+            assert_eq!(
+                mapping
+                    .begin_connection(mapping.scope(), &[ip.parse().unwrap()], Utc::now())
+                    .unwrap_err(),
+                MappingError::UnsafeDnsTargets
+            );
+        }
+
+        record.relay_host = "other.tenant-a.svc.cluster.local".into();
+        record.relay_url = format!("wss://{}", record.relay_host);
+        assert_eq!(
+            TrustedRelayMapping::validate(record, Utc::now()).unwrap_err(),
+            MappingError::InvalidDeploymentProvenance
+        );
+    }
+
+    #[test]
+    fn trusted_service_connected_relay_requires_private_pinned_peer() {
+        let (tenant, workspace) = ids();
+        let mut record = valid_record(tenant, workspace, "buzz.tenant-a.svc.cluster.local");
+        record.endpoint_policy = RelayEndpointPolicy::TrustedService;
+        record.endpoint_service_identity =
+            format!("k8s://{}/tenant-a/buzz/{}", Uuid::new_v4(), Uuid::new_v4());
+        record.approved_ips = vec!["10.96.32.10".parse().unwrap()];
+        let mapping = TrustedRelayMapping::validate(record, Utc::now()).unwrap();
+        let attempt = mapping
+            .begin_connection(
+                mapping.scope(),
+                &["10.96.32.10".parse().unwrap()],
+                Utc::now(),
+            )
+            .unwrap();
+        let mut evidence = valid_connection(&mapping, "10.96.32.10".parse().unwrap());
+        assert!(verify_connected_relay(&attempt, &mapping, &evidence, Utc::now()).is_ok());
+
+        evidence.peer_ip = "8.8.8.8".parse().unwrap();
+        assert_eq!(
+            verify_connected_relay(&attempt, &mapping, &evidence, Utc::now()).unwrap_err(),
+            MappingError::PeerAddressMismatch
+        );
     }
 
     #[test]
@@ -743,6 +1031,9 @@ mod tests {
         .unwrap();
         let mut same_tenant = valid_record(tenant_a, workspace_b, "a.tenant.example");
         same_tenant.community_id = first.record.community_id.clone();
+        same_tenant.relay_deployment_id = first.record.relay_deployment_id;
+        same_tenant.endpoint_service_identity = first.record.endpoint_service_identity.clone();
+        same_tenant.tls_peer_spki_sha256 = first.record.tls_peer_spki_sha256.clone();
         same_tenant.relay_pubkey = first.record.relay_pubkey.clone();
         same_tenant.approved_ips = first.record.approved_ips.clone();
         let same_tenant = TrustedRelayMapping::validate(same_tenant, Utc::now()).unwrap();
@@ -759,7 +1050,7 @@ mod tests {
 
         let (_, workspace_d) = ids();
         let mut same_key = valid_record(tenant_b, workspace_d, "other.tenant.example");
-        same_key.community_id = "different-community".into();
+        same_key.community_id = Uuid::new_v4().to_string();
         same_key.relay_pubkey = "22".repeat(32);
         let same_key = TrustedRelayMapping::validate(same_key, Utc::now()).unwrap();
         let (tenant_c, workspace_e) = ids();
