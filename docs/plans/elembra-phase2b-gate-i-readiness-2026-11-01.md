@@ -326,3 +326,48 @@ Publisher-specific upstream-fix and live conformance tracking is separate in
 [issue #460](https://github.com/kubedoio/rustshare/issues/460). Issue #458
 remains the mandatory managed-history Cilium gate; neither issue substitutes
 for the other or for desktop acceptance in #442.
+
+## 2026-11-05 protected-main refresh and Phase 2B.3 acceptance
+
+Protected `main` is `894813735b3a6828149d7216fee4b79ed5d0823d`. PRs #457,
+#459, #461, #462 and #463 are merged. All listed main-push workflows completed
+successfully except CI run [42062550751](https://github.com/kubedoio/rustshare/actions/runs/42062550751),
+which was still in progress when this entry was prepared; it is not counted as
+passed. The refreshed #463 PR checks and managed-history Cilium run
+[42056855474](https://github.com/kubedoio/rustshare/actions/runs/42056855474)
+are complete and successful.
+
+| Acceptance row | Result | Evidence / remaining condition |
+| --- | --- | --- |
+| Authorized kind-9 history | PASS | Exact event `4981ad90ef6cddd623d996146d675cc5ab07c9cfd7fe541104dbbcaa166de3d6`, author `c384d3e11ae0fd20ab1e2b53a21302feffae948356ea90b647f11a66714b09f4`, channel `191e0088-c8e8-40c3-9def-073830b15350`; current run asserts exact ID and author. |
+| Cross-tenant/private/wrong-identity denial | PASS | Cilium suite passed; terminal private/cross-tenant responses logged `event_count=0`. |
+| Revocation and mapping-generation fencing | PASS | Current suite passed; revoked active socket closed with zero EVENT frames, and mapping-generation change fenced the session. |
+| PostgreSQL outage during history revalidation | PASS | Runner stopped PostgreSQL after relay events and before authorization revalidation; reader returned `DatabaseUnavailable`; PostgreSQL restore passed. |
+| KMS unavailability and body-free audit | PASS | Reader returned no history on KMS failure and recorded only a body-free denial reason. |
+| Actual Cilium network policy and cleanup | PASS | Hubble recorded forbidden `1.1.1.1:443` egress as denied/dropped; the cluster and owned images were removed. |
+| Evidence manifest | PASS | All 53 artifact entries verified; `SHA256SUMS` digest is `1dd8017162ca8786116618080fd678ad387ac9f51079a3c1ad1b6425b2bc0091`. |
+| #458 normal PR review | PASS | Senolcolak approved PR #463. This is code review only. |
+| #458 independent issue-level security decision | PENDING | Requested explicit ACCEPT, REJECT, or REQUIRE CHANGES from eligible independent reviewer @melisecolak. #458 stays open until recorded. |
+| #442 stock Buzz Desktop acceptance | UNVERIFIED | No interactive display/session bus or runtime directory is present. Keyring binaries alone do not satisfy the committed native-keychain procedure. |
+| #460 publishing and upstream remediation | BLOCKED | Public review found no upstream-confirmed remediation, official fixed source pin, verified provenance, or accepted membership/role regression evidence. Contract fixtures are design-only and NOT IMPLEMENTED. |
+| Gate I / Phase 2B.4 | NO-GO | Managed signing, publishing, managed Chat activation and Phase 2B.4 remain disabled. |
+
+Issue #458's execution PASS, ordinary PR approval and independent security
+acceptance are tracked separately. Its sanitized artifact was downloaded and
+its SHA-256 manifest verified locally. No sensitive Buzz reproduction was run.
+The public upstream state is unknown: no commit or release is treated as a fix
+without upstream confirmation and the required evidence.
+
+Before signing or publishing implementation, require all ADR-0046 entry
+criteria: the recorded owner Option A decision; a named independent security
+ACCEPT for the final authorization/custody/relay-trust/recovery boundary;
+upstream-confirmed remediation in an official unmodified Buzz revision with
+verified provenance; accepted membership/role regression evidence; and review
+of the typed request, precheck, idempotency, exact-byte recovery, encrypted
+retention, audit, and executable test designs. Then implement only typed kind-9
+publishing and satisfy protected review and CI. #458 issue-level acceptance
+and #442 stock-desktop acceptance remain separate gates; both, plus passing
+publisher Rust/PostgreSQL and disposable Buzz/Cilium conformance, are required
+before Phase 2B.4. No arbitrary signer, publishing route, real-user signing,
+NIP-17, migration, deployment or Phase 2B.4 integration is authorized by this
+plan.
