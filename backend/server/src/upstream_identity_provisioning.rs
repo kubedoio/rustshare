@@ -3462,5 +3462,13 @@ mod tests {
             final_mapping.record().generation,
             original_mapping.generation
         );
+        pool.close().await;
+        let database_denied = provisioner
+            .read_channel_history(&authenticated, &membership_channel, &kms, &trust)
+            .await;
+        assert!(matches!(
+            database_denied,
+            Err(ProvisioningError::DatabaseUnavailable)
+        ));
     }
 }
