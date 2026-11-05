@@ -6,7 +6,7 @@ umask 077
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODE="${1:-compatibility}"
 if [[ "$MODE" == security ]]; then
-	printf 'UPSTREAM_SECURITY_REMEDIATION=BLOCKED\nLOCAL_COMPOSE_COMPATIBILITY=UNVERIFIED\nMANAGED_HISTORY_LOCAL=UNVERIFIED\nMANAGED_PUBLISHER=BLOCKED\nGATE_I=NO_GO\n'
+	printf 'UPSTREAM_SECURITY_REMEDIATION=BLOCKED\nQUALIFICATION_COMPOSE_OUTCOME=UNVERIFIED\nMANAGED_HISTORY_LOCAL=UNVERIFIED\nMANAGED_PUBLISHER=BLOCKED\nGATE_I=NO_GO\n'
 	echo 'No maintainer-authorized fixed upstream source and provenance are configured.'
 	exit 0
 fi
@@ -133,7 +133,7 @@ report.write_text(json.dumps({
   'product_scope_exit_status': {'PASS':0,'FAIL':1}.get(compat,2),
   'full_exploratory_suite_exit_status': int(run_status),
   'local_protocol_compatibility': compat,
-  'local_compose_compatibility': compat,
+  'qualification_compose_outcome': compat,
   'upstream_security_remediation': 'BLOCKED',
   'managed_history_local': 'UNVERIFIED',
   'typed_managed_publisher': 'NOT_IMPLEMENTED',
@@ -156,13 +156,13 @@ if [[ "$INVENTORY_UNCHANGED" != true ]]; then
 	cp "$RUN_DIR/inventory-before.txt" "$EVIDENCE_DIR/upstream-buzz-inventory-before-$STAMP.txt"
 	cp "$RUN_DIR/inventory-after.txt" "$EVIDENCE_DIR/upstream-buzz-inventory-after-$STAMP.txt"
 fi
-sha256sum "$REPORT" >"$EVIDENCE_DIR/upstream-buzz-local-qualification-$STAMP.SHA256SUMS"
+(cd "$EVIDENCE_DIR" && sha256sum "$(basename "$REPORT")") >"$EVIDENCE_DIR/upstream-buzz-local-qualification-$STAMP.SHA256SUMS"
 echo "report=$REPORT"
 echo "report_sha256=$(sha256sum "$REPORT" | cut -d' ' -f1)"
 python3 - "$REPORT" <<'PY'
 import json,sys
 r=json.load(open(sys.argv[1]))
-for key in ('local_protocol_compatibility','nip29_core_compatibility','nip29_private_dm_compatibility','nip42_authentication','nip43_membership','cross_tenant_isolation','nip17_exploratory_compatibility','full_exploratory_suite_outcome','product_scope_exit_status','full_exploratory_suite_exit_status','local_compose_compatibility','upstream_security_remediation','managed_history_local','typed_managed_publisher','gate_i','existing_docker_inventory_unchanged'):
+for key in ('local_protocol_compatibility','nip29_core_compatibility','nip29_private_dm_compatibility','nip42_authentication','nip43_membership','cross_tenant_isolation','nip17_exploratory_compatibility','full_exploratory_suite_outcome','product_scope_exit_status','full_exploratory_suite_exit_status','qualification_compose_outcome','upstream_security_remediation','managed_history_local','typed_managed_publisher','gate_i','existing_docker_inventory_unchanged'):
  print(f'{key.upper()}={r[key]}')
 for item in r['tests']:
  print(f"TEST {item['name']}={item['status']}")
