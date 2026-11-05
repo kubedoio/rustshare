@@ -545,6 +545,46 @@ run_member_transport_test() {
 	fi
 }
 
+run_history_reader_db_outage_test() {
+	local filter=upstream_identity_provisioning::tests::live_provisioning_reaches_ready_after_nip42_and_member_only_read
+	local log="$EVIDENCE_DIR/provisioning.log" test_status db_stopped=0
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- rm -f /tmp/db-outage.ack /tmp/db-restore.ack
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- test ! -e /tmp/db-outage.ack -a ! -e /tmp/db-restore.ack
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- /usr/local/bin/test-runner --ignored --exact "$filter" --nocapture >"$log" 2>&1 &
+	TEST_PID=$!
+	wait_for_test_marker "$log" BUZZ_TEST_HISTORY_DB_OUTAGE_READY
+	echo 'history read received relay events; stopping PostgreSQL before authorization revalidation' >"$EVIDENCE_DIR/history-reader-db-outage-orchestration.log"
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- gosu postgres pg_ctl -D /var/lib/postgresql/data/pgdata -m fast stop >"$RUN_DIR/history-postgres-stop.log" 2>&1
+	cp "$RUN_DIR/history-postgres-stop.log" "$EVIDENCE_DIR/history-postgres-stop.log"
+	for _ in {1..30}; do
+		if ! "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- pg_isready -h 127.0.0.1 -p 5432 -U postgres -d rustshare_test >/dev/null 2>&1; then
+			db_stopped=1
+			break
+		fi
+		sleep 1
+	done
+	[[ "$db_stopped" == 1 ]] || { echo 'PostgreSQL did not become unavailable during managed-history read' >&2; return 1; }
+	echo 'PostgreSQL outage verified' >>"$EVIDENCE_DIR/history-reader-db-outage-orchestration.log"
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/db-outage.ack
+	wait_for_test_marker "$log" BUZZ_TEST_DB_RESTORE_READY
+	echo 'managed-history reader failed closed; restoring PostgreSQL' >>"$EVIDENCE_DIR/history-reader-db-outage-orchestration.log"
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- touch /run/db-control/restart
+	timeout --signal=TERM 90s "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- sh -ec 'until pg_isready -h 127.0.0.1 -p 5432 -U postgres -d rustshare_test; do sleep 1; done'
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/db-restore.ack
+	set +e
+	wait "$TEST_PID"
+	test_status=$?
+	set -e
+	TEST_PID=
+	echo "exit=$test_status" >>"$log"
+	if [[ "$test_status" != 0 ]] || ! grep -q '1 passed; 0 failed' "$log"; then
+		echo "Rust test failed: $filter" >&2
+		tail -n 40 "$log" >&2
+		return 1
+	fi
+	echo 'PostgreSQL restore verified' >>"$EVIDENCE_DIR/history-reader-db-outage-orchestration.log"
+}
+
 run_provisioning_relay_outage_test() {
 	local filter=upstream_identity_provisioning::tests::live_provisioning_recovers_after_relay_outage
 	local log="$EVIDENCE_DIR/provisioning-relay-outage.log" test_status outage_verified=0 restore_verified=0
@@ -611,7 +651,7 @@ run_rust_test member-revocation upstream_buzz_transport::disposable_service_test
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/member-db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$RUN_DIR/db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$RUN_DIR/db-reset.log" 2>&1
-run_rust_test provisioning upstream_identity_provisioning::tests::live_provisioning_reaches_ready_after_nip42_and_member_only_read none
+run_history_reader_db_outage_test
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$EVIDENCE_DIR/provisioning-relay-outage-db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/provisioning-relay-outage-db-reset.log" 2>&1
 run_provisioning_relay_outage_test

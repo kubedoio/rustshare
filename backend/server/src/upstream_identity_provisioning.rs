@@ -6,6 +6,9 @@
 
 use std::time::Duration;
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use chrono::Utc;
 use nostr::{Event, EventBuilder, Keys, Kind, RelayUrl, Tag, Timestamp};
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
@@ -26,6 +29,29 @@ use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
 const HISTORY_SUBSCRIPTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[cfg(test)]
+static LIVE_HISTORY_DATABASE_READS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+async fn wait_for_live_history_database_outage() {
+    let Some(ack_file) = std::env::var_os("BUZZ_TEST_DB_OUTAGE_ACK_FILE") else {
+        return;
+    };
+    if LIVE_HISTORY_DATABASE_READS.fetch_add(1, Ordering::SeqCst) != 1 {
+        return;
+    }
+    println!("BUZZ_TEST_HISTORY_DB_OUTAGE_READY");
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    let ack_file = std::path::PathBuf::from(ack_file);
+    tokio::time::timeout(Duration::from_secs(120), async {
+        while !ack_file.exists() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("history database outage acknowledgement timed out");
+}
 
 // shortcut: this foundation has no runtime caller, so a process-wide lock
 // prevents overlapping test drives; replace it with a durable lease before
@@ -399,6 +425,9 @@ impl ManagedIdentityProvisioner {
             MAX_EVENT_CONTENT_BYTES,
         )
         .await?;
+
+        #[cfg(test)]
+        wait_for_live_history_database_outage().await;
 
         let current_subject = self.resolver.resolve(authenticated).await?;
         let current_identity = self
@@ -3462,7 +3491,6 @@ mod tests {
             final_mapping.record().generation,
             original_mapping.generation
         );
-        pool.close().await;
         let database_denied = provisioner
             .read_channel_history(&authenticated, &membership_channel, &kms, &trust)
             .await;
@@ -3470,5 +3498,16 @@ mod tests {
             database_denied,
             Err(ProvisioningError::DatabaseUnavailable)
         ));
+        println!("history_reader_db_outage=DATABASE_UNAVAILABLE");
+        let restore_ack_path = std::path::PathBuf::from(required("BUZZ_TEST_DB_RESTORE_ACK_FILE"));
+        println!("BUZZ_TEST_DB_RESTORE_READY");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+        tokio::time::timeout(Duration::from_secs(120), async {
+            while !restore_ack_path.exists() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("history database restore acknowledgement timed out");
     }
 }
