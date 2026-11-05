@@ -68,10 +68,15 @@ recovery before requiring the operation to reach `ready`.
 `live_provisioning_reaches_ready_after_nip42_and_member_only_read` also calls
 the internal managed-identity history reader and requires the exact seeded
 event ID and original author after authorized kind-39000 discovery. It checks
-that an undiscoverable channel is denied and that audit entries contain no
-message body. It does not publish kind-9 messages: pinned Buzz evaluates the
-current write role and channel state only after receiving a signed `EVENT`, so
-there is no safe pre-sign permission check for this backend boundary.
+that an undiscoverable channel is denied, that KMS failure returns no history,
+and that audit entries contain no message body. The Cilium runner stops the
+disposable PostgreSQL process after the history `EVENT`/`EOSE` response and
+before post-read authorization revalidation; the reader must return
+`DatabaseUnavailable` without releasing the buffered history, then the runner
+restores PostgreSQL before the test exits. It does not publish kind-9 messages:
+pinned Buzz evaluates the current write role and channel state only after
+receiving a signed `EVENT`, so there is no safe pre-sign permission check for
+this backend boundary.
 
 Before the Rust tests, the harness attempts TCP to a forbidden public address
 from the connector Pod and requires Hubble to record Cilium's egress denial.
