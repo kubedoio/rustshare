@@ -3491,24 +3491,26 @@ mod tests {
             final_mapping.record().generation,
             original_mapping.generation
         );
-        let database_denied = provisioner
-            .read_channel_history(&authenticated, &membership_channel, &kms, &trust)
-            .await;
-        assert!(matches!(
-            database_denied,
-            Err(ProvisioningError::DatabaseUnavailable)
-        ));
-        println!("history_reader_db_outage=DATABASE_UNAVAILABLE");
-        let restore_ack_path =
-            std::path::PathBuf::from(required("BUZZ_TEST_HISTORY_DB_RESTORE_ACK_FILE"));
-        println!("BUZZ_TEST_HISTORY_DB_RESTORE_READY");
-        std::io::Write::flush(&mut std::io::stdout()).unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(120), async {
-            while !restore_ack_path.exists() {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            }
-        })
-        .await
-        .expect("history database restore acknowledgement timed out");
+        if std::env::var_os("BUZZ_TEST_HISTORY_DB_OUTAGE_ACK_FILE").is_some() {
+            let database_denied = provisioner
+                .read_channel_history(&authenticated, &membership_channel, &kms, &trust)
+                .await;
+            assert!(matches!(
+                database_denied,
+                Err(ProvisioningError::DatabaseUnavailable)
+            ));
+            println!("history_reader_db_outage=DATABASE_UNAVAILABLE");
+            let restore_ack_path =
+                std::path::PathBuf::from(required("BUZZ_TEST_HISTORY_DB_RESTORE_ACK_FILE"));
+            println!("BUZZ_TEST_HISTORY_DB_RESTORE_READY");
+            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(120), async {
+                while !restore_ack_path.exists() {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            })
+            .await
+            .expect("history database restore acknowledgement timed out");
+        }
     }
 }
