@@ -211,6 +211,37 @@ impl ManagedIdentityOperationStore {
         Ok(record)
     }
 
+    /// Find the durable ready operation that authorizes this active identity
+    /// in this workspace. Callers still revalidate the user and mapping.
+    pub async fn ready_for_identity(
+        &self,
+        tenant_id: Uuid,
+        principal_id: Uuid,
+        workspace_id: Uuid,
+        identity_id: Uuid,
+        identity_generation: i64,
+    ) -> Result<ManagedIdentityOperationRecord, ManagedIdentityOperationError> {
+        let mut tx = self.0.begin().await.map_err(map_database_error)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let record = sqlx::query_as::<_, ManagedIdentityOperationRecord>(&format!(
+            "SELECT {COLUMNS} FROM managed_chat_identity_operations \
+             WHERE tenant_id=$1 AND principal_id=$2 AND workspace_id=$3 \
+               AND identity_id=$4 AND identity_generation=$5 AND status='ready' \
+             ORDER BY ready_at DESC LIMIT 1"
+        ))
+        .bind(tenant_id)
+        .bind(principal_id)
+        .bind(workspace_id)
+        .bind(identity_id)
+        .bind(identity_generation)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_database_error)?
+        .ok_or(ManagedIdentityOperationError::NotFound)?;
+        tx.commit().await.map_err(map_database_error)?;
+        Ok(record)
+    }
+
     /// Whether a ready operation already relies on this active identity.
     pub async fn identity_is_ready(
         &self,

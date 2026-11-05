@@ -238,3 +238,91 @@ Phase 2B.2 durable managed-identity provisioning and live admission orchestratio
 The Phase 2B.2 branch now includes tests for kind-9031 removal on an established member socket and reconnect, provisioning retry after relay-edge outage, signed mapping-generation change, cross-tenant operation substitution, NIP-43 operation-layer replay, claim-before-KMS recovery, and safe abandonment of never-ready identities. Disposable PostgreSQL runs passed the operation-store suite (9/9) and provisioning lifecycle cases (14/14); workspace all-features library tests and Clippy passed. SQLx prepare check passed after applying repository migrations to a disposable PostgreSQL 16/pgvector database. The Cilium harness passed all six selected tests at source commit `f349605a13f3a1c076e47e246660fe9c1c370210`; sanitized evidence is at `/tmp/elembra-cilium-evidence-20261103180651-2276002`, with all 48/48 SHA256 manifest entries verified.
 
 Independent review findings on abandonment ordering and the existing-socket revocation probe were addressed and re-reviewed. Secret checks cover recovered-identity/event formatting, serialized NIP-42 AUTH payloads, both managed-identity table schemas/RLS, and configured NSEC values in harness evidence. A same-sentinel raw-key-to-vault-row assertion was not added because the key-generation API intentionally provides no raw-key accessor; vault storage/recovery is covered by its existing encrypted-envelope integration test. Gate I remains **NOT ACCEPTED**, issue #442 remains open and unverified, and production activation is not authorized.
+
+## 2026-11-04 Phase 2B.3 authorized NIP-29 publish/read investigation
+
+The feature-gated upstream transport now has an internal, one-shot managed-identity history reader. It resolves an active Principal with Chat access, requires the ready operation and matching active identity/mapping generations, recovers the existing vault identity, authenticates with NIP-42, discovers the target through relay-signed kind 39000, and reads only kind-9 (`Kind::ChatMessage`) events from the mapped relay. It verifies signatures, event IDs, kind and exact channel tag, buffers one bounded page through EOSE, discards results on CLOSED, then rechecks the local subject, entitlement, identity, operation and mapping before returning. AUTH, discovery, history and provisioning membership exchanges each have a 30-second total deadline; timeout discards the session. Recovered key material is dropped after signing the NIP-42 AUTH event, before sending it to the relay. Authorization outcome and failure reason are written to the existing user security event table without message bodies; allowed entries include tenant/workspace, operation, identity and mapping generations. The resolver enforces the current `workspace_id == tenant_id` invariant, and managed provisioning fixtures now use that same scope with a mismatched-workspace denial assertion. This reader has no route, worker, startup caller or session pool. It uses the trusted test Principal context; this snapshot has no separate workspace-membership table, so any future caller must pass the authenticated workspace context from the existing authorization boundary. Multi-page history and persistent subscriptions are not implemented. NIP-17 remains disabled; native NIP-29 private DMs remain relay-access-controlled plaintext.
+
+Publishing is deliberately absent. The pinned unmodified Buzz checkout at `eafd77e9f6e96052476bdd88be732c046fdb7ab3` checks kind-9 write eligibility in `crates/buzz-relay/src/handlers/ingest.rs::check_channel_write` only after receiving the signed event. That decision uses current channel state, membership, role-based `can_post`, join policy and archive state. NIP-29 kind 39002 exposes a member list but does not prove all of those write conditions, and the pinned protocol exposes no read-only write-permission preflight. Therefore Elembra cannot establish current write eligibility before signing without trusting stale/local state or already publishing a signed request. No kind-9 signing API, publish operation table, event-body storage, or publish retry path was added. Phase 2B.3 is **INCOMPLETE** until an approved upstream mechanism can support pre-sign authorization and durable exact-event idempotency.
+
+The protected PR's separate `Buzz Live Conformance` job passed, but it runs the Docker Compose `buzz_live_conformance_test` suite and does not run the kind/Cilium harness or the managed-identity provisioning history test. The separate upstream Buzz v1alpha2 integration job failed because its relay did not become ready within 30 seconds; it does not exercise this managed-identity reader. The local Cilium runner preflight stopped at the missing `kind` executable. No permitted disposable kind/Kubernetes/Cilium runner was available for this run; Cilium conformance and signed publish event IDs are therefore **UNVERIFIED**. Gate I remains **NO-GO / NOT ACCEPTED**, issue #442 remains a separate mandatory interoperability gate, and no production Chat capability is enabled.
+
+## 2026-11-04 PR #457 protected-check update
+
+At code head `6d140a323482c235dd8598b967350e2b08cbca55`, all 12 branch-protection-required contexts passed on normal `pull_request` workflows. These include Format, Clippy, Cargo Deny, Production and Monitoring Compose Contract, integration-tests, Buzz Live Conformance, Chat Product Acceptance, DCO Check, Terminology & Trademark Scan, Plugin Unit Tests, frontend, and Buzz Identity Replacement E2E. CodeQL and OpenAPI Contract also passed. This reports the result for that exact code head; the PR's check run is [41847930088](https://github.com/kubedoio/rustshare/actions/runs/41847930088), with the other normal pull-request runs linked from PR #457.
+
+The CI results do not include the disposable kind/Cilium harness. The current host has no `kind` executable, and this repository has no Cilium Actions workflow or designated runner; the new managed-history Cilium test was not run and remains **UNVERIFIED**. Dedicated evidence tracking is [issue #458](https://github.com/kubedoio/rustshare/issues/458). Independent security acceptance to defer this evidence until #458 passes is **PENDING**; the ordinary PR approval is not that acceptance. Request recorded at [PR comment #6635007265](https://github.com/kubedoio/rustshare/pull/457#issuecomment-6635007265). Issue #442 remains a distinct stock-desktop interoperability gate.
+
+The PR remains an inert, internal, one-shot history-reader foundation: the upstream modules are feature-gated and have no production caller; this change adds no publish/signing API, Chat route or activation, migration, or deployment change. Phase 2B.3 publish/read integration remains incomplete, production Chat remains disabled, issues #442 and #458 remain open, and Gate I remains **NO-GO / NOT ACCEPTED**. Do not merge until the independent security review and Cilium-deferral acceptance are recorded.
+
+## 2026-11-04 PR #457 merge and acceptance reconciliation
+
+PR #457 merged through GitHub's protected process on 2026-11-04. The PR head
+was `308997a434c5c96a3acaf207aee37ffd0fdb920e`; the exact squash merge commit
+on protected `main` is `a6ec3d98c1d397e59596585f1badab716165691b`. All 12
+required branch-protection contexts passed on the final head, along with
+CodeQL and OpenAPI Contract. The protected runs were CI
+[`41872935656`](https://github.com/kubedoio/rustshare/actions/runs/41872935656),
+Integration Tests
+[`41872935823`](https://github.com/kubedoio/rustshare/actions/runs/41872935823),
+Frontend CI
+[`41872935738`](https://github.com/kubedoio/rustshare/actions/runs/41872935738),
+Vault Sync Compliance
+[`41872935735`](https://github.com/kubedoio/rustshare/actions/runs/41872935735),
+DCO Check
+[`41872935622`](https://github.com/kubedoio/rustshare/actions/runs/41872935622),
+and CodeQL
+[`41872935628`](https://github.com/kubedoio/rustshare/actions/runs/41872935628).
+The PR-tier workflow skipped Build Release, Test, SQLx Prepare Check and Code
+Coverage; these are not reported as executed. Buzz Live Conformance and Chat
+Product Acceptance passing do not count as a run of the new managed-history
+Cilium test.
+
+Project-owner `senolcolak` recorded `ACCEPT` in [PR #457 comment
+#6637880199](https://github.com/kubedoio/rustshare/pull/457#issuecomment-6637880199).
+Its scope is the inert history reader's reliance on the pinned relay for
+historical write enforcement/current private-channel read ACLs, and deferral of
+the new history Cilium evidence to issue #458. This is project-owner acceptance
+only, not independent security/custody approval, not a publishing decision, and
+not permission for production Chat. No independent security verdict was
+recorded by that comment.
+
+The managed-history Cilium test passed in [run
+41936521775](https://github.com/kubedoio/rustshare/actions/runs/41936521775)
+against PR #461 head `b97bb229d9e9f1d05b0b77596063fff4d435e20a` (tested via
+merge checkout `a2e6c52ba5de45bb49698509126a3f10aebc7479`). It exercised the
+six selected managed-history/supporting transport tests and real Cilium egress
+isolation; the sanitized artifact manifest is recorded in issue #458. This
+execution does not itself provide independent security acceptance. Issue
+[#458](https://github.com/kubedoio/rustshare/issues/458) remains open for its
+tracked qualification and acceptance requirements before managed Chat
+activation. It covers authorized history, private denial,
+cross-tenant/wrong-identity reads, revocation, mapping generation, database/KMS
+failure, zero unauthorized EVENT frames and real Cilium network isolation. Issue
+[#442](https://github.com/kubedoio/rustshare/issues/442) remains the separate
+mandatory stock-desktop interoperability gate. Gate I remains **NO-GO / NOT
+ACCEPTED**. Phase 2B.4 runtime integration and production Chat remain disabled.
+
+The project owner explicitly selected Option A as the publishing target and
+accepted the portable signed-artifact, replay, plaintext-visibility and
+revocation risks in [PR #459 comment
+#6640798406](https://github.com/kubedoio/rustshare/pull/459#issuecomment-6640798406).
+This is a product architecture decision, not implementation or activation
+approval. A separate independent security verdict remains pending. The #457
+`ACCEPT` remains limited to the history-reader trust model and Cilium deferral.
+
+Source review identified an upstream membership-cache/role-transition
+authorization defect. Its reproduction details were submitted through Buzz's
+private vulnerability-reporting process and are omitted from this public
+report. The managed publisher is blocked until upstream triages and fixes the
+finding in an official unmodified Buzz pin and regression tests pass. ADR-0046
+now selects typed Elembra-side authorization with Buzz final ingest enforcement,
+preserves Option B as a deferred alternative, and specifies durable exact-event
+recovery and publisher conformance tests. No signing, publishing, production
+authorization, or Phase 2B.4 integration follows from this decision. Gate I
+remains **NO-GO**.
+
+Publisher-specific upstream-fix and live conformance tracking is separate in
+[issue #460](https://github.com/kubedoio/rustshare/issues/460). Issue #458
+remains the mandatory managed-history Cilium gate; neither issue substitutes
+for the other or for desktop acceptance in #442.

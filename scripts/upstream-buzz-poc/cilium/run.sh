@@ -10,18 +10,27 @@ source "$HERE/versions.env"
 SOURCE_SHA=eafd77e9f6e96052476bdd88be732c046fdb7ab3
 SOURCE_TREE=04e3a40545bd3b23510ec32b4c8cccee2acef7c5
 NAMESPACE=elembra-buzz-test
-RUN_ID="$(date -u +%Y%m%d%H%M%S)-$$"
+RUN_ID="${BUZZ_CILIUM_RUN_ID:-$(date -u +%Y%m%d%H%M%S)-$$}"
+[[ "$RUN_ID" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || { echo 'BUZZ_CILIUM_RUN_ID must be a short lowercase tag-safe value' >&2; exit 2; }
 CLUSTER="ec-${RUN_ID}"
 BUZZ_IMAGE="local/elembra-cilium-buzz:${RUN_ID}"
 POC_IMAGE="local/elembra-cilium-tools:${RUN_ID}"
 RUNNER_IMAGE="local/elembra-cilium-runner:${RUN_ID}"
 EVIDENCE_DIR="${EVIDENCE_DIR:-${TMPDIR:-/tmp}/elembra-cilium-evidence-${RUN_ID}}"
+RESOURCE_LOCK_DIR="/tmp/elembra-cilium-lock-${RUN_ID}"
 [[ ! -e "$EVIDENCE_DIR" ]] || { echo "evidence path already exists: $EVIDENCE_DIR" >&2; exit 2; }
 mkdir -m 0700 "$EVIDENCE_DIR"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/elembra-cilium.${RUN_ID}.XXXXXX")"
 KUBECONFIG="$RUN_DIR/kubeconfig"
 K=(kubectl --kubeconfig "$KUBECONFIG")
 CLUSTER_CREATED=0
+RESOURCE_LOCK_CREATED=0
+BUZZ_IMAGE_CREATED=0
+POC_IMAGE_CREATED=0
+RUNNER_IMAGE_CREATED=0
+BUZZ_IMAGE_ID=
+POC_IMAGE_ID=
+RUNNER_IMAGE_ID=
 PF_PID=
 TCP_PID=
 UDP_PID=
@@ -35,7 +44,19 @@ cleanup() {
 		if [[ -n "$pid" ]]; then kill -INT "$pid" >/dev/null 2>&1 || true; wait "$pid" 2>/dev/null || true; fi
 	done
 	if [[ "$CLUSTER_CREATED" == 1 ]]; then kind delete cluster --name "$CLUSTER" >>"$EVIDENCE_DIR/cleanup.log" 2>&1 || true; fi
-	for image in "$BUZZ_IMAGE" "$POC_IMAGE" "$RUNNER_IMAGE"; do docker image rm "$image" >>"$EVIDENCE_DIR/cleanup.log" 2>&1 || true; done
+	remove_owned_image() {
+		local created="$1" tag="$2" expected_id="$3" actual_id
+		[[ "$created" == 1 && -n "$expected_id" ]] || return 0
+		actual_id="$(docker image inspect --format '{{.Id}}' "$tag" 2>/dev/null || true)"
+		if [[ "$actual_id" == "$expected_id" ]]; then
+			docker image rm "$tag" >>"$EVIDENCE_DIR/cleanup.log" 2>&1 || true
+		else
+			echo "skipped changed image tag $tag" >>"$EVIDENCE_DIR/cleanup.log"
+		fi
+	}
+	remove_owned_image "$BUZZ_IMAGE_CREATED" "$BUZZ_IMAGE" "$BUZZ_IMAGE_ID"
+	remove_owned_image "$POC_IMAGE_CREATED" "$POC_IMAGE" "$POC_IMAGE_ID"
+	remove_owned_image "$RUNNER_IMAGE_CREATED" "$RUNNER_IMAGE" "$RUNNER_IMAGE_ID"
 	python3 - "$RUN_DIR" <<'PY'
 from pathlib import Path
 import shutil, sys
@@ -52,11 +73,18 @@ manifest.write_text("".join(f"{hashlib.sha256(item.read_bytes()).hexdigest()}  {
 manifest.chmod(0o600)
 PY
 	echo "sanitized_evidence=$EVIDENCE_DIR"
+	if [[ "$RESOURCE_LOCK_CREATED" == 1 ]]; then rmdir "$RESOURCE_LOCK_DIR" 2>/dev/null || true; fi
 	exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+if ! mkdir "$RESOURCE_LOCK_DIR" 2>/dev/null; then
+	echo "refusing concurrent run with ID $RUN_ID" >&2
+	exit 2
+fi
+RESOURCE_LOCK_CREATED=1
 
 usage() {
 	cat <<'HELP'
@@ -89,7 +117,7 @@ hubble_version="$(hubble version)"
 [[ "$hubble_version" == *"$HUBBLE_CLI_VERSION"* ]] || { echo "Hubble CLI must be $HUBBLE_CLI_VERSION" >&2; exit 2; }
 rustc_version="$(rustc +1.97.1 --version)"
 [[ "$rustc_version" == *1.97.1* ]] || { echo 'Rust 1.97.1 is required' >&2; exit 2; }
-node --version | grep -Eq '^v22\.' || { echo 'Node.js 22 is required' >&2; exit 2; }
+[[ "$(node --version)" == "v$NODE_VERSION" ]] || { echo "Node.js $NODE_VERSION is required" >&2; exit 2; }
 npm --version | awk -F. '$1 >= 10 { ok=1 } END { exit !ok }' || { echo 'npm 10 or newer is required' >&2; exit 2; }
 
 default_source="${BUZZ_SOURCE_DIR:-$RUN_DIR/buzz-source}"
@@ -104,6 +132,7 @@ fi
 [[ -z "$(git -C "$default_source" status --porcelain)" && -z "$(git -C "$default_source" clean -ndX)" ]] || { echo 'Buzz checkout must be clean, including ignored files' >&2; exit 2; }
 [[ -z "$(git -C "$ROOT" status --porcelain)" ]] || { echo 'RustShare worktree must be clean to bind test evidence to a commit' >&2; exit 2; }
 git -C "$ROOT" rev-parse HEAD >"$EVIDENCE_DIR/rustshare-source.txt"
+cp "$HERE/versions.env" "$EVIDENCE_DIR/tool-image-pins.env"
 {
 	echo "buzz_source=$SOURCE_SHA"
 	echo "buzz_tree=$SOURCE_TREE"
@@ -126,10 +155,14 @@ docker buildx build --platform linux/amd64 --load --quiet --metadata-file "$RUN_
 	--build-arg "BUZZ_SOURCE_SHA=$SOURCE_SHA" --tag "$BUZZ_IMAGE" "$default_source" >"$RUN_DIR/buzz-build.log" 2>&1 || {
 	echo 'unmodified upstream Buzz image build failed' >&2; tail -n 30 "$RUN_DIR/buzz-build.log" >&2; exit 1;
 }
+BUZZ_IMAGE_CREATED=1
+BUZZ_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$BUZZ_IMAGE")"
 docker buildx build --platform linux/amd64 --load --quiet --build-arg "NODE_BASE=$NODE_IMAGE" \
 	--tag "$POC_IMAGE" -f "$HERE/Dockerfile.poc" "$HARNESS" >"$RUN_DIR/poc-build.log" 2>&1 || {
 	echo 'disposable Node fixture image build failed' >&2; tail -n 30 "$RUN_DIR/poc-build.log" >&2; exit 1;
 }
+POC_IMAGE_CREATED=1
+POC_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$POC_IMAGE")"
 
 (
 	cd "$ROOT"
@@ -158,8 +191,7 @@ docker buildx build --platform linux/amd64 --load --quiet --build-arg "RUNNER_BA
 	--tag "$RUNNER_IMAGE" "$RUN_DIR/runner-context" >"$RUN_DIR/runner-build.log" 2>&1 || {
 	echo 'Rust test runner image build failed' >&2; tail -n 30 "$RUN_DIR/runner-build.log" >&2; exit 1;
 }
-BUZZ_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$BUZZ_IMAGE")"
-POC_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$POC_IMAGE")"
+RUNNER_IMAGE_CREATED=1
 RUNNER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$RUNNER_IMAGE")"
 BUZZ_BUILD_DIGEST="$(python3 - "$RUN_DIR/buzz-build.json" <<'PY'
 import json, sys
@@ -176,9 +208,9 @@ PY
 	echo "buzz_tree=$SOURCE_TREE"
 } >"$EVIDENCE_DIR/image-identities.txt"
 
-CLUSTER_CREATED=1
 kind create cluster --name "$CLUSTER" --image "$KIND_NODE_IMAGE" --config "$HERE/kind.yaml" \
 	--kubeconfig "$KUBECONFIG" >"$EVIDENCE_DIR/kind-create.log" 2>&1
+CLUSTER_CREATED=1
 export KUBECONFIG
 cilium install --version "$CILIUM_VERSION" --set kubeProxyReplacement=false --set ipam.mode=kubernetes \
 	--set routingMode=tunnel --set hubble.enabled=true --set hubble.relay.enabled=true --set hubble.ui.enabled=false \
@@ -343,7 +375,7 @@ values = {
  "BUZZ_TEST_RELAY_PUBKEY":a["relay_pubkey"], "BUZZ_TEST_DEPLOYMENT_DIGEST":digest,
  "BUZZ_TEST_SERVICE_IDENTITY":f"k8s://{cluster_uid}/{ns}/buzz-edge-a/{svc_a_uid}", "BUZZ_TEST_TLS_SPKI_PIN":spki_a,
  "BUZZ_TEST_APPROVED_IP":ip_a, "BUZZ_TEST_DM_CHANNEL_ID":a["channel_id"], "BUZZ_TEST_EXPECTED_DM_EVENT_ID":a["event_id"],
- "BUZZ_TEST_PROVISIONING_CHANNEL_ID":a["provisioning_channel_id"],
+ "BUZZ_TEST_PROVISIONING_CHANNEL_ID":a["provisioning_channel_id"], "BUZZ_TEST_PROVISIONING_EVENT_ID":a["provisioning_event_id"],
  "BUZZ_TEST_EXPECTED_DM_AUTHOR":a["author"], "BUZZ_TEST_OTHER_MEMBER_PUBKEY":keys["member_b_pubkey"], "BUZZ_TEST_TLS_ROOT_DER":"/run/trust/a.der",
  "BUZZ_TEST_B_RELAY_URL":f"wss://{host_b}", "BUZZ_TEST_B_RELAY_HOST":host_b, "BUZZ_TEST_B_COMMUNITY_ID":b["community_id"],
  "BUZZ_TEST_B_RELAY_PUBKEY":b["relay_pubkey"], "BUZZ_TEST_B_DEPLOYMENT_DIGEST":digest,
@@ -360,8 +392,14 @@ values = {
  "BUZZ_TEST_RELAY_OUTAGE_ACK_FILE":"/tmp/relay-outage.ack", "BUZZ_TEST_RELAY_RESTORE_ACK_FILE":"/tmp/relay-restore.ack",
 }
 path = Path(sys.argv[3]); path.write_text("".join(f"{k}={v}\n" for k,v in values.items())); path.chmod(0o600)
-public = {"tenant_a": {"community": a["community_id"], "channel": a["channel_id"], "event": a["event_id"], "author": a["author"]},
-          "tenant_b": {"community": b["community_id"], "channel": b["channel_id"], "event": b["event_id"], "author": b["author"]}}
+public = {
+    "tenant_a": {"community": a["community_id"], "channel": a["channel_id"], "event": a["event_id"], "author": a["author"],
+                 "provisioning_channel": a["provisioning_channel_id"], "provisioning_event": a["provisioning_event_id"],
+                 "provisioning_author": a["provisioning_author"]},
+    "tenant_b": {"community": b["community_id"], "channel": b["channel_id"], "event": b["event_id"], "author": b["author"],
+                 "provisioning_channel": b["provisioning_channel_id"], "provisioning_event": b["provisioning_event_id"],
+                 "provisioning_author": b["provisioning_author"]},
+}
 Path(sys.argv[1]).write_text(json.dumps(public, indent=2) + "\n")
 PY
 cp "$RUN_DIR/connector-public.env" "$EVIDENCE_DIR/connector-public.env"
@@ -412,7 +450,8 @@ run_rust_test() {
 		TCP_PID=$!
 		timeout --signal=TERM 60s hubble observe --server 127.0.0.1:4245 --since 1s --follow --pod "$NAMESPACE/rust-connector" --protocol udp --output compact >"$EVIDENCE_DIR/$1-hubble-udp.log" 2>&1 &
 		UDP_PID=$!
-		sleep 1
+		# Let both Hubble streams subscribe before the test's first network request.
+		sleep 3
 		for name in TCP_PID UDP_PID; do
 			local pid="${!name}"
 			if ! kill -0 "$pid" 2>/dev/null; then
@@ -420,6 +459,20 @@ run_rust_test() {
 				return 1
 			fi
 		done
+		if [[ "$capture" == no-tcp ]]; then
+			local dns_host="hubble-ready-$RUN_ID.$NAMESPACE.svc.cluster.local"
+			"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- getent ahostsv4 "$dns_host" \
+				>"$EVIDENCE_DIR/dns-observer-preflight.txt" 2>&1 || true
+			for _ in {1..20}; do
+				if grep -Eq 'rust-connector.*->.*controlled-dns.*:53' "$EVIDENCE_DIR/$1-hubble-udp.log"; then break; fi
+				sleep 0.25
+			done
+			if ! grep -Eq 'rust-connector.*->.*controlled-dns.*:53' "$EVIDENCE_DIR/$1-hubble-udp.log"; then
+				echo 'Hubble did not capture the controlled DNS preflight' >&2
+				cat "$EVIDENCE_DIR/$1-hubble-udp.log" >&2
+				return 1
+			fi
+		fi
 	fi
 	set +e
 	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- /usr/local/bin/test-runner --ignored --exact "$filter" --nocapture >"$log" 2>&1
@@ -445,6 +498,14 @@ run_rust_test() {
 	if [[ "$capture" == no-tcp ]]; then
 		if ! grep -Eq 'rust-connector.*->.*controlled-dns.*:53' "$EVIDENCE_DIR/$1-hubble-udp.log"; then
 			echo 'no positive DNS exchange in the rejection-window capture' >&2
+			cat "$EVIDENCE_DIR/$1-hubble-udp.log" >&2
+			return 1
+		fi
+		# Source ports and resolver flow counts vary across libc/runtime versions.
+		# The Rust test validates the answers; this preflight validates DNS capture,
+		# while the same window verifies the rejected target was never dialed.
+		if ! grep -Eq 'rust-connector.*->.*controlled-dns.*:53' "$EVIDENCE_DIR/$1-hubble-udp.log"; then
+			echo 'Hubble did not capture the controlled DNS preflight' >&2
 			cat "$EVIDENCE_DIR/$1-hubble-udp.log" >&2
 			return 1
 		fi
@@ -514,6 +575,47 @@ run_member_transport_test() {
 	fi
 }
 
+run_history_reader_db_outage_test() {
+	local filter=upstream_identity_provisioning::tests::live_provisioning_reaches_ready_after_nip42_and_member_only_read
+	local log="$EVIDENCE_DIR/provisioning.log" test_status db_stopped=0
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- rm -f /tmp/history-db-outage.ack /tmp/history-db-restore.ack
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- test ! -e /tmp/history-db-outage.ack -a ! -e /tmp/history-db-restore.ack
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- env BUZZ_TEST_HISTORY_DB_OUTAGE_ACK_FILE=/tmp/history-db-outage.ack BUZZ_TEST_HISTORY_DB_RESTORE_ACK_FILE=/tmp/history-db-restore.ack /usr/local/bin/test-runner --ignored --exact "$filter" --nocapture >"$log" 2>&1 &
+	TEST_PID=$!
+	wait_for_test_marker "$log" BUZZ_TEST_HISTORY_DB_OUTAGE_READY
+	echo 'history read received relay events; stopping PostgreSQL before authorization revalidation' >"$EVIDENCE_DIR/history-reader-db-outage-orchestration.log"
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- gosu postgres pg_ctl -D /var/lib/postgresql/data/pgdata -m fast stop >"$RUN_DIR/history-postgres-stop.log" 2>&1
+	cp "$RUN_DIR/history-postgres-stop.log" "$EVIDENCE_DIR/history-postgres-stop.log"
+	for _ in {1..30}; do
+		if ! "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- pg_isready -h 127.0.0.1 -p 5432 -U postgres -d rustshare_test >/dev/null 2>&1; then
+			db_stopped=1
+			break
+		fi
+		sleep 1
+	done
+	[[ "$db_stopped" == 1 ]] || { echo 'PostgreSQL did not become unavailable during managed-history read' >&2; return 1; }
+	echo 'PostgreSQL outage verified' >>"$EVIDENCE_DIR/history-reader-db-outage-orchestration.log"
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/history-db-outage.ack
+	wait_for_test_marker "$log" BUZZ_TEST_HISTORY_DB_RESTORE_READY
+	echo 'managed-history reader failed closed; restoring PostgreSQL' >>"$EVIDENCE_DIR/history-reader-db-outage-orchestration.log"
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- touch /run/db-control/restart
+	timeout --signal=TERM 90s "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- sh -ec 'until pg_isready -h 127.0.0.1 -p 5432 -U postgres -d rustshare_test; do sleep 1; done'
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/history-db-restore.ack
+	set +e
+	wait "$TEST_PID"
+	test_status=$?
+	set -e
+	TEST_PID=
+	echo "exit=$test_status" >>"$log"
+	if [[ "$test_status" != 0 ]] || ! grep -q '1 passed; 0 failed' "$log"; then
+		echo "Rust test failed: $filter" >&2
+		tail -n 40 "$log" >&2
+		return 1
+	fi
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- rm -f /tmp/history-db-outage.ack /tmp/history-db-restore.ack
+	echo 'PostgreSQL restore verified' >>"$EVIDENCE_DIR/history-reader-db-outage-orchestration.log"
+}
+
 run_provisioning_relay_outage_test() {
 	local filter=upstream_identity_provisioning::tests::live_provisioning_recovers_after_relay_outage
 	local log="$EVIDENCE_DIR/provisioning-relay-outage.log" test_status outage_verified=0 restore_verified=0
@@ -580,7 +682,7 @@ run_rust_test member-revocation upstream_buzz_transport::disposable_service_test
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/member-db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$RUN_DIR/db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$RUN_DIR/db-reset.log" 2>&1
-run_rust_test provisioning upstream_identity_provisioning::tests::live_provisioning_reaches_ready_after_nip42_and_member_only_read none
+run_history_reader_db_outage_test
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- dropdb -U postgres --if-exists rustshare_test >"$EVIDENCE_DIR/provisioning-relay-outage-db-reset.log" 2>&1
 "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- createdb -U postgres rustshare_test >>"$EVIDENCE_DIR/provisioning-relay-outage-db-reset.log" 2>&1
 run_provisioning_relay_outage_test

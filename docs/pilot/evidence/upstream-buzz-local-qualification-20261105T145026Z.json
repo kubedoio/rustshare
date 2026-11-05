@@ -1,0 +1,847 @@
+{
+  "rustshare": {
+    "source_sha": "d3c0477adf54372a5c28eda26632499e416f428f",
+    "worktree_state": "clean"
+  },
+  "upstream_buzz": {
+    "source_sha": "eafd77e9f6e96052476bdd88be732c046fdb7ab3",
+    "tree": "04e3a40545bd3b23510ec32b4c8cccee2acef7c5",
+    "release_provenance_decision": "UNVERIFIED_HISTORICAL_BASELINE_NOT_SECURITY_APPROVED",
+    "provenance_reference": null
+  },
+  "compose": {
+    "version": "5.5.0",
+    "project_prefix": "localqa20261105t145026ze14b09",
+    "projects": [
+      "localqa20261105t145026ze14b09-a",
+      "localqa20261105t145026ze14b09-b"
+    ],
+    "ports": "dynamically allocated loopback only"
+  },
+  "image": {
+    "image_id": "sha256:5048f16debb4355f651bc67301b1123da4a75a42da8d3beed2cbbdb87c550846",
+    "build_digest": "sha256:5048f16debb4355f651bc67301b1123da4a75a42da8d3beed2cbbdb87c550846"
+  },
+  "tests": [
+    {
+      "name": "nsec_gui_export",
+      "status": "PASS",
+      "observed_channel_id": null
+    },
+    {
+      "name": "owner_nip42",
+      "status": "PASS",
+      "outcome": "OK",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "nonmember_nip42_denied",
+      "status": "PASS",
+      "outcome": "OK",
+      "relay_accepted": false,
+      "observed_channel_id": null
+    },
+    {
+      "name": "nip43_add_alice",
+      "status": "PASS",
+      "outcome": "OK",
+      "event_id": "0c08f3db347e21b4c4f545b18c55eb588225550052093255ab783633d0b7cfda",
+      "ack_event_id": "0c08f3db347e21b4c4f545b18c55eb588225550052093255ab783633d0b7cfda",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "nip43_add_bob",
+      "status": "PASS",
+      "outcome": "OK",
+      "event_id": "f65e617efa3b0b06c319aa9e40226d5882f26d85809b1cd87c848f0b1a24b407",
+      "ack_event_id": "f65e617efa3b0b06c319aa9e40226d5882f26d85809b1cd87c848f0b1a24b407",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "nip43_add_exact_replay",
+      "status": "UNVERIFIED",
+      "outcome": "OK",
+      "event_id": "0c08f3db347e21b4c4f545b18c55eb588225550052093255ab783633d0b7cfda",
+      "ack_event_id": "0c08f3db347e21b4c4f545b18c55eb588225550052093255ab783633d0b7cfda",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "nip43_add_stale_signed_command",
+      "status": "PASS",
+      "outcome": "OK",
+      "event_id": "23deb52555ca496b06b783d4c9e3f4dec5dd0c245d6f0745a16c7b3378e2842c",
+      "ack_event_id": "23deb52555ca496b06b783d4c9e3f4dec5dd0c245d6f0745a16c7b3378e2842c",
+      "relay_accepted": false,
+      "observed_channel_id": null
+    },
+    {
+      "name": "member_nip42_alice",
+      "status": "PASS",
+      "outcome": "OK",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "member_nip42_bob",
+      "status": "PASS",
+      "outcome": "OK",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "create_public_channel",
+      "status": "PASS",
+      "outcome": "OK",
+      "event_id": "8f9aff1daf260ef4bbc424c6e864fa7e6b1b8116f26262b332d5c1d4281514e6",
+      "ack_event_id": "8f9aff1daf260ef4bbc424c6e864fa7e6b1b8116f26262b332d5c1d4281514e6",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "create_private_channel",
+      "status": "PASS",
+      "outcome": "OK",
+      "event_id": "60fd4c172262c32d2f93674d7c88b3cdae4adc64bc07b7077a0a4397beeac2df",
+      "ack_event_id": "60fd4c172262c32d2f93674d7c88b3cdae4adc64bc07b7077a0a4397beeac2df",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "private_channel_add_alice",
+      "status": "PASS",
+      "outcome": "OK",
+      "event_id": "63fd639a5ca505f0f72a0874f0d77a1c925e88db1280ff95dea5a89a6702124f",
+      "ack_event_id": "63fd639a5ca505f0f72a0874f0d77a1c925e88db1280ff95dea5a89a6702124f",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "private_channel_alice_message",
+      "status": "PASS",
+      "outcome": "OK",
+      "event_id": "b616a2b1e1e896e1c2f9071480feb418971d3e6aa02e63e24a55c06b0a811060",
+      "ack_event_id": "b616a2b1e1e896e1c2f9071480feb418971d3e6aa02e63e24a55c06b0a811060",
+      "relay_accepted": true,
+      "author": "f29aa11c6266fd81f362b78fd15209bc783da9b99582441e4cc3cb3e360a29ff",
+      "kind": 9,
+      "channel_id": "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f",
+      "observed_channel_id": null,
+      "signed_h_tags": [
+        "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f"
+      ]
+    },
+    {
+      "name": "private_channel_alice_history",
+      "status": "PASS",
+      "outcome": "EOSE",
+      "event_id": "b616a2b1e1e896e1c2f9071480feb418971d3e6aa02e63e24a55c06b0a811060",
+      "author": "f29aa11c6266fd81f362b78fd15209bc783da9b99582441e4cc3cb3e360a29ff",
+      "kind": 9,
+      "channel_id": "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f",
+      "expected_channel_id": "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f",
+      "observed_channel_id": "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f",
+      "channel_match": true,
+      "history_observed": true,
+      "signed_h_tags": [
+        "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f"
+      ],
+      "received_h_tags": [
+        "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f"
+      ],
+      "returned_h_tags": [
+        "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f"
+      ]
+    },
+    {
+      "name": "channel_discovery_39000",
+      "status": "PASS",
+      "outcome": "EOSE",
+      "observed_channel_id": null
+    },
+    {
+      "name": "channel_discovery_39001",
+      "status": "PASS",
+      "outcome": "EOSE",
+      "observed_channel_id": null
+    },
+    {
+      "name": "channel_discovery_39002",
+      "status": "PASS",
+      "outcome": "EOSE",
+      "observed_channel_id": null
+    },
+    {
+      "name": "kind9_publish",
+      "status": "PASS",
+      "outcome": "OK",
+      "event_id": "05d1b0cf4d93670373e2e9a1ef185345badd036c047dc85ad6a0d71fd898eddd",
+      "ack_event_id": "05d1b0cf4d93670373e2e9a1ef185345badd036c047dc85ad6a0d71fd898eddd",
+      "relay_accepted": true,
+      "author": "f29aa11c6266fd81f362b78fd15209bc783da9b99582441e4cc3cb3e360a29ff",
+      "kind": 9,
+      "channel_id": "e6b7e1a2-8515-47ec-9013-2bb35061d9d3",
+      "observed_channel_id": null
+    },
+    {
+      "name": "kind9_history_bob",
+      "status": "PASS",
+      "outcome": "EOSE",
+      "event_id": "05d1b0cf4d93670373e2e9a1ef185345badd036c047dc85ad6a0d71fd898eddd",
+      "author": "f29aa11c6266fd81f362b78fd15209bc783da9b99582441e4cc3cb3e360a29ff",
+      "kind": 9,
+      "channel_id": "e6b7e1a2-8515-47ec-9013-2bb35061d9d3",
+      "expected_channel_id": "e6b7e1a2-8515-47ec-9013-2bb35061d9d3",
+      "observed_channel_id": "e6b7e1a2-8515-47ec-9013-2bb35061d9d3",
+      "channel_match": true,
+      "history_observed": true,
+      "signed_h_tags": [
+        "e6b7e1a2-8515-47ec-9013-2bb35061d9d3"
+      ],
+      "received_h_tags": [
+        "e6b7e1a2-8515-47ec-9013-2bb35061d9d3"
+      ],
+      "returned_h_tags": [
+        "e6b7e1a2-8515-47ec-9013-2bb35061d9d3"
+      ]
+    },
+    {
+      "name": "private_channel_bob_denied",
+      "status": "PASS",
+      "observed_channel_id": null,
+      "metadata_event_count": 0,
+      "history_event_count": 0
+    },
+    {
+      "name": "private_channel_add_bob",
+      "status": "PASS",
+      "outcome": "OK",
+      "event_id": "106b0c970efecde9af3300039feb73816e43c69679bcbfc9b2c33eee3e8635c4",
+      "ack_event_id": "106b0c970efecde9af3300039feb73816e43c69679bcbfc9b2c33eee3e8635c4",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "private_channel_bob_member_history",
+      "status": "PASS",
+      "outcome": "EOSE",
+      "event_id": "b616a2b1e1e896e1c2f9071480feb418971d3e6aa02e63e24a55c06b0a811060",
+      "author": "f29aa11c6266fd81f362b78fd15209bc783da9b99582441e4cc3cb3e360a29ff",
+      "kind": 9,
+      "channel_id": "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f",
+      "expected_channel_id": "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f",
+      "observed_channel_id": "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f",
+      "history_observed": true,
+      "received_h_tags": [
+        "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f"
+      ],
+      "returned_h_tags": [
+        "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f"
+      ]
+    },
+    {
+      "name": "nip43_add_outsider_for_private_dm_denial",
+      "status": "PASS",
+      "outcome": "OK",
+      "event_id": "0a6b5cedcc04767a3cdb7a59c47ff77cdbdede3adf04bb09869b29c08e17f13d",
+      "ack_event_id": "0a6b5cedcc04767a3cdb7a59c47ff77cdbdede3adf04bb09869b29c08e17f13d",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "member_nip42_outsider",
+      "status": "PASS",
+      "outcome": "OK",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "nip29_dm_open_and_discovery",
+      "status": "PASS",
+      "event_id": "d439f926286bcd5630c49d4c99bee385821f2e70fefb2aae62f6e99f1bbac03d",
+      "author": "f29aa11c6266fd81f362b78fd15209bc783da9b99582441e4cc3cb3e360a29ff",
+      "channel_id": "04e48528-2d92-4ecd-b907-36da761193bf",
+      "observed_channel_id": null,
+      "signed_h_tags": [
+        "04e48528-2d92-4ecd-b907-36da761193bf"
+      ],
+      "received_h_tags": [
+        "04e48528-2d92-4ecd-b907-36da761193bf"
+      ],
+      "returned_h_tags": [
+        "04e48528-2d92-4ecd-b907-36da761193bf"
+      ],
+      "bob_observed_dm_event_id": "d439f926286bcd5630c49d4c99bee385821f2e70fefb2aae62f6e99f1bbac03d",
+      "bob_observed_dm_kind": 9,
+      "bob_observed_dm_author": "f29aa11c6266fd81f362b78fd15209bc783da9b99582441e4cc3cb3e360a29ff",
+      "bob_observed_dm_channel": "04e48528-2d92-4ecd-b907-36da761193bf"
+    },
+    {
+      "name": "nip29_dm_bidirectional_messages",
+      "status": "PASS",
+      "channel_id": "04e48528-2d92-4ecd-b907-36da761193bf",
+      "observed_channel_id": null,
+      "alice_signed_h_tags": [
+        "04e48528-2d92-4ecd-b907-36da761193bf"
+      ],
+      "alice_received_h_tags": [
+        "04e48528-2d92-4ecd-b907-36da761193bf"
+      ],
+      "alice_returned_h_tags": [
+        "04e48528-2d92-4ecd-b907-36da761193bf"
+      ],
+      "bob_signed_h_tags": [
+        "04e48528-2d92-4ecd-b907-36da761193bf"
+      ],
+      "bob_received_h_tags": [
+        "04e48528-2d92-4ecd-b907-36da761193bf"
+      ],
+      "bob_returned_h_tags": [
+        "04e48528-2d92-4ecd-b907-36da761193bf"
+      ],
+      "alice_event_id": "030818da242b1de526fff182d9f7d59e1115a85d25f2dc951571a6d38d7e8a65",
+      "alice_author": "f29aa11c6266fd81f362b78fd15209bc783da9b99582441e4cc3cb3e360a29ff",
+      "bob_event_id": "0a992c9b0f779e85f6434cd6df26ed024d5bae11f141b58341a7fa542077d6b0",
+      "bob_author": "9a2565adc7521950770761828ab92f8b0032552ba8cda592bb766056cb829f54",
+      "bob_observed_alice_kind": 9,
+      "alice_observed_bob_kind": 9
+    },
+    {
+      "name": "nip17_randomized_timestamp_relay_compatibility",
+      "status": "FAIL",
+      "outcome": "OK",
+      "event_id": "8179c4bdd7ac9e9fc63a823c6f2f4a245a569698d2ae5e92fd03e5fe82aa6e30",
+      "ack_event_id": "8179c4bdd7ac9e9fc63a823c6f2f4a245a569698d2ae5e92fd03e5fe82aa6e30",
+      "relay_accepted": false,
+      "observed_channel_id": null
+    },
+    {
+      "name": "nip17_recent_timestamp_delivery_and_decryption",
+      "status": "PASS",
+      "outcome": "OK",
+      "event_id": "6ca75d1233d29bc1805296938997834f41013efd580c7096a67e9e26f6654aee",
+      "ack_event_id": "6ca75d1233d29bc1805296938997834f41013efd580c7096a67e9e26f6654aee",
+      "relay_accepted": true,
+      "observed_channel_id": null
+    },
+    {
+      "name": "nip17_recipient_only_visibility",
+      "status": "PASS",
+      "observed_channel_id": null
+    },
+    {
+      "name": "tenant_b_member_nip42",
+      "status": "PASS",
+      "observed_channel_id": null
+    },
+    {
+      "name": "tenant_b_nip29_private_dm",
+      "status": "PASS",
+      "channel_id": "bf245292-54b6-4e27-9c90-46f4facf211a",
+      "observed_channel_id": null,
+      "history_event_count": 1,
+      "signed_h_tags": [
+        "bf245292-54b6-4e27-9c90-46f4facf211a"
+      ],
+      "received_h_tags": [
+        "bf245292-54b6-4e27-9c90-46f4facf211a"
+      ],
+      "returned_h_tags": [
+        "bf245292-54b6-4e27-9c90-46f4facf211a"
+      ],
+      "private_dm_event_id": "803aa436a00f023611490c5242fc5866029cdae8abf7b9f7b2bc44555b9c6e20",
+      "private_dm_kind": 9,
+      "private_dm_author": "316cb5140027db7fc54957742c871a2fed10dddecf0c757661484f23a3747d97",
+      "other_member_event_id": "803aa436a00f023611490c5242fc5866029cdae8abf7b9f7b2bc44555b9c6e20"
+    },
+    {
+      "name": "cross_tenant_alice_denied",
+      "status": "PASS",
+      "outcome": "OK",
+      "relay_accepted": false,
+      "observed_channel_id": null
+    },
+    {
+      "name": "cross_tenant_b_user_denied",
+      "status": "PASS",
+      "outcome": "OK",
+      "relay_accepted": false,
+      "observed_channel_id": null
+    },
+    {
+      "name": "wrong_host_denied",
+      "status": "PASS",
+      "outcome": "HTTP_ERROR",
+      "relay_accepted": false,
+      "observed_channel_id": null
+    },
+    {
+      "name": "wrong_sni_tls_rejected_before_relay",
+      "status": "PASS",
+      "outcome": "TRANSPORT_ERROR",
+      "observed_channel_id": null
+    },
+    {
+      "name": "open_pre_revocation_subscriptions",
+      "status": "UNVERIFIED_NOT_RUN_PRIVATE_REMEDIATION_TEST"
+    },
+    {
+      "name": "nip43_remove_bob",
+      "status": "UNVERIFIED_NOT_RUN_PRIVATE_REMEDIATION_TEST"
+    },
+    {
+      "name": "nip43_remove_exact_replay",
+      "status": "UNVERIFIED_NOT_RUN_PRIVATE_REMEDIATION_TEST"
+    },
+    {
+      "name": "revoked_existing_subscription",
+      "status": "UNVERIFIED_NOT_RUN_PRIVATE_REMEDIATION_TEST"
+    },
+    {
+      "name": "revoked_existing_publish",
+      "status": "UNVERIFIED_NOT_RUN_PRIVATE_REMEDIATION_TEST"
+    },
+    {
+      "name": "revoked_existing_new_req",
+      "status": "UNVERIFIED_NOT_RUN_PRIVATE_REMEDIATION_TEST"
+    },
+    {
+      "name": "revoked_fresh_connection",
+      "status": "UNVERIFIED_NOT_RUN_PRIVATE_REMEDIATION_TEST"
+    },
+    {
+      "name": "revoked_reconnect_after_delay",
+      "status": "UNVERIFIED_NOT_RUN_PRIVATE_REMEDIATION_TEST"
+    }
+  ],
+  "protocol_evidence": {
+    "public_keys": {
+      "OWNER": "f8700b6ae896da586ad93ede0b3264ed8e0bda95786ba866399a1c61adbfbd71",
+      "ALICE": "f29aa11c6266fd81f362b78fd15209bc783da9b99582441e4cc3cb3e360a29ff",
+      "BOB": "9a2565adc7521950770761828ab92f8b0032552ba8cda592bb766056cb829f54",
+      "OUTSIDER": "45b62f8d7309a80526e8607ceee277e616ff864f78a9718971ff1321b9fc89d0"
+    },
+    "public_channel": "e6b7e1a2-8515-47ec-9013-2bb35061d9d3",
+    "private_channel": "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f",
+    "public_message_id": "05d1b0cf4d93670373e2e9a1ef185345badd036c047dc85ad6a0d71fd898eddd",
+    "private_message_id": "b616a2b1e1e896e1c2f9071480feb418971d3e6aa02e63e24a55c06b0a811060",
+    "events": {
+      "public_kind9": {
+        "event_id": "05d1b0cf4d93670373e2e9a1ef185345badd036c047dc85ad6a0d71fd898eddd",
+        "kind": 9,
+        "author": "f29aa11c6266fd81f362b78fd15209bc783da9b99582441e4cc3cb3e360a29ff",
+        "channel_id": "e6b7e1a2-8515-47ec-9013-2bb35061d9d3"
+      },
+      "private_kind9": {
+        "event_id": "b616a2b1e1e896e1c2f9071480feb418971d3e6aa02e63e24a55c06b0a811060",
+        "kind": 9,
+        "author": "f29aa11c6266fd81f362b78fd15209bc783da9b99582441e4cc3cb3e360a29ff",
+        "channel_id": "bb4ab43d-3bbd-47bd-9fde-0773044a2d4f"
+      }
+    }
+  },
+  "reported_kind9_failure_root_cause": "SESSION_READ_SUMMARY_OMITTED_TAGS_CONFIRMED",
+  "kind9_h_tag_evidence": {
+    "expected_channel_id": "e6b7e1a2-8515-47ec-9013-2bb35061d9d3",
+    "signed_event_h_tags": [
+      "e6b7e1a2-8515-47ec-9013-2bb35061d9d3"
+    ],
+    "received_event_frame_h_tags": [
+      "e6b7e1a2-8515-47ec-9013-2bb35061d9d3"
+    ],
+    "session_read_returned_h_tags": [
+      "e6b7e1a2-8515-47ec-9013-2bb35061d9d3"
+    ],
+    "assertion_requested_tags": true,
+    "status": "PASS"
+  },
+  "restart_recovery": {
+    "relay_identity_persisted_after_restart": "PASS"
+  },
+  "secret_redaction_validation": "PASS",
+  "existing_docker_inventory_unchanged": true,
+  "existing_docker_inventory": {
+    "before_sha256": "bf313336e34f637713b251d81dc40e8a9d6200fc3993374b54048f9c434c1636",
+    "after_sha256": "bf313336e34f637713b251d81dc40e8a9d6200fc3993374b54048f9c434c1636",
+    "compose_project_count": 2,
+    "container_count": 7,
+    "network_count": 6,
+    "volume_count": 133,
+    "image_count": 39,
+    "containers_before": [
+      {
+        "name": "m41b2e-buzz-pg",
+        "id": "9fddf3e74d0e5453a02bf693fbbb7733a1ebafc0047a61edae354bf7dfe42047",
+        "state": "running"
+      },
+      {
+        "name": "m41b2e-buzz-redis",
+        "id": "4cee9b2f15de0080e58a8768bc022731b1e9ab8307b2401f99783fdae51c5070",
+        "state": "running"
+      },
+      {
+        "name": "n-kudo-web",
+        "id": "4d52fbea06a7e84ea30f97715b4f0fe9131004c903f4931e0b92e681b88e7451",
+        "state": "running"
+      },
+      {
+        "name": "rustshare-backend-1",
+        "id": "e54475ee4bca466a21c49d6ebd3a28ffc9ea5230511d18a6331ed42e12459b08",
+        "state": "running"
+      },
+      {
+        "name": "rustshare-nginx-1",
+        "id": "948f6102fdc7f2f0b42929e7a969a9aeb89552309cc6d706475eb25209f64d66",
+        "state": "running"
+      },
+      {
+        "name": "rustshare-postgres-1",
+        "id": "54d090e52425eba963d874cf1cfdb4e5935c8a414ae1017ca5849f707a04ac21",
+        "state": "running"
+      },
+      {
+        "name": "rustshare-rustfs-1",
+        "id": "98f7d630baa7ff4ec070d30fbc29ab5d8a937f169f73b2482fe69d7eb3047581",
+        "state": "running"
+      }
+    ],
+    "containers_after": [
+      {
+        "name": "m41b2e-buzz-pg",
+        "id": "9fddf3e74d0e5453a02bf693fbbb7733a1ebafc0047a61edae354bf7dfe42047",
+        "state": "running"
+      },
+      {
+        "name": "m41b2e-buzz-redis",
+        "id": "4cee9b2f15de0080e58a8768bc022731b1e9ab8307b2401f99783fdae51c5070",
+        "state": "running"
+      },
+      {
+        "name": "n-kudo-web",
+        "id": "4d52fbea06a7e84ea30f97715b4f0fe9131004c903f4931e0b92e681b88e7451",
+        "state": "running"
+      },
+      {
+        "name": "rustshare-backend-1",
+        "id": "e54475ee4bca466a21c49d6ebd3a28ffc9ea5230511d18a6331ed42e12459b08",
+        "state": "running"
+      },
+      {
+        "name": "rustshare-nginx-1",
+        "id": "948f6102fdc7f2f0b42929e7a969a9aeb89552309cc6d706475eb25209f64d66",
+        "state": "running"
+      },
+      {
+        "name": "rustshare-postgres-1",
+        "id": "54d090e52425eba963d874cf1cfdb4e5935c8a414ae1017ca5849f707a04ac21",
+        "state": "running"
+      },
+      {
+        "name": "rustshare-rustfs-1",
+        "id": "98f7d630baa7ff4ec070d30fbc29ab5d8a937f169f73b2482fe69d7eb3047581",
+        "state": "running"
+      }
+    ],
+    "volume_names_before": [
+      "0371db9f8c0525c092f70bf3db65151cca6ab2d46689cbd6651a5fc5a53c77bc",
+      "06ff876d7bcb353eb1f79c54d72d25c96d34b6cedaef4f22d980d74abd9565d3",
+      "08f9d9eb2051d6edad5618b8d180805606e254e8fc4102edc44bb796148d6128",
+      "09f9b646ee31490203f958f87762ca1a3aaba1c0e0da449a00c2eef821d5c725",
+      "0cbb1116016ebfb844b7b987985bbadea85201bfaea4da20986a5aedb8e1bad7",
+      "0d552adbb3718e74acdbe832c4b147dd3ea57a90e9efee7c7a5a5ceaf5c68af5",
+      "13a565f3459d5766db60906bd08755b03dedce21400e673c0888f166ffa85efa",
+      "15ecb45aeeaa48e5dba87e5f1449267dc9403dc3ee780e58812fa1b7f230259d",
+      "16dd75a5121cf62aea9618c0bfd5d5163d3458b4101473460899a5efe176e540",
+      "182a7ebf9488afe608e46b148432c42f4bbaef280bc54f243c044dd9ca054c0b",
+      "192aac3f29b33592a2f0dc548f4c17f2c91d13c1e0177e0417b82a655cec7ddb",
+      "19bcf206339d95900e3d1a6e6f6d3f3e9a703b0131355b893b62a618fbd6f669",
+      "1bc3519f11e94626babbb3ea9a029aa26fae978126dac0850d67075a7a6e4006",
+      "1e4958b1c8d2df2096e511787fcc483b2e752574c9de68aee5e6fea811322df4",
+      "1eb7562641a9b3848a462f5f52c836428cd6d5607ed716ea57821b1c8a079711",
+      "25f82c2791b95f370fe7a8a9721a23f844a74cd67abc60a4bb07d42e53f592c6",
+      "2a3b89e8ec22be7dc9664412ef2f957b96c84b98f9b0b179a43f35434c9f7587",
+      "2c6cba361546a856cbc44c52f2d6093caaa6d5ee4921599882e1a1c3a966887b",
+      "2e8a137d0e05f17c1249f870076a471322e8c2161173ba022d78ce3808374083",
+      "311037355dd73408ef652de650862da12fafde477bf64ea239fa1806407f1542",
+      "326fe07702180b0aa55d2d65ed7e01feea34190fcb01a05e921773b8fc80ff0a",
+      "35fa84f30d9d207162becea294dfc68be5096ca61e71b684eebc2c6b0227c6bb",
+      "3921f933eda10e21a553e9025f5cdfc41b86c3402d52775a761b1223e3ac7102",
+      "3bd1fcf0942c13e16383a326fd845d357232012f0f68abc11ccf426c70a6f364",
+      "3f1389e348ae538b487510a6f2d03733a76b9c095076784929a348813fcb9922",
+      "403c42be4e7704feb89138d2b0cf3fcc36dc50d27de8945873575946b911db70",
+      "418210f59f5251da1f4a48d4eede76b7980e742bde16fbe5f24f3bbd43e627bb",
+      "49b06aa73229c6c6499a76fc3fe2cfef100e1c2ce8bc01af887d283a26839097",
+      "4aef4475e6cf7d2220ff84f8c166af531185ff26527659098f06689a3b27e000",
+      "4c5e905ab65c66f4c260b75e6f31fd19ee0a449a067406ae742169e042accb28",
+      "4dba7c887f1b456171bc8fe7e7b7b9fe07bbfdc14cbfa88f543542ed0f307a67",
+      "4f31cac8736bf9a6bf944db1c3404e64f1debf39b074fe365bd0c1c54f529dc5",
+      "51da44a1e94d43878c027a4f7e6695730aadd7a8dc85e33e7df48794fab0b9c3",
+      "5325431d513ef92271ba415fd8e61568fbeed7daa9a816b37786163ffddf7f9a",
+      "54a756b6dcf66cd6ff561551069b1826949d86d0d1eed17b2f58703b597e9cb4",
+      "5779d1ebff62b5fb5d8030e84e56277c1721f93705373aec25e31b8320474777",
+      "5b1b6daa31461af8bd811800ae862d9c1f08a924bb4d5eafc9236e5bff6f1882",
+      "5cb3f8a426c1dbf107a7d6a514205b9db600ca790f07e42e8f59db137fb4396c",
+      "5ddca22f1a4d1fc2abdef63f398efa96d6901c3dc12f4f995bbafb6f8415335b",
+      "641be3f60a6d10e87d89332a254196e46dae9190126a56bcc993d121f9906dad",
+      "68c780aff50e1bf9c27e5b4af9840056379d4ca7f1595945b19e1a6a7b557262",
+      "6a7f13d7cf975a0f89df498ad5e05ed887ab6c5c458819ec730bfa641d8ffe37",
+      "6d22eaa80c98d23957a197f714225dbbd1ba54a86cbd97f5e78ad28611dee47e",
+      "70b26d6a88cc65b6243fd02443fcd57311dd73a12d9fd52ca1aba2444b3bcefa",
+      "745badaeea7127b37b69a4685273b0dcdaf618a1272d087492a38aca8bee6035",
+      "75e4f17ae1e495cfb410432f4a47a33f169100292062138a4c904e4d5f53af00",
+      "76037eff91f0928538cf070fdd25acaa17d6bb2548bbb019b8a0291a2dd8b95a",
+      "7db317bc71c651281bc3021ea3371e90deb7179dd51fd9c5087863182cc98dd1",
+      "826d04f5c65dc1afa90c7beb37c03c8719fd1373a55184e1785f0eaa526f34e2",
+      "8b90cdd094b40aa6312eea955893bcd6a2f7b6b7479e7390ab892f9756f54b09",
+      "8c9b48802d750ec53cf7cc78ed983913ff2a6a9570bfef0bce0b5a8442a38068",
+      "91e4070e081cedd41aa9decc3c6d13d612fc427fc4f8bf776beee396263b7210",
+      "93fbc92fbe6a9c9c1e19370fa9b84c5e154bff2605a5f6a02b2959b6cd1fa3a9",
+      "940962a63047a46df872f210a84ca7ba8fb1b2936e97f1861a4750f229507b13",
+      "95bf80b92454939970339a487675104f7e135a56944ad32221cc8c316d2a24e5",
+      "9a3e118daf4ad49f35a52c676b6627ede448760a9cb46979209257a99c3c6b3b",
+      "9c6393dfa9e1964cffd0eb8cb3c56c32de54c2e7958553408b01d175043f4655",
+      "a4b6624c8a47adb5b2640e1e05be1d36b6b20b6a561d642023ec55b868f34ba2",
+      "b136223495019b1994a0c46eef200bb644c887e2ebd1791fc35799dc682b9b2b",
+      "b240387bc3926c3eb470e242fbf9669d482a427357d057cb0c51fb1fbd2872b6",
+      "b2e7f652407ce80c78a193ff58633d9f02d3a6892d252ebcc5ab3f2e9ca352c5",
+      "b3c5b7b46e82a5956533d3b010f0d2e04e7a764baaf1033e8baf9ad4957c5458",
+      "b472010607a7c1a7965f37d115e70ba16a185ebad97df0b5cc3a3300a0ebc137",
+      "b9548f402b3ded483355af476ae575f722272b78906934b2c0b152ecd25a71ea",
+      "bc67441ef96e84b85d8242236829e1e1a5770cfcda389ac0a73a59452c0a0ec1",
+      "bf5320c95af058b701c8154544b4fe32cf4227dad9ea513101772f8d645411e9",
+      "buzz-postgres-data",
+      "buzz-rustfs-data",
+      "buzz-rustfs-logs",
+      "c3e152b6f6df4ea4999db44e65a7959566dcb8f23255b142f902d16417393714",
+      "c4b6f0e5e79da92fefbc39405bd287aa8e2984e5c3c393f7d97a2c80b77dc989",
+      "c5de0f24f852b502f8be72803b0fd4e97da60a44b7e4426097f94ad8d9996292",
+      "c9b8df2067af68111009e558d2d7e7bdfc91e59369186ac3f4349d2000a9d604",
+      "cb59b038d36073485795176cd918aed3f5741d45923bee2150e968b13cc6b708",
+      "ccfb0d0308b976b7c805b65068a7736a7bfdb7bb35cb84a17a288b660d04b041",
+      "cf5fae74139344474b059c21abbea1916f43dad3c060f7754370a4b4a3336932",
+      "cfba331fb742dfe27adb0c499ee5280523413d0f4a08b95ead369f0bb35b22b7",
+      "chv_chv-data",
+      "chv_chv_controlplane_data",
+      "d169e85b56e7419df6a4b17dfbc09dcf2993abd9765190a96c970d25c1a89b04",
+      "d3a6c9db7e58743ea99fe702877e4478274e4f512bc0971eae1cbed214c6ff95",
+      "d50871beaee40300996989072a8ef8ba7650e102e908c022e976b3c63a022b04",
+      "d76520d7a0e24bc2206205b3e6d529d814987f53da7a5178fbda186f044fbbe4",
+      "dcca707de6c42fc466480f4f7e97c04fec4196aaba1631716b0407fa22cc4997",
+      "ddb52d1f7de75e413d056c57fde3e9f131efcc6ff224d84b0b75aa8659083db3",
+      "e3ccf391e430ee500560fb31a95f0f35d05f9c613f00b54cfbc965e1148a1728",
+      "e602fa1dbcfd80a7f3393e3cd7ffb45aabb2dac57407bd9c8caf1f8796226c29",
+      "e83b2940c99f8297ebcd2967169f02ff999c701574fc9d45d81ac920c36c8f01",
+      "e965577d19a6b3e5fdc16fecebcf42629ebba35bdd95be7ca178fcfd27a39580",
+      "eaab988754ffc065cecf36d03d7f0a7a73b4c3fb425231f9331632960cb231a0",
+      "eab60ae6ccb268a20def0268d736221d8496071138265c5d963c7938d681c283",
+      "edc319d40ac41d8bbdc25156aabefdb0921e4a2e4ade98db8ebbe6a664ae910d",
+      "ee25489a6f774d77c7dfc49e7a4b69330a9384cea04c219333eb55c0b5880f15",
+      "f41c83dcf36582b81352435da338fdb587b0aaacf444480bd0daac8c33c30573",
+      "f5ca687c692570037b5572b9f9218b46092e8dbd4f8e9b35eb9ab792841004cb",
+      "f62913022ca95c37ddc696d1b1f20dcab2142d77bb12aac885df5585392c3d3d",
+      "f79ddc4257bdc3043cf84b8e02221cf2ea82e0f095fa8814da0124c373390623",
+      "f9babd9a2ca557e03f6c1dc47cba20882fdc51ad4d9d14486e317a4f52a785bd",
+      "fe933092e495e672c1fdf85361321d086f4c0d4e5ebf06ff484ddcefd841f06d",
+      "feat-vault-webui-safe-editing_postgres_data",
+      "ff69dcefb56a33402a90f128f7349eb1d0bf6bab41cb8cb7c6aa511621357b52",
+      "infra_postgres_data",
+      "mail-phase4-archive-jobs_postgres_data",
+      "n-kudo_nkudo_alertmanager_data",
+      "n-kudo_nkudo_grafana_data",
+      "n-kudo_nkudo_mailpit_data",
+      "n-kudo_nkudo_pgdata",
+      "n-kudo_nkudo_pki",
+      "n-kudo_nkudo_prometheus_data",
+      "rafineri_ollama_data",
+      "rafineri_postgres_data",
+      "rafineri_redis_data",
+      "rustshare-candidate_buzz_postgres_data",
+      "rustshare-candidate_buzz_rustfs_data",
+      "rustshare-candidate_buzz_rustfs_logs",
+      "rustshare-candidate_postgres_data",
+      "rustshare-candidate_rustfs_data",
+      "rustshare-candidate_rustfs_logs",
+      "rustshare-integration_postgres_data",
+      "rustshare-integration_rustfs_data",
+      "rustshare-integration_rustfs_logs",
+      "rustshare-m12-cargo",
+      "rustshare-m12-target",
+      "rustshare-test_postgres_data",
+      "rustshare-test_rustfs_data",
+      "rustshare-test_rustfs_logs",
+      "rustshare_buzz_minio_data",
+      "rustshare_buzz_postgres_data",
+      "rustshare_buzz_rustfs_data",
+      "rustshare_buzz_rustfs_logs",
+      "rustshare_postgres_data",
+      "rustshare_rustfs_data",
+      "rustshare_rustfs_logs"
+    ],
+    "volume_names_after": [
+      "0371db9f8c0525c092f70bf3db65151cca6ab2d46689cbd6651a5fc5a53c77bc",
+      "06ff876d7bcb353eb1f79c54d72d25c96d34b6cedaef4f22d980d74abd9565d3",
+      "08f9d9eb2051d6edad5618b8d180805606e254e8fc4102edc44bb796148d6128",
+      "09f9b646ee31490203f958f87762ca1a3aaba1c0e0da449a00c2eef821d5c725",
+      "0cbb1116016ebfb844b7b987985bbadea85201bfaea4da20986a5aedb8e1bad7",
+      "0d552adbb3718e74acdbe832c4b147dd3ea57a90e9efee7c7a5a5ceaf5c68af5",
+      "13a565f3459d5766db60906bd08755b03dedce21400e673c0888f166ffa85efa",
+      "15ecb45aeeaa48e5dba87e5f1449267dc9403dc3ee780e58812fa1b7f230259d",
+      "16dd75a5121cf62aea9618c0bfd5d5163d3458b4101473460899a5efe176e540",
+      "182a7ebf9488afe608e46b148432c42f4bbaef280bc54f243c044dd9ca054c0b",
+      "192aac3f29b33592a2f0dc548f4c17f2c91d13c1e0177e0417b82a655cec7ddb",
+      "19bcf206339d95900e3d1a6e6f6d3f3e9a703b0131355b893b62a618fbd6f669",
+      "1bc3519f11e94626babbb3ea9a029aa26fae978126dac0850d67075a7a6e4006",
+      "1e4958b1c8d2df2096e511787fcc483b2e752574c9de68aee5e6fea811322df4",
+      "1eb7562641a9b3848a462f5f52c836428cd6d5607ed716ea57821b1c8a079711",
+      "25f82c2791b95f370fe7a8a9721a23f844a74cd67abc60a4bb07d42e53f592c6",
+      "2a3b89e8ec22be7dc9664412ef2f957b96c84b98f9b0b179a43f35434c9f7587",
+      "2c6cba361546a856cbc44c52f2d6093caaa6d5ee4921599882e1a1c3a966887b",
+      "2e8a137d0e05f17c1249f870076a471322e8c2161173ba022d78ce3808374083",
+      "311037355dd73408ef652de650862da12fafde477bf64ea239fa1806407f1542",
+      "326fe07702180b0aa55d2d65ed7e01feea34190fcb01a05e921773b8fc80ff0a",
+      "35fa84f30d9d207162becea294dfc68be5096ca61e71b684eebc2c6b0227c6bb",
+      "3921f933eda10e21a553e9025f5cdfc41b86c3402d52775a761b1223e3ac7102",
+      "3bd1fcf0942c13e16383a326fd845d357232012f0f68abc11ccf426c70a6f364",
+      "3f1389e348ae538b487510a6f2d03733a76b9c095076784929a348813fcb9922",
+      "403c42be4e7704feb89138d2b0cf3fcc36dc50d27de8945873575946b911db70",
+      "418210f59f5251da1f4a48d4eede76b7980e742bde16fbe5f24f3bbd43e627bb",
+      "49b06aa73229c6c6499a76fc3fe2cfef100e1c2ce8bc01af887d283a26839097",
+      "4aef4475e6cf7d2220ff84f8c166af531185ff26527659098f06689a3b27e000",
+      "4c5e905ab65c66f4c260b75e6f31fd19ee0a449a067406ae742169e042accb28",
+      "4dba7c887f1b456171bc8fe7e7b7b9fe07bbfdc14cbfa88f543542ed0f307a67",
+      "4f31cac8736bf9a6bf944db1c3404e64f1debf39b074fe365bd0c1c54f529dc5",
+      "51da44a1e94d43878c027a4f7e6695730aadd7a8dc85e33e7df48794fab0b9c3",
+      "5325431d513ef92271ba415fd8e61568fbeed7daa9a816b37786163ffddf7f9a",
+      "54a756b6dcf66cd6ff561551069b1826949d86d0d1eed17b2f58703b597e9cb4",
+      "5779d1ebff62b5fb5d8030e84e56277c1721f93705373aec25e31b8320474777",
+      "5b1b6daa31461af8bd811800ae862d9c1f08a924bb4d5eafc9236e5bff6f1882",
+      "5cb3f8a426c1dbf107a7d6a514205b9db600ca790f07e42e8f59db137fb4396c",
+      "5ddca22f1a4d1fc2abdef63f398efa96d6901c3dc12f4f995bbafb6f8415335b",
+      "641be3f60a6d10e87d89332a254196e46dae9190126a56bcc993d121f9906dad",
+      "68c780aff50e1bf9c27e5b4af9840056379d4ca7f1595945b19e1a6a7b557262",
+      "6a7f13d7cf975a0f89df498ad5e05ed887ab6c5c458819ec730bfa641d8ffe37",
+      "6d22eaa80c98d23957a197f714225dbbd1ba54a86cbd97f5e78ad28611dee47e",
+      "70b26d6a88cc65b6243fd02443fcd57311dd73a12d9fd52ca1aba2444b3bcefa",
+      "745badaeea7127b37b69a4685273b0dcdaf618a1272d087492a38aca8bee6035",
+      "75e4f17ae1e495cfb410432f4a47a33f169100292062138a4c904e4d5f53af00",
+      "76037eff91f0928538cf070fdd25acaa17d6bb2548bbb019b8a0291a2dd8b95a",
+      "7db317bc71c651281bc3021ea3371e90deb7179dd51fd9c5087863182cc98dd1",
+      "826d04f5c65dc1afa90c7beb37c03c8719fd1373a55184e1785f0eaa526f34e2",
+      "8b90cdd094b40aa6312eea955893bcd6a2f7b6b7479e7390ab892f9756f54b09",
+      "8c9b48802d750ec53cf7cc78ed983913ff2a6a9570bfef0bce0b5a8442a38068",
+      "91e4070e081cedd41aa9decc3c6d13d612fc427fc4f8bf776beee396263b7210",
+      "93fbc92fbe6a9c9c1e19370fa9b84c5e154bff2605a5f6a02b2959b6cd1fa3a9",
+      "940962a63047a46df872f210a84ca7ba8fb1b2936e97f1861a4750f229507b13",
+      "95bf80b92454939970339a487675104f7e135a56944ad32221cc8c316d2a24e5",
+      "9a3e118daf4ad49f35a52c676b6627ede448760a9cb46979209257a99c3c6b3b",
+      "9c6393dfa9e1964cffd0eb8cb3c56c32de54c2e7958553408b01d175043f4655",
+      "a4b6624c8a47adb5b2640e1e05be1d36b6b20b6a561d642023ec55b868f34ba2",
+      "b136223495019b1994a0c46eef200bb644c887e2ebd1791fc35799dc682b9b2b",
+      "b240387bc3926c3eb470e242fbf9669d482a427357d057cb0c51fb1fbd2872b6",
+      "b2e7f652407ce80c78a193ff58633d9f02d3a6892d252ebcc5ab3f2e9ca352c5",
+      "b3c5b7b46e82a5956533d3b010f0d2e04e7a764baaf1033e8baf9ad4957c5458",
+      "b472010607a7c1a7965f37d115e70ba16a185ebad97df0b5cc3a3300a0ebc137",
+      "b9548f402b3ded483355af476ae575f722272b78906934b2c0b152ecd25a71ea",
+      "bc67441ef96e84b85d8242236829e1e1a5770cfcda389ac0a73a59452c0a0ec1",
+      "bf5320c95af058b701c8154544b4fe32cf4227dad9ea513101772f8d645411e9",
+      "buzz-postgres-data",
+      "buzz-rustfs-data",
+      "buzz-rustfs-logs",
+      "c3e152b6f6df4ea4999db44e65a7959566dcb8f23255b142f902d16417393714",
+      "c4b6f0e5e79da92fefbc39405bd287aa8e2984e5c3c393f7d97a2c80b77dc989",
+      "c5de0f24f852b502f8be72803b0fd4e97da60a44b7e4426097f94ad8d9996292",
+      "c9b8df2067af68111009e558d2d7e7bdfc91e59369186ac3f4349d2000a9d604",
+      "cb59b038d36073485795176cd918aed3f5741d45923bee2150e968b13cc6b708",
+      "ccfb0d0308b976b7c805b65068a7736a7bfdb7bb35cb84a17a288b660d04b041",
+      "cf5fae74139344474b059c21abbea1916f43dad3c060f7754370a4b4a3336932",
+      "cfba331fb742dfe27adb0c499ee5280523413d0f4a08b95ead369f0bb35b22b7",
+      "chv_chv-data",
+      "chv_chv_controlplane_data",
+      "d169e85b56e7419df6a4b17dfbc09dcf2993abd9765190a96c970d25c1a89b04",
+      "d3a6c9db7e58743ea99fe702877e4478274e4f512bc0971eae1cbed214c6ff95",
+      "d50871beaee40300996989072a8ef8ba7650e102e908c022e976b3c63a022b04",
+      "d76520d7a0e24bc2206205b3e6d529d814987f53da7a5178fbda186f044fbbe4",
+      "dcca707de6c42fc466480f4f7e97c04fec4196aaba1631716b0407fa22cc4997",
+      "ddb52d1f7de75e413d056c57fde3e9f131efcc6ff224d84b0b75aa8659083db3",
+      "e3ccf391e430ee500560fb31a95f0f35d05f9c613f00b54cfbc965e1148a1728",
+      "e602fa1dbcfd80a7f3393e3cd7ffb45aabb2dac57407bd9c8caf1f8796226c29",
+      "e83b2940c99f8297ebcd2967169f02ff999c701574fc9d45d81ac920c36c8f01",
+      "e965577d19a6b3e5fdc16fecebcf42629ebba35bdd95be7ca178fcfd27a39580",
+      "eaab988754ffc065cecf36d03d7f0a7a73b4c3fb425231f9331632960cb231a0",
+      "eab60ae6ccb268a20def0268d736221d8496071138265c5d963c7938d681c283",
+      "edc319d40ac41d8bbdc25156aabefdb0921e4a2e4ade98db8ebbe6a664ae910d",
+      "ee25489a6f774d77c7dfc49e7a4b69330a9384cea04c219333eb55c0b5880f15",
+      "f41c83dcf36582b81352435da338fdb587b0aaacf444480bd0daac8c33c30573",
+      "f5ca687c692570037b5572b9f9218b46092e8dbd4f8e9b35eb9ab792841004cb",
+      "f62913022ca95c37ddc696d1b1f20dcab2142d77bb12aac885df5585392c3d3d",
+      "f79ddc4257bdc3043cf84b8e02221cf2ea82e0f095fa8814da0124c373390623",
+      "f9babd9a2ca557e03f6c1dc47cba20882fdc51ad4d9d14486e317a4f52a785bd",
+      "fe933092e495e672c1fdf85361321d086f4c0d4e5ebf06ff484ddcefd841f06d",
+      "feat-vault-webui-safe-editing_postgres_data",
+      "ff69dcefb56a33402a90f128f7349eb1d0bf6bab41cb8cb7c6aa511621357b52",
+      "infra_postgres_data",
+      "mail-phase4-archive-jobs_postgres_data",
+      "n-kudo_nkudo_alertmanager_data",
+      "n-kudo_nkudo_grafana_data",
+      "n-kudo_nkudo_mailpit_data",
+      "n-kudo_nkudo_pgdata",
+      "n-kudo_nkudo_pki",
+      "n-kudo_nkudo_prometheus_data",
+      "rafineri_ollama_data",
+      "rafineri_postgres_data",
+      "rafineri_redis_data",
+      "rustshare-candidate_buzz_postgres_data",
+      "rustshare-candidate_buzz_rustfs_data",
+      "rustshare-candidate_buzz_rustfs_logs",
+      "rustshare-candidate_postgres_data",
+      "rustshare-candidate_rustfs_data",
+      "rustshare-candidate_rustfs_logs",
+      "rustshare-integration_postgres_data",
+      "rustshare-integration_rustfs_data",
+      "rustshare-integration_rustfs_logs",
+      "rustshare-m12-cargo",
+      "rustshare-m12-target",
+      "rustshare-test_postgres_data",
+      "rustshare-test_rustfs_data",
+      "rustshare-test_rustfs_logs",
+      "rustshare_buzz_minio_data",
+      "rustshare_buzz_postgres_data",
+      "rustshare_buzz_rustfs_data",
+      "rustshare_buzz_rustfs_logs",
+      "rustshare_postgres_data",
+      "rustshare_rustfs_data",
+      "rustshare_rustfs_logs"
+    ]
+  },
+  "cleanup": "PASS",
+  "nip29_core_compatibility": "PASS",
+  "nip29_private_dm_compatibility": "PASS",
+  "nip42_authentication": "PASS",
+  "nip43_membership": "PASS",
+  "cross_tenant_isolation": "PASS",
+  "nip17_exploratory_compatibility": {
+    "v1_scope": "EXCLUDED",
+    "outcome": "FAIL",
+    "tests": [
+      "nip17_randomized_timestamp_relay_compatibility",
+      "nip17_recent_timestamp_delivery_and_decryption",
+      "nip17_recipient_only_visibility"
+    ]
+  },
+  "full_exploratory_suite_outcome": "FAIL",
+  "product_scope_exit_status": 0,
+  "full_exploratory_suite_exit_status": 1,
+  "local_protocol_compatibility": "PASS",
+  "qualification_compose_outcome": "PASS",
+  "upstream_security_remediation": "BLOCKED",
+  "managed_history_local": "UNVERIFIED",
+  "typed_managed_publisher": "NOT_IMPLEMENTED",
+  "gate_i": "NO_GO",
+  "issue_460_publisher": "BLOCKED",
+  "issue_458_acceptance": "SENOLCOLAK_REVIEW_REQUIRED",
+  "issue_442_acceptance": "INDEPENDENT_REQUIREMENTS_RETAINED",
+  "runner_exit_code": 1
+}
