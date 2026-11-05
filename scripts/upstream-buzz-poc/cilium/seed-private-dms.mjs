@@ -173,7 +173,8 @@ async function seed(label) {
 		['channel_type', 'dm'],
 		['visibility', 'private'],
 	]));
-	await admin.publish(signed(ownerKey, 9, [['h', provisioningChannelId]], `provisioning-channel-seed-${randomUUID()}`));
+	const provisioningMessage = signed(ownerKey, 9, [['h', provisioningChannelId]], `provisioning-channel-seed-${randomUUID()}`);
+	await admin.publish(provisioningMessage);
 	admin.close();
 
 	const user = new RelaySession(relayUrl, relayCa);
@@ -199,6 +200,8 @@ async function seed(label) {
 		relay_pubkey: relayPubkey,
 		channel_id: channelId,
 		provisioning_channel_id: provisioningChannelId,
+		provisioning_event_id: provisioningMessage.id,
+		provisioning_author: ownerPubkey,
 		event_id: message.id,
 		author: memberPubkey,
 		friend_pubkey: friendPubkey,

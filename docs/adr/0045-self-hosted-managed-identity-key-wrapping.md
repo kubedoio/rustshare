@@ -2,13 +2,15 @@
 
 - **Status:** Architecture selected for an inert provider foundation; independent custody acceptance and real-user use remain gated
 - **Date:** 2026-11-01
-- **Related:** ADR-0044, PR #444, PRs #445/#446, RustFS image pinned in `docker-compose.yml`
+- **Related:** ADR-0044, ADR-0046, PR #444, PRs #445/#446, RustFS image pinned in `docker-compose.yml`
 
 ## Decision
 
 Keep the existing version-1 AES-256-GCM identity envelope and its metadata in PostgreSQL. Implement the existing `DekKeyManagement` abstraction with an Elembra-owned, feature-gated local key-wrapping provider. The provider reads versioned 32-byte master keys from an operator-provisioned, read-only secret mount and retains the active and recovery versions only for the provider lifetime (best-effort zeroization; no hardware isolation is implied). It authenticates each wrapped DEK with AES-256-GCM and binds the full `KeyEncryptionContext` as AAD. Only the backend service identity receives the secret mount. No key bytes are loaded from environment variables, PostgreSQL, RustFS or normal backups.
 
 This selection records the project owner's self-hosted architecture direction on 2026-11-01. It is not independent security acceptance, authorization for real-user custody, feature enablement or release approval. The provider has no production caller and remains disabled for real-user identities until Gate I and named independent custody acceptance.
+
+The wrapping provider does not itself grant signing authority. Any future kind-9 signer must use the typed, current-subject boundary and exact-event recovery requirements in ADR-0046. Successful key recovery is not authorization to sign. The project owner selected Option A and accepted the valid-event portability, plaintext, replay and revocation risks in [PR #459](https://github.com/kubedoio/rustshare/pull/459#issuecomment-6640798406); independent security acceptance and an upstream fix for the privately reported membership-cache/role-transition defect remain required before implementation.
 
 ## RustFS evaluation at the deployed pin
 
