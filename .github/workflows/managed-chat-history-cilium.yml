@@ -1,0 +1,138 @@
+name: Managed Chat History Cilium Qualification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/managed-chat-history-cilium.yml
+      - backend/server/src/upstream_buzz_transport.rs
+      - backend/server/src/upstream_identity_provisioning.rs
+      - backend/server/src/managed_identity_*.rs
+      - backend/crates/crypto/src/managed_identity_vault.rs
+      - backend/crates/storage/src/managed_identity_operations.rs
+      - backend/crates/resource-auth/src/chat_identity.rs
+      - backend/migrations/**
+      - scripts/upstream-buzz-poc/cilium/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: managed-chat-history-cilium-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  managed-history-cilium:
+    name: Managed NIP-29 history on disposable Cilium
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      BUZZ_CILIUM_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust 1.97.1
+        uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Install Node.js 22.22.2
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.2
+
+      - name: Configure Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install checksum-pinned kind, kubectl, Cilium CLI, and Hubble
+        run: sudo scripts/upstream-buzz-poc/cilium/install-ci-tools.sh
+
+      - name: Run disposable unmodified Buzz and managed-history suite
+        timeout-minutes: 75
+        env:
+          TMPDIR: ${{ runner.temp }}
+          EVIDENCE_DIR: ${{ runner.temp }}/managed-chat-history-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+        run: scripts/upstream-buzz-poc/cilium/run.sh
+
+      - name: Verify and bind sanitized evidence to this CI run
+        if: success()
+        env:
+          EVIDENCE_DIR: ${{ runner.temp }}/managed-chat-history-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          GH_RUN_ID: ${{ github.run_id }}
+          GH_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 - "$EVIDENCE_DIR" <<'PY'
+          from pathlib import Path
+          import hashlib, os, sys
+
+          evidence = Path(sys.argv[1])
+          required = {
+              "result.txt", "rustshare-source.txt", "tool-image-pins.env",
+              "tool-versions.txt", "image-identities.txt", "seed-metadata.json",
+          }
+          missing = sorted(name for name in required if not (evidence / name).is_file())
+          if missing:
+              raise SystemExit("missing sanitized evidence files: " + ", ".join(missing))
+          result = (evidence / "result.txt").read_text()
+          if "result=PASS:" not in result:
+              raise SystemExit("managed-history harness did not report PASS")
+          images = (evidence / "image-identities.txt").read_text().splitlines()
+          for name in ("buzz_image", "poc_image", "runner_image"):
+              line = next((line for line in images if line.startswith(name + "=")), "")
+              if not line.startswith(name + "=sha256:"):
+                  raise SystemExit(f"missing exact image ID for {name}")
+          (evidence / "ci-run.txt").write_text(
+              f"run_id={os.environ['GH_RUN_ID']}\n"
+              f"run_attempt={os.environ['GH_RUN_ATTEMPT']}\n"
+              f"run_url={os.environ['GH_RUN_URL']}\n"
+              "qualification=managed-history-with-supporting-transport-tests\n"
+          )
+          files = sorted(p for p in evidence.iterdir() if p.is_file() and p.name != "SHA256SUMS")
+          manifest = "".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in files)
+          (evidence / "SHA256SUMS").write_text(manifest)
+          for line in manifest.splitlines():
+              digest, name = line.split("  ", 1)
+              if hashlib.sha256((evidence / name).read_bytes()).hexdigest() != digest:
+                  raise SystemExit("evidence SHA-256 verification failed")
+          print(f"verified {len(files)} sanitized evidence files")
+          PY
+
+      - name: Upload sanitized conformance evidence
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: managed-chat-history-cilium-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/managed-chat-history-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Delete disposable cluster, local images, and temporary secrets
+        if: always()
+        env:
+          BUZZ_CILIUM_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+          TMPDIR: ${{ runner.temp }}
+          EVIDENCE_DIR: ${{ runner.temp }}/managed-chat-history-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          cluster="ec-${BUZZ_CILIUM_RUN_ID}"
+          if command -v kind >/dev/null 2>&1; then
+            kind delete cluster --name "$cluster" >/dev/null 2>&1 || true
+          fi
+          if command -v docker >/dev/null 2>&1; then
+            docker image rm \
+              "local/elembra-cilium-buzz:${BUZZ_CILIUM_RUN_ID}" \
+              "local/elembra-cilium-tools:${BUZZ_CILIUM_RUN_ID}" \
+              "local/elembra-cilium-runner:${BUZZ_CILIUM_RUN_ID}" >/dev/null 2>&1 || true
+          fi
+          rm -rf -- "${TMPDIR}/elembra-cilium.${BUZZ_CILIUM_RUN_ID}."* "$EVIDENCE_DIR"
