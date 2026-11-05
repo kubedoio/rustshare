@@ -38,7 +38,7 @@ async fn wait_for_live_history_database_outage() {
     let Some(ack_file) = std::env::var_os("BUZZ_TEST_HISTORY_DB_OUTAGE_ACK_FILE") else {
         return;
     };
-    if LIVE_HISTORY_DATABASE_READS.fetch_add(1, Ordering::SeqCst) != 1 {
+    if LIVE_HISTORY_DATABASE_READS.fetch_add(1, Ordering::SeqCst) != 0 {
         return;
     }
     println!("BUZZ_TEST_HISTORY_DB_OUTAGE_READY");
