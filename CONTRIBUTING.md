@@ -110,7 +110,7 @@ cd frontend && npm install && npm run check && npm run lint && npm run test && n
 RustShare has multiple levels of testing. Please add tests for new features and bug fixes.
 
 - **Unit tests**: `SQLX_OFFLINE=true cargo test --workspace --all-features --lib`
-- **Integration tests**: `cargo test --workspace --all-features -- --ignored` (requires running DB + RustFS)
+- **Integration tests**: `cargo test --workspace --all-features -- --ignored --skip upstream_buzz_transport::disposable_service_tests` (requires running DB + RustFS)
 - **Contract tests**: `cargo test --workspace --test contracts -- --ignored` (requires DB + RustFS)
 - **Frontend tests**: `npm run test`
 - **E2E tests**: `npm run test:e2e` (requires Playwright and a running backend)

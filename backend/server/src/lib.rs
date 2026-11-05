@@ -35,6 +35,18 @@ pub mod state;
 #[doc(hidden)]
 pub mod test_guard;
 pub mod trash_cleanup;
+#[cfg(feature = "upstream-buzz-runtime")]
+#[expect(
+    dead_code,
+    reason = "transport is deliberately unwired until Gate I and independent review pass"
+)]
+pub(crate) mod upstream_buzz_transport;
+#[cfg(feature = "upstream-buzz-runtime")]
+#[expect(
+    dead_code,
+    reason = "provisioning is test-called only; no runtime caller until a separately authorized phase"
+)]
+pub(crate) mod upstream_identity_provisioning;
 pub mod user_disable;
 pub mod web_session;
 

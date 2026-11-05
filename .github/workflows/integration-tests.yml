@@ -173,6 +173,15 @@ jobs:
           cargo test -p buzz-db --test membership_v1alpha2 -- --ignored
           cargo test -p buzz-test-client --test authoritative_membership -- --ignored --nocapture
 
+      - name: Reclaim disposable relay build artifacts
+        run: |
+          relay_target="${RUNNER_TEMP}/buzz-membership-target"
+          test -x "${relay_target}/debug/buzz-relay"
+          find "${relay_target}" -mindepth 1 -maxdepth 1 ! -name debug -exec rm -rf -- {} +
+          find "${relay_target}/debug" -mindepth 1 -maxdepth 1 ! -name buzz-relay -exec rm -rf -- {} +
+          df -h "${RUNNER_TEMP}"
+          du -sh "${relay_target}"
+
       - name: Test feature workflow repository and authentication
         run: |
           cargo test -p rustshare-server --test features_test -- --test-threads=1
@@ -200,12 +209,14 @@ jobs:
           RUSTSHARE_TEST_DISPOSABLE_DB: "1"
           RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE: "1"
         run: |
+          df -h "${RUNNER_TEMP}"
           export RUSTSHARE_TEST_BUZZ_SOURCE_DIR="${GITHUB_WORKSPACE}/.buzz-membership-source"
           export RUSTSHARE_TEST_BUZZ_TARGET_DIR="${RUNNER_TEMP}/buzz-membership-target"
           export RUSTSHARE_TEST_BUZZ_BINARY="${BUZZ_TEST_RELAY_BINARY}"
           export RUSTSHARE_TEST_BUZZ_BINARY_SHA256="$(sha256sum "${BUZZ_TEST_RELAY_BINARY}" | cut -d ' ' -f 1)"
+          # Dedicated Buzz/Cilium fixtures use their own separately provisioned harness.
           RUSTSHARE_SCIM_BEARER_TOKEN="$(openssl rand -hex 32)" \
-            cargo test --workspace --all-features -j 1 -- --ignored --test-threads=1
+            cargo test --workspace --all-features -j 1 -- --ignored --skip upstream_buzz_transport::disposable_service_tests --skip upstream_identity_provisioning::tests::live_ --test-threads=1
 
       - name: Ask Workspace security matrix (repeated)
         # Keep this explicit: the recording-provider matrix is the security

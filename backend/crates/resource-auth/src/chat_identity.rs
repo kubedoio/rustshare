@@ -68,6 +68,24 @@ pub fn build_buzz_admission_event_at(
         .map_err(|error| BuzzAdmissionCommandError::Signing(error.to_string()))
 }
 
+/// Deterministic member admission accepted by stock Buzz. Provisioning uses
+/// this instead of the bridge's generic command so the relay receives the
+/// required `role=member` tag; it remains separately relay-admin signed.
+pub fn build_buzz_provisioning_admission_event_at(
+    buzz_pubkey: &str,
+    relay_admin_keys: &Keys,
+    created_at: Timestamp,
+) -> Result<Event, BuzzAdmissionCommandError> {
+    let pubkey = PublicKey::from_hex(buzz_pubkey)
+        .map_err(|error| BuzzAdmissionCommandError::InvalidPubkey(error.to_string()))?;
+    EventBuilder::new(Kind::from(BUZZ_RELAY_ADD_MEMBER_KIND), "")
+        .tag(Tag::public_key(pubkey))
+        .tag(Tag::parse(vec!["role".to_string(), "member".to_string()]).expect("static tag"))
+        .custom_created_at(created_at)
+        .sign_with_keys(relay_admin_keys)
+        .map_err(|error| BuzzAdmissionCommandError::Signing(error.to_string()))
+}
+
 /// Build a v1alpha2 conditional membership command. The operation UUID and
 /// observed revision are signed into the NIP-43 event so retries are stable.
 pub fn build_buzz_conditional_admission_event_at(
@@ -515,6 +533,36 @@ mod tests {
     fn bridge_commands_use_generic_nip43_membership_kinds() {
         assert_eq!(BuzzAdmissionOperation::Admit.buzz_kind(), 9030);
         assert_eq!(BuzzAdmissionOperation::Revoke.buzz_kind(), 9031);
+    }
+
+    #[test]
+    fn provisioning_admission_is_deterministic_and_carries_member_role() {
+        let admin = Keys::generate();
+        let target = Keys::generate();
+        let created_at = Timestamp::from_secs(1_700_000_000);
+        let first = build_buzz_provisioning_admission_event_at(
+            &target.public_key().to_hex(),
+            &admin,
+            created_at,
+        )
+        .unwrap();
+        let retry = build_buzz_provisioning_admission_event_at(
+            &target.public_key().to_hex(),
+            &admin,
+            created_at,
+        )
+        .unwrap();
+        assert_eq!(first.id, retry.id);
+        assert_eq!(first.kind, Kind::from(BUZZ_RELAY_ADD_MEMBER_KIND));
+        assert_eq!(first.pubkey, admin.public_key());
+        assert_ne!(first.pubkey, target.public_key());
+        assert!(first.verify().is_ok());
+        let tags = serde_json::to_value(&first).unwrap()["tags"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(tags.contains(&serde_json::json!(["p", target.public_key().to_hex()])));
+        assert!(tags.contains(&serde_json::json!(["role", "member"])));
     }
 
     #[test]

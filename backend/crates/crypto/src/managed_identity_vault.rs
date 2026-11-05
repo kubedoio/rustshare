@@ -90,10 +90,14 @@ pub enum VaultError {
     Recovery,
     #[error("key management operation failed")]
     KeyManagement,
+    #[error("managed identity authentication signing failed")]
+    AuthenticationSigning,
 }
 
 /// Recovered material exposes only the public key. It cannot be formatted,
-/// serialized, or used by this crate to sign events.
+/// serialized, or used by this crate to sign events unless the
+/// `nip42-auth-signing` feature is enabled, which permits signing only
+/// NIP-42 client-authentication events.
 pub struct RecoveredIdentity {
     _secret_key: Zeroizing<[u8; 32]>,
     public_key: String,
@@ -111,6 +115,29 @@ impl fmt::Debug for RecoveredIdentity {
 impl RecoveredIdentity {
     pub fn public_key(&self) -> &str {
         &self.public_key
+    }
+}
+
+#[cfg(feature = "nip42-auth-signing")]
+impl RecoveredIdentity {
+    /// Sign a NIP-42 client-authentication event (kind 22242) binding
+    /// `challenge` to `relay_url`. The event has empty content and carries
+    /// only the relay and challenge tags.
+    pub fn sign_nip42_authentication(
+        &self,
+        challenge: &str,
+        relay_url: &str,
+        created_at: nostr::Timestamp,
+    ) -> Result<nostr::Event, VaultError> {
+        let relay =
+            nostr::RelayUrl::parse(relay_url).map_err(|_| VaultError::AuthenticationSigning)?;
+        let secret_key = nostr::SecretKey::from_slice(&self._secret_key[..])
+            .map_err(|_| VaultError::AuthenticationSigning)?;
+        let keys = Keys::new(secret_key);
+        nostr::EventBuilder::auth(challenge, relay)
+            .custom_created_at(created_at)
+            .sign_with_keys(&keys)
+            .map_err(|_| VaultError::AuthenticationSigning)
     }
 }
 
@@ -456,7 +483,7 @@ mod tests {
             VaultError::KeyManagement
         );
 
-        let secret = [0xab; 32];
+        let secret = [1; 32];
         let recovered = RecoveredIdentity {
             _secret_key: Zeroizing::new(secret),
             public_key: "public".to_owned(),
@@ -490,5 +517,95 @@ mod tests {
                 .public_key(),
             original.public_key
         );
+    }
+
+    #[cfg(feature = "nip42-auth-signing")]
+    #[tokio::test]
+    async fn sign_nip42_authentication_binds_challenge_and_relay() {
+        let context = context();
+        let kms = TestKms::new(7, "v1");
+        let envelope = ManagedIdentityEnvelope::generate(context, &kms)
+            .await
+            .unwrap();
+        let recovered = envelope.recover(context, &kms).await.unwrap();
+        let created_at = nostr::Timestamp::from(1_729_000_000);
+        let challenge = "relay-challenge-123";
+        let relay_url = "wss://relay.example.com";
+
+        let event = recovered
+            .sign_nip42_authentication(challenge, relay_url, created_at)
+            .unwrap();
+
+        assert_eq!(event.kind, nostr::Kind::Authentication);
+        assert_eq!(event.kind.as_u16(), 22242);
+        event.verify().unwrap();
+        assert_eq!(event.pubkey.to_hex(), envelope.public_key);
+        assert_eq!(event.created_at, created_at);
+        assert!(event.content.is_empty());
+        let relay = nostr::RelayUrl::parse(relay_url).unwrap();
+        let expected_tags = nostr::Tags::from_list(vec![
+            nostr::Tag::from_standardized_without_cell(nostr::TagStandard::Challenge(
+                challenge.to_owned(),
+            )),
+            nostr::Tag::from_standardized_without_cell(nostr::TagStandard::Relay(relay)),
+        ]);
+        assert_eq!(event.tags, expected_tags);
+    }
+
+    #[cfg(feature = "nip42-auth-signing")]
+    #[tokio::test]
+    async fn sign_nip42_authentication_is_deterministic_and_rejects_bad_relay() {
+        let context = context();
+        let kms = TestKms::new(7, "v1");
+        let envelope = ManagedIdentityEnvelope::generate(context, &kms)
+            .await
+            .unwrap();
+        let recovered = envelope.recover(context, &kms).await.unwrap();
+        let created_at = nostr::Timestamp::from(1_729_000_000);
+
+        let first = recovered
+            .sign_nip42_authentication("challenge", "wss://relay.example.com", created_at)
+            .unwrap();
+        let second = recovered
+            .sign_nip42_authentication("challenge", "wss://relay.example.com", created_at)
+            .unwrap();
+        assert_eq!(first.id, second.id);
+
+        for bad_relay in ["not a url", "http://relay.example.com"] {
+            assert_eq!(
+                recovered
+                    .sign_nip42_authentication("challenge", bad_relay, created_at)
+                    .unwrap_err(),
+                VaultError::AuthenticationSigning
+            );
+        }
+    }
+
+    #[cfg(feature = "nip42-auth-signing")]
+    #[tokio::test]
+    async fn signed_auth_event_exposes_no_secret() {
+        // A valid, deterministic secp256k1 scalar used only as a sentinel.
+        let secret = [1; 32];
+        let recovered = RecoveredIdentity {
+            _secret_key: Zeroizing::new(secret),
+            public_key: "public".to_owned(),
+        };
+        let event = recovered
+            .sign_nip42_authentication(
+                "challenge",
+                "wss://relay.example.com",
+                nostr::Timestamp::from(1_729_000_000),
+            )
+            .unwrap();
+
+        let secret_hex = hex::encode(secret);
+        let identity_debug = format!("{recovered:?}");
+        let event_debug = format!("{event:?}");
+        let auth_frame = nostr::serde_json::json!(["AUTH", event]);
+        let relay_payload = nostr::serde_json::to_string(&auth_frame).unwrap();
+        for output in [&identity_debug, &event_debug, &relay_payload] {
+            assert!(!output.contains(&secret_hex));
+            assert!(!output.contains("nsec"));
+        }
     }
 }
