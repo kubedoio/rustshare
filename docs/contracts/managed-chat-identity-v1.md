@@ -18,11 +18,14 @@ with all 48/48 sanitized evidence manifest entries verified. PR #457 later
 merged the feature-gated, internal, one-shot managed NIP-29 history reader at
 merge commit `a6ec3d98c1d397e59596585f1badab716165691b`; it has no production
 caller. Project-owner `senolcolak` accepted only that reader's limited reliance
-on Buzz's relay authorization and deferral of its Cilium test. This is not
+on Buzz's relay authorization and the proposed Cilium deferral; this is not
 independent security acceptance and does not authorize production provisioning,
-user-message signing, key export, or activation. The reader's Cilium test remains
-UNVERIFIED and is tracked by issue #458 before managed Chat activation. Issue
-#442 remains the separate stock-desktop interoperability gate.
+user-message signing, key export, or activation. The dedicated reader Cilium
+qualification passed in [run 41936521775](https://github.com/kubedoio/rustshare/actions/runs/41936521775)
+against PR #461 head `b97bb229d9e9f1d05b0b77596063fff4d435e20a`. Issue #458
+remains open for its tracked qualification and acceptance requirements before
+managed Chat activation. Issue #442 remains the separate stock-desktop
+interoperability gate.
 
 ## Identity invariant
 

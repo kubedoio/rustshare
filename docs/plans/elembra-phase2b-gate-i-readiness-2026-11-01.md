@@ -287,13 +287,18 @@ only, not independent security/custody approval, not a publishing decision, and
 not permission for production Chat. No independent security verdict was
 recorded by that comment.
 
-The managed-history Cilium test remains **UNVERIFIED**. The development host's
-preflight failed with `missing required command: kind`; no Cilium run was
-claimed. Issue [#458](https://github.com/kubedoio/rustshare/issues/458) is a
-mandatory live qualification gate before managed Chat activation and tracks
-authorized history, private denial, cross-tenant/wrong-identity reads,
-revocation, mapping generation, database/KMS failure, zero unauthorized EVENT
-frames and real Cilium network isolation. Issue
+The managed-history Cilium test passed in [run
+41936521775](https://github.com/kubedoio/rustshare/actions/runs/41936521775)
+against PR #461 head `b97bb229d9e9f1d05b0b77596063fff4d435e20a` (tested via
+merge checkout `a2e6c52ba5de45bb49698509126a3f10aebc7479`). It exercised the
+six selected managed-history/supporting transport tests and real Cilium egress
+isolation; the sanitized artifact manifest is recorded in issue #458. This
+execution does not itself provide independent security acceptance. Issue
+[#458](https://github.com/kubedoio/rustshare/issues/458) remains open for its
+tracked qualification and acceptance requirements before managed Chat
+activation. It covers authorized history, private denial,
+cross-tenant/wrong-identity reads, revocation, mapping generation, database/KMS
+failure, zero unauthorized EVENT frames and real Cilium network isolation. Issue
 [#442](https://github.com/kubedoio/rustshare/issues/442) remains the separate
 mandatory stock-desktop interoperability gate. Gate I remains **NO-GO / NOT
 ACCEPTED**. Phase 2B.4 runtime integration and production Chat remain disabled.
