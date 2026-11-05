@@ -336,11 +336,11 @@ fixture test, and documentation; it adds no production publisher, signer,
 route, or activation. Its test explicitly labels every publisher behavior
 `NOT IMPLEMENTED`, so passing fixture tests are not publisher evidence.
 
-Protected-main CI is **INCOMPLETE**, not green: the Integration Tests workflow
+Protected-main CI remains **INCOMPLETE**, not fully green: Integration Tests
 [`42118936965`](https://github.com/kubedoio/rustshare/actions/runs/42118936965)
-and Pilot Release workflow
+completed successfully, but the Pilot Release workflow
 [`42118936980`](https://github.com/kubedoio/rustshare/actions/runs/42118936980)
-are still in progress. Pilot Release is the disposable compose/upgrade
+is still in progress. Pilot Release is the disposable compose/upgrade
 qualification workflow; this is not a production deployment. The CI workflow
 [`42118937122`](https://github.com/kubedoio/rustshare/actions/runs/42118937122),
 Frontend CI [`42118937103`](https://github.com/kubedoio/rustshare/actions/runs/42118937103),
