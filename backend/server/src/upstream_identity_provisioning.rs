@@ -3427,6 +3427,12 @@ mod tests {
             .read_channel_history(&authenticated, &Uuid::new_v4().to_string(), &kms, &trust)
             .await;
         assert!(matches!(denied, Err(ProvisioningError::ReadDenied)));
+        kms.set_unavailable(true);
+        let kms_denied = provisioner
+            .read_channel_history(&authenticated, &membership_channel, &kms, &trust)
+            .await;
+        assert!(matches!(kms_denied, Err(ProvisioningError::KmsUnavailable)));
+        kms.set_unavailable(false);
         let audits: Vec<String> = sqlx::query_scalar(
             "SELECT description FROM user_security_events \
              WHERE user_id=$1 AND event_type='managed_chat_history_access'",
@@ -3435,9 +3441,12 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(audits.len(), 2);
+        assert_eq!(audits.len(), 3);
         assert!(audits.iter().any(|entry| entry.starts_with("allowed ")));
         assert!(audits.iter().any(|entry| entry.starts_with("denied ")));
+        assert!(audits
+            .iter()
+            .any(|entry| entry.contains("reason=kms_unavailable")));
         assert!(audits
             .iter()
             .all(|entry| !entry.contains("provisioning-channel-seed")));
