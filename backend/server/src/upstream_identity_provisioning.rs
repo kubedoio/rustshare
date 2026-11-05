@@ -3502,9 +3502,9 @@ mod tests {
         let restore_ack_path = std::path::PathBuf::from(required("BUZZ_TEST_DB_RESTORE_ACK_FILE"));
         println!("BUZZ_TEST_DB_RESTORE_READY");
         std::io::Write::flush(&mut std::io::stdout()).unwrap();
-        tokio::time::timeout(Duration::from_secs(120), async {
+        tokio::time::timeout(std::time::Duration::from_secs(120), async {
             while !restore_ack_path.exists() {
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
         })
         .await
