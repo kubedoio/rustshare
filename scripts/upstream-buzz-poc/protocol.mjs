@@ -6,6 +6,7 @@ import { writeFile } from 'node:fs/promises';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns';
 import { createInterface } from 'node:readline';
+import { channelRef } from './channel-tags.mjs';
 
 if (!process.env.POC_TEST_PACKAGE) throw new Error('POC_TEST_PACKAGE is required');
 const require = createRequire(process.env.POC_TEST_PACKAGE);
@@ -147,14 +148,7 @@ const result = (pass, detail = {}) => ({ pass, ...detail });
 const deniedWithoutEvents = (read) => ['CLOSED', 'EOSE'].includes(read.outcome) && read.events.length === 0;
 const hasChannelTag = (event, channelId) => event.tags?.some((tag) => tag[0] === 'd' && tag[1] === channelId) === true;
 const hasChannelRef = (event, channelId) => event.tags?.some((tag) => tag[0] === 'h' && tag[1] === channelId) === true;
-const channelRef = (event) => {
-	const tags = event?.tags?.filter((tag) => tag?.[0] === 'h') || [];
-	return { tags, valid: tags.length === 1 && tags[0].length === 2 && typeof tags[0][1] === 'string', channel_id: tags.length === 1 && tags[0].length === 2 ? tags[0][1] : null };
-};
 const receivedChannelRef = (session, eventId) => session.observations.find((item) => item.type === 'EVENT' && item.event_id === eventId)?.h_tags || [];
-assert.equal(channelRef({ tags: [['h', 'requested-channel']] }).valid, true);
-assert.equal(channelRef({ tags: [['h', 'other-channel']] }).channel_id === 'requested-channel', false);
-assert.equal(channelRef({ tags: [['h', 'requested-channel'], ['h', 'requested-channel']] }).valid, false);
 assert.equal(deniedWithoutEvents({ outcome: 'CLOSED', events: [{ kind: 9 }] }), false);
 assert.equal(deniedWithoutEvents({ outcome: 'EOSE', events: [{ kind: 9 }] }), false);
 assert.equal(deniedWithoutEvents({ outcome: 'CLOSED', events: [] }), true);
