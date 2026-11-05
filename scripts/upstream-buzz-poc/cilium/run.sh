@@ -17,12 +17,20 @@ BUZZ_IMAGE="local/elembra-cilium-buzz:${RUN_ID}"
 POC_IMAGE="local/elembra-cilium-tools:${RUN_ID}"
 RUNNER_IMAGE="local/elembra-cilium-runner:${RUN_ID}"
 EVIDENCE_DIR="${EVIDENCE_DIR:-${TMPDIR:-/tmp}/elembra-cilium-evidence-${RUN_ID}}"
+RESOURCE_LOCK_DIR="${TMPDIR:-/tmp}/elembra-cilium-lock-${RUN_ID}"
 [[ ! -e "$EVIDENCE_DIR" ]] || { echo "evidence path already exists: $EVIDENCE_DIR" >&2; exit 2; }
 mkdir -m 0700 "$EVIDENCE_DIR"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/elembra-cilium.${RUN_ID}.XXXXXX")"
 KUBECONFIG="$RUN_DIR/kubeconfig"
 K=(kubectl --kubeconfig "$KUBECONFIG")
 CLUSTER_CREATED=0
+RESOURCE_LOCK_CREATED=0
+BUZZ_IMAGE_CREATED=0
+POC_IMAGE_CREATED=0
+RUNNER_IMAGE_CREATED=0
+BUZZ_IMAGE_ID=
+POC_IMAGE_ID=
+RUNNER_IMAGE_ID=
 PF_PID=
 TCP_PID=
 UDP_PID=
@@ -36,7 +44,19 @@ cleanup() {
 		if [[ -n "$pid" ]]; then kill -INT "$pid" >/dev/null 2>&1 || true; wait "$pid" 2>/dev/null || true; fi
 	done
 	if [[ "$CLUSTER_CREATED" == 1 ]]; then kind delete cluster --name "$CLUSTER" >>"$EVIDENCE_DIR/cleanup.log" 2>&1 || true; fi
-	for image in "$BUZZ_IMAGE" "$POC_IMAGE" "$RUNNER_IMAGE"; do docker image rm "$image" >>"$EVIDENCE_DIR/cleanup.log" 2>&1 || true; done
+	remove_owned_image() {
+		local created="$1" tag="$2" expected_id="$3" actual_id
+		[[ "$created" == 1 && -n "$expected_id" ]] || return 0
+		actual_id="$(docker image inspect --format '{{.Id}}' "$tag" 2>/dev/null || true)"
+		if [[ "$actual_id" == "$expected_id" ]]; then
+			docker image rm "$tag" >>"$EVIDENCE_DIR/cleanup.log" 2>&1 || true
+		else
+			echo "skipped changed image tag $tag" >>"$EVIDENCE_DIR/cleanup.log"
+		fi
+	}
+	remove_owned_image "$BUZZ_IMAGE_CREATED" "$BUZZ_IMAGE" "$BUZZ_IMAGE_ID"
+	remove_owned_image "$POC_IMAGE_CREATED" "$POC_IMAGE" "$POC_IMAGE_ID"
+	remove_owned_image "$RUNNER_IMAGE_CREATED" "$RUNNER_IMAGE" "$RUNNER_IMAGE_ID"
 	python3 - "$RUN_DIR" <<'PY'
 from pathlib import Path
 import shutil, sys
@@ -53,11 +73,18 @@ manifest.write_text("".join(f"{hashlib.sha256(item.read_bytes()).hexdigest()}  {
 manifest.chmod(0o600)
 PY
 	echo "sanitized_evidence=$EVIDENCE_DIR"
+	if [[ "$RESOURCE_LOCK_CREATED" == 1 ]]; then rmdir "$RESOURCE_LOCK_DIR" 2>/dev/null || true; fi
 	exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+if ! mkdir "$RESOURCE_LOCK_DIR" 2>/dev/null; then
+	echo "refusing concurrent run with ID $RUN_ID" >&2
+	exit 2
+fi
+RESOURCE_LOCK_CREATED=1
 
 usage() {
 	cat <<'HELP'
@@ -128,10 +155,14 @@ docker buildx build --platform linux/amd64 --load --quiet --metadata-file "$RUN_
 	--build-arg "BUZZ_SOURCE_SHA=$SOURCE_SHA" --tag "$BUZZ_IMAGE" "$default_source" >"$RUN_DIR/buzz-build.log" 2>&1 || {
 	echo 'unmodified upstream Buzz image build failed' >&2; tail -n 30 "$RUN_DIR/buzz-build.log" >&2; exit 1;
 }
+BUZZ_IMAGE_CREATED=1
+BUZZ_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$BUZZ_IMAGE")"
 docker buildx build --platform linux/amd64 --load --quiet --build-arg "NODE_BASE=$NODE_IMAGE" \
 	--tag "$POC_IMAGE" -f "$HERE/Dockerfile.poc" "$HARNESS" >"$RUN_DIR/poc-build.log" 2>&1 || {
 	echo 'disposable Node fixture image build failed' >&2; tail -n 30 "$RUN_DIR/poc-build.log" >&2; exit 1;
 }
+POC_IMAGE_CREATED=1
+POC_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$POC_IMAGE")"
 
 (
 	cd "$ROOT"
@@ -160,8 +191,7 @@ docker buildx build --platform linux/amd64 --load --quiet --build-arg "RUNNER_BA
 	--tag "$RUNNER_IMAGE" "$RUN_DIR/runner-context" >"$RUN_DIR/runner-build.log" 2>&1 || {
 	echo 'Rust test runner image build failed' >&2; tail -n 30 "$RUN_DIR/runner-build.log" >&2; exit 1;
 }
-BUZZ_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$BUZZ_IMAGE")"
-POC_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$POC_IMAGE")"
+RUNNER_IMAGE_CREATED=1
 RUNNER_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$RUNNER_IMAGE")"
 BUZZ_BUILD_DIGEST="$(python3 - "$RUN_DIR/buzz-build.json" <<'PY'
 import json, sys
@@ -178,9 +208,9 @@ PY
 	echo "buzz_tree=$SOURCE_TREE"
 } >"$EVIDENCE_DIR/image-identities.txt"
 
-CLUSTER_CREATED=1
 kind create cluster --name "$CLUSTER" --image "$KIND_NODE_IMAGE" --config "$HERE/kind.yaml" \
 	--kubeconfig "$KUBECONFIG" >"$EVIDENCE_DIR/kind-create.log" 2>&1
+CLUSTER_CREATED=1
 export KUBECONFIG
 cilium install --version "$CILIUM_VERSION" --set kubeProxyReplacement=false --set ipam.mode=kubernetes \
 	--set routingMode=tunnel --set hubble.enabled=true --set hubble.relay.enabled=true --set hubble.ui.enabled=false \
