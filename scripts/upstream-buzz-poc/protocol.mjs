@@ -471,10 +471,13 @@ try {
 			public_kind9: publicMessage ? { event_id: publicMessage.id, author: pubs.ALICE, channel_id: publicChannel } : null,
 			private_kind9: privateMessage ? { event_id: privateMessage.id, author: pubs.ALICE, channel_id: privateChannel } : null,
 		},
-		results: results.map(({ name, pass, outcome, published, history_observed, event_id, ack_event_id, metadata_event_count, history_event_count }) => ({
+		results: results.map(({ name, pass, outcome, published, accepted, history_observed, event_id, ack_event_id, author, channel_id, metadata_event_count, history_event_count }) => ({
 			name, pass,
 			outcome: [outcome, published?.outcome].find((item) => typeof item === 'string' && /^[A-Z_]+$/.test(item)) || null,
-			...(event_id ? { event_id } : {}), ...(ack_event_id ? { ack_event_id } : {}),
+			...((event_id || published?.event_id) ? { event_id: event_id || published.event_id } : {}),
+			...((ack_event_id || published?.ack_event_id) ? { ack_event_id: ack_event_id || published.ack_event_id } : {}),
+			...(typeof (accepted ?? published?.accepted) === 'boolean' ? { relay_accepted: accepted ?? published.accepted } : {}),
+			...(author ? { author } : {}), ...(channel_id ? { channel_id } : {}),
 			...(history_observed !== undefined ? { history_observed } : {}),
 			...(metadata_event_count !== undefined ? { metadata_event_count } : {}),
 			...(history_event_count !== undefined ? { history_event_count } : {}),
