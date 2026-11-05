@@ -4,7 +4,7 @@
 - **Date:** 2026-10-31
 - **Repository:** `kubedoio/rustshare`
 - **Amends by runtime profile:** ADR-0034 (key custody), ADR-0035 (source authorization), ADR-0036 (zero-config bootstrap); existing runtime behavior and tenant/resource-safety requirements are preserved
-- **Related:** ADR-0040 (organization/tenant), ADR-0041 (groups/authorization), #196, #214, #215, #323, #424
+- **Related:** ADR-0040 (organization/tenant), ADR-0041 (groups/authorization), ADR-0046 (managed NIP-29 publishing authorization), #196, #214, #215, #323, #424
 
 ## Context and selected product decision
 
@@ -27,6 +27,8 @@ This accepted target architecture deliberately creates a profile-scoped exceptio
 5. **Standard Buzz clients remain direct clients.** User Settings exposes the exact community URL and an explicitly requested `nsec` export, masked by default and guarded by a fresh step-up authentication event. Optionally produce NIP-49 `ncryptsec` only after round-trip compatibility tests; never call the custom Elembra JSON backup a Buzz-compatible credential. Exported keys are permanently copyable; Elembra cannot revoke a private key cryptographically.
 6. **The source of truth stays Buzz.** Elembra must not recreate Buzz channel, DM, thread or membership ACLs. Gate downstream Chat views and Chat-backed Memory on an authenticated, current upstream Buzz read under the requesting user's managed identity. If the current upstream release cannot establish equivalent per-channel authorization, disable that feature until proven. No observation index, cached ACL, message snapshot, or local toggle may turn a denial into an allow.
 7. **Availability and rollout are explicit.** Future reconciliation, outbox and lifecycle operations must be idempotent; failed provisioning leaves Chat pending/unavailable, never open. Keep legacy fork-backed deployments on their existing pin until a separately approved migration and parity gate passes. No in-place weakening of historical replacement guards or production schema changes merely to make the new profile start.
+
+Point 4 states the accepted product target; it does not authorize an implementation. The project owner explicitly selected Option A for publishing in [PR #459](https://github.com/kubedoio/rustshare/pull/459#issuecomment-6640798406), accepting the valid signed-artifact portability, plaintext visibility, replay and revocation tradeoffs. ADR-0046 records the typed authorization boundary and keeps implementation blocked pending independent security acceptance and an upstream fix for a privately reported membership-cache/role-transition authorization defect. Public conformance tracking is in issue #460; reproduction details remain in the upstream private report. PR #457's merged history reader does not change this boundary.
 
 ## Security model and accepted tradeoffs
 

@@ -19,6 +19,9 @@ sequential numbers. New ADRs must pick the next unused number. Statuses used:
 | `0041-groups-and-authorization.md` | Groups and Organization Authorization | Accepted (2026-10-15) |
 | `0042-postgresql-tenant-isolation-rls-staging.md` | PostgreSQL Tenant Isolation — Least Privilege First, Gated RLS | Accepted (2026-10-15) |
 | `0043-legacy-nil-tenant-compatibility.md` | Legacy Nil-Tenant Compatibility and Non-Destructive Migration | Accepted (2026-10-15) |
+| `0044-managed-buzz-identity-upstream-only.md` | Elembra-Managed Chat Identities on Unmodified Upstream Buzz | Accepted target architecture; runtime and independent security gates remain |
+| `0045-self-hosted-managed-identity-key-wrapping.md` | Self-Hosted Managed Identity DEK Wrapping | Selected inert provider foundation; custody acceptance remains gated |
+| `0046-managed-nip29-publishing-authorization.md` | Managed NIP-29 Publishing Authorization and Signing Boundary | Proposed Option A; owner decision recorded; independent security acceptance and upstream Buzz cache fix pending |
 
 The 2026-10-15 revisions of ADR-0040–0043 are Accepted following explicit user
 approval. Acceptance covers architecture and associated milestone/contract amendments,
