@@ -30,6 +30,7 @@ fi
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 QUAL_ID="localqa${STAMP,,}$(openssl rand -hex 3)"
+IMAGE_TAG="local/buzz-upstream-poc:${UPSTREAM_SHA:0:12}-${QUAL_ID}"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rustshare-local-qualification.XXXXXX")"
 EVIDENCE_DIR="$ROOT/docs/pilot/evidence"
 REPORT="$EVIDENCE_DIR/upstream-buzz-local-qualification-$STAMP.json"
@@ -75,13 +76,7 @@ POC_COMPATIBILITY_ONLY=1 POC_EVIDENCE_FILE="$RUN_DIR/protocol-evidence.json" \
 	"$ROOT/scripts/upstream-buzz-poc/run.sh" >"$RUN_DIR/run.log" 2>&1
 RUN_STATUS=$?
 set -e
-python3 - "$RUN_DIR/inventory-before.txt" <<'PY'
-import json, subprocess, sys
-before = {x['id'] for x in json.load(open(sys.argv[1]))['images']}
-after_ids = set(subprocess.check_output(['docker','image','ls','-q','--no-trunc'], text=True).split())
-for image_id in sorted(after_ids - before):
-  subprocess.run(['docker','image','rm',image_id], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-PY
+docker image rm "$IMAGE_TAG" >/dev/null 2>&1 || true
 inventory "$RUN_DIR/inventory-after.txt"
 INVENTORY_UNCHANGED=false
 if cmp -s "$RUN_DIR/inventory-before.txt" "$RUN_DIR/inventory-after.txt"; then INVENTORY_UNCHANGED=true; fi
@@ -144,7 +139,7 @@ report.write_text(json.dumps({
   'typed_managed_publisher': 'NOT_IMPLEMENTED',
   'gate_i': 'NO_GO',
   'issue_460_publisher': 'BLOCKED',
-  'issue_458_acceptance': 'INDEPENDENT_REQUIREMENTS_RETAINED',
+  'issue_458_acceptance': 'SENOLCOLAK_REVIEW_REQUIRED',
   'issue_442_acceptance': 'INDEPENDENT_REQUIREMENTS_RETAINED',
   'runner_exit_code': int(run_status),
 }, indent=2) + '\n')
