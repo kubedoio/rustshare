@@ -454,7 +454,7 @@ try {
 			if (!discovered || hidden !== true || privateChannel !== true) return result(false, { channel_id: channelId, matching_channel_event_counts: matchingChannelEvents, discovery_outcomes: discoveries.map((read) => read.outcome), hidden: hidden === true, private: privateChannel === true });
 			const marker = await event(process.env.POC_B_USER_SK, 9, [['h', channelId]], `POC tenant B private DM ${randomUUID()}`);
 			const published = await member.session.publish(marker);
-			const history = await otherMember.session.read({ kinds: [9], '#h': [channelId], limit: 20 });
+			const history = await otherMember.session.read({ kinds: [9], '#h': [channelId], limit: 20 }, true);
 			const observed = history.events.find((item) => item.id === marker.id);
 			const signedTag = channelRef(marker), returnedTag = channelRef(observed), receivedTags = receivedChannelRef(otherMember.session, marker.id);
 			const channelMatch = signedTag.valid && signedTag.channel_id === channelId && returnedTag.valid && returnedTag.channel_id === channelId && receivedTags.length === 1 && receivedTags[0] === channelId;
