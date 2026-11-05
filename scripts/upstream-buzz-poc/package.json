@@ -3,7 +3,8 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"test:desktop-evidence": "node --test desktop-evidence.test.mjs"
+		"test:desktop-evidence": "node --test desktop-evidence.test.mjs",
+		"test:protocol": "node --test channel-tags.test.mjs"
 	},
 	"dependencies": {
 		"@noble/curves": "2.4.0",
