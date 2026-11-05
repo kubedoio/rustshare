@@ -10,7 +10,7 @@ TREE="${BUZZ_POC_SOURCE_TREE:-04e3a40545bd3b23510ec32b4c8cccee2acef7c5}"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/upstream-buzz-poc.XXXXXX")"
 PROJECT="${BUZZ_POC_PROJECT_PREFIX:-buzzpoc$(basename "$RUN_DIR" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]')}"
 SOURCE="${BUZZ_SOURCE_DIR:-$RUN_DIR/source}"
-IMAGE="local/buzz-upstream-poc:${SHA:0:12}"
+IMAGE="local/buzz-upstream-poc:${SHA:0:12}-${PROJECT}"
 STACKS=()
 PROXIES=()
 POC_GUI_NSEC_FILE="$RUN_DIR/alice.nsec"
@@ -26,6 +26,7 @@ cleanup() {
       failed=1
     fi
   done
+  docker image rm "$IMAGE" >/dev/null 2>&1 || true
   rm -rf -- "$RUN_DIR"
   if [[ "$failed" == 1 && "$status" == 0 ]]; then status=1; fi
   exit "$status"

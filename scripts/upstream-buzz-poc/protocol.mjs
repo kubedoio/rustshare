@@ -71,7 +71,7 @@ class Session {
 	}
 	push(frame) {
 		const observed = { type: frame[0] };
-		if (frame[0] === 'EVENT' && frame[2]) Object.assign(observed, { subscription: frame[1], event_id: frame[2].id, kind: frame[2].kind, pubkey: frame[2].pubkey });
+		if (frame[0] === 'EVENT' && frame[2]) Object.assign(observed, { subscription: frame[1], event_id: frame[2].id, kind: frame[2].kind, pubkey: frame[2].pubkey, h_tags: (frame[2].tags || []).filter((tag) => tag?.[0] === 'h').map((tag) => tag.length === 2 && typeof tag[1] === 'string' ? tag[1] : null) });
 		else if (frame[0] === 'CLOSED' || frame[0] === 'CLOSE') observed.subscription = frame[1];
 		else if (frame[0] === 'OK') Object.assign(observed, { event_id: frame[1], accepted: frame[2] });
 		else if (frame[0] === 'SOCKET_CLOSE') observed.code = frame[1];
@@ -147,6 +147,14 @@ const result = (pass, detail = {}) => ({ pass, ...detail });
 const deniedWithoutEvents = (read) => ['CLOSED', 'EOSE'].includes(read.outcome) && read.events.length === 0;
 const hasChannelTag = (event, channelId) => event.tags?.some((tag) => tag[0] === 'd' && tag[1] === channelId) === true;
 const hasChannelRef = (event, channelId) => event.tags?.some((tag) => tag[0] === 'h' && tag[1] === channelId) === true;
+const channelRef = (event) => {
+	const tags = event?.tags?.filter((tag) => tag?.[0] === 'h') || [];
+	return { tags, valid: tags.length === 1 && tags[0].length === 2 && typeof tags[0][1] === 'string', channel_id: tags.length === 1 && tags[0].length === 2 ? tags[0][1] : null };
+};
+const receivedChannelRef = (session, eventId) => session.observations.find((item) => item.type === 'EVENT' && item.event_id === eventId)?.h_tags || [];
+assert.equal(channelRef({ tags: [['h', 'requested-channel']] }).valid, true);
+assert.equal(channelRef({ tags: [['h', 'other-channel']] }).channel_id === 'requested-channel', false);
+assert.equal(channelRef({ tags: [['h', 'requested-channel'], ['h', 'requested-channel']] }).valid, false);
 assert.equal(deniedWithoutEvents({ outcome: 'CLOSED', events: [{ kind: 9 }] }), false);
 assert.equal(deniedWithoutEvents({ outcome: 'EOSE', events: [{ kind: 9 }] }), false);
 assert.equal(deniedWithoutEvents({ outcome: 'CLOSED', events: [] }), true);
@@ -249,11 +257,15 @@ try {
 	await check('private_channel_alice_message', async () => {
 		privateMessage = await event(keys.ALICE, 9, [['h', privateChannel]], `POC ${randomUUID()}`);
 		const wire = await alice.publish(privateMessage);
-		return result(wire.accepted, wire);
+		const signedTag = channelRef(privateMessage);
+		return result(wire.accepted && signedTag.valid && signedTag.channel_id === privateChannel, { ...wire, author: pubs.ALICE, channel_id: privateChannel, signed_h_tags: signedTag.tags.map((tag) => tag[1]) });
 	});
 	await check('private_channel_alice_history', async () => {
-		const read = await alice.read({ kinds: [9], '#h': [privateChannel], limit: 20 });
-		return result(read.outcome === 'EOSE' && read.events.some((item) => item.id === privateMessage.id), read);
+		const read = await alice.read({ kinds: [9], '#h': [privateChannel], limit: 20 }, true);
+		const observed = read.events.find((item) => item.id === privateMessage.id);
+		const signedTag = channelRef(privateMessage), returnedTag = channelRef(observed), receivedTags = receivedChannelRef(alice, privateMessage.id);
+		const valid = (tags) => tags.length === 1 && tags[0] === privateChannel;
+		return result(read.outcome === 'EOSE' && observed?.pubkey === pubs.ALICE && signedTag.valid && signedTag.channel_id === privateChannel && returnedTag.valid && returnedTag.channel_id === privateChannel && valid(receivedTags), { outcome: read.outcome, event_id: observed?.id, author: observed?.pubkey, channel_id: privateChannel, expected_channel_id: privateChannel, observed_channel_id: returnedTag.channel_id, signed_h_tags: signedTag.tags.map((tag) => tag[1]), received_h_tags: receivedTags, returned_h_tags: returnedTag.tags.map((tag) => tag[1]), channel_match: valid(receivedTags) && returnedTag.channel_id === privateChannel, history_observed: Boolean(observed) });
 	});
 	for (const kind of [39000, 39001, 39002]) {
 		await check(`channel_discovery_${kind}`, async () => {
@@ -268,10 +280,11 @@ try {
 		return result(wire.accepted && wire.ack_event_id === publicMessage.id, wire);
 	});
 	await check('kind9_history_bob', async () => {
-		const read = await bob.read({ kinds: [9], '#h': [publicChannel], limit: 20 });
+		const read = await bob.read({ kinds: [9], '#h': [publicChannel], limit: 20 }, true);
 		const observed = read.events.find((item) => item.id === publicMessage.id);
-		const observedChannel = observed?.tags?.find((tag) => tag[0] === 'h')?.[1] ?? null;
-		return result(read.outcome === 'EOSE' && observed?.pubkey === pubs.ALICE && observedChannel === publicChannel, { outcome: read.outcome, event_id: observed?.id, author: observed?.pubkey, expected_channel_id: publicChannel, observed_channel_id: observedChannel, channel_match: observedChannel === publicChannel, history_observed: Boolean(observed) });
+		const signedTag = channelRef(publicMessage), receivedTags = receivedChannelRef(bob, publicMessage.id), returnedTag = channelRef(observed);
+		const receivedMatch = receivedTags.length === 1 && receivedTags[0] === publicChannel;
+		return result(read.outcome === 'EOSE' && observed?.pubkey === pubs.ALICE && signedTag.valid && signedTag.channel_id === publicChannel && receivedMatch && returnedTag.valid && returnedTag.channel_id === publicChannel, { outcome: read.outcome, event_id: observed?.id, author: observed?.pubkey, channel_id: publicChannel, expected_channel_id: publicChannel, observed_channel_id: returnedTag.channel_id, signed_h_tags: signedTag.tags.map((tag) => tag[1]), received_h_tags: receivedTags, returned_h_tags: returnedTag.tags.map((tag) => tag[1]), channel_match: receivedMatch && returnedTag.channel_id === publicChannel, history_observed: Boolean(observed) });
 	});
 	await check('private_channel_bob_denied', async () => {
 		const metadata = await bob.read({ kinds: [39000], '#d': [privateChannel], limit: 20 });
@@ -283,8 +296,10 @@ try {
 		return result(wire.accepted, wire);
 	});
 	await check('private_channel_bob_member_history', async () => {
-		const read = await bob.read({ kinds: [9], '#h': [privateChannel], limit: 20 });
-		return result(read.outcome === 'EOSE' && read.events.some((item) => item.id === privateMessage.id), read);
+		const read = await bob.read({ kinds: [9], '#h': [privateChannel], limit: 20 }, true);
+		const observed = read.events.find((item) => item.id === privateMessage.id);
+		const tag = channelRef(observed), receivedTags = receivedChannelRef(bob, privateMessage.id);
+		return result(read.outcome === 'EOSE' && observed?.pubkey === pubs.ALICE && tag.valid && tag.channel_id === privateChannel && receivedTags.length === 1 && receivedTags[0] === privateChannel, { outcome: read.outcome, event_id: observed?.id, author: observed?.pubkey, channel_id: privateChannel, expected_channel_id: privateChannel, observed_channel_id: tag.channel_id, received_h_tags: receivedTags, returned_h_tag_count: tag.tags.length, history_observed: Boolean(observed) });
 	});
 	await check('nip43_add_outsider_for_private_dm_denial', async () => {
 		const wire = await owner.publish(await event(keys.OWNER, 9030, [['p', pubs.OUTSIDER]]));
@@ -311,10 +326,11 @@ try {
 		const dmPublish = await alice.publish(dmMessage);
 		const bobDmHistory = await bob.read({ kinds: [9], '#h': [dmChannel], limit: 50 }, true);
 		const bobObservedDm = bobDmHistory.events.find((item) => item.id === dmMessage.id);
-		const bobSawExactDm = dmPublish.accepted && bobDmHistory.outcome === 'EOSE' && bobObservedDm?.pubkey === pubs.ALICE && hasChannelRef(bobObservedDm, dmChannel);
+		const dmTag = channelRef(dmMessage), receivedDmTags = receivedChannelRef(bob, dmMessage.id);
+		const bobSawExactDm = dmPublish.accepted && bobDmHistory.outcome === 'EOSE' && bobObservedDm?.pubkey === pubs.ALICE && dmTag.valid && dmTag.channel_id === dmChannel && channelRef(bobObservedDm).valid && channelRef(bobObservedDm).channel_id === dmChannel && receivedDmTags.length === 1 && receivedDmTags[0] === dmChannel;
 		const outsiderMetadata = await outsider.read({ kinds: [39000, 39001, 39002], '#d': [dmChannel], limit: 20 });
 		const outsiderHistory = await outsider.read({ kinds: [9], '#h': [dmChannel], limit: 20 });
-		return result(discovered && hidden === true && bobSawExactDm && deniedWithoutEvents(outsiderMetadata) && deniedWithoutEvents(outsiderHistory), { channel_id: dmChannel, discovery_kinds: discoveries.map((read) => read.events[0]?.kind), matching_channel_event_counts: matchingChannelEvents, hidden, participant_dm_event_id: dmMessage.id, participant_dm_author: pubs.ALICE, participant_dm_channel: dmChannel, bob_observed_dm_event_id: bobObservedDm?.id, bob_observed_dm_author: bobObservedDm?.pubkey, bob_observed_dm_channel: bobObservedDm?.tags?.find((tag) => tag[0] === 'h')?.[1], outsider_discovery: outsiderMetadata.outcome, outsider_discovery_event_count: outsiderMetadata.events.length, outsider_history: outsiderHistory.outcome, outsider_history_event_count: outsiderHistory.events.length });
+		return result(discovered && hidden === true && bobSawExactDm && deniedWithoutEvents(outsiderMetadata) && deniedWithoutEvents(outsiderHistory), { channel_id: dmChannel, discovery_kinds: discoveries.map((read) => read.events[0]?.kind), matching_channel_event_counts: matchingChannelEvents, hidden, participant_dm_event_id: dmMessage.id, participant_dm_author: pubs.ALICE, participant_dm_channel: dmChannel, bob_observed_dm_event_id: bobObservedDm?.id, bob_observed_dm_author: bobObservedDm?.pubkey, bob_observed_dm_channel: channelRef(bobObservedDm).channel_id, signed_h_tags: dmTag.tags.map((tag) => tag[1]), received_h_tags: receivedDmTags, returned_h_tags: channelRef(bobObservedDm).tags.map((tag) => tag[1]), outsider_discovery: outsiderMetadata.outcome, outsider_discovery_event_count: outsiderMetadata.events.length, outsider_history: outsiderHistory.outcome, outsider_history_event_count: outsiderHistory.events.length });
 	});
 	await check('nip29_dm_bidirectional_messages', async () => {
 		const aliceMessage = await event(keys.ALICE, 9, [['h', dmChannel]], `POC NIP-29 Alice ${randomUUID()}`);
@@ -325,7 +341,12 @@ try {
 		const bobPublish = await bob.publish(bobMessage);
 		const aliceRead = await alice.read({ kinds: [9], '#h': [dmChannel], limit: 50 }, true);
 		const aliceObservedBob = aliceRead.events.find((item) => item.id === bobMessage.id);
-		return result(alicePublish.accepted && bobObservedAlice?.pubkey === pubs.ALICE && bobPublish.accepted && aliceObservedBob?.pubkey === pubs.BOB, { alice_event_id: aliceMessage.id, alice_author: pubs.ALICE, bob_observed_alice_event_id: bobObservedAlice?.id, bob_observed_alice_author: bobObservedAlice?.pubkey, bob_event_id: bobMessage.id, bob_author: pubs.BOB, alice_observed_bob_event_id: aliceObservedBob?.id, alice_observed_bob_author: aliceObservedBob?.pubkey });
+		const aliceTags = receivedChannelRef(bob, aliceMessage.id), bobTags = receivedChannelRef(alice, bobMessage.id);
+		const aliceReadTag = channelRef(bobObservedAlice), bobReadTag = channelRef(aliceObservedBob);
+		const aliceSignedTag = channelRef(aliceMessage), bobSignedTag = channelRef(bobMessage);
+		const aliceChannelMatch = aliceSignedTag.valid && aliceSignedTag.channel_id === dmChannel && aliceTags.length === 1 && aliceTags[0] === dmChannel && aliceReadTag.valid && aliceReadTag.channel_id === dmChannel;
+		const bobChannelMatch = bobSignedTag.valid && bobSignedTag.channel_id === dmChannel && bobTags.length === 1 && bobTags[0] === dmChannel && bobReadTag.valid && bobReadTag.channel_id === dmChannel;
+		return result(alicePublish.accepted && bobObservedAlice?.pubkey === pubs.ALICE && aliceChannelMatch && bobPublish.accepted && aliceObservedBob?.pubkey === pubs.BOB && bobChannelMatch, { alice_event_id: aliceMessage.id, alice_author: pubs.ALICE, bob_observed_alice_event_id: bobObservedAlice?.id, bob_observed_alice_author: bobObservedAlice?.pubkey, alice_signed_h_tags: aliceSignedTag.tags.map((tag) => tag[1]), alice_received_h_tags: aliceTags, alice_returned_h_tags: aliceReadTag.tags.map((tag) => tag[1]), bob_event_id: bobMessage.id, bob_author: pubs.BOB, alice_observed_bob_event_id: aliceObservedBob?.id, alice_observed_bob_author: aliceObservedBob?.pubkey, bob_signed_h_tags: bobSignedTag.tags.map((tag) => tag[1]), bob_received_h_tags: bobTags, bob_returned_h_tags: bobReadTag.tags.map((tag) => tag[1]), channel_id: dmChannel });
 	});
 	await check('nip17_randomized_timestamp_relay_compatibility', async () => {
 		const now = Math.floor(Date.now() / 1000);
@@ -435,7 +456,9 @@ try {
 			const published = await member.session.publish(marker);
 			const history = await otherMember.session.read({ kinds: [9], '#h': [channelId], limit: 20 });
 			const observed = history.events.find((item) => item.id === marker.id);
-			return result(published.accepted && history.outcome === 'EOSE' && observed?.pubkey === pubkey(process.env.POC_B_USER_SK), { channel_id: channelId, private_dm_event_id: marker.id, private_dm_author: pubkey(process.env.POC_B_USER_SK), other_member_event_id: observed?.id, history_outcome: history.outcome, history_event_count: history.events.length, matching_channel_event_counts: matchingChannelEvents, hidden, private: privateChannel });
+			const signedTag = channelRef(marker), returnedTag = channelRef(observed), receivedTags = receivedChannelRef(otherMember.session, marker.id);
+			const channelMatch = signedTag.valid && signedTag.channel_id === channelId && returnedTag.valid && returnedTag.channel_id === channelId && receivedTags.length === 1 && receivedTags[0] === channelId;
+			return result(published.accepted && history.outcome === 'EOSE' && observed?.pubkey === pubkey(process.env.POC_B_USER_SK) && channelMatch, { channel_id: channelId, private_dm_event_id: marker.id, private_dm_author: pubkey(process.env.POC_B_USER_SK), other_member_event_id: observed?.id, history_outcome: history.outcome, history_event_count: history.events.length, signed_h_tags: signedTag.tags.map((tag) => tag[1]), received_h_tags: receivedTags, returned_h_tags: returnedTag.tags.map((tag) => tag[1]), matching_channel_event_counts: matchingChannelEvents, hidden, private: privateChannel });
 		});
 		await check('cross_tenant_alice_denied', async () => {
 			const joined = await connect(process.env.POC_RELAY_B_URL, keys.ALICE);
@@ -472,7 +495,7 @@ try {
 			public_kind9: publicMessage ? { event_id: publicMessage.id, author: pubs.ALICE, channel_id: publicChannel } : null,
 			private_kind9: privateMessage ? { event_id: privateMessage.id, author: pubs.ALICE, channel_id: privateChannel } : null,
 		},
-		results: results.map(({ name, pass, outcome, published, accepted, history_observed, event_id, ack_event_id, author, channel_id, expected_channel_id, observed_channel_id, channel_match, metadata_event_count, history_event_count }) => ({
+		results: results.map(({ name, pass, outcome, published, accepted, history_observed, event_id, ack_event_id, author, channel_id, expected_channel_id, observed_channel_id, channel_match, metadata_event_count, history_event_count, signed_h_tags, received_h_tags, returned_h_tags, alice_signed_h_tags, alice_received_h_tags, alice_returned_h_tags, bob_signed_h_tags, bob_received_h_tags, bob_returned_h_tags, participant_dm_event_id, participant_dm_author, participant_dm_channel, private_dm_event_id, private_dm_author, other_member_event_id, bob_observed_dm_event_id, bob_observed_dm_author, bob_observed_dm_channel, alice_event_id, alice_author, bob_event_id, bob_author }) => ({
 			name, pass,
 			outcome: [outcome, published?.outcome].find((item) => typeof item === 'string' && /^[A-Z_]+$/.test(item)) || null,
 			...((event_id || published?.event_id) ? { event_id: event_id || published.event_id } : {}),
@@ -484,6 +507,28 @@ try {
 			...(history_observed !== undefined ? { history_observed } : {}),
 			...(metadata_event_count !== undefined ? { metadata_event_count } : {}),
 			...(history_event_count !== undefined ? { history_event_count } : {}),
+			...(signed_h_tags !== undefined ? { signed_h_tags } : {}),
+			...(received_h_tags !== undefined ? { received_h_tags } : {}),
+			...(returned_h_tags !== undefined ? { returned_h_tags } : {}),
+			...(alice_signed_h_tags !== undefined ? { alice_signed_h_tags } : {}),
+			...(alice_received_h_tags !== undefined ? { alice_received_h_tags } : {}),
+			...(alice_returned_h_tags !== undefined ? { alice_returned_h_tags } : {}),
+			...(bob_signed_h_tags !== undefined ? { bob_signed_h_tags } : {}),
+			...(bob_received_h_tags !== undefined ? { bob_received_h_tags } : {}),
+			...(bob_returned_h_tags !== undefined ? { bob_returned_h_tags } : {}),
+			...(alice_event_id ? { alice_event_id } : {}),
+			...(alice_author ? { alice_author } : {}),
+			...(bob_event_id ? { bob_event_id } : {}),
+			...(bob_author ? { bob_author } : {}),
+			...(participant_dm_event_id ? { event_id: participant_dm_event_id } : {}),
+			...(participant_dm_author ? { author: participant_dm_author } : {}),
+			...(participant_dm_channel ? { channel_id: participant_dm_channel } : {}),
+			...(private_dm_event_id ? { private_dm_event_id } : {}),
+			...(private_dm_author ? { private_dm_author } : {}),
+			...(other_member_event_id ? { other_member_event_id } : {}),
+			...(bob_observed_dm_event_id ? { bob_observed_dm_event_id } : {}),
+			...(bob_observed_dm_author ? { bob_observed_dm_author } : {}),
+			...(bob_observed_dm_channel ? { bob_observed_dm_channel } : {}),
 		})),
 		unrun: process.env.POC_COMPATIBILITY_ONLY === '1'
 			? ['open_pre_revocation_subscriptions', 'nip43_remove_bob', 'nip43_remove_exact_replay', 'revoked_existing_subscription', 'revoked_existing_publish', 'revoked_existing_new_req', 'revoked_fresh_connection', 'revoked_reconnect_after_delay']
