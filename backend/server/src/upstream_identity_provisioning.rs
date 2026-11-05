@@ -35,7 +35,7 @@ static LIVE_HISTORY_DATABASE_READS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(test)]
 async fn wait_for_live_history_database_outage() {
-    let Some(ack_file) = std::env::var_os("BUZZ_TEST_DB_OUTAGE_ACK_FILE") else {
+    let Some(ack_file) = std::env::var_os("BUZZ_TEST_HISTORY_DB_OUTAGE_ACK_FILE") else {
         return;
     };
     if LIVE_HISTORY_DATABASE_READS.fetch_add(1, Ordering::SeqCst) != 1 {
@@ -3499,8 +3499,9 @@ mod tests {
             Err(ProvisioningError::DatabaseUnavailable)
         ));
         println!("history_reader_db_outage=DATABASE_UNAVAILABLE");
-        let restore_ack_path = std::path::PathBuf::from(required("BUZZ_TEST_DB_RESTORE_ACK_FILE"));
-        println!("BUZZ_TEST_DB_RESTORE_READY");
+        let restore_ack_path =
+            std::path::PathBuf::from(required("BUZZ_TEST_HISTORY_DB_RESTORE_ACK_FILE"));
+        println!("BUZZ_TEST_HISTORY_DB_RESTORE_READY");
         std::io::Write::flush(&mut std::io::stdout()).unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(120), async {
             while !restore_ack_path.exists() {

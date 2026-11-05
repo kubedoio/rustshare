@@ -548,9 +548,9 @@ run_member_transport_test() {
 run_history_reader_db_outage_test() {
 	local filter=upstream_identity_provisioning::tests::live_provisioning_reaches_ready_after_nip42_and_member_only_read
 	local log="$EVIDENCE_DIR/provisioning.log" test_status db_stopped=0
-	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- rm -f /tmp/db-outage.ack /tmp/db-restore.ack
-	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- test ! -e /tmp/db-outage.ack -a ! -e /tmp/db-restore.ack
-	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- /usr/local/bin/test-runner --ignored --exact "$filter" --nocapture >"$log" 2>&1 &
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- rm -f /tmp/history-db-outage.ack /tmp/history-db-restore.ack
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- test ! -e /tmp/history-db-outage.ack -a ! -e /tmp/history-db-restore.ack
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- env BUZZ_TEST_HISTORY_DB_OUTAGE_ACK_FILE=/tmp/history-db-outage.ack BUZZ_TEST_HISTORY_DB_RESTORE_ACK_FILE=/tmp/history-db-restore.ack /usr/local/bin/test-runner --ignored --exact "$filter" --nocapture >"$log" 2>&1 &
 	TEST_PID=$!
 	wait_for_test_marker "$log" BUZZ_TEST_HISTORY_DB_OUTAGE_READY
 	echo 'history read received relay events; stopping PostgreSQL before authorization revalidation' >"$EVIDENCE_DIR/history-reader-db-outage-orchestration.log"
@@ -565,12 +565,12 @@ run_history_reader_db_outage_test() {
 	done
 	[[ "$db_stopped" == 1 ]] || { echo 'PostgreSQL did not become unavailable during managed-history read' >&2; return 1; }
 	echo 'PostgreSQL outage verified' >>"$EVIDENCE_DIR/history-reader-db-outage-orchestration.log"
-	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/db-outage.ack
-	wait_for_test_marker "$log" BUZZ_TEST_DB_RESTORE_READY
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/history-db-outage.ack
+	wait_for_test_marker "$log" BUZZ_TEST_HISTORY_DB_RESTORE_READY
 	echo 'managed-history reader failed closed; restoring PostgreSQL' >>"$EVIDENCE_DIR/history-reader-db-outage-orchestration.log"
 	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- touch /run/db-control/restart
 	timeout --signal=TERM 90s "${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- sh -ec 'until pg_isready -h 127.0.0.1 -p 5432 -U postgres -d rustshare_test; do sleep 1; done'
-	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/db-restore.ack
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- touch /tmp/history-db-restore.ack
 	set +e
 	wait "$TEST_PID"
 	test_status=$?
@@ -582,6 +582,7 @@ run_history_reader_db_outage_test() {
 		tail -n 40 "$log" >&2
 		return 1
 	fi
+	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- rm -f /tmp/history-db-outage.ack /tmp/history-db-restore.ack
 	echo 'PostgreSQL restore verified' >>"$EVIDENCE_DIR/history-reader-db-outage-orchestration.log"
 }
 
