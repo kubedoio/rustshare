@@ -357,7 +357,7 @@ this refresh. Recheck before treating main CI as complete.
 | --- | --- | --- |
 | Managed identity / provisioning | PASS — inert implementation and disposable qualification only | Phase 2B.2 foundations and Cilium qualification are merged; runtime remains disabled, with no production KMS/runtime caller, user signing, or activation approval. |
 | Managed history reader implementation | PASS — inert implementation only | Feature-gated, test-only Principal context, no route, worker, startup caller, or session pool. |
-| History Cilium execution | PASS, with one acceptance-row gap | Run [42056855474](https://github.com/kubedoio/rustshare/actions/runs/42056855474) succeeded against unmodified Buzz `eafd77e9f6e96052476bdd88be732c046fdb7ab3`. The downloaded 54-file artifact had 53 manifest entries; all 53 verified and the manifest SHA-256 matched `1dd8017162ca8786116618080fd678ad387ac9f51079a3c1ad1b6425b2bc0091`. It covers exact event/author, private, wrong-identity and cross-tenant zero-EVENT denial, revocation, PostgreSQL outage, KMS failure/body-free audit, and real Cilium egress denial/cleanup. It does **not** include a mapping-generation change during managed-history revalidation; that row remains UNVERIFIED. |
+| History Cilium execution | PASS | Run [42056855474](https://github.com/kubedoio/rustshare/actions/runs/42056855474) succeeded against unmodified Buzz `eafd77e9f6e96052476bdd88be732c046fdb7ab3`. The downloaded 54-file artifact had 53 manifest entries; all 53 verified and the manifest SHA-256 matched `1dd8017162ca8786116618080fd678ad387ac9f51079a3c1ad1b6425b2bc0091`. It covers exact event/author, private, wrong-identity and cross-tenant zero-EVENT denial, revocation, mapping-generation fencing, PostgreSQL outage, KMS failure/body-free audit, and real Cilium egress denial/cleanup. The transport test updates the signed mapping from generation 5 to 6 and verifies the active session is fenced. |
 | History independent security acceptance (#458) | PENDING | On 2026-11-05 requested an explicit issue-level ACCEPT, REJECT, or REQUIRE CHANGES from the designated independent reviewer @melisecolak, a repo maintainer distinct from the author. No verdict is recorded yet. Execution PASS and ordinary PR approval do not satisfy this gate. Keep #458 open and reader disabled. |
 | Stock Buzz Desktop acceptance (#442) | UNVERIFIED | This host has no `DISPLAY`, `WAYLAND_DISPLAY`, D-Bus session, or runtime directory; installed keyring tools do not establish a working native keychain. The exact operator checklist is committed at [`desktop-acceptance.md`](../../scripts/upstream-buzz-poc/desktop-acceptance.md); no GUI/mocked acceptance was substituted. |
 | Publishing implementation | NOT IMPLEMENTED | PR #465 is test-only contract inventory and fixtures. No production signer, publish operation, route, network publisher, or activation was added. |
@@ -371,10 +371,12 @@ The artifact's exact Tenant A fixture is event
 `0c10f455-6382-44af-bc2d-8c53b3387e9a`. The live provisioning test compares
 both exact event ID and relay-admin author, asserts wrong-channel denial,
 `KmsUnavailable`, and audit reasons without the seeded message body. The
-orchestrator stops PostgreSQL after receiving relay events and before
-authorization revalidation; the test observes `DatabaseUnavailable`, then
-restores PostgreSQL. Cilium Hubble records the forbidden public TCP probe as
-denied/dropped; cleanup evidence is included in the verified manifest.
+transport test applies a signed mapping update from generation 5 to 6 and
+asserts `SessionFenced` on the existing session. The orchestrator stops
+PostgreSQL after receiving relay events and before authorization revalidation;
+the test observes `DatabaseUnavailable`, then restores PostgreSQL. Cilium
+Hubble records the forbidden public TCP probe as denied/dropped; cleanup
+evidence is included in the verified manifest.
 
 ### Conditions to begin Phase 2B.3 publishing implementation
 
