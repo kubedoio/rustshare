@@ -270,7 +270,8 @@ try {
 	await check('kind9_history_bob', async () => {
 		const read = await bob.read({ kinds: [9], '#h': [publicChannel], limit: 20 });
 		const observed = read.events.find((item) => item.id === publicMessage.id);
-		return result(read.outcome === 'EOSE' && observed?.pubkey === pubs.ALICE && hasChannelRef(observed, publicChannel), { outcome: read.outcome, event_id: observed?.id, author: observed?.pubkey, channel_id: observed?.tags?.find((tag) => tag[0] === 'h')?.[1], history_observed: Boolean(observed) });
+		const observedChannel = observed?.tags?.find((tag) => tag[0] === 'h')?.[1] ?? null;
+		return result(read.outcome === 'EOSE' && observed?.pubkey === pubs.ALICE && observedChannel === publicChannel, { outcome: read.outcome, event_id: observed?.id, author: observed?.pubkey, expected_channel_id: publicChannel, observed_channel_id: observedChannel, channel_match: observedChannel === publicChannel, history_observed: Boolean(observed) });
 	});
 	await check('private_channel_bob_denied', async () => {
 		const metadata = await bob.read({ kinds: [39000], '#d': [privateChannel], limit: 20 });
@@ -471,13 +472,15 @@ try {
 			public_kind9: publicMessage ? { event_id: publicMessage.id, author: pubs.ALICE, channel_id: publicChannel } : null,
 			private_kind9: privateMessage ? { event_id: privateMessage.id, author: pubs.ALICE, channel_id: privateChannel } : null,
 		},
-		results: results.map(({ name, pass, outcome, published, accepted, history_observed, event_id, ack_event_id, author, channel_id, metadata_event_count, history_event_count }) => ({
+		results: results.map(({ name, pass, outcome, published, accepted, history_observed, event_id, ack_event_id, author, channel_id, expected_channel_id, observed_channel_id, channel_match, metadata_event_count, history_event_count }) => ({
 			name, pass,
 			outcome: [outcome, published?.outcome].find((item) => typeof item === 'string' && /^[A-Z_]+$/.test(item)) || null,
 			...((event_id || published?.event_id) ? { event_id: event_id || published.event_id } : {}),
 			...((ack_event_id || published?.ack_event_id) ? { ack_event_id: ack_event_id || published.ack_event_id } : {}),
 			...(typeof (accepted ?? published?.accepted) === 'boolean' ? { relay_accepted: accepted ?? published.accepted } : {}),
 			...(author ? { author } : {}), ...(channel_id ? { channel_id } : {}),
+			...(expected_channel_id ? { expected_channel_id } : {}), ...(observed_channel_id !== undefined ? { observed_channel_id } : {}),
+			...(channel_match !== undefined ? { channel_match } : {}),
 			...(history_observed !== undefined ? { history_observed } : {}),
 			...(metadata_event_count !== undefined ? { metadata_event_count } : {}),
 			...(history_event_count !== undefined ? { history_event_count } : {}),
