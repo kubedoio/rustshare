@@ -4,10 +4,11 @@ set -euo pipefail
 umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SHA=eafd77e9f6e96052476bdd88be732c046fdb7ab3
-TREE=04e3a40545bd3b23510ec32b4c8cccee2acef7c5
+SHA="${BUZZ_POC_SOURCE_SHA:-eafd77e9f6e96052476bdd88be732c046fdb7ab3}"
+TREE="${BUZZ_POC_SOURCE_TREE:-04e3a40545bd3b23510ec32b4c8cccee2acef7c5}"
+[[ "$SHA" =~ ^[0-9a-f]{40}$ && "$TREE" =~ ^[0-9a-f]{40}$ ]] || { echo 'Upstream SHA and tree must be explicit 40-character hex values' >&2; exit 1; }
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/upstream-buzz-poc.XXXXXX")"
-PROJECT="buzzpoc$(basename "$RUN_DIR" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]')"
+PROJECT="${BUZZ_POC_PROJECT_PREFIX:-buzzpoc$(basename "$RUN_DIR" | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]')}"
 SOURCE="${BUZZ_SOURCE_DIR:-$RUN_DIR/source}"
 IMAGE="local/buzz-upstream-poc:${SHA:0:12}"
 STACKS=()
@@ -144,6 +145,8 @@ POC_WRONG_HOST_URL="$POC_WRONG_HOST_URL" POC_TLS_FAILURE_URL="$POC_TLS_FAILURE_U
 POC_GUI_NSEC_FILE="$POC_GUI_NSEC_FILE" \
 POC_TEST_PACKAGE="$RUN_DIR/test-deps/package.json" \
 POC_HOLD="${POC_HOLD:-0}" \
+POC_COMPATIBILITY_ONLY="${POC_COMPATIBILITY_ONLY:-0}" \
+POC_EVIDENCE_FILE="${POC_EVIDENCE_FILE:-}" \
 NODE_EXTRA_CA_CERTS="$RUN_DIR/tls.crt" G_TLS_CA_FILE="$RUN_DIR/tls.crt" \
   node "$ROOT/scripts/upstream-buzz-poc/protocol.mjs" || PROTOCOL_STATUS=$?
 relay_identity() {

@@ -1,6 +1,7 @@
 // Disposable, wire-level conformance probe. Private keys enter only via env and optional 0600 GUI file.
 import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns';
@@ -353,6 +354,7 @@ try {
 		return result(!selfRead.events.some((item) => item.id === delivered) && wrongRecipientFilter.outcome === 'CLOSED' && wrongRecipientFilter.events.length === 0, { sender_filter_events: selfRead.events.length, wrong_recipient_filter_outcome: wrongRecipientFilter.outcome, wrong_recipient_event_count: wrongRecipientFilter.events.length });
 	});
 	if (process.env.POC_HOLD === '1') await desktopHold();
+	if (process.env.POC_COMPATIBILITY_ONLY !== '1') {
 	await check('open_pre_revocation_subscriptions', async () => {
 		bobSubscriptions = await Promise.all([
 			bob.subscribe({ kinds: [9], '#h': [publicChannel], since: Math.floor(Date.now() / 1000) }),
@@ -398,6 +400,7 @@ try {
 		const joined = await connect(url, keys.BOB);
 		return result(explicitAuthDenial(joined.auth), { delay_ms: 1500, auth: joined.auth, private_content_read: false });
 	});
+	}
 	if (process.env.POC_RELAY_B_URL && process.env.POC_B_OWNER_SK && process.env.POC_B_USER_SK && process.env.POC_B_OTHER_USER_SK) {
 		await check('tenant_b_member_nip42', async () => {
 			const joined = await connect(process.env.POC_RELAY_B_URL, process.env.POC_B_OWNER_SK);
@@ -457,5 +460,16 @@ try {
 } finally {
 	for (const session of sessions) session.close();
 	console.log(JSON.stringify({ relay: url, public_keys: pubs, public_channel: publicChannel, private_channel: privateChannel, public_message_id: publicMessage?.id, private_message_id: privateMessage?.id, results }, null, 2));
+	if (process.env.POC_EVIDENCE_FILE) writeFileSync(process.env.POC_EVIDENCE_FILE, JSON.stringify({
+		public_keys: pubs,
+		public_channel: publicChannel,
+		private_channel: privateChannel,
+		public_message_id: publicMessage?.id,
+		private_message_id: privateMessage?.id,
+		results: results.map(({ name, pass }) => ({ name, pass })),
+		unrun: process.env.POC_COMPATIBILITY_ONLY === '1'
+			? ['open_pre_revocation_subscriptions', 'nip43_remove_bob', 'nip43_remove_exact_replay', 'revoked_existing_subscription', 'revoked_existing_publish', 'revoked_existing_new_req', 'revoked_fresh_connection', 'revoked_reconnect_after_delay']
+			: [],
+	}, null, 2));
 }
 if (results.some((item) => item.pass === false)) process.exitCode = 1;
