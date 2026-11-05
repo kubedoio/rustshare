@@ -14,6 +14,18 @@ building the local relay image. Dependency image digests, node image, and tool
 versions are recorded in [`versions.env`](versions.env). The relay itself is
 not patched or rebuilt from a fork.
 
+The `Managed Chat History Cilium Qualification` Actions workflow runs this
+script on a disposable `ubuntu-24.04` runner when its harness or managed
+identity transport inputs change. It checksum-verifies the pinned kind,
+kubectl, Cilium CLI, and Hubble downloads; uses a unique cluster and image tag
+per workflow attempt; uploads only the harness's sanitized evidence after all
+tests pass; and removes the cluster, local image tags, temporary credentials,
+and local evidence in an unconditional cleanup step. The artifact includes the
+exact RustShare and Buzz source revisions, image IDs, tool and image pins,
+fixture event metadata, run link, and SHA-256 manifest. A passing run qualifies
+only the managed-history and listed supporting transport tests; it does not
+qualify publishing, stock desktop interoperability, or Gate I.
+
 ## Requirements and command
 
 Use a Linux amd64 host with Docker Buildx, `kind` v0.27.0, `kubectl` v1.32.2,

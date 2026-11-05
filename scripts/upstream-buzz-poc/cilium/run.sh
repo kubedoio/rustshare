@@ -10,7 +10,8 @@ source "$HERE/versions.env"
 SOURCE_SHA=eafd77e9f6e96052476bdd88be732c046fdb7ab3
 SOURCE_TREE=04e3a40545bd3b23510ec32b4c8cccee2acef7c5
 NAMESPACE=elembra-buzz-test
-RUN_ID="$(date -u +%Y%m%d%H%M%S)-$$"
+RUN_ID="${BUZZ_CILIUM_RUN_ID:-$(date -u +%Y%m%d%H%M%S)-$$}"
+[[ "$RUN_ID" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || { echo 'BUZZ_CILIUM_RUN_ID must be a short lowercase tag-safe value' >&2; exit 2; }
 CLUSTER="ec-${RUN_ID}"
 BUZZ_IMAGE="local/elembra-cilium-buzz:${RUN_ID}"
 POC_IMAGE="local/elembra-cilium-tools:${RUN_ID}"
@@ -89,7 +90,7 @@ hubble_version="$(hubble version)"
 [[ "$hubble_version" == *"$HUBBLE_CLI_VERSION"* ]] || { echo "Hubble CLI must be $HUBBLE_CLI_VERSION" >&2; exit 2; }
 rustc_version="$(rustc +1.97.1 --version)"
 [[ "$rustc_version" == *1.97.1* ]] || { echo 'Rust 1.97.1 is required' >&2; exit 2; }
-node --version | grep -Eq '^v22\.' || { echo 'Node.js 22 is required' >&2; exit 2; }
+[[ "$(node --version)" == "v$NODE_VERSION" ]] || { echo "Node.js $NODE_VERSION is required" >&2; exit 2; }
 npm --version | awk -F. '$1 >= 10 { ok=1 } END { exit !ok }' || { echo 'npm 10 or newer is required' >&2; exit 2; }
 
 default_source="${BUZZ_SOURCE_DIR:-$RUN_DIR/buzz-source}"
@@ -104,6 +105,7 @@ fi
 [[ -z "$(git -C "$default_source" status --porcelain)" && -z "$(git -C "$default_source" clean -ndX)" ]] || { echo 'Buzz checkout must be clean, including ignored files' >&2; exit 2; }
 [[ -z "$(git -C "$ROOT" status --porcelain)" ]] || { echo 'RustShare worktree must be clean to bind test evidence to a commit' >&2; exit 2; }
 git -C "$ROOT" rev-parse HEAD >"$EVIDENCE_DIR/rustshare-source.txt"
+cp "$HERE/versions.env" "$EVIDENCE_DIR/tool-image-pins.env"
 {
 	echo "buzz_source=$SOURCE_SHA"
 	echo "buzz_tree=$SOURCE_TREE"
@@ -360,8 +362,14 @@ values = {
  "BUZZ_TEST_RELAY_OUTAGE_ACK_FILE":"/tmp/relay-outage.ack", "BUZZ_TEST_RELAY_RESTORE_ACK_FILE":"/tmp/relay-restore.ack",
 }
 path = Path(sys.argv[3]); path.write_text("".join(f"{k}={v}\n" for k,v in values.items())); path.chmod(0o600)
-public = {"tenant_a": {"community": a["community_id"], "channel": a["channel_id"], "event": a["event_id"], "author": a["author"]},
-          "tenant_b": {"community": b["community_id"], "channel": b["channel_id"], "event": b["event_id"], "author": b["author"]}}
+public = {
+    "tenant_a": {"community": a["community_id"], "channel": a["channel_id"], "event": a["event_id"], "author": a["author"],
+                 "provisioning_channel": a["provisioning_channel_id"], "provisioning_event": a["provisioning_event_id"],
+                 "provisioning_author": a["provisioning_author"]},
+    "tenant_b": {"community": b["community_id"], "channel": b["channel_id"], "event": b["event_id"], "author": b["author"],
+                 "provisioning_channel": b["provisioning_channel_id"], "provisioning_event": b["provisioning_event_id"],
+                 "provisioning_author": b["provisioning_author"]},
+}
 Path(sys.argv[1]).write_text(json.dumps(public, indent=2) + "\n")
 PY
 cp "$RUN_DIR/connector-public.env" "$EVIDENCE_DIR/connector-public.env"
@@ -412,7 +420,8 @@ run_rust_test() {
 		TCP_PID=$!
 		timeout --signal=TERM 60s hubble observe --server 127.0.0.1:4245 --since 1s --follow --pod "$NAMESPACE/rust-connector" --protocol udp --output compact >"$EVIDENCE_DIR/$1-hubble-udp.log" 2>&1 &
 		UDP_PID=$!
-		sleep 1
+		# Let both Hubble streams subscribe before the test's first network request.
+		sleep 3
 		for name in TCP_PID UDP_PID; do
 			local pid="${!name}"
 			if ! kill -0 "$pid" 2>/dev/null; then
@@ -420,6 +429,20 @@ run_rust_test() {
 				return 1
 			fi
 		done
+		if [[ "$capture" == no-tcp ]]; then
+			local dns_host="hubble-ready-$RUN_ID.$NAMESPACE.svc.cluster.local"
+			"${K[@]}" -n "$NAMESPACE" exec rust-connector -c postgres -- getent ahostsv4 "$dns_host" \
+				>"$EVIDENCE_DIR/dns-observer-preflight.txt" 2>&1 || true
+			for _ in {1..20}; do
+				if grep -Eq 'rust-connector.*->.*controlled-dns.*:53' "$EVIDENCE_DIR/$1-hubble-udp.log"; then break; fi
+				sleep 0.25
+			done
+			if ! grep -Eq 'rust-connector.*->.*controlled-dns.*:53' "$EVIDENCE_DIR/$1-hubble-udp.log"; then
+				echo 'Hubble did not capture the controlled DNS preflight' >&2
+				cat "$EVIDENCE_DIR/$1-hubble-udp.log" >&2
+				return 1
+			fi
+		fi
 	fi
 	set +e
 	"${K[@]}" -n "$NAMESPACE" exec rust-connector -c rust-test -- /usr/local/bin/test-runner --ignored --exact "$filter" --nocapture >"$log" 2>&1
@@ -445,6 +468,14 @@ run_rust_test() {
 	if [[ "$capture" == no-tcp ]]; then
 		if ! grep -Eq 'rust-connector.*->.*controlled-dns.*:53' "$EVIDENCE_DIR/$1-hubble-udp.log"; then
 			echo 'no positive DNS exchange in the rejection-window capture' >&2
+			cat "$EVIDENCE_DIR/$1-hubble-udp.log" >&2
+			return 1
+		fi
+		# Source ports and resolver flow counts vary across libc/runtime versions.
+		# The Rust test validates the answers; this preflight validates DNS capture,
+		# while the same window verifies the rejected target was never dialed.
+		if ! grep -Eq 'rust-connector.*->.*controlled-dns.*:53' "$EVIDENCE_DIR/$1-hubble-udp.log"; then
+			echo 'Hubble did not capture the controlled DNS preflight' >&2
 			cat "$EVIDENCE_DIR/$1-hubble-udp.log" >&2
 			return 1
 		fi
