@@ -104,7 +104,7 @@ class Session {
 	async publish(signed) {
 		this.socket.send(JSON.stringify(['EVENT', signed]));
 		const answer = await this.next((f) => (f[0] === 'OK' && f[1] === signed.id) || ['SOCKET_CLOSE', 'HTTP_ERROR', 'TRANSPORT_ERROR'].includes(f[0]));
-		return { accepted: answer[0] === 'OK' && answer[2] === true, outcome: answer[0] === 'OK' ? 'OK' : answer[0], event_id: signed.id, ...(answer[3] ? { relay_message: answer[3] } : {}) };
+		return { accepted: answer[0] === 'OK' && answer[1] === signed.id && answer[2] === true, outcome: answer[0] === 'OK' ? 'OK' : answer[0], event_id: signed.id, ack_event_id: answer[0] === 'OK' ? answer[1] : null, ...(answer[3] ? { relay_message: answer[3] } : {}) };
 	}
 	async read(filter, includePayload = false) {
 		const sub = randomUUID();
@@ -265,16 +265,17 @@ try {
 	await check('kind9_publish', async () => {
 		publicMessage = await event(keys.ALICE, 9, [['h', publicChannel]], `POC ${randomUUID()}`);
 		const wire = await alice.publish(publicMessage);
-		return result(wire.accepted, wire);
+		return result(wire.accepted && wire.ack_event_id === publicMessage.id, wire);
 	});
 	await check('kind9_history_bob', async () => {
 		const read = await bob.read({ kinds: [9], '#h': [publicChannel], limit: 20 });
-		return result(read.outcome === 'EOSE' && read.events.some((item) => item.id === publicMessage.id), read);
+		const observed = read.events.find((item) => item.id === publicMessage.id);
+		return result(read.outcome === 'EOSE' && observed?.pubkey === pubs.ALICE && hasChannelRef(observed, publicChannel), { outcome: read.outcome, event_id: observed?.id, author: observed?.pubkey, channel_id: observed?.tags?.find((tag) => tag[0] === 'h')?.[1], history_observed: Boolean(observed) });
 	});
 	await check('private_channel_bob_denied', async () => {
 		const metadata = await bob.read({ kinds: [39000], '#d': [privateChannel], limit: 20 });
 		const history = await bob.read({ kinds: [9], '#h': [privateChannel], limit: 20 });
-		return result([metadata, history].every(deniedWithoutEvents), { metadata, history });
+		return result([metadata, history].every(deniedWithoutEvents), { metadata_outcome: metadata.outcome, metadata_event_count: metadata.events.length, history_outcome: history.outcome, history_event_count: history.events.length });
 	});
 	await check('private_channel_add_bob', async () => {
 		const wire = await owner.publish(await event(keys.OWNER, 9000, [['h', privateChannel], ['p', pubs.BOB]]));
@@ -466,7 +467,18 @@ try {
 		private_channel: privateChannel,
 		public_message_id: publicMessage?.id,
 		private_message_id: privateMessage?.id,
-		results: results.map(({ name, pass }) => ({ name, pass })),
+		events: {
+			public_kind9: publicMessage ? { event_id: publicMessage.id, author: pubs.ALICE, channel_id: publicChannel } : null,
+			private_kind9: privateMessage ? { event_id: privateMessage.id, author: pubs.ALICE, channel_id: privateChannel } : null,
+		},
+		results: results.map(({ name, pass, outcome, published, history_observed, event_id, ack_event_id, metadata_event_count, history_event_count }) => ({
+			name, pass,
+			outcome: [outcome, published?.outcome].find((item) => typeof item === 'string' && /^[A-Z_]+$/.test(item)) || null,
+			...(event_id ? { event_id } : {}), ...(ack_event_id ? { ack_event_id } : {}),
+			...(history_observed !== undefined ? { history_observed } : {}),
+			...(metadata_event_count !== undefined ? { metadata_event_count } : {}),
+			...(history_event_count !== undefined ? { history_event_count } : {}),
+		})),
 		unrun: process.env.POC_COMPATIBILITY_ONLY === '1'
 			? ['open_pre_revocation_subscriptions', 'nip43_remove_bob', 'nip43_remove_exact_replay', 'revoked_existing_subscription', 'revoked_existing_publish', 'revoked_existing_new_req', 'revoked_fresh_connection', 'revoked_reconnect_after_delay']
 			: [],

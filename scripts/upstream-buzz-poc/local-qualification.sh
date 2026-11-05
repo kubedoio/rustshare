@@ -12,7 +12,7 @@ if [[ "$MODE" == security ]]; then
 fi
 [[ "$MODE" == compatibility ]] || { echo 'usage: local-qualification.sh [compatibility|security]' >&2; exit 2; }
 
-for command in git docker node python3 sha256sum; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
+for command in git docker node python3 sha256sum openssl; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
 docker info >/dev/null
 SOURCE_SHA="$(git -C "$ROOT" rev-parse HEAD)"
 WORKTREE_STATE="$(if [[ -z "$(git -C "$ROOT" status --porcelain)" ]]; then echo clean; else echo modified; fi)"
@@ -40,9 +40,13 @@ trap cleanup EXIT INT TERM
 
 inventory() {
 	{
+		echo COMPOSE_PROJECTS
 		docker compose ls --all --format json | python3 -c 'import json,sys; print(json.dumps(sorted((x["Name"],x["Status"]) for x in json.load(sys.stdin)),separators=(",",":")))'
+		echo CONTAINERS
 		docker ps -a --format '{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}|{{.Networks}}|{{.Mounts}}' | sort
+		echo VOLUMES
 		docker volume ls --format '{{.Name}}|{{.Labels}}' | sort
+		echo NETWORKS
 		docker network ls --format '{{.Name}}|{{.Driver}}|{{.Scope}}' | sort
 	} >"$1"
 }
@@ -77,16 +81,26 @@ tests = protocol.get('results', [])
 restart = bool(re.search(r'^relay_identity_restart=PASS\b', log, re.M))
 all_tests_pass = bool(tests) and all(t.get('pass') is True for t in tests)
 compat = 'PASS' if int(run_status) == 0 and all_tests_pass and restart else 'FAIL' if any(t.get('pass') is False for t in tests) or re.search(r'^relay_identity_restart=FAIL', log, re.M) else 'UNVERIFIED'
+def inventory_sections(path):
+  sections, current = {}, None
+  for line in path.read_text().splitlines():
+    if line in {'COMPOSE_PROJECTS','CONTAINERS','VOLUMES','NETWORKS'}: current=line.lower(); sections[current]=[]
+    elif current: sections[current].append(line)
+  return sections
+before, after = inventory_sections(run_dir / 'inventory-before.txt'), inventory_sections(run_dir / 'inventory-after.txt')
+import hashlib
+inventory_digests = {side: hashlib.sha256((run_dir / f'inventory-{side}.txt').read_bytes()).hexdigest() for side in ('before','after')}
 report.write_text(json.dumps({
   'rustshare': {'source_sha': source_sha, 'worktree_state': worktree},
   'upstream_buzz': {'source_sha': upstream_sha, 'tree': upstream_tree, 'release_provenance_decision': 'UNVERIFIED_HISTORICAL_BASELINE_NOT_SECURITY_APPROVED' if not provenance else 'SUPPLIED_FOR_REVIEW_ONLY', 'provenance_reference': provenance or None},
   'compose': {'version': field('compose_version'), 'project_prefix': project, 'projects': [project+'-a', project+'-b'], 'ports': 'dynamically allocated loopback only'},
   'image': {'image_id': field('upstream_image_id'), 'build_digest': field('upstream_image_build_digest')},
-  'tests': [{'name': t['name'], 'status': 'PASS' if t['pass'] is True else 'FAIL' if t['pass'] is False else 'UNVERIFIED'} for t in tests] + [{'name': n, 'status': 'UNVERIFIED_NOT_RUN_PRIVATE_REMEDIATION_TEST'} for n in protocol.get('unrun', [])],
-  'protocol_evidence': {k: protocol.get(k) for k in ('public_keys', 'public_channel', 'private_channel', 'public_message_id', 'private_message_id')},
+  'tests': [{k:v for k,v in {'name': t['name'], 'status': 'PASS' if t['pass'] is True else 'FAIL' if t['pass'] is False else 'UNVERIFIED', 'outcome': t.get('outcome'), 'event_id': t.get('event_id'), 'ack_event_id': t.get('ack_event_id'), 'history_observed': t.get('history_observed'), 'metadata_event_count': t.get('metadata_event_count'), 'history_event_count': t.get('history_event_count')}.items() if v is not None} for t in tests] + [{'name': n, 'status': 'UNVERIFIED_NOT_RUN_PRIVATE_REMEDIATION_TEST'} for n in protocol.get('unrun', [])],
+  'protocol_evidence': {k: protocol.get(k) for k in ('public_keys', 'public_channel', 'private_channel', 'public_message_id', 'private_message_id', 'events')},
   'restart_recovery': {'relay_identity_persisted_after_restart': 'PASS' if restart else 'FAIL'},
   'secret_redaction_validation': 'PENDING',
   'existing_docker_inventory_unchanged': inventory_unchanged == 'true',
+  'existing_docker_inventory': {'before_sha256': inventory_digests['before'], 'after_sha256': inventory_digests['after'], 'compose_projects_before': before.get('compose_projects', []), 'compose_projects_after': after.get('compose_projects', []), 'containers_before': before.get('containers', []), 'containers_after': after.get('containers', []), 'named_volumes_before': before.get('volumes', []), 'named_volumes_after': after.get('volumes', [])},
   'local_protocol_compatibility': compat,
   'local_compose_compatibility': compat,
   'upstream_security_remediation': 'BLOCKED',
