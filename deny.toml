@@ -57,7 +57,7 @@ ignore = [
     # proc-macro-error2 — unmaintained; pulled in by validator_derive v0.20.0 (latest validator release)
     { id = "RUSTSEC-2026-0173", reason = "validator v0.20.0 depends on proc-macro-error2; no alternative release available" },
     # pin-utils is informationally unmaintained with no patched release; currently transitive through async-imap and AWS Smithy crates.
-    { id = "RUSTSEC-2026-0441", reason = "No patched release; required by async-imap and AWS Smithy dependencies" },
+    { id = "RUSTSEC-2026-0441", reason = "Locked async-imap 0.11.3 and AWS Smithy need it; remove when async-imap drops pin-utils" },
     # h2 0.3.27 — final 0.3.x; upstream patched only the 0.4 line (RUSTSEC-2026-0258).
     # Reached only via the AWS SDK client path (aws-smithy-http-client -> hyper 0.14 ->
     # RustFS/S3). Low-severity DoS (unbounded empty DATA frames) that requires a
