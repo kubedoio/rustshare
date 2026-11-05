@@ -17,7 +17,7 @@ BUZZ_IMAGE="local/elembra-cilium-buzz:${RUN_ID}"
 POC_IMAGE="local/elembra-cilium-tools:${RUN_ID}"
 RUNNER_IMAGE="local/elembra-cilium-runner:${RUN_ID}"
 EVIDENCE_DIR="${EVIDENCE_DIR:-${TMPDIR:-/tmp}/elembra-cilium-evidence-${RUN_ID}}"
-RESOURCE_LOCK_DIR="${TMPDIR:-/tmp}/elembra-cilium-lock-${RUN_ID}"
+RESOURCE_LOCK_DIR="/tmp/elembra-cilium-lock-${RUN_ID}"
 [[ ! -e "$EVIDENCE_DIR" ]] || { echo "evidence path already exists: $EVIDENCE_DIR" >&2; exit 2; }
 mkdir -m 0700 "$EVIDENCE_DIR"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/elembra-cilium.${RUN_ID}.XXXXXX")"
