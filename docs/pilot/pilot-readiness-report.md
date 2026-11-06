@@ -9,12 +9,12 @@
   Elembra/Buzz service health checks passed. The Chat observer is connected,
   authenticated, community-discovered, and ready.
 - PR #467 (public relay routing) merged as `a1c1934b035899a29b691e3a201ed5086646ab12`.
-  PR #468 (`aeedb420ddbda7d6a8937f3be1930b61595177cf`) fixes a deployed
+  PR #468 (`c93d68710cdee4297068af4f4502799656261c06`) fixes the deployed
   publish-ack ordering defect: relay-accepted messages were displayed as
-  rejected in the browser. Its focused test passed (12/12), formatting passed,
-  and its pre-rebase required CI passed (workflow-skipped jobs remain skipped).
-  Checks are rerunning after rebase onto current `main`; review and deployment
-  rerun remain pending. Do not claim the fix is deployed.
+  rejected in the browser. Its focused test passes (12/12), including a 300 ms
+  delayed relay ACK, and formatting passes. The latest commit was pushed after
+  the prior approval, so renewed review and CI are pending; the fix is not
+  deployed.
 - The active backend source checkout is `08173b3ad223b7bd41a9ba055a831ec60f240b03`
   with an uncommitted migration overlay. Running backend image ID is
   `sha256:afbeae6555191470f575f6e8da827575b6d3731e921a17719548ccf3dffaebbc`;
@@ -28,8 +28,8 @@
   forward migrations. A restored-copy upgrade using the exact-SHA image
   `rustshare-backend@sha256:bdf8673aca4fc99e71761800efe49f6bc1050c10f8d93ee4a8b09ca134a55592`
   also applied all 130 migrations and reached healthy backend state. This is
-  isolated migration evidence only; PR #470 is not merged and the image is not
-  deployed. PR CI is still running.
+  isolated migration evidence only; PR #470 is approved and its required CI
+  checks pass, but it is not merged and the image is not deployed.
 - Pinned Buzz relay image:
   `ghcr.io/kubedoio/buzz-elembra@sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a`.
   Server-managed signing and publishing remain disabled. The OCI image revision
@@ -47,8 +47,8 @@
   had matching author keys and verified signatures; the observer recorded both.
   Both browser histories survived reload and backend/relay/observer restart.
   The browser's send UI incorrectly showed “Relay rejected” for successful
-  publishes, so the end-user delivery-state assertion is **FAIL** pending PR
-  #468 review, merge, release, and deployed rerun.
+  publishes, so the deployed end-user delivery-state assertion remains
+  **FAIL** pending PR #468 review, merge, release, and deployed rerun.
 - Private channel: hidden from the non-member channel list, but there was no
   authorized member message to probe and the unauthorized message query
   returned HTTP 200 with an empty result. Private-channel denial is therefore
@@ -96,7 +96,7 @@
   server-managed signing/publishing, and unverified migrations remain deferred.
 
 
-## Latest exact-candidate workflow update (2026-10-06)
+## Historical exact-candidate workflow update (2026-10-06; superseded for current acceptance)
 
 - Candidate source SHA: `1b4aeb18c9578f225e732ff44225ea6df54a874a`.
 - [Pilot Release run 37461268485](https://github.com/kubedoio/rustshare/actions/runs/37461268485)
