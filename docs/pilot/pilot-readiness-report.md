@@ -9,12 +9,12 @@
   Elembra/Buzz service health checks passed. The Chat observer is connected,
   authenticated, community-discovered, and ready.
 - PR #467 (public relay routing) merged as `a1c1934b035899a29b691e3a201ed5086646ab12`.
-  PR #468 (`d87e4dee4756459cefb29f70ace6d40a2b0efd76`) fixes a deployed
+  PR #468 (`aeedb420ddbda7d6a8937f3be1930b61595177cf`) fixes a deployed
   publish-ack ordering defect: relay-accepted messages were displayed as
   rejected in the browser. Its focused test passed (12/12), formatting passed,
-  and the required PR checks now pass (workflow-skipped jobs remain skipped).
-  The PR still needs review approval and deployment rerun; do not claim the fix
-  is deployed.
+  and its pre-rebase required CI passed (workflow-skipped jobs remain skipped).
+  Checks are rerunning after rebase onto current `main`; review and deployment
+  rerun remain pending. Do not claim the fix is deployed.
 - The active backend source checkout is `08173b3ad223b7bd41a9ba055a831ec60f240b03`
   with an uncommitted migration overlay. Running backend image ID is
   `sha256:afbeae6555191470f575f6e8da827575b6d3731e921a17719548ccf3dffaebbc`;
