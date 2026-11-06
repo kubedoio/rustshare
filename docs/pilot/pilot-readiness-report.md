@@ -4,7 +4,6 @@
 
 ## Elembra WebUI deployment execution (2026-11-06)
 
-
 - **Decision: POC NOT READY for users.** `https://app.rustshare.io/` serves the
   Elembra page over valid TLS. Public WSS at `wss://app.rustshare.io/` accepts
   a connection; the same-host NIP-11 request returns Buzz Relay metadata.
@@ -42,6 +41,10 @@
   mapping, browser identity binding, two-user messaging, file authorization,
   revocation, restart/history recovery, and rollback restoration therefore
   remain unverified.
+- Sanitized backend logs also show the Chat bridge outbox consumer cannot
+  register because its persisted subscription set is immutable and differs
+  from the deployed source. This needs resolution before relying on bridge
+  event delivery, even though container and API health probes report healthy.
 - Focused existing UI tests previously passed (22 tests across
   `ChatApplicationView.test.ts` and `ChannelList.test.ts`). This is not
   end-to-end evidence. The Notes implementation already stores the Markdown
@@ -50,7 +53,6 @@
   #458 execution/artifact **PASS**, independent acceptance **PENDING**; #460
   upstream remediation **UNKNOWN/BLOCKED**. These waivers do not mark tests as
   passed. Server-side signing and publishing remain disabled.
-
 
 
 ## Latest exact-candidate workflow update (2026-10-06)
