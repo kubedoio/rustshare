@@ -17,17 +17,19 @@
   inherits the configured public relay URL; the former forced localhost URL
   caused authentication failure.
 - Focused configuration fix is in [PR #467](https://github.com/kubedoio/rustshare/pull/467)
-  (`69e7321f3d12e7da75faf681eb0457221aea289a`); repository CI was still
-  running when this record was updated (DCO and Vault Sync Compliance passed;
-  CI, Frontend CI, Integration Tests, and CodeQL were in progress). It has not
-  been merged.
-- Backend source commit: `c8cc8f28a4b97fdb6434016de77161452aee11ca`; built
-  image digest: `rustshare-backend@sha256:112b3d860f0ed07bbe378cd3d2f66fd6f9fd747655e5a12841b75ba5f08c688c`.
-  The isolated deployment worktree included 23 historical migration files
-  copied from `origin/main` after each was matched against the database's
-  applied SQLx checksum. All 128 applied migration checksums match; no pending
-  migration was included or applied. The OCI revision label is `unknown`, so
-  the effective source is not represented by one clean repository commit.
+  (configuration commit `69e7321f3d12e7da75faf681eb0457221aea289a`); DCO,
+  Vault Sync Compliance, CI, Frontend CI, and CodeQL pass on the latest head.
+  Integration Tests remain in progress. It has not been merged.
+- Backend application source: `origin/main` commit
+  `594fe807077d06d19e05ffbce38d08c9e8a83c71`; image digest:
+  `rustshare-backend@sha256:9cfa843d29d717ce00d38cd711db4dfcc28fccc4da1356c6e4da70e23d145638`.
+  The build restored the already-applied checksum for migration
+  `20261101100000` and excluded the sole unapplied
+  `20261103100000_managed_chat_identity_operations` migration. All 128 applied
+  migration checksums match; no pending migration was included or applied.
+  The upstream runtime Cargo feature was not enabled. The OCI revision label
+  is `unknown`, so the effective source tree is not represented by one clean
+  repository commit.
 - Buzz relay image:
   `ghcr.io/kubedoio/buzz-elembra@sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a`.
   Backend container image ID is `sha256:24c4f619ebec1033e001a0caee266efd47e76f9a9e79ef34fa819b688ee7803e`.
@@ -41,10 +43,10 @@
   mapping, browser identity binding, two-user messaging, file authorization,
   revocation, restart/history recovery, and rollback restoration therefore
   remain unverified.
-- Sanitized backend logs also show the Chat bridge outbox consumer cannot
-  register because its persisted subscription set is immutable and differs
-  from the deployed source. This needs resolution before relying on bridge
-  event delivery, even though container and API health probes report healthy.
+- The first stale-checkout backend could not register the persisted Chat bridge
+  subscription set. After rebuilding from the matching source, sanitized logs
+  show the Chat bridge and memory consumers registering successfully; the
+  mismatch was resolved without changing the immutable database contract.
 - Focused existing UI tests previously passed (22 tests across
   `ChatApplicationView.test.ts` and `ChannelList.test.ts`). This is not
   end-to-end evidence. The Notes implementation already stores the Markdown
