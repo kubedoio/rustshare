@@ -64,17 +64,24 @@
   Check”. Its Files name remained `note.md` at
   `/Workspace/Notes/Untitled Note/note.md`. The disposable test note was deleted.
   **PASS**.
-- The verified pre-cleanup backup at
-  `/tmp/elembra-poc-backups/20261106T124248Z` is 1.7 GB and checksum-verified,
-  but remains same-host storage; no durable off-host copy is evidenced. An
-  isolated restore drill restored PostgreSQL and RustFS and reached healthy
-  backend/nginx with all 130 migrations applied, then failed authenticated smoke
-  login with HTTP 401 because the restored database's admin hash differs from
-  the fresh deployment `.env`. The backup manifest records `CHAT_BACKUP=false`,
-  no Buzz PostgreSQL service, and Chat secrets as external, so it is not a full
-  Elembra/Buzz recovery bundle. The isolated stack was removed. Full restore,
-  post-restore Chat/Files/Notes verification, off-host backup, and rollback remain
-  **FAIL/UNVERIFIED**; production volumes were not changed by the drill.
+- A fresh full `--with-chat` backup at
+  `/tmp/elembra-poc-backups-current/20261106T191748Z` passed checksum and
+  structural verification. Its manifest records `CHAT_BACKUP=true`, and the
+  bundle includes application PostgreSQL/RustFS plus Buzz PostgreSQL/RustFS.
+  It remains same-host storage; the deployment secrets are intentionally
+  separate and no off-host copy of data or encrypted identities is evidenced.
+- An isolated core restore of that fresh snapshot passed using the exact-SHA
+  backend candidate: authenticated admin login and root Files smoke checks
+  passed; all 130 migrations were applied and backend health was green. Image
+  ID/digest was
+  `sha256:bdf8673aca4fc99e71761800efe49f6bc1050c10f8d93ee4a8b09ca134a55592`
+  from source `c827e0fffda2d09d506e29540aeceb2da7f9afbd`. The repository restore
+  drill does not restore Buzz services, so Buzz history, browser identity,
+  Notes-after-restore, and full Elembra/Buzz recovery remain **UNVERIFIED**.
+  The isolated stack was removed and production volumes were not changed.
+  Off-host storage and rollback validation also remain incomplete. An earlier
+  attempt using the pre-cleanup backup failed admin login (401); that result is
+  superseded for core restore by the verified current snapshot.
 - The approved cleanup reset the active database/storage and generated a fresh
   Chat identity; the pre-cleanup backup is retained. Current post-reset
   operational evidence does not substitute for an off-host backup or rollback
