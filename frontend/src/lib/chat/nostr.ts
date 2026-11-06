@@ -101,10 +101,12 @@ export async function publishEvent(
 		// post-auth, even if the relay does not send a pre-auth rejection.
 		let sawAuthRejection = false;
 		let authSent = false;
+		let authRejectionTimer: ReturnType<typeof setTimeout> | undefined;
 		const finish = (result: PublishResult) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			if (authRejectionTimer) clearTimeout(authRejectionTimer);
 			socket.close();
 			resolve(result);
 		};
@@ -147,13 +149,23 @@ export async function publishEvent(
 				}
 				if (message[0] === 'OK' && message[1] === signed.id) {
 					if (
-						!authSent &&
 						!sawAuthRejection &&
 						message[2] === false &&
 						typeof message[3] === 'string' &&
 						message[3].toLowerCase().includes('auth')
 					) {
 						sawAuthRejection = true;
+						// A relay may deliver the pre-auth rejection after AUTH and the
+						// resend. Give the resent publish a longer ACK window before surfacing it.
+						// shortcut: ACKs share an event ID, so a late rejection is ambiguous;
+						// replace this grace period if the relay exposes correlated ACKs.
+						if (authSent) {
+							const detail = message[3];
+							authRejectionTimer = setTimeout(
+								() => finish({ ok: false, reason: 'rejected', detail }),
+								1_000
+							);
+						}
 						return;
 					}
 					finish(
