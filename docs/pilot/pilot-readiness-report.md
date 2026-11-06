@@ -75,9 +75,12 @@
   passed; all 130 migrations were applied and backend health was green. Image
   ID/digest was
   `sha256:bdf8673aca4fc99e71761800efe49f6bc1050c10f8d93ee4a8b09ca134a55592`
-  from source `c827e0fffda2d09d506e29540aeceb2da7f9afbd`. The repository restore
-  drill does not restore Buzz services, so Buzz history, browser identity,
-  Notes-after-restore, and full Elembra/Buzz recovery remain **UNVERIFIED**.
+  from source `c827e0fffda2d09d506e29540aeceb2da7f9afbd`. A separate isolated
+  browser check created and saved a Note, edited its Markdown H1 while keeping
+  the Files path `/Workspace/Notes/Untitled Note/note.md`, opened it in Files,
+  and removed the disposable Note: Notes/Files after core restore **PASS**.
+  The repository restore drill does not restore Buzz services, so Buzz history,
+  browser identity, and full Elembra/Buzz recovery remain **UNVERIFIED**.
   The isolated stack was removed and production volumes were not changed.
   Off-host storage and rollback validation also remain incomplete. An earlier
   attempt using the pre-cleanup backup failed admin login (401); that result is
