@@ -2,6 +2,57 @@
 
 ## Conclusion: NOT READY
 
+## Elembra WebUI deployment execution (2026-11-06)
+
+
+- **Decision: POC NOT READY for users.** `https://app.rustshare.io/` serves the
+  Elembra page over valid TLS. Public WSS at `wss://app.rustshare.io/` accepts
+  a connection; the same-host NIP-11 request returns Buzz Relay metadata.
+- `./scripts/elembra.sh up` is running Elembra, PostgreSQL, RustFS, nginx,
+  Buzz PostgreSQL, Redis, Buzz RustFS, the pinned Buzz relay, and the Chat
+  observer. All nine services report healthy; `/health/ready` reports ready.
+  Sanitized observer status: `connection=connected`, `auth=authenticated`,
+  `registry=ready`, `community_discovered=true`, `observation=ready`.
+- Nginx root dispatch now sends WebSocket and NIP-11 requests to Buzz while
+  ordinary `/` requests go to Elembra. `nginx -t` passed. The observer now
+  inherits the configured public relay URL; the former forced localhost URL
+  caused authentication failure.
+- Focused configuration fix is in [PR #467](https://github.com/kubedoio/rustshare/pull/467)
+  (`69e7321f3d12e7da75faf681eb0457221aea289a`); repository CI was still
+  running when this record was updated (DCO and Vault Sync Compliance passed;
+  CI, Frontend CI, Integration Tests, and CodeQL were in progress). It has not
+  been merged.
+- Backend source commit: `c8cc8f28a4b97fdb6434016de77161452aee11ca`; built
+  image digest: `rustshare-backend@sha256:112b3d860f0ed07bbe378cd3d2f66fd6f9fd747655e5a12841b75ba5f08c688c`.
+  The isolated deployment worktree included 23 historical migration files
+  copied from `origin/main` after each was matched against the database's
+  applied SQLx checksum. All 128 applied migration checksums match; no pending
+  migration was included or applied. The OCI revision label is `unknown`, so
+  the effective source is not represented by one clean repository commit.
+- Buzz relay image:
+  `ghcr.io/kubedoio/buzz-elembra@sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a`.
+  Backend container image ID is `sha256:24c4f619ebec1033e001a0caee266efd47e76f9a9e79ef34fa819b688ee7803e`.
+- Existing PostgreSQL and RustFS data and deployment identities were backed up
+  before restart. The 1.7 GB backup bundle at
+  `/tmp/elembra-poc-backups/20261106T124248Z` passed checksum and structural
+  verification. A restore drill was not run.
+- Chat was not enabled: the preserved `RUSTSHARE_ADMIN_PASSWORD` returned
+  HTTP 401 for the active administrator account, and the backend bootstrap
+  password file is absent. No credential reset was performed. Workspace
+  mapping, browser identity binding, two-user messaging, file authorization,
+  revocation, restart/history recovery, and rollback restoration therefore
+  remain unverified.
+- Focused existing UI tests previously passed (22 tests across
+  `ChatApplicationView.test.ts` and `ChannelList.test.ts`). This is not
+  end-to-end evidence. The Notes implementation already stores the Markdown
+  H1 independently from its filename; a live Files/Notes workflow was not run.
+- Deferred statuses remain open: #442 desktop interoperability **UNVERIFIED**;
+  #458 execution/artifact **PASS**, independent acceptance **PENDING**; #460
+  upstream remediation **UNKNOWN/BLOCKED**. These waivers do not mark tests as
+  passed. Server-side signing and publishing remain disabled.
+
+
+
 ## Latest exact-candidate workflow update (2026-10-06)
 
 - Candidate source SHA: `1b4aeb18c9578f225e732ff44225ea6df54a874a`.
