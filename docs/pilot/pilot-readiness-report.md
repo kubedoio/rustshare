@@ -28,8 +28,9 @@
   forward migrations. A restored-copy upgrade using the exact-SHA image
   `rustshare-backend@sha256:bdf8673aca4fc99e71761800efe49f6bc1050c10f8d93ee4a8b09ca134a55592`
   also applied all 130 migrations and reached healthy backend state. This is
-  isolated migration evidence only; PR #470 is approved and its required CI
-  checks pass, but it is not merged and the image is not deployed.
+  isolated migration evidence only; PR #470 merged as
+  `44a98355c3ccdbc21fdffbfd1dfc1672428788ff` after approval and required CI
+  passed. The candidate image is not deployed.
 - Pinned Buzz relay image:
   `ghcr.io/kubedoio/buzz-elembra@sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a`.
   Server-managed signing and publishing remain disabled. The OCI image revision
