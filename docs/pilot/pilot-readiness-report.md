@@ -12,17 +12,24 @@
   PR #468 (`d87e4dee4756459cefb29f70ace6d40a2b0efd76`) fixes a deployed
   publish-ack ordering defect: relay-accepted messages were displayed as
   rejected in the browser. Its focused test passed (12/12), formatting passed,
-  and the required PR checks were still pending at this report update. Do not
-  claim the fix is deployed.
+  and the required PR checks now pass (workflow-skipped jobs remain skipped).
+  The PR still needs review approval and deployment rerun; do not claim the fix
+  is deployed.
 - The active backend source checkout is `08173b3ad223b7bd41a9ba055a831ec60f240b03`
   with an uncommitted migration overlay. Running backend image ID is
   `sha256:afbeae6555191470f575f6e8da827575b6d3731e921a17719548ccf3dffaebbc`;
-  OCI source revision is `unknown`, and no registry digest or clean exact-source
-  image is established. The effective image altered migration
-  `20261101100000` to match the historical applied checksum and omitted pending
-  migration `20261103100000_managed_chat_identity_operations`. No replacement
-  backend was deployed. Migration compatibility remains unproven on disposable
-  restored data; do not release this image as a reproducible candidate.
+  OCI source revision is `unknown`. No replacement backend was deployed.
+- Migration reconciliation is in PR #470, commit
+  `c827e0fffda2d09d506e29540aeceb2da7f9afbd`: it restores migration
+  `20261101100000` to the exact SHA-384 checksum stored in the backup database,
+  includes pending `20261103100000_managed_chat_identity_operations`, and moves
+  actor-attribution predicates to new forward migration `20261106183700`.
+  A clean disposable database applied all 130 migrations, including both
+  forward migrations. A restored-copy upgrade using the exact-SHA image
+  `rustshare-backend@sha256:bdf8673aca4fc99e71761800efe49f6bc1050c10f8d93ee4a8b09ca134a55592`
+  also applied all 130 migrations and reached healthy backend state. This is
+  isolated migration evidence only; PR #470 is not merged and the image is not
+  deployed. PR CI is still running.
 - Pinned Buzz relay image:
   `ghcr.io/kubedoio/buzz-elembra@sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a`.
   Server-managed signing and publishing remain disabled. The OCI image revision
@@ -61,10 +68,13 @@
   `/tmp/elembra-poc-backups/20261106T124248Z` is 1.7 GB and checksum-verified,
   but remains same-host storage; no durable off-host copy is evidenced. An
   isolated restore drill restored PostgreSQL and RustFS and reached healthy
-  backend/nginx, then failed authenticated smoke login with HTTP 401 because
-  the restored database's admin hash differs from the fresh deployment `.env`.
-  The isolated stack was automatically removed. Restore acceptance and rollback
-  remain **FAIL/UNVERIFIED**; no production volumes were changed by the drill.
+  backend/nginx with all 130 migrations applied, then failed authenticated smoke
+  login with HTTP 401 because the restored database's admin hash differs from
+  the fresh deployment `.env`. The backup manifest records `CHAT_BACKUP=false`,
+  no Buzz PostgreSQL service, and Chat secrets as external, so it is not a full
+  Elembra/Buzz recovery bundle. The isolated stack was removed. Full restore,
+  post-restore Chat/Files/Notes verification, off-host backup, and rollback remain
+  **FAIL/UNVERIFIED**; production volumes were not changed by the drill.
 - The approved cleanup reset the active database/storage and generated a fresh
   Chat identity; the pre-cleanup backup is retained. Current post-reset
   operational evidence does not substitute for an off-host backup or rollback
