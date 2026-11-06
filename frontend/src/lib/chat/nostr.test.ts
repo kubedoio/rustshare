@@ -64,6 +64,8 @@ class FakeWebSocket {
 	static challengeOnEvent = true;
 	// Set false to script every OK frame manually from the test.
 	static autoOkOnEvent = true;
+	static latePreAuthRejection = false;
+	static autoOkDelayMs = 0;
 
 	sent: unknown[][] = [];
 	onopen: (() => void) | null = null;
@@ -72,6 +74,7 @@ class FakeWebSocket {
 	onclose: (() => void) | null = null;
 	closed = false;
 	authenticated = false;
+	initialEventId: string | null = null;
 
 	constructor() {
 		FakeWebSocket.instances.push(this);
@@ -85,13 +88,21 @@ class FakeWebSocket {
 		this.sent.push(frame);
 		if (frame[0] === 'AUTH') {
 			this.authenticated = true;
+			if (FakeWebSocket.latePreAuthRejection && this.initialEventId) {
+				const eventId = this.initialEventId;
+				setTimeout(() => this.reply(['OK', eventId, false, 'auth-required: not authenticated']), 0);
+			}
 		} else if (frame[0] === 'EVENT' && FakeWebSocket.challengeOnEvent && !this.authenticated) {
 			// Buzz relay behavior: an unauthenticated EVENT provokes the NIP-42
 			// AUTH challenge instead of an immediate OK.
+			this.initialEventId = (frame[1] as { id: string }).id;
 			this.reply(['AUTH', 'challenge-1']);
 		} else if (frame[0] === 'EVENT' && FakeWebSocket.autoOkOnEvent) {
 			const event = frame[1] as { id: string };
-			this.reply(['OK', event.id, FakeWebSocket.okValue, FakeWebSocket.okMessage]);
+			setTimeout(
+				() => this.reply(['OK', event.id, FakeWebSocket.okValue, FakeWebSocket.okMessage]),
+				FakeWebSocket.autoOkDelayMs
+			);
 		}
 	}
 
@@ -119,6 +130,8 @@ describe('publishEvent', () => {
 		FakeWebSocket.okMessage = '';
 		FakeWebSocket.challengeOnEvent = true;
 		FakeWebSocket.autoOkOnEvent = true;
+		FakeWebSocket.latePreAuthRejection = false;
+		FakeWebSocket.autoOkDelayMs = 0;
 		vi.stubGlobal('WebSocket', FakeWebSocket);
 	});
 
@@ -162,6 +175,18 @@ describe('publishEvent', () => {
 		const ws = FakeWebSocket.instances[0];
 		expect(ws.sent.filter((frame) => frame[0] === 'EVENT')).toHaveLength(2);
 		expect(ws.sent.filter((frame) => frame[0] === 'AUTH')).toHaveLength(1);
+	});
+
+	it('waits for a delayed successful resend after a late pre-auth rejection', async () => {
+		FakeWebSocket.latePreAuthRejection = true;
+		FakeWebSocket.autoOkDelayMs = 300;
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
+
+		const result = await publishEvent('wss://relay.test', unsigned, sk);
+
+		expect(result).toMatchObject({ ok: true, event_id: expect.any(String) });
 	});
 
 	it('surfaces a persistent auth-flavored rejection instead of swallowing it forever', async () => {

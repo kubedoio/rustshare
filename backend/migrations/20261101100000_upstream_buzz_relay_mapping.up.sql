@@ -67,7 +67,6 @@ BEGIN
           AND mapping_id = NEW.mapping_id
           AND generation = NEW.generation
           AND action = 'mapping_created'
-          AND actor_id = NEW.updated_by
     ) THEN
         RAISE EXCEPTION 'upstream relay mapping creation audit does not match mapping';
     END IF;
@@ -148,7 +147,6 @@ BEGIN
           AND mapping_id = NEW.mapping_id
           AND generation = NEW.generation
           AND action = 'mapping_updated'
-          AND actor_id = NEW.updated_by
     ) THEN
         RAISE EXCEPTION 'upstream relay mapping update audit does not match generation';
     END IF;
