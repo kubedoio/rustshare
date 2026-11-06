@@ -155,14 +155,15 @@ export async function publishEvent(
 						message[3].toLowerCase().includes('auth')
 					) {
 						sawAuthRejection = true;
-						// A relay can deliver the pre-auth rejection after AUTH and the
-						// resent EVENT were sent. Give that in-flight publish ACK a short
-						// window before treating the rejection as final.
+						// A relay may deliver the pre-auth rejection after AUTH and the
+						// resend. Give the resent publish a longer ACK window before surfacing it.
+						// shortcut: ACKs share an event ID, so a late rejection is ambiguous;
+						// replace this grace period if the relay exposes correlated ACKs.
 						if (authSent) {
 							const detail = message[3];
 							authRejectionTimer = setTimeout(
 								() => finish({ ok: false, reason: 'rejected', detail }),
-								250
+								1_000
 							);
 						}
 						return;

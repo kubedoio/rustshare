@@ -177,9 +177,9 @@ describe('publishEvent', () => {
 		expect(ws.sent.filter((frame) => frame[0] === 'AUTH')).toHaveLength(1);
 	});
 
-	it('waits for the successful resend when the pre-auth rejection arrives late', async () => {
+	it('waits for a delayed successful resend after a late pre-auth rejection', async () => {
 		FakeWebSocket.latePreAuthRejection = true;
-		FakeWebSocket.autoOkDelayMs = 50;
+		FakeWebSocket.autoOkDelayMs = 300;
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
