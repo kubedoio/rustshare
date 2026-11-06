@@ -49,8 +49,10 @@
 - Files reference: the owner opened the referenced upload (HTTP 200, exact bytes
   matched); another user received HTTP 404 `resource unavailable`. **PASS**.
   User D's Chat principal was revoked and account disabled: its existing session
-  and Chat status returned HTTP 401, and new login returned HTTP 403. User C
-  remained active. **PASS**.
+  and Chat status returned HTTP 401, and new login returned HTTP 403 while
+  user C remained active. After the two-user run, C was also revoked and
+  disabled, E was disabled, and C's existing browser session returned HTTP 401;
+  the administrator still logs in. **PASS**.
 - Notes/Files: a public-browser note was edited to H1 “Elembra H1 Independence
   Check”. Its Files name remained `note.md` at
   `/Workspace/Notes/Untitled Note/note.md`. The disposable test note was deleted.
