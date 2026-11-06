@@ -17,9 +17,8 @@
   inherits the configured public relay URL; the former forced localhost URL
   caused authentication failure.
 - Focused configuration fix is in [PR #467](https://github.com/kubedoio/rustshare/pull/467)
-  (configuration commit `69e7321f3d12e7da75faf681eb0457221aea289a`); DCO,
-  Vault Sync Compliance, CI, Frontend CI, and CodeQL pass on the latest head.
-  Integration Tests remain in progress. It has not been merged.
+  (configuration commit `69e7321f3d12e7da75faf681eb0457221aea289a`). It is
+  open and unmerged; its latest check runs are in progress.
 - Backend application source: `origin/main` commit
   `594fe807077d06d19e05ffbce38d08c9e8a83c71`; image digest:
   `rustshare-backend@sha256:9cfa843d29d717ce00d38cd711db4dfcc28fccc4da1356c6e4da70e23d145638`.
