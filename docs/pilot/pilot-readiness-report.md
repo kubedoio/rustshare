@@ -9,12 +9,12 @@
   Elembra/Buzz service health checks passed. The Chat observer is connected,
   authenticated, community-discovered, and ready.
 - PR #467 (public relay routing) merged as `a1c1934b035899a29b691e3a201ed5086646ab12`.
-  PR #468 (`c93d68710cdee4297068af4f4502799656261c06`) fixes the deployed
-  publish-ack ordering defect: relay-accepted messages were displayed as
-  rejected in the browser. Its focused test passes (12/12), including a 300 ms
-  delayed relay ACK, and formatting passes. The latest commit was pushed after
-  the prior approval, so renewed review and CI are pending; the fix is not
-  deployed.
+  PR #468 fixes the deployed publish-ack ordering defect: relay-accepted
+  messages were displayed as rejected in the browser. It merged as
+  `645c19f14965c95b71697c71399e727be2b4c1b5` after fresh approval on head
+  `af332f10881cbc7bfabfdb1c787d5be2596b9254` and all required checks passed.
+  Its focused test passes (12/12), including a 300 ms delayed relay ACK. The fix
+  is merged but not yet deployed.
 - The active backend source checkout is `08173b3ad223b7bd41a9ba055a831ec60f240b03`
   with an uncommitted migration overlay. Running backend image ID is
   `sha256:afbeae6555191470f575f6e8da827575b6d3731e921a17719548ccf3dffaebbc`;
@@ -48,8 +48,8 @@
   had matching author keys and verified signatures; the observer recorded both.
   Both browser histories survived reload and backend/relay/observer restart.
   The browser's send UI incorrectly showed “Relay rejected” for successful
-  publishes, so the deployed end-user delivery-state assertion remains
-  **FAIL** pending PR #468 review, merge, release, and deployed rerun.
+  publishes, so the current deployed end-user delivery-state assertion remains
+  **FAIL** pending release of #468 and a live rerun.
 - Private channel: hidden from the non-member channel list, but there was no
   authorized member message to probe and the unauthorized message query
   returned HTTP 200 with an empty result. Private-channel denial is therefore
