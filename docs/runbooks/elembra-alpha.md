@@ -17,7 +17,8 @@ onboards real users who can use Files + Chat + Memory + Ask together.
 Browser ── nginx :80 ── backend :8080 ── postgres :5432
                               │            rustfs :9000
                               │
-Browser ── ws://localhost:7447 ── buzz-relay ── buzz-postgres / buzz-redis / buzz-rustfs
+Browser ── wss://<public-app-host>/ ── HTTPS proxy/nginx ── buzz-relay
+Elembra ── wss://<public-app-host>/ ────────────────────────┘
                                       ▲
              chat-observer (managed Compose service)
              └─ signed community/registry discovery + state recovery
@@ -38,6 +39,13 @@ Trust boundaries and data flow: see the Alpha readiness doc §1–§2.
 The canonical Compose wrapper gives the observer and backend the same network
 namespace, so Buzz's host-derived community remains identical for browser,
 gateway, and observer without a host-side Node process.
+
+The public root terminates TLS at the deployment's HTTPS edge. Nginx sends
+WebSocket upgrades and NIP-11 discovery requests to Buzz's root route while
+ordinary page requests continue to Elembra. Nginx preserves the public `Host`;
+the Buzz control API path `/api/v1/relay` is proxied to that same relay. This
+makes the browser, Elembra gateway, and observer use one host-derived
+community identity.
 
 ---
 
@@ -83,13 +91,22 @@ curl -s http://localhost/health/ready
 
 ### 2.3 Bundled-relay SSRF trust
 
-The bundled path sets `RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL` to exactly
-`ws://localhost:7447`. The Chat URL validator and Buzz gateway allow a private
-destination only when the complete configured URL matches that value. Redirects
-remain disabled, DNS results are pinned for the request, and the signed relay
-identity is still checked by the gateway and observer. Arbitrary loopback,
-RFC1918, link-local, and metadata targets remain rejected. External Buzz mode
-does not use this exception and must use a public/resolvable relay URL.
+For a local-only deployment, the bundled path may use exactly
+`ws://localhost:7447`. For remote browsers, configure the same public WebSocket
+URL in `BUZZ_RELAY_WS`, `BUZZ_RELAY_URL`,
+`RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL`, and
+`RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL`, for example
+`wss://app.example.com`. The public HTTPS edge must pass WebSocket upgrades
+and NIP-11 root requests to Nginx, which routes them to Buzz, and route
+`/api/v1/relay` to that same relay; DNS and TLS must already cover the public
+app host. If `.elembra/chat.env` already exists, update these
+URL values there as well as in `.env`; preserve its generated service keys.
+
+The Chat URL validator and Buzz gateway allow the configured deployment URL as
+an explicit trusted destination. Redirects remain disabled, resolved addresses
+are pinned for each request, and the signed relay identity is still checked by
+the gateway and observer. Arbitrary unconfigured loopback, RFC1918, link-local,
+and metadata targets remain rejected.
 
 No direct SQL is needed to create the mapping anymore: in `auto` mode
 enabling Chat provisions it (§2.2 step 8), and in `manual` mode the admin
