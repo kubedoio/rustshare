@@ -509,7 +509,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate SBOM for x86_64 binary
-        uses: anchore/sbom-action@v0.24.0
+        uses: anchore/sbom-action@v0.24.3
         with:
           file: ./artifacts/rustshare-server-x86_64-unknown-linux-gnu
           format: spdx-json
@@ -519,7 +519,7 @@ jobs:
           artifact-name: sbom-x86_64
 
       - name: Generate SBOM for aarch64 binary
-        uses: anchore/sbom-action@v0.24.0
+        uses: anchore/sbom-action@v0.24.3
         with:
           file: ./artifacts/rustshare-server-aarch64-unknown-linux-gnu
           format: spdx-json
@@ -529,7 +529,7 @@ jobs:
           artifact-name: sbom-aarch64
 
       - name: Generate SBOM for Docker image
-        uses: anchore/sbom-action@v0.24.0
+        uses: anchore/sbom-action@v0.24.3
         with:
           image: ${{ env.IMAGE_NAME }}@${{ needs.build-and-push-image.outputs.digest }}
           format: spdx-json
@@ -539,7 +539,7 @@ jobs:
           artifact-name: sbom-docker
 
       - name: Generate SBOM for Chat observer image
-        uses: anchore/sbom-action@v0.24.0
+        uses: anchore/sbom-action@v0.24.3
         with:
           image: ${{ env.OBSERVER_IMAGE_NAME }}@${{ needs.build-and-push-image.outputs.observer_digest }}
           format: spdx-json
