@@ -4,56 +4,74 @@
 
 ## Elembra WebUI deployment execution (2026-11-06)
 
-- **Decision: POC NOT READY for users.** `https://app.rustshare.io/` serves the
-  Elembra page over valid TLS. Public WSS at `wss://app.rustshare.io/` accepts
-  a connection; the same-host NIP-11 request returns Buzz Relay metadata.
-- `./scripts/elembra.sh up` is running Elembra, PostgreSQL, RustFS, nginx,
-  Buzz PostgreSQL, Redis, Buzz RustFS, the pinned Buzz relay, and the Chat
-  observer. All nine services report healthy; `/health/ready` reports ready.
-  Sanitized observer status: `connection=connected`, `auth=authenticated`,
-  `registry=ready`, `community_discovered=true`, `observation=ready`.
-- Nginx root dispatch now sends WebSocket and NIP-11 requests to Buzz while
-  ordinary `/` requests go to Elembra. `nginx -t` passed. The observer now
-  inherits the configured public relay URL; the former forced localhost URL
-  caused authentication failure.
-- Focused configuration fix is in [PR #467](https://github.com/kubedoio/rustshare/pull/467)
-  (configuration commit `69e7321f3d12e7da75faf681eb0457221aea289a`). It is
-  open and unmerged; its latest check runs are in progress.
-- Backend application source: `origin/main` commit
-  `594fe807077d06d19e05ffbce38d08c9e8a83c71`; image digest:
-  `rustshare-backend@sha256:9cfa843d29d717ce00d38cd711db4dfcc28fccc4da1356c6e4da70e23d145638`.
-  The build restored the already-applied checksum for migration
-  `20261101100000` and excluded the sole unapplied
-  `20261103100000_managed_chat_identity_operations` migration. All 128 applied
-  migration checksums match; no pending migration was included or applied.
-  The upstream runtime Cargo feature was not enabled. The OCI revision label
-  is `unknown`, so the effective source tree is not represented by one clean
-  repository commit.
-- Buzz relay image:
+- **Decision: POC NOT READY.** The public app is reachable at
+  `https://app.rustshare.io`; HTTPS, WSS, NIP-11, `/health/ready`, and all nine
+  Elembra/Buzz service health checks passed. The Chat observer is connected,
+  authenticated, community-discovered, and ready.
+- PR #467 (public relay routing) merged as `a1c1934b035899a29b691e3a201ed5086646ab12`.
+  PR #468 (`d87e4dee4756459cefb29f70ace6d40a2b0efd76`) fixes a deployed
+  publish-ack ordering defect: relay-accepted messages were displayed as
+  rejected in the browser. Its focused test passed (12/12), formatting passed,
+  and the required PR checks were still pending at this report update. Do not
+  claim the fix is deployed.
+- The active backend source checkout is `08173b3ad223b7bd41a9ba055a831ec60f240b03`
+  with an uncommitted migration overlay. Running backend image ID is
+  `sha256:afbeae6555191470f575f6e8da827575b6d3731e921a17719548ccf3dffaebbc`;
+  OCI source revision is `unknown`, and no registry digest or clean exact-source
+  image is established. The effective image altered migration
+  `20261101100000` to match the historical applied checksum and omitted pending
+  migration `20261103100000_managed_chat_identity_operations`. No replacement
+  backend was deployed. Migration compatibility remains unproven on disposable
+  restored data; do not release this image as a reproducible candidate.
+- Pinned Buzz relay image:
   `ghcr.io/kubedoio/buzz-elembra@sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a`.
-  Backend container image ID is `sha256:24c4f619ebec1033e001a0caee266efd47e76f9a9e79ef34fa819b688ee7803e`.
-- Existing PostgreSQL and RustFS data and deployment identities were backed up
-  before restart. The 1.7 GB backup bundle at
-  `/tmp/elembra-poc-backups/20261106T124248Z` passed checksum and structural
-  verification. A restore drill was not run.
-- Chat was not enabled: the preserved `RUSTSHARE_ADMIN_PASSWORD` returned
-  HTTP 401 for the active administrator account, and the backend bootstrap
-  password file is absent. No credential reset was performed. Workspace
-  mapping, browser identity binding, two-user messaging, file authorization,
-  revocation, restart/history recovery, and rollback restoration therefore
-  remain unverified.
-- The first stale-checkout backend could not register the persisted Chat bridge
-  subscription set. After rebuilding from the matching source, sanitized logs
-  show the Chat bridge and memory consumers registering successfully; the
-  mismatch was resolved without changing the immutable database contract.
-- Focused existing UI tests previously passed (22 tests across
-  `ChatApplicationView.test.ts` and `ChannelList.test.ts`). This is not
-  end-to-end evidence. The Notes implementation already stores the Markdown
-  H1 independently from its filename; a live Files/Notes workflow was not run.
-- Deferred statuses remain open: #442 desktop interoperability **UNVERIFIED**;
-  #458 execution/artifact **PASS**, independent acceptance **PENDING**; #460
-  upstream remediation **UNKNOWN/BLOCKED**. These waivers do not mark tests as
-  passed. Server-side signing and publishing remain disabled.
+  Server-managed signing and publishing remain disabled. The OCI image revision
+  and digest for the running backend remain unresolved.
+- Administrator recovery succeeded after the approved full cleanup: the
+  configured administrator logged in over the public HTTPS browser and its
+  admin authorization returned HTTP 200. No authentication or tenant security
+  controls were weakened. The test used the fresh deployment database; the
+  pre-cleanup backup contains a different administrator hash.
+- Chat was enabled through the administrator API and automatic workspace and
+  community mapping was present. Two separate public-origin browser profiles
+  bound distinct local identities and were admitted. C-to-D event
+  `2d95367ccdd543ea287a07c663bb3528b6f2ee213c43b8724fb89c3870180f44` and
+  D-to-C event `ba7b3bd64cd91e9c9a10d42a441ad175519e51257a17160afe126237ef7de3ca`
+  had matching author keys and verified signatures; the observer recorded both.
+  Both browser histories survived reload and backend/relay/observer restart.
+  The browser's send UI incorrectly showed “Relay rejected” for successful
+  publishes, so the end-user delivery-state assertion is **FAIL** pending PR
+  #468 review, merge, release, and deployed rerun.
+- Private channel: hidden from the non-member channel list, but there was no
+  authorized member message to probe and the unauthorized message query
+  returned HTTP 200 with an empty result. Private-channel denial is therefore
+  **UNVERIFIED**, not PASS.
+- Files reference: the owner opened the referenced upload (HTTP 200, exact bytes
+  matched); another user received HTTP 404 `resource unavailable`. **PASS**.
+  User D's Chat principal was revoked and account disabled: its existing session
+  and Chat status returned HTTP 401, and new login returned HTTP 403. User C
+  remained active. **PASS**.
+- Notes/Files: a public-browser note was edited to H1 “Elembra H1 Independence
+  Check”. Its Files name remained `note.md` at
+  `/Workspace/Notes/Untitled Note/note.md`. The disposable test note was deleted.
+  **PASS**.
+- The verified pre-cleanup backup at
+  `/tmp/elembra-poc-backups/20261106T124248Z` is 1.7 GB and checksum-verified,
+  but remains same-host storage; no durable off-host copy is evidenced. An
+  isolated restore drill restored PostgreSQL and RustFS and reached healthy
+  backend/nginx, then failed authenticated smoke login with HTTP 401 because
+  the restored database's admin hash differs from the fresh deployment `.env`.
+  The isolated stack was automatically removed. Restore acceptance and rollback
+  remain **FAIL/UNVERIFIED**; no production volumes were changed by the drill.
+- The approved cleanup reset the active database/storage and generated a fresh
+  Chat identity; the pre-cleanup backup is retained. Current post-reset
+  operational evidence does not substitute for an off-host backup or rollback
+  drill. Current deployment uses `./scripts/elembra.sh up`.
+- Deferred issues stay open with recorded statuses: #442 desktop
+  interoperability **UNVERIFIED**; #458 execution/artifact **PASS**, independent
+  acceptance **PENDING**; #460 upstream remediation **UNKNOWN/BLOCKED**. These
+  are not represented as passed prerequisites. External audit, native Desktop,
+  server-managed signing/publishing, and unverified migrations remain deferred.
 
 
 ## Latest exact-candidate workflow update (2026-10-06)
