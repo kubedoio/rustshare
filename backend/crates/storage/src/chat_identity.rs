@@ -844,25 +844,24 @@ impl ChatIdentityStore {
                     .as_database_error()
                     .and_then(|db| db.constraint())
                     .map(str::to_string);
+                let workspace_conflict = constraint.as_deref()
+                    == Some("chat_workspace_communities_tenant_id_workspace_id_key");
                 match constraint.as_deref() {
-                    Some("chat_workspace_communities_tenant_id_workspace_id_key") => {
+                    Some("chat_workspace_communities_tenant_id_workspace_id_key")
+                    | Some("chat_workspace_communities_tenant_id_community_id_key")
+                    | Some("chat_workspace_communities_active_community") => {
                         let existing = self
                             .mapping(mapping.tenant_id, mapping.workspace_id)
                             .await
-                            .map_err(|error| {
-                                ProvisionMappingError::Other(error.to_string())
-                            })?
-                            .ok_or_else(|| {
-                                ProvisionMappingError::Other(
-                                    "mapping vanished between the failed insert and the winner re-read"
-                                        .to_string(),
-                                )
-                            })?;
-                        Ok(ProvisionMappingOutcome::AlreadyExists(existing))
-                    }
-                    Some("chat_workspace_communities_tenant_id_community_id_key")
-                    | Some("chat_workspace_communities_active_community") => {
-                        Err(ProvisionMappingError::CommunityInUse)
+                            .map_err(|error| ProvisionMappingError::Other(error.to_string()))?;
+                        match existing {
+                            Some(existing) => Ok(ProvisionMappingOutcome::AlreadyExists(existing)),
+                            None if workspace_conflict => Err(ProvisionMappingError::Other(
+                                "mapping vanished between the failed insert and the winner re-read"
+                                    .to_string(),
+                            )),
+                            None => Err(ProvisionMappingError::CommunityInUse),
+                        }
                     }
                     _ => Err(ProvisionMappingError::Other(error.to_string())),
                 }

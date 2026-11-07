@@ -546,26 +546,11 @@ In production, the backend does **not** create a missing bucket by default. Prov
 
 ---
 
-## Migration Checksum Fix
+## Migration failures
 
-If migration `20260404000002_add_tenant_sharing_config.sql` fails with a checksum mismatch error:
-
-```
-error: migration 20260404000002 was previously applied but has been modified
-```
-
-This can happen if the migration file was modified after being applied to the database.
-
-### Solution
-
-Run the following SQL on the database before deploying:
-
-```sql
-DELETE FROM _sqlx_migrations WHERE version = '20260404000002';
-```
-
-Then restart the backend. The migration will be re-applied with the new checksum.
-
-### Note
-
-This is safe because the migration only adds a table and columns - re-running it on an already-migrated database will be a no-op (the table/columns already exist).
+The first supported Elembra release requires an empty database; pre-release
+POC migration histories are incompatible. From this baseline onward, migration
+files are immutable. A checksum mismatch or unknown migration version is a
+hard failure: stop, restore the matching pre-upgrade backup if needed, and
+deploy the matching release. Never delete or edit rows in `_sqlx_migrations`
+to force startup.

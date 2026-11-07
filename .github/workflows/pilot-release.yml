@@ -876,143 +876,11 @@ jobs:
             rm -rf -- "${expected_root}"
           fi
 
-      - name: Validate previous release to candidate upgrade
-        env:
-          ADMIN_EMAIL: admin@localhost
-          ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
-          VIEWER_EMAIL: viewer@localhost
-          VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
-          POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
-          DATABASE_URL: postgres://rustshare:${{ steps.pilot-secrets.outputs.pg_password }}@postgres:5432/rustshare
-          RUSTFS_ROOT_USER: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
-          RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
-          AWS_ACCESS_KEY_ID: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
-          AWS_SECRET_ACCESS_KEY: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
-          JWT_SECRET: ${{ steps.pilot-secrets.outputs.jwt_secret }}
-          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ steps.pilot-secrets.outputs.encryption_key }}
-          RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
-          RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
-          RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
-          RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: "true"
-          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
-          RUSTSHARE_BACKEND_PULL_POLICY: never
+      - name: Record first supported release baseline
         run: |
-          set -euo pipefail
-          previous_tag=v0.8.0-alpha.5
-          git fetch --no-tags --depth=1 origin \
-            "refs/tags/${previous_tag}:refs/tags/${previous_tag}"
-          previous_sha="$(git rev-list -n 1 "${previous_tag}")"
-          mkdir -p /tmp/rustshare-previous
-          git archive "${previous_tag}" | tar -x -C /tmp/rustshare-previous
-          docker build -f /tmp/rustshare-previous/docker/backend.Dockerfile \
-            --build-arg VERSION="${previous_tag}" \
-            --build-arg REVISION="${previous_sha}" \
-            -t rustshare-backend:pilot-previous /tmp/rustshare-previous
-
-          cat > /tmp/rustshare-upgrade-ports.yml <<'EOF'
-          services:
-            postgres:
-              ports: !override
-                - "25432:5432"
-            rustfs:
-              ports: !override
-                - "29000:9000"
-                - "29001:9001"
-            backend:
-              ports: !override
-                - "28082:8080"
-            nginx:
-              ports: !override
-                - "28080:80"
-          EOF
-
-          compose=(
-            docker compose
-            --project-name rustshare-pilot-upgrade
-            -f docker-compose.yml
-            -f /tmp/rustshare-upgrade-ports.yml
-            -f docker-compose.pilot.yml
-          )
-          RUSTSHARE_BACKEND_IMAGE=rustshare-backend:pilot-previous \
-            "${compose[@]}" up -d postgres rustfs backend nginx
-
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:28080/health/ready; then
-              break
-            fi
-            [[ "${attempt}" -lt 30 ]] || {
-              echo "Previous release did not become ready" >&2
-              exit 1
-            }
-            sleep 5
-          done
-
-          BASE_URL=http://127.0.0.1:28080 \
-            ADMIN_EMAIL="${ADMIN_EMAIL}" \
-            ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
-            VIEWER_EMAIL="${VIEWER_EMAIL}" \
-            VIEWER_PASSWORD="${VIEWER_PASSWORD}" \
-            REPORT_DIR=/tmp/rustshare-pilot-evidence \
-            PILOT_REPORT_PATH=/tmp/rustshare-pilot-evidence/upgrade-previous.env \
-            PILOT_MODE=upgrade-previous \
-            PILOT_PRESERVE_DATA=1 \
-            PILOT_SOURCE_SHA="${previous_sha}" \
-            PILOT_BUILD_VERSION="${previous_tag}" \
-            PILOT_DEPLOYMENT_ID=rustshare-pilot-upgrade \
-            PILOT_CONFIG_ID=upgrade-isolated \
-            ./scripts/run-beta-smoke.sh
-
-          RUSTSHARE_BACKEND_IMAGE=rustshare-backend:pilot \
-            "${compose[@]}" up -d backend nginx
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:28080/health/ready \
-              >/tmp/rustshare-pilot-evidence/health-after-upgrade.json; then
-              break
-            fi
-            [[ "${attempt}" -lt 30 ]] || {
-              echo "Candidate did not become ready after upgrade" >&2
-              exit 1
-            }
-            sleep 5
-          done
-
-          BASE_URL=http://127.0.0.1:28080 \
-            ADMIN_EMAIL="${ADMIN_EMAIL}" \
-            ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
-            VIEWER_EMAIL="${VIEWER_EMAIL}" \
-            VIEWER_PASSWORD="${VIEWER_PASSWORD}" \
-            REPORT_DIR=/tmp/rustshare-pilot-evidence \
-            PILOT_REPORT_PATH=/tmp/rustshare-pilot-evidence/upgrade-candidate.env \
-            PILOT_VERIFY_STATE_FILE=/tmp/rustshare-pilot-evidence/upgrade-previous.env \
-            PILOT_MODE=upgrade-candidate \
-            PILOT_SOURCE_SHA="${GITHUB_SHA}" \
-            PILOT_BUILD_VERSION="${PILOT_BUILD_VERSION}" \
-            PILOT_DEPLOYMENT_ID=rustshare-pilot-upgrade \
-            PILOT_CONFIG_ID=upgrade-isolated \
-            ./scripts/run-beta-smoke.sh
-          "${compose[@]}" logs --no-color --tail=300 backend \
-            > "/tmp/rustshare-pilot-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log" 2>&1
-          printf 'UPGRADE_STATUS=passed\nPREVIOUS_TAG=%s\nPREVIOUS_SHA=%s\n' \
-            "${previous_tag}" "${previous_sha}" \
+          mkdir -p /tmp/rustshare-pilot-evidence
+          printf 'UPGRADE_STATUS=not_applicable\nUPGRADE_REASON=first_clean_install_baseline\n' \
             > /tmp/rustshare-pilot-evidence/upgrade.env
-
-      - name: Clean up isolated upgrade stack
-        if: always()
-        env:
-          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
-          RUSTSHARE_BACKEND_PULL_POLICY: never
-        run: |
-          set -euo pipefail
-          if [[ -f /tmp/rustshare-upgrade-ports.yml ]]; then
-            docker compose \
-              --project-name rustshare-pilot-upgrade \
-              -f docker-compose.yml \
-              -f /tmp/rustshare-upgrade-ports.yml \
-              -f docker-compose.pilot.yml \
-              down -v --remove-orphans
-          else
-            echo "No isolated upgrade stack was created; cleanup not required."
-          fi
 
       - name: Install Rust toolchain for migration tooling
         uses: dtolnay/rust-toolchain@1.97.1
@@ -1082,10 +950,8 @@ jobs:
           safe_to_upload=false
           evidence_dir=/tmp/rustshare-pilot-evidence
           raw_log="/tmp/rustshare-pilot-compose-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log"
-          upgrade_raw_log="/tmp/rustshare-pilot-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log"
           safe_log="${evidence_dir}/compose-logs.txt"
-          safe_upgrade_log="${evidence_dir}/upgrade-backend.log"
-          trap 'rm -f -- "${raw_log}" "${upgrade_raw_log}" "${safe_log}.tmp" "${safe_upgrade_log}.tmp"' EXIT
+          trap 'rm -f -- "${raw_log}" "${safe_log}.tmp"' EXIT
           mkdir -p "${evidence_dir}" || collection_status=1
           git rev-parse HEAD > "${evidence_dir}/source-sha.txt" || collection_status=1
           git status --short > "${evidence_dir}/source-status.txt" || collection_status=1
@@ -1104,24 +970,6 @@ jobs:
           else
             collection_status=1
             rm -f -- "${safe_log}.tmp" "${safe_log}"
-          fi
-          if [[ -f "${upgrade_raw_log}" ]]; then
-            if [[ ! -s "${upgrade_raw_log}" ]]; then
-              collection_status=1
-            else
-              python3 scripts/redact_pilot_logs.py --require-all \
-                < "${upgrade_raw_log}" > "${safe_upgrade_log}.tmp"
-              upgrade_redact_status=$?
-              if [[ "${upgrade_redact_status}" -eq 0 ]]; then
-                mv -- "${safe_upgrade_log}.tmp" "${safe_upgrade_log}" || collection_status=1
-              elif [[ "${upgrade_redact_status}" -eq 10 ]]; then
-                secret_log_leak=1
-                mv -- "${safe_upgrade_log}.tmp" "${safe_upgrade_log}" || collection_status=1
-              else
-                collection_status=1
-                rm -f -- "${safe_upgrade_log}.tmp" "${safe_upgrade_log}"
-              fi
-            fi
           fi
           curl --silent --show-error http://127.0.0.1/health \
             > "${evidence_dir}/health-live.json" 2>&1 || collection_status=1
@@ -1226,8 +1074,6 @@ jobs:
               backup.env \
               restore-persistence.env \
               upgrade.env \
-              upgrade-previous.env \
-              upgrade-candidate.env \
               migration.env \
               migration-failure.env \
               migration-failure.log \
@@ -1367,7 +1213,8 @@ jobs:
             (( failure_finished_epoch < failure_started_epoch )) && { echo "failure-drill finish timestamp precedes start"; exit 1; }
             require_line "${evidence_dir}/backup.env" 'BACKUP_STATUS=passed'
             require_line "${evidence_dir}/backup.env" 'BACKUP_OUTPUT_SECRET_SCAN=passed'
-            require_line "${evidence_dir}/upgrade.env" 'UPGRADE_STATUS=passed'
+            require_line "${evidence_dir}/upgrade.env" 'UPGRADE_STATUS=not_applicable'
+            require_line "${evidence_dir}/upgrade.env" 'UPGRADE_REASON=first_clean_install_baseline'
             require_line "${evidence_dir}/migration.env" 'MIGRATION_STATUS=passed'
             require_line "${evidence_dir}/migration.env" 'MIGRATION_DIAGNOSTIC_SECRET_SCAN=passed'
             require_line "${evidence_dir}/migration-failure.env" 'MIGRATION_FAILURE_STATUS=passed'
@@ -1387,16 +1234,16 @@ jobs:
             require_line "${evidence_dir}/security-sanity.env" 'PRODUCTION_COOKIE_SECURITY=passed'
             require_line "${evidence_dir}/security-sanity.env" 'SECRET_LOG_SCAN=passed'
             require_line "${evidence_dir}/evidence-collection-status.env" 'EVIDENCE_COLLECTION_STATUS=passed'
-            for report in canonical-smoke.env persistence.env restore-persistence.env upgrade-previous.env upgrade-candidate.env; do
+            for report in canonical-smoke.env persistence.env restore-persistence.env; do
               require_smoke_passed "${evidence_dir}/${report}"
             done
-            for report in canonical-smoke.env upgrade-previous.env; do
+            for report in canonical-smoke.env; do
               require_line "${evidence_dir}/${report}" 'BETA_SMOKE_FILE_SHARE_ACCESS=passed'
             done
-            for report in persistence.env restore-persistence.env upgrade-candidate.env; do
+            for report in persistence.env restore-persistence.env; do
               require_line "${evidence_dir}/${report}" 'BETA_SMOKE_PERSISTENCE_STATE_VERIFIED=passed'
             done
-            for report in canonical-smoke.env persistence.env restore-persistence.env upgrade-candidate.env; do
+            for report in canonical-smoke.env persistence.env restore-persistence.env; do
               require_line "${evidence_dir}/${report}" "BETA_SMOKE_SOURCE_SHA=${GITHUB_SHA}"
             done
             for report in canonical-smoke.env persistence.env; do
@@ -1407,15 +1254,6 @@ jobs:
             require_line "${evidence_dir}/restore-persistence.env" "BETA_SMOKE_BUILD_VERSION=${image_version}"
             require_line "${evidence_dir}/restore-persistence.env" 'BETA_SMOKE_DEPLOYMENT_ID=rustshare-restore-drill'
             require_line "${evidence_dir}/restore-persistence.env" "BETA_SMOKE_CONFIG_ID=${config_id}"
-            previous_sha="$(sed -n 's/^PREVIOUS_SHA=//p' "${evidence_dir}/upgrade.env")"
-            previous_tag="$(sed -n 's/^PREVIOUS_TAG=//p' "${evidence_dir}/upgrade.env")"
-            require_line "${evidence_dir}/upgrade-previous.env" "BETA_SMOKE_SOURCE_SHA=${previous_sha}"
-            require_line "${evidence_dir}/upgrade-previous.env" "BETA_SMOKE_BUILD_VERSION=${previous_tag}"
-            require_line "${evidence_dir}/upgrade-previous.env" 'BETA_SMOKE_DEPLOYMENT_ID=rustshare-pilot-upgrade'
-            require_line "${evidence_dir}/upgrade-previous.env" 'BETA_SMOKE_CONFIG_ID=upgrade-isolated'
-            require_line "${evidence_dir}/upgrade-candidate.env" "BETA_SMOKE_BUILD_VERSION=${image_version}"
-            require_line "${evidence_dir}/upgrade-candidate.env" 'BETA_SMOKE_DEPLOYMENT_ID=rustshare-pilot-upgrade'
-            require_line "${evidence_dir}/upgrade-candidate.env" 'BETA_SMOKE_CONFIG_ID=upgrade-isolated'
             for report in "${restore_reports[@]}"; do
               require_line "${report}" 'RESTORE_DRILL_STATUS=passed'
               require_line "${report}" "RESTORE_DRILL_SOURCE_SHA=${GITHUB_SHA}"
