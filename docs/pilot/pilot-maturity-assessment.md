@@ -120,8 +120,10 @@ captured under `/var/backups/rustshare/fws-evidence-20261004`.
 ### PARTIAL
 
 - A retained non-release `rustshare-backend:latest` image stopped its full
-  smoke at search. The supported `v0.8.0-alpha.5` to candidate upgrade passed
-  in the authoritative Pilot Release workflow. Evidence:
+  smoke at search. The historical `v0.8.0-alpha.5` to candidate upgrade passed
+  in the authoritative Pilot Release workflow, but that pre-release path is
+  retired by the first clean-install baseline and is not a supported upgrade.
+  Evidence:
   `20261004T002129Z-1282058-beta-smoke.env` and workflow run 37156360337.
 - Credential recovery: the retained database required a controlled password
   rotation because its existing admin credential did not match the copied

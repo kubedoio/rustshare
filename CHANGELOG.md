@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Establish the first supported Elembra database baseline for clean installs; existing pre-release POC databases require a fresh database and application storage.
 - Declare Chat admission, revocation, and staged-release events so durable replacement commands pass the integration outbox ownership check.
 - Wait for NIP-42 authentication acknowledgment before sending conditional Buzz membership commands.
 - Add authenticated durable Chat identity replacement initiation and scoped redacted status; initiation stays disabled until a separately qualified Buzz v1alpha2 runtime is pinned.

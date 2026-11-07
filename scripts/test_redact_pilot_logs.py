@@ -210,7 +210,6 @@ class PilotEvidenceWorkflowTests(unittest.TestCase):
 
     def write_valid_summary_evidence(self, evidence_dir: Path) -> None:
         source_sha = "a" * 40
-        previous_sha = "b" * 40
         image_id = f"sha256:{'c' * 64}"
         archive_sha = "d" * 64
         image_version = f"pilot-{source_sha[:12]}"
@@ -335,36 +334,7 @@ BETA_SMOKE_DEPLOYMENT_ID=rustshare-restore-drill
 BETA_SMOKE_CONFIG_ID={config_id}
 BETA_SMOKE_PERSISTENCE_STATE_VERIFIED=passed
 """,
-            "upgrade.env": (
-                f"UPGRADE_STATUS=passed\nPREVIOUS_SHA={previous_sha}\n"
-                "PREVIOUS_TAG=v0.8.0-alpha.5\n"
-            ),
-            "upgrade-previous.env": f"""\
-BETA_SMOKE_STATUS=passed
-BETA_SMOKE_FAILURE_PHASE=complete
-BETA_SMOKE_WORKFLOW_RUN_ID={run_id}
-BETA_SMOKE_WORKFLOW_RUN_ATTEMPT={run_attempt}
-BETA_SMOKE_STARTED_AT={started}
-BETA_SMOKE_FINISHED_AT={finished}
-BETA_SMOKE_SOURCE_SHA={previous_sha}
-BETA_SMOKE_BUILD_VERSION=v0.8.0-alpha.5
-BETA_SMOKE_DEPLOYMENT_ID=rustshare-pilot-upgrade
-BETA_SMOKE_CONFIG_ID=upgrade-isolated
-BETA_SMOKE_FILE_SHARE_ACCESS=passed
-""",
-            "upgrade-candidate.env": f"""\
-BETA_SMOKE_STATUS=passed
-BETA_SMOKE_FAILURE_PHASE=complete
-BETA_SMOKE_WORKFLOW_RUN_ID={run_id}
-BETA_SMOKE_WORKFLOW_RUN_ATTEMPT={run_attempt}
-BETA_SMOKE_STARTED_AT={started}
-BETA_SMOKE_FINISHED_AT={finished}
-BETA_SMOKE_SOURCE_SHA={source_sha}
-BETA_SMOKE_BUILD_VERSION={image_version}
-BETA_SMOKE_DEPLOYMENT_ID=rustshare-pilot-upgrade
-BETA_SMOKE_CONFIG_ID=upgrade-isolated
-BETA_SMOKE_PERSISTENCE_STATE_VERIFIED=passed
-""",
+            "upgrade.env": "UPGRADE_STATUS=not_applicable\nUPGRADE_REASON=first_clean_install_baseline\n",
             "migration.env": "MIGRATION_STATUS=passed\nMIGRATION_DIAGNOSTIC_SECRET_SCAN=passed\n",
             "runtime-db.env": f"""\
 RUNTIME_DB_STATUS=passed
@@ -572,14 +542,6 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
                 lambda value: value.replace(
                     "FINISHED_AT=2026-10-05T12:01:00Z",
                     "FINISHED_AT=2026-10-05T11:59:00Z",
-                ),
-            ),
-            (
-                "mismatched candidate revision",
-                "upgrade-candidate.env",
-                lambda value: value.replace(
-                    f"BETA_SMOKE_SOURCE_SHA={'a' * 40}",
-                    f"BETA_SMOKE_SOURCE_SHA={'e' * 40}",
                 ),
             ),
         )
@@ -832,24 +794,16 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
     def test_file_share_evidence_gate_only_requires_full_journey_modes(self) -> None:
         step = workflow_step("Write pilot workflow summary")
 
-        self.assertIn(
-            "for report in canonical-smoke.env upgrade-previous.env; do",
-            step,
-        )
-        share_gate_start = step.index(
-            "for report in canonical-smoke.env upgrade-previous.env; do"
-        )
+        self.assertIn("for report in canonical-smoke.env; do", step)
+        share_gate_start = step.index("for report in canonical-smoke.env; do")
         share_gate_end = step.index("\n            done", share_gate_start)
         share_gate = step[share_gate_start:share_gate_end]
         self.assertIn("'BETA_SMOKE_FILE_SHARE_ACCESS=passed'", share_gate)
         self.assertNotIn("persistence.env", share_gate)
         self.assertNotIn("restore-persistence.env", share_gate)
-        self.assertNotIn("upgrade-candidate.env", share_gate)
-        self.assertIn(
-            "for report in canonical-smoke.env persistence.env restore-persistence.env "
-            "upgrade-candidate.env; do",
-            step,
-        )
+        self.assertNotIn("upgrade-previous.env", step)
+        self.assertNotIn("upgrade-candidate.env", step)
+        self.assertIn("UPGRADE_STATUS=not_applicable", step)
 
     def test_failure_diagnostics_do_not_print_compose_logs(self) -> None:
         step = workflow_step("Show service status on failure")
@@ -1059,21 +1013,15 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn(secret, result.stderr)
 
-    def test_upgrade_logs_are_redacted_before_entering_uploadable_evidence(self) -> None:
-        upgrade_step = workflow_step("Validate previous release to candidate upgrade")
-        collect_step = workflow_step("Collect pilot evidence and diagnostics")
+    def test_first_baseline_does_not_claim_a_pre_release_upgrade(self) -> None:
+        baseline_step = workflow_step("Record first supported release baseline")
+        workflow = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn("/tmp/rustshare-pilot-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log", upgrade_step)
-        self.assertIn('> "/tmp/rustshare-pilot-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log" 2>&1', upgrade_step)
-        self.assertNotIn("/tmp/rustshare-pilot-evidence/upgrade-backend.log", upgrade_step)
-        self.assertIn('upgrade_raw_log="/tmp/rustshare-pilot-upgrade-', collect_step)
-        self.assertIn('safe_upgrade_log="${evidence_dir}/upgrade-backend.log"', collect_step)
-        self.assertIn('"${upgrade_redact_status}" -eq 10', collect_step)
-        self.assertIn(
-            'else\n                collection_status=1\n'
-            '                rm -f -- "${safe_upgrade_log}.tmp" "${safe_upgrade_log}"',
-            collect_step,
-        )
+        self.assertIn("UPGRADE_STATUS=not_applicable", baseline_step)
+        self.assertIn("UPGRADE_REASON=first_clean_install_baseline", baseline_step)
+        self.assertNotIn("upgrade-previous.env", workflow)
+        self.assertNotIn("upgrade-candidate.env", workflow)
+        self.assertNotIn("v0.8.0-alpha.5", workflow)
 
     def test_critical_image_findings_block_publication(self) -> None:
         scan_step = workflow_step("Scan image with Trivy")

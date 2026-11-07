@@ -76,26 +76,14 @@ Error: connection refused: postgres:5432
 **Symptoms:**
 
 ```
-error: migration 20260404000002 was previously applied but has been modified
+error: migration <version> was previously applied but is missing in the resolved migrations
 ```
 
-**Solution:**
-
-This happens when a migration file changed after it was applied. For the specific `20260404000002_add_tenant_sharing_config.sql` migration:
-
-```bash
-# Connect to PostgreSQL
-docker compose exec postgres psql -U rustshare -d rustshare
-
-# Remove the migration record (safe to re-run; it only adds tables/columns)
-DELETE FROM _sqlx_migrations WHERE version = '20260404000002';
-\q
-
-# Restart the backend
-docker compose up -d --force-recreate backend
-```
-
-> **Warning:** Only do this if you understand what the migration does. For production databases, take a backup first.
+The first supported Elembra release starts from an empty database and cannot
+upgrade a pre-release POC migration history. Create a clean deployment using
+[`scripts/elembra.sh`](../scripts/elembra.sh). From the release baseline onward,
+checksum and unknown-version errors stop startup. Do not edit `_sqlx_migrations`
+or remove migration records; restore the matching backup and release instead.
 
 ---
 
