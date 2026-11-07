@@ -160,15 +160,20 @@ The decision is made in `validate-tag`, before anything is built, by the pure
 
 ## Pre-release Validation
 
-The automated pipeline accepts stable `vX.Y.Z` tags and SemVer prerelease
-tags (`vX.Y.Z-alpha.N`, `vX.Y.Z-rc.N`, …): pushing either triggers
-`release.yml`, which builds binaries, builds and gates a candidate image,
-promotes the released Docker tags, and creates the GitHub Release (stable or
-prerelease, per `scripts/release-tag.sh`). See the
-[Promotion Pipeline](#promotion-pipeline) below for the ordering guarantees.
-Prerelease image tags are version-only (`latest` and rolling aliases are never
-moved); run the same validation checklist below against the exact commit to be
-tagged before pushing any tag.
+Do not create a version tag to start qualification. From the current protected
+`main` commit, run **Release → Run workflow** with the version and
+`qualification_only=true`. This path verifies that protected-main checks have
+completed successfully, rejects an existing version tag/release, builds and
+tests the exact commit, runs strict image scans, and generates SBOMs and
+provenance before attaching `qualified-<full-commit-sha>` to the verified image
+digests. The workflow summary records the source SHA and both immutable digests.
+
+Only after qualification succeeds, create and push the signed `vX.Y.Z` or
+`vX.Y.Z-alpha.N` tag at that exact commit. The tag-triggered run resolves the
+qualified digests, repeats the platform boot and vulnerability gates, promotes
+the version tags without rebuilding the images, and publishes the GitHub
+release. Prerelease image tags are version-only; `latest` and rolling aliases
+are never moved.
 
 Before pushing a stable tag, the maintainer must complete the validation
 checklist against the exact commit to be tagged:
@@ -182,8 +187,11 @@ checklist against the exact commit to be tagged:
    applied, `cargo test --workspace --all-features -- --ignored --skip upstream_buzz_transport::disposable_service_tests`.
 4. **Clean deployment smoke**: boot the documented Compose stack from a clean
    state and run `./scripts/final-launch-smoke.sh`.
-5. **Upgrade drill**: upgrade from the previous stable release against
-   representative data; verify data survival and restart after migrations.
+5. **Migration drill**: install the canonical baseline from an empty database
+   and verify idempotent bootstrap. Run an upgrade drill only from a release
+   version that the project documents as supported. The first supported
+   Elembra baseline explicitly retires alpha.5/alpha.6 development database
+   upgrades.
 6. **Backup/restore drill**: `./scripts/backup-stack.sh` →
    `./scripts/verify-backup-bundle.sh` → `./scripts/run-restore-drill.sh` /
    `post-restore-smoke.sh`.
@@ -191,41 +199,41 @@ checklist against the exact commit to be tagged:
    authentication, SSRF, Mail privacy/sanitization, object-storage credential
    isolation.
 
-When a staging environment is available, also deploy the candidate to staging,
-run the integration suites there, and verify migration behavior against a copy
-of production data before tagging. If issues are found, fix them on `main`,
-merge, and re-run the affected gates against the new candidate commit — then
-tag the stable version.
+When a staging environment is available, also deploy the qualified candidate
+to staging and run the integration suites there. If issues are found, fix them
+on `main`, merge, and run qualification again against the new protected commit
+before creating its version tag.
 
 ---
 
 ## Promotion Pipeline
 
-`release.yml` publishes images in strict order — the released tags are created
-only after the candidate image has passed the boot gate:
+`release.yml` uses a pre-tag qualification dispatch followed by a tag-triggered
+publication. Both use the exact same immutable image digests:
 
-1. **Build candidates** — the backend and managed Chat observer images are built
-   (multi-arch, SBOM/provenance
-   attestations, OCI labels) and pushed under the unadvertised candidate tag
-   `candidate-<run_id>` only. The released tags are NOT attached during the
-   build.
-2. **Boot smoke test** — the backend candidate is booted per platform (exec
-   bit + dynamic linker checks, full exit-code taxonomy and glibc-marker scan),
-   and the observer candidate runs its entrypoint script syntax check per
-   platform.
-3. **Promote** — only when the boot gate passed, `docker buildx imagetools
-   create` re-tags both verified digests with the released tags (version, and
-   for stable: `X.Y`, `X`, `latest`) plus `sha-<short>`. No rebuild happens:
-   promotion only creates references to the digests the gate tested.
-4. **SBOM / provenance** — SBOMs for the binaries and both images, and build
-   provenance attestations, are generated from the same verified digests.
-5. **Release** — the GitHub Release (stable or prerelease) is created from the
-   tag.
+1. **Qualify before tag** — dispatch on the current protected `main` SHA with
+   `qualification_only=true`. The workflow verifies the main ref and completed
+   checks, builds and pushes run-scoped candidate images, records each
+   platform's backend ELF dependencies, boots both platforms, and strictly
+   scans backend and observer images on amd64 and arm64.
+2. **Qualify artifacts** — only after those gates pass, the workflow generates
+   binary and image SBOMs and provenance attestations, then publishes
+   `qualified-<full-commit-sha>` references to the verified digests. The run
+   summary is the evidence to use before creating the Git tag.
+3. **Create the version tag** — create and push the signed version tag at the
+   qualified SHA. This is the first point at which the release version tag
+   exists.
+4. **Reverify and promote** — the tag-triggered workflow resolves those
+   qualified image digests (it fails if qualification is missing), repeats the
+   platform boot and strict vulnerability scans, then promotes the verified
+   digests to the version and `sha-<short>` tags. It does not rebuild images.
+5. **Release** — after promotion, SBOMs, and attestations all pass, create the
+   GitHub Release from the version tag.
 
-A failed gate fails the job before step 3: **no released tags are created, no
-`latest`/alias mutation happens, and no release is created.** The `candidate-*`
-tags are transient audit artifacts (they record what was gated); they are not
-advertised and may be deleted at any time.
+A pre-tag failure creates no qualified image references, Git version tag, or
+GitHub Release. A failed tag-triggered gate creates no release-version image
+tags or GitHub Release. Run-scoped candidate images are unadvertised and can
+be removed after the corresponding evidence retention window.
 
 ---
 
