@@ -10,6 +10,11 @@ on:
         description: 'Version to release (e.g., 1.2.3 or 0.8.0-alpha.1)'
         required: true
         type: string
+      qualification_only:
+        description: 'Build and qualify the current protected main commit before creating its release tag'
+        required: false
+        default: false
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -30,6 +35,9 @@ jobs:
   validate-tag:
     name: Validate tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       version_major_minor: ${{ steps.resolve.outputs.version_major_minor }}
@@ -40,6 +48,7 @@ jobs:
       is_prerelease: ${{ steps.resolve.outputs.is_prerelease }}
       release_name: ${{ steps.resolve.outputs.release_name }}
       docker_tags: ${{ steps.resolve.outputs.docker_tags }}
+      qualification_only: ${{ steps.resolve.outputs.qualification_only }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -52,18 +61,49 @@ jobs:
         env:
           DISPATCH_VERSION: ${{ github.event.inputs.version }}
           TAG_REF: ${{ github.ref_name }}
-          EVENT_NAME: ${{ github.event_name }}
+          QUALIFICATION_ONLY: ${{ github.event.inputs.qualification_only }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          workflow_event="${{ github.event_name }}"
           COMMIT="${{ github.sha }}"
 
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+          if [[ "$workflow_event" == "workflow_dispatch" ]]; then
             # The dispatch input is a bare version; the tag carries the v prefix.
-            # Passed via env so actor-controlled input never reaches shell syntax.
             TAG="v${DISPATCH_VERSION}"
           else
-            # push: tags:
             TAG="$TAG_REF"
+          fi
+
+          if [[ "$workflow_event" == "workflow_dispatch" && "$QUALIFICATION_ONLY" == "true" ]]; then
+            if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "::error::qualification must run from protected main"
+              exit 1
+            fi
+            MAIN_SHA="$(git ls-remote origin refs/heads/main | awk 'NR == 1 {print $1}')"
+            if [[ -z "$MAIN_SHA" || "$MAIN_SHA" != "$COMMIT" ]]; then
+              echo "::error::qualification must use the current protected main commit (run=${COMMIT}, main=${MAIN_SHA:-missing})"
+              exit 1
+            fi
+            set +e
+            tag_lookup="$(git ls-remote --exit-code origin "refs/tags/${TAG}" 2>&1)"
+            tag_lookup_rc=$?
+            set -e
+            if [[ "${tag_lookup_rc}" -eq 0 ]]; then
+              echo "::error::qualification requires ${TAG} to be absent"
+              exit 1
+            fi
+            if [[ "${tag_lookup_rc}" -ne 2 || -n "${tag_lookup}" ]]; then
+              echo "::error::unable to verify that ${TAG} is absent (${tag_lookup:-git ls-remote exited ${tag_lookup_rc}})"
+              exit 1
+            fi
+            CHECK_SUMMARY="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${COMMIT}/check-runs?per_page=100" --jq '[.check_runs[] | select(.name != "Validate tag")] | {total:length, bad:[.[] | select(.status != "completed" or (.conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped"))] | length}')"
+            CHECK_TOTAL="$(jq -r '.total' <<<"${CHECK_SUMMARY}")"
+            CHECK_BAD="$(jq -r '.bad' <<<"${CHECK_SUMMARY}")"
+            if [[ "${CHECK_TOTAL}" -eq 0 || "${CHECK_BAD}" -ne 0 ]]; then
+              echo "::error::protected-main checks are missing or not all successful (${CHECK_SUMMARY})"
+              exit 1
+            fi
+            echo "Protected main checks passed: ${CHECK_TOTAL} completed checks"
           fi
 
           # Single source of truth for tag grammar and release metadata.
@@ -77,7 +117,7 @@ jobs:
           # below and by the release-immutability decision.
           TAG_SHA="$(git rev-parse "${TAG}^{}" 2>/dev/null || true)"
 
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+          if [[ "$workflow_event" == "workflow_dispatch" && "$QUALIFICATION_ONLY" != "true" ]]; then
             # A dispatch must reference an EXISTING tag at the exact commit
             # being released. A released version can never be rebuilt from a
             # different workflow/source commit.
@@ -128,9 +168,12 @@ jobs:
           # resolve_release_tag emits GITHUB_OUTPUT-compatible key=value lines
           # (multiline docker_tags via the <<RS_EOF delimiter); append verbatim.
           cat /tmp/release-tag.out >> "$GITHUB_OUTPUT"
-          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "commit=$COMMIT"
+            echo "tag=$TAG"
+            echo "should_release=true"
+            echo "qualification_only=${QUALIFICATION_ONLY}"
+          } >> "$GITHUB_OUTPUT"
           echo "Resolved: $(grep -E '^(version|is_prerelease|release_name)=' /tmp/release-tag.out | tr '\n' ' ')"
 
   build-binaries:
@@ -218,8 +261,8 @@ jobs:
       contents: read
       packages: write
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
-      observer_digest: ${{ steps.build_observer.outputs.digest }}
+      digest: ${{ steps.build.outputs.digest || steps.qualified.outputs.backend_digest }}
+      observer_digest: ${{ steps.build_observer.outputs.digest || steps.qualified.outputs.observer_digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -246,6 +289,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve qualified image digests for release tag
+        id: qualified
+        if: needs.validate-tag.outputs.qualification_only != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          qualified_tag="qualified-${GITHUB_SHA}"
+          for image in backend observer; do
+            if [[ "${image}" == backend ]]; then selected_image="${IMAGE_NAME}"; else selected_image="${OBSERVER_IMAGE_NAME}"; fi
+            output_name="${image}_digest"
+            ref="${selected_image}:${qualified_tag}"
+            digest="$(docker buildx imagetools inspect "${ref}" | awk '$1 == "Digest:" { print $2; exit }')"
+            if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::No qualified multi-platform image found for ${ref}"
+              exit 1
+            fi
+            echo "${output_name}=${digest}" >> "${GITHUB_OUTPUT}"
+          done
+          echo "Using pre-tag qualified images for ${GITHUB_SHA}"
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -253,7 +316,7 @@ jobs:
           images: ${{ env.IMAGE_NAME }}
           # Kept for LABELS only: the build is tagged with the unadvertised
           # candidate tag, and the released tags (docker_tags + sha) are
-          # created by the promote step AFTER the boot gate passes. The
+          # created only after all image, SBOM, and provenance gates pass. The
           # metadata action derives the OCI version label from the first tag,
           # so it is pinned to the real release version below; revision,
           # created, source, etc. are emitted as before.
@@ -264,6 +327,7 @@ jobs:
 
       - name: Build and push candidate
         id: build
+        if: needs.validate-tag.outputs.qualification_only == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -293,6 +357,7 @@ jobs:
 
       - name: Build and push observer candidate
         id: build_observer
+        if: needs.validate-tag.outputs.qualification_only == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -306,25 +371,60 @@ jobs:
 
       - name: Smoke test observer candidate
         shell: bash
+        env:
+          QUALIFICATION_ONLY: ${{ needs.validate-tag.outputs.qualification_only }}
         run: |
           set -euo pipefail
-          IMAGE_REF="${OBSERVER_IMAGE_NAME}:candidate-${GITHUB_RUN_ID}"
+          if [[ "${QUALIFICATION_ONLY}" == true ]]; then
+            IMAGE_REF="${OBSERVER_IMAGE_NAME}:candidate-${GITHUB_RUN_ID}"
+          else
+            IMAGE_REF="${OBSERVER_IMAGE_NAME}:qualified-${GITHUB_SHA}"
+          fi
           for platform in linux/amd64 linux/arm64; do
             docker run --rm --platform "${platform}" "${IMAGE_REF}" \
               node --check scripts/buzz-observer.mjs
           done
 
+      - name: Inspect backend runtime dependencies
+        shell: bash
+        env:
+          QUALIFICATION_ONLY: ${{ needs.validate-tag.outputs.qualification_only }}
+        run: |
+          set -euo pipefail
+          if [[ "${QUALIFICATION_ONLY}" == true ]]; then
+            IMAGE_REF="${IMAGE_NAME}:candidate-${GITHUB_RUN_ID}"
+          else
+            IMAGE_REF="${IMAGE_NAME}:qualified-${GITHUB_SHA}"
+          fi
+          for platform in linux/amd64 linux/arm64; do
+            container_id="$(docker create --platform "${platform}" "${IMAGE_REF}" /usr/local/bin/rustshare-server)"
+            binary="$(mktemp)"
+            trap 'docker rm -f "${container_id}" >/dev/null 2>&1 || true; rm -f "${binary}"' EXIT
+            docker cp "${container_id}:/usr/local/bin/rustshare-server" "${binary}"
+            dependencies="$(readelf -d "${binary}" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')"
+            printf '%s dependencies:\n%s\n' "${platform}" "${dependencies}"
+            grep -qx 'libgcc_s.so.1' <<<"${dependencies}"
+            if grep -Eq 'lib(ssl|crypto)\.so' <<<"${dependencies}"; then
+              echo "::error::Unexpected OpenSSL dependency in ${platform} runtime"
+              exit 1
+            fi
+            docker rm -f "${container_id}" >/dev/null
+            rm -f "${binary}"
+            trap - EXIT
+          done
+
       - name: Boot smoke test (exec bit + dynamic linker)
         shell: bash
+        env:
+          QUALIFICATION_ONLY: ${{ needs.validate-tag.outputs.qualification_only }}
         run: |
-          # Run from the candidate tag, not the digest: pulling the same
-          # multi-arch digest twice with different --platform values fails in
-          # the runner's classic docker store ("cannot overwrite digest ...").
-          # The candidate tag is re-resolved per leg, and both legs reference
-          # the exact image this job just built and pushed. The released tags
-          # (docker_tags + sha) are only ever touched by the promote step
-          # below, after this gate passes.
-          IMAGE_REF="${IMAGE_NAME}:candidate-${GITHUB_RUN_ID}"
+          # Re-resolve the multi-platform tag on each leg; the runner's classic
+          # Docker store cannot replace one platform digest with another.
+          if [[ "${QUALIFICATION_ONLY}" == true ]]; then
+            IMAGE_REF="${IMAGE_NAME}:candidate-${GITHUB_RUN_ID}"
+          else
+            IMAGE_REF="${IMAGE_NAME}:qualified-${GITHUB_SHA}"
+          fi
           # The server has no --help/--version: main() ignores argv and boots
           # straight into startup, which first validates config and connects to
           # Postgres. Without a database it exits 1 quickly — that is a PASS,
@@ -397,12 +497,12 @@ jobs:
             esac
           done
 
-      - name: Scan exact candidate images before promotion
+      - name: Scan exact release images before promotion
         shell: bash
         env:
           TRIVY_IMAGE: aquasec/trivy@sha256:e2b22eac59c02003d8749f5b8d9bd073b62e30fefaef5b7c8371204e0a4b0c08
-          BACKEND_DIGEST: ${{ steps.build.outputs.digest }}
-          OBSERVER_DIGEST: ${{ steps.build_observer.outputs.digest }}
+          BACKEND_DIGEST: ${{ steps.build.outputs.digest || steps.qualified.outputs.backend_digest }}
+          OBSERVER_DIGEST: ${{ steps.build_observer.outputs.digest || steps.qualified.outputs.observer_digest }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/trivy-cache
@@ -423,67 +523,6 @@ jobs:
                 "${image}"
             done
           done
-
-      - name: Promote release tags (post-gate)
-        shell: bash
-        env:
-          RELEASE_TAGS: ${{ needs.validate-tag.outputs.docker_tags }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          OBSERVER_IMAGE_DIGEST: ${{ steps.build_observer.outputs.digest }}
-        run: |
-          # Reached only when the boot smoke test passed: a failed gate fails
-          # the job, so this step (and every downstream job) never runs. The
-          # released tags — version (+ major/minor/latest for stable) and
-          # sha-<short> — are created as references to the SAME digest the
-          # gate just verified; nothing is rebuilt. Existing release tags are
-          # rejected so a failed candidate cannot be silently repaired by
-          # republishing the same version from different source code.
-          set -euo pipefail
-          ensure_tag_absent() {
-            local ref="$1" inspect_output
-            if inspect_output="$(docker buildx imagetools inspect "$ref" 2>&1)"; then
-              echo "::error::release tag already exists: ${ref}"
-              return 1
-            fi
-            if ! grep -Eiq '(not found|manifest unknown)' <<<"${inspect_output}"; then
-              echo "::error::unable to verify release tag absence: ${ref}"
-              printf '%s\n' "${inspect_output}"
-              return 1
-            fi
-          }
-          TAGS=()
-          while IFS= read -r entry; do
-            [[ -n "$entry" ]] || continue
-            [[ "$entry" == type=raw,value=* ]] || {
-              echo "::error::unexpected docker_tags entry: $entry"
-              exit 1
-            }
-            tag="${entry#type=raw,value=}"
-            ensure_tag_absent "${IMAGE_NAME}:${tag}"
-            TAGS+=(--tag "${IMAGE_NAME}:${tag}")
-            echo "Promoting ${IMAGE_NAME}:${tag}"
-          done <<< "$RELEASE_TAGS"
-          SHA_TAG="sha-${GITHUB_SHA:0:7}"
-          ensure_tag_absent "${IMAGE_NAME}:${SHA_TAG}"
-          TAGS+=(--tag "${IMAGE_NAME}:${SHA_TAG}")
-          echo "Promoting ${IMAGE_NAME}:${SHA_TAG}"
-          docker buildx imagetools create "${TAGS[@]}" "${IMAGE_NAME}@${IMAGE_DIGEST}"
-
-          OBSERVER_TAGS=()
-          while IFS= read -r entry; do
-            [[ -n "$entry" ]] || continue
-            [[ "$entry" == type=raw,value=* ]] || {
-              echo "::error::unexpected docker_tags entry: $entry"
-              exit 1
-            }
-            tag="${entry#type=raw,value=}"
-            ensure_tag_absent "${OBSERVER_IMAGE_NAME}:${tag}"
-            OBSERVER_TAGS+=(--tag "${OBSERVER_IMAGE_NAME}:${tag}")
-          done <<< "$RELEASE_TAGS"
-          ensure_tag_absent "${OBSERVER_IMAGE_NAME}:${SHA_TAG}"
-          OBSERVER_TAGS+=(--tag "${OBSERVER_IMAGE_NAME}:${SHA_TAG}")
-          docker buildx imagetools create "${OBSERVER_TAGS[@]}" \
-            "${OBSERVER_IMAGE_NAME}@${OBSERVER_IMAGE_DIGEST}"
 
   generate-sbom:
     name: Generate SBOMs
@@ -591,9 +630,96 @@ jobs:
           subject-digest: ${{ needs.build-and-push-image.outputs.observer_digest }}
           push-to-registry: true
 
+  promote-verified-images:
+    name: Publish verified image references
+    needs: [validate-tag, build-and-push-image, generate-sbom, attest-artifacts]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish verified image references
+        env:
+          QUALIFICATION_ONLY: ${{ needs.validate-tag.outputs.qualification_only }}
+          RELEASE_TAGS: ${{ needs.validate-tag.outputs.docker_tags }}
+          IMAGE_DIGEST: ${{ needs.build-and-push-image.outputs.digest }}
+          OBSERVER_IMAGE_DIGEST: ${{ needs.build-and-push-image.outputs.observer_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ensure_tag_absent() {
+            local ref="$1" inspect_output
+            if inspect_output="$(docker buildx imagetools inspect "$ref" 2>&1)"; then
+              echo "::error::image tag already exists: ${ref}"
+              return 1
+            fi
+            if ! grep -Eiq '(not found|manifest unknown)' <<<"${inspect_output}"; then
+              echo "::error::unable to verify image tag absence: ${ref}"
+              printf '%s\n' "${inspect_output}"
+              return 1
+            fi
+          }
+
+          if [[ "${QUALIFICATION_ONLY}" == true ]]; then
+            tag="qualified-${GITHUB_SHA}"
+            for image in "${IMAGE_NAME}" "${OBSERVER_IMAGE_NAME}"; do
+              ensure_tag_absent "${image}:${tag}"
+            done
+            docker buildx imagetools create --tag "${IMAGE_NAME}:${tag}" "${IMAGE_NAME}@${IMAGE_DIGEST}"
+            docker buildx imagetools create --tag "${OBSERVER_IMAGE_NAME}:${tag}" "${OBSERVER_IMAGE_NAME}@${OBSERVER_IMAGE_DIGEST}"
+            {
+              echo '## Pre-tag qualification passed'
+              echo
+              echo "Source: \`${GITHUB_SHA}\`"
+              echo "Backend: \`${IMAGE_NAME}@${IMAGE_DIGEST}\`"
+              echo "Observer: \`${OBSERVER_IMAGE_NAME}@${OBSERVER_IMAGE_DIGEST}\`"
+              echo "Qualified tags: \`${IMAGE_NAME}:${tag}\`, \`${OBSERVER_IMAGE_NAME}:${tag}\`"
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          tags=()
+          while IFS= read -r entry; do
+            [[ -n "${entry}" ]] || continue
+            [[ "${entry}" == type=raw,value=* ]] || {
+              echo "::error::unexpected docker_tags entry: ${entry}"
+              exit 1
+            }
+            tag="${entry#type=raw,value=}"
+            ensure_tag_absent "${IMAGE_NAME}:${tag}"
+            tags+=(--tag "${IMAGE_NAME}:${tag}")
+          done <<< "${RELEASE_TAGS}"
+          sha_tag="sha-${GITHUB_SHA:0:7}"
+          ensure_tag_absent "${IMAGE_NAME}:${sha_tag}"
+          tags+=(--tag "${IMAGE_NAME}:${sha_tag}")
+          docker buildx imagetools create "${tags[@]}" "${IMAGE_NAME}@${IMAGE_DIGEST}"
+
+          observer_tags=()
+          while IFS= read -r entry; do
+            [[ -n "${entry}" ]] || continue
+            tag="${entry#type=raw,value=}"
+            ensure_tag_absent "${OBSERVER_IMAGE_NAME}:${tag}"
+            observer_tags+=(--tag "${OBSERVER_IMAGE_NAME}:${tag}")
+          done <<< "${RELEASE_TAGS}"
+          ensure_tag_absent "${OBSERVER_IMAGE_NAME}:${sha_tag}"
+          observer_tags+=(--tag "${OBSERVER_IMAGE_NAME}:${sha_tag}")
+          docker buildx imagetools create "${observer_tags[@]}" \
+            "${OBSERVER_IMAGE_NAME}@${OBSERVER_IMAGE_DIGEST}"
+
   create-release:
     name: Create GitHub Release
-    needs: [validate-tag, build-and-push-image, generate-sbom, attest-artifacts]
+    needs: [validate-tag, build-and-push-image, generate-sbom, attest-artifacts, promote-verified-images]
+    if: needs.validate-tag.outputs.qualification_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
