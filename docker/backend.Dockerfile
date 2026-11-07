@@ -61,7 +61,6 @@ COPY .sqlx ./.sqlx/
 # Build the application or select precompiled binaries
 ENV SQLX_OFFLINE=true
 ENV CARGO_NET_RETRY=10
-ENV RUSTFLAGS="-C link-arg=-static-libgcc"
 # Precompiled artifacts arrive via actions/download-artifact merge-multiple,
 # which drops the exec bit; restore it so the runtime image can execute the
 # binary. (strip preserves the file mode, so ordering vs. chmod is irrelevant.)
@@ -78,6 +77,10 @@ RUN mkdir -p target/release \
     fi \
     && strip target/release/rustshare-server
 
+# The backend needs libgcc_s for Rust unwinding. Source it from the same
+# official Debian 13 runtime family without inheriting cc's vulnerable zlib.
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1 AS runtime-libraries
+
 # =============================================================================
 # Stage 3: Runtime Image
 # =============================================================================
@@ -85,6 +88,7 @@ FROM gcr.io/distroless/base-nossl-debian13:nonroot@sha256:e6b0f82595aa1edde72c80
 
 # Copy binaries and frontend build
 COPY --from=builder /app/target/release/rustshare-server /usr/local/bin/
+COPY --from=runtime-libraries /lib/*-linux-gnu/libgcc_s.so.1 /usr/lib/
 COPY --from=frontend-builder /app/frontend/build /app/frontend-build
 
 ENV FRONTEND_DIST_DIR=/app/frontend-build
