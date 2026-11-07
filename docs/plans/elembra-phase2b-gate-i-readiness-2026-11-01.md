@@ -327,47 +327,75 @@ Publisher-specific upstream-fix and live conformance tracking is separate in
 remains the mandatory managed-history Cilium gate; neither issue substitutes
 for the other or for desktop acceptance in #442.
 
-## 2026-11-05 protected-main refresh and Phase 2B.3 acceptance
+## 2026-11-05 post-#465 protected-main and Gate I refresh
 
-Protected `main` is `894813735b3a6828149d7216fee4b79ed5d0823d`. PRs #457,
-#459, #461, #462 and #463 are merged. All listed main-push workflows completed
-successfully except CI run [42062550751](https://github.com/kubedoio/rustshare/actions/runs/42062550751),
-which was still in progress when this entry was prepared; it is not counted as
-passed. The refreshed #463 PR checks and managed-history Cilium run
-[42056855474](https://github.com/kubedoio/rustshare/actions/runs/42056855474)
-are complete and successful.
+Protected `main` is `594fe807077d06d19e05ffbce38d08c9e8a83c71`, the squash
+merge of PR #465. PRs #457, #459, #461, #462, #463 and #465 are merged. PR #465
+changes only the Cargo integration-test registration, a deterministic contract
+fixture test, and documentation; it adds no production publisher, signer,
+route, or activation. Its test explicitly labels every publisher behavior
+`NOT IMPLEMENTED`, so passing fixture tests are not publisher evidence.
 
-| Acceptance row | Result | Evidence / remaining condition |
+Protected-main CI remains **INCOMPLETE**, not fully green: Integration Tests
+[`42118936965`](https://github.com/kubedoio/rustshare/actions/runs/42118936965)
+completed successfully, but the Pilot Release workflow
+[`42118936980`](https://github.com/kubedoio/rustshare/actions/runs/42118936980)
+is still in progress. Pilot Release is the disposable compose/upgrade
+qualification workflow; this is not a production deployment. The CI workflow
+[`42118937122`](https://github.com/kubedoio/rustshare/actions/runs/42118937122),
+Frontend CI [`42118937103`](https://github.com/kubedoio/rustshare/actions/runs/42118937103),
+CodeQL [`42118936999`](https://github.com/kubedoio/rustshare/actions/runs/42118936999),
+Vault Sync Compliance [`42118937010`](https://github.com/kubedoio/rustshare/actions/runs/42118937010),
+and DCO Check [`42118937084`](https://github.com/kubedoio/rustshare/actions/runs/42118937084)
+have successful completed runs. `OpenAPI Contract` in CI run 42118937122 is
+skipped and is not counted as a pass. No failed completed run was observed at
+this refresh. Recheck before treating main CI as complete.
+
+### Gate I acceptance matrix
+
+| Area | Verdict | Evidence / exact remaining condition |
 | --- | --- | --- |
-| Authorized kind-9 history | PASS | Exact event `4981ad90ef6cddd623d996146d675cc5ab07c9cfd7fe541104dbbcaa166de3d6`, author `c384d3e11ae0fd20ab1e2b53a21302feffae948356ea90b647f11a66714b09f4`, channel `191e0088-c8e8-40c3-9def-073830b15350`; current run asserts exact ID and author. |
-| Cross-tenant/private/wrong-identity denial | PASS | Cilium suite passed; terminal private/cross-tenant responses logged `event_count=0`. |
-| Revocation and mapping-generation fencing | PASS | Current suite passed; revoked active socket closed with zero EVENT frames, and mapping-generation change fenced the session. |
-| PostgreSQL outage during history revalidation | PASS | Runner stopped PostgreSQL after relay events and before authorization revalidation; reader returned `DatabaseUnavailable`; PostgreSQL restore passed. |
-| KMS unavailability and body-free audit | PASS | Reader returned no history on KMS failure and recorded only a body-free denial reason. |
-| Actual Cilium network policy and cleanup | PASS | Hubble recorded forbidden `1.1.1.1:443` egress as denied/dropped; the cluster and owned images were removed. |
-| Evidence manifest | PASS | All 53 artifact entries verified; `SHA256SUMS` digest is `1dd8017162ca8786116618080fd678ad387ac9f51079a3c1ad1b6425b2bc0091`. |
-| #458 normal PR review | PASS | Senolcolak approved PR #463. This is code review only. |
-| #458 independent issue-level security decision | PENDING | Requested explicit ACCEPT, REJECT, or REQUIRE CHANGES from eligible independent reviewer @melisecolak. #458 stays open until recorded. |
-| #442 stock Buzz Desktop acceptance | UNVERIFIED | No interactive display/session bus or runtime directory is present. Keyring binaries alone do not satisfy the committed native-keychain procedure. |
-| #460 publishing and upstream remediation | BLOCKED | Public review found no upstream-confirmed remediation, official fixed source pin, verified provenance, or accepted membership/role regression evidence. Contract fixtures are design-only and NOT IMPLEMENTED. |
-| Gate I / Phase 2B.4 | NO-GO | Managed signing, publishing, managed Chat activation and Phase 2B.4 remain disabled. |
+| Managed identity / provisioning | PASS — inert implementation and disposable qualification only | Phase 2B.2 foundations and Cilium qualification are merged; runtime remains disabled, with no production KMS/runtime caller, user signing, or activation approval. |
+| Managed history reader implementation | PASS — inert implementation only | Feature-gated, test-only Principal context, no route, worker, startup caller, or session pool. |
+| History Cilium execution | PASS | Run [42056855474](https://github.com/kubedoio/rustshare/actions/runs/42056855474) succeeded against unmodified Buzz `eafd77e9f6e96052476bdd88be732c046fdb7ab3`. The downloaded 54-file artifact had 53 manifest entries; all 53 verified and the manifest SHA-256 matched `1dd8017162ca8786116618080fd678ad387ac9f51079a3c1ad1b6425b2bc0091`. It covers exact event/author, private, wrong-identity and cross-tenant zero-EVENT denial, revocation, mapping-generation fencing, PostgreSQL outage, KMS failure/body-free audit, and real Cilium egress denial/cleanup. The transport test updates the signed mapping from generation 5 to 6 and verifies the active session is fenced. |
+| History independent security acceptance (#458) | PENDING | On 2026-11-05 requested an explicit issue-level ACCEPT, REJECT, or REQUIRE CHANGES from the designated independent reviewer @melisecolak, a repo maintainer distinct from the author. No verdict is recorded yet. Execution PASS and ordinary PR approval do not satisfy this gate. Keep #458 open and reader disabled. |
+| Stock Buzz Desktop acceptance (#442) | UNVERIFIED | This host has no `DISPLAY`, `WAYLAND_DISPLAY`, D-Bus session, or runtime directory; installed keyring tools do not establish a working native keychain. The exact operator checklist is committed at [`desktop-acceptance.md`](../../scripts/upstream-buzz-poc/desktop-acceptance.md); no GUI/mocked acceptance was substituted. |
+| Publishing implementation | NOT IMPLEMENTED | PR #465 is test-only contract inventory and fixtures. No production signer, publish operation, route, network publisher, or activation was added. |
+| Upstream authorization remediation (#460) | BLOCKED / not verified | No upstream-confirmed fix, official immutable fixed source revision, provenance verification, or accepted membership/role regression evidence was found in authorized public information. Public commits/PRs are not treated as remediation absent upstream confirmation. Do not change the Buzz pin. |
+| Publisher security and live conformance | NOT ACCEPTED / NOT RUN | Independent security acceptance of the Option A boundary, accepted upstream regression evidence, and disposable publisher Buzz/Cilium conformance are all outstanding. Managed signing stays disabled. |
+| Phase 2B.4 authorization | NO-GO | Gate I is not accepted. Do not start runtime integration, production publishing, migration, deployment, or NIP-17. |
 
-Issue #458's execution PASS, ordinary PR approval and independent security
-acceptance are tracked separately. Its sanitized artifact was downloaded and
-its SHA-256 manifest verified locally. No sensitive Buzz reproduction was run.
-The public upstream state is unknown: no commit or release is treated as a fix
-without upstream confirmation and the required evidence.
+The artifact's exact Tenant A fixture is event
+`66f50b1e9812fc8d3e25ae97c7704c31a0ad4c540587791cd38a05a830754793`, author
+`e632a318bdff67fbd42669350cd57f5c7eae323e9e0fe326cd681c7ff1d154e1`, channel
+`0c10f455-6382-44af-bc2d-8c53b3387e9a`. The live provisioning test compares
+both exact event ID and relay-admin author, asserts wrong-channel denial,
+`KmsUnavailable`, and audit reasons without the seeded message body. The
+transport test applies a signed mapping update from generation 5 to 6 and
+asserts `SessionFenced` on the existing session. The orchestrator stops
+PostgreSQL after receiving relay events and before authorization revalidation;
+the test observes `DatabaseUnavailable`, then restores PostgreSQL. Cilium
+Hubble records the forbidden public TCP probe as denied/dropped; cleanup
+evidence is included in the verified manifest.
 
-Before signing or publishing implementation, require all ADR-0046 entry
-criteria: the recorded owner Option A decision; a named independent security
-ACCEPT for the final authorization/custody/relay-trust/recovery boundary;
-upstream-confirmed remediation in an official unmodified Buzz revision with
-verified provenance; accepted membership/role regression evidence; and review
-of the typed request, precheck, idempotency, exact-byte recovery, encrypted
-retention, audit, and executable test designs. Then implement only typed kind-9
-publishing and satisfy protected review and CI. #458 issue-level acceptance
-and #442 stock-desktop acceptance remain separate gates; both, plus passing
-publisher Rust/PostgreSQL and disposable Buzz/Cilium conformance, are required
-before Phase 2B.4. No arbitrary signer, publishing route, real-user signing,
-NIP-17, migration, deployment or Phase 2B.4 integration is authorized by this
-plan.
+### Conditions to begin Phase 2B.3 publishing implementation
+
+Before implementing managed signing/publishing, require all of the following:
+
+1. Upstream confirms remediation through an authorized public status; the fix
+   is in an official, unmodified Buzz source revision with immutable SHA and
+   verified provenance.
+2. Membership/role regression tests for that exact revision are accepted,
+   including intended anonymous/open-channel policy behavior.
+3. An authorized independent security reviewer records ACCEPT for the final
+   Option A authorization, custody/KMS, relay trust, idempotency, exact-byte
+   recovery, replay, plaintext visibility, revocation and redaction boundary.
+4. The typed request, conservative precheck, scoped idempotency, crash/lost-ACK
+   recovery, encrypted retention/deletion and audit contracts are reviewed.
+
+Option A is already the project-owner-selected design. Before later Phase 2B.4
+authorization, additionally close #458 with its independent ACCEPT, complete
+#442 using the committed stock-desktop procedure, pass publisher Rust/PostgreSQL
+tests and disposable Buzz/Cilium live conformance, and satisfy protected PR
+review and CI. No condition here authorizes a real-user signing, production
+deployment, migration, NIP-17, or Phase 2B.4 change in this task.
