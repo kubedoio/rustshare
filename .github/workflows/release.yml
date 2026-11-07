@@ -314,6 +314,28 @@ jobs:
               node --check scripts/buzz-observer.mjs
           done
 
+      - name: Inspect backend runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE_REF="${IMAGE_NAME}:candidate-${GITHUB_RUN_ID}"
+          for platform in linux/amd64 linux/arm64; do
+            container_id="$(docker create --platform "${platform}" "${IMAGE_REF}" /usr/local/bin/rustshare-server)"
+            binary="$(mktemp)"
+            trap 'docker rm -f "${container_id}" >/dev/null 2>&1 || true; rm -f "${binary}"' EXIT
+            docker cp "${container_id}:/usr/local/bin/rustshare-server" "${binary}"
+            dependencies="$(readelf -d "${binary}" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p')"
+            printf '%s dependencies:\n%s\n' "${platform}" "${dependencies}"
+            grep -qx 'libgcc_s.so.1' <<<"${dependencies}"
+            if grep -Eq 'lib(ssl|crypto)\.so' <<<"${dependencies}"; then
+              echo "::error::Unexpected OpenSSL dependency in ${platform} runtime"
+              exit 1
+            fi
+            docker rm -f "${container_id}" >/dev/null
+            rm -f "${binary}"
+            trap - EXIT
+          done
+
       - name: Boot smoke test (exec bit + dynamic linker)
         shell: bash
         run: |
