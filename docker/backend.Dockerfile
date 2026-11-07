@@ -61,6 +61,7 @@ COPY .sqlx ./.sqlx/
 # Build the application or select precompiled binaries
 ENV SQLX_OFFLINE=true
 ENV CARGO_NET_RETRY=10
+ENV RUSTFLAGS="-C link-arg=-static-libgcc"
 # Precompiled artifacts arrive via actions/download-artifact merge-multiple,
 # which drops the exec bit; restore it so the runtime image can execute the
 # binary. (strip preserves the file mode, so ordering vs. chmod is irrelevant.)
@@ -80,7 +81,7 @@ RUN mkdir -p target/release \
 # =============================================================================
 # Stage 3: Runtime Image
 # =============================================================================
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e
+FROM gcr.io/distroless/base-nossl-debian13:nonroot@sha256:e6b0f82595aa1edde72c8054de7a9dca30f0f8f54820c37a167c0ddfc21c5c67
 
 # Copy binaries and frontend build
 COPY --from=builder /app/target/release/rustshare-server /usr/local/bin/
