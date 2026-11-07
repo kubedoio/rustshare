@@ -61,20 +61,20 @@ jobs:
         env:
           DISPATCH_VERSION: ${{ github.event.inputs.version }}
           TAG_REF: ${{ github.ref_name }}
-          EVENT_NAME: ${{ github.event_name }}
           QUALIFICATION_ONLY: ${{ github.event.inputs.qualification_only }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          workflow_event="${{ github.event_name }}"
           COMMIT="${{ github.sha }}"
 
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+          if [[ "$workflow_event" == "workflow_dispatch" ]]; then
             # The dispatch input is a bare version; the tag carries the v prefix.
             TAG="v${DISPATCH_VERSION}"
           else
             TAG="$TAG_REF"
           fi
 
-          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$QUALIFICATION_ONLY" == "true" ]]; then
+          if [[ "$workflow_event" == "workflow_dispatch" && "$QUALIFICATION_ONLY" == "true" ]]; then
             if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
               echo "::error::qualification must run from protected main"
               exit 1
@@ -117,7 +117,7 @@ jobs:
           # below and by the release-immutability decision.
           TAG_SHA="$(git rev-parse "${TAG}^{}" 2>/dev/null || true)"
 
-          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$QUALIFICATION_ONLY" != "true" ]]; then
+          if [[ "$workflow_event" == "workflow_dispatch" && "$QUALIFICATION_ONLY" != "true" ]]; then
             # A dispatch must reference an EXISTING tag at the exact commit
             # being released. A released version can never be rebuilt from a
             # different workflow/source commit.
@@ -168,10 +168,12 @@ jobs:
           # resolve_release_tag emits GITHUB_OUTPUT-compatible key=value lines
           # (multiline docker_tags via the <<RS_EOF delimiter); append verbatim.
           cat /tmp/release-tag.out >> "$GITHUB_OUTPUT"
-          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "should_release=true" >> "$GITHUB_OUTPUT"
-          echo "qualification_only=${QUALIFICATION_ONLY}" >> "$GITHUB_OUTPUT"
+          {
+            echo "commit=$COMMIT"
+            echo "tag=$TAG"
+            echo "should_release=true"
+            echo "qualification_only=${QUALIFICATION_ONLY}"
+          } >> "$GITHUB_OUTPUT"
           echo "Resolved: $(grep -E '^(version|is_prerelease|release_name)=' /tmp/release-tag.out | tr '\n' ' ')"
 
   build-binaries:
@@ -295,9 +297,9 @@ jobs:
           set -euo pipefail
           qualified_tag="qualified-${GITHUB_SHA}"
           for image in backend observer; do
-            if [[ "${image}" == backend ]]; then image_name="${IMAGE_NAME}"; else image_name="${OBSERVER_IMAGE_NAME}"; fi
+            if [[ "${image}" == backend ]]; then selected_image="${IMAGE_NAME}"; else selected_image="${OBSERVER_IMAGE_NAME}"; fi
             output_name="${image}_digest"
-            ref="${image_name}:${qualified_tag}"
+            ref="${selected_image}:${qualified_tag}"
             digest="$(docker buildx imagetools inspect "${ref}" | awk '$1 == "Digest:" { print $2; exit }')"
             if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
               echo "::error::No qualified multi-platform image found for ${ref}"
