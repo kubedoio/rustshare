@@ -558,3 +558,71 @@ describe('subject-authenticated relay reads', () => {
 		expect(await verifyEvent({ ...snapshot, content: 'tampered' })).toBe(false);
 	});
 });
+
+/** A relay that never challenges and tries to serve events without AUTH. */
+class UngatedRelaySocket extends FakeWebSocket {
+	static snapshot: NostrEvent | null = null;
+	static mode: 'direct' | 'forged-ok' | 'bare-ok' = 'direct';
+	send(data: string) {
+		const frame = JSON.parse(data) as unknown[];
+		this.sent.push(frame);
+		if (frame[0] === 'AUTH') {
+			this.reply(['OK', (frame[1] as { id: string }).id, true, '']);
+		} else if (frame[0] === 'REQ') {
+			const subscription = frame[1] as string;
+			if (UngatedRelaySocket.mode === 'forged-ok') {
+				// The relay asserts a successful AUTH we never performed.
+				this.reply(['OK', 'relay-chosen-auth-id', true, '']);
+			} else if (UngatedRelaySocket.mode === 'bare-ok') {
+				// A JSON array with no second element yields frame[1] === undefined,
+				// which a bare `frame[1] === authId` comparison would match while
+				// no AUTH is in flight.
+				this.reply(['OK']);
+			}
+			if (UngatedRelaySocket.snapshot) {
+				this.reply(['EVENT', subscription, UngatedRelaySocket.snapshot]);
+				this.reply(['EOSE', subscription]);
+			}
+		}
+	}
+}
+
+describe('relay-side authentication bypass attempts on reads', () => {
+	beforeEach(() => {
+		FakeWebSocket.instances = [];
+		UngatedRelaySocket.snapshot = null;
+		UngatedRelaySocket.mode = 'direct';
+		vi.stubGlobal('WebSocket', UngatedRelaySocket);
+	});
+	afterEach(() => vi.unstubAllGlobals());
+
+	it.each(['direct', 'forged-ok', 'bare-ok'] as const)(
+		'never accepts events when the relay skips AUTH (%s)',
+		async (mode) => {
+			UngatedRelaySocket.mode = mode;
+			const relaySk = generateSecretKey();
+			UngatedRelaySocket.snapshot = await signEvent(
+				await buildUnsignedEvent(39002, '', [['d', 'channel']], publicKeyOf(relaySk)),
+				relaySk
+			);
+			vi.useFakeTimers();
+			try {
+				const pending = queryRelayEvents(
+					'wss://relay.test',
+					{ kinds: [39002], '#d': ['channel'] },
+					generateSecretKey(),
+					publicKeyOf(relaySk)
+				);
+				// Fail closed on the transport timer: the forged frames must be
+				// dropped, never accepted.
+				await vi.advanceTimersByTimeAsync(10_500);
+				await expect(pending).resolves.toEqual({ ok: false, reason: 'transport' });
+			} finally {
+				vi.useRealTimers();
+			}
+			// No challenge ever arrived, so the client must never have sent AUTH.
+			const ws = FakeWebSocket.instances[0];
+			expect(ws.sent.filter((f) => f[0] === 'AUTH')).toHaveLength(0);
+		}
+	);
+});

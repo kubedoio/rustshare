@@ -172,7 +172,9 @@ export async function publishSignedEvent(
 				}
 				if (message[0] !== 'OK' || typeof message[2] !== 'boolean') return;
 				const detail = typeof message[3] === 'string' ? message[3] : undefined;
-				if (message[1] === authId) {
+				// authId is unset until our AUTH is sent, so this matches only the
+				// relay's OK for that event — never an unrelated or id-less frame.
+				if (typeof authId === 'string' && message[1] === authId) {
 					if (message[2]) send();
 					else finish({ ok: false, reason: 'rejected', detail });
 					return;
@@ -322,7 +324,7 @@ export async function queryRelayEvents(
 						if (settled) return;
 						authId = auth.id;
 						socket.send(JSON.stringify(['AUTH', auth]));
-					} else if (frame[0] === 'OK' && frame[1] === authId) {
+					} else if (frame[0] === 'OK' && typeof authId === 'string' && frame[1] === authId) {
 						if (frame[2] !== true)
 							finish({
 								ok: false,
