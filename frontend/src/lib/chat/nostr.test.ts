@@ -2,11 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { hexToBytes, bytesToHex } from '@noble/curves/utils.js';
 import {
+	type NostrEvent,
 	generateSecretKey,
 	publicKeyOf,
 	signEvent,
 	buildUnsignedEvent,
 	publishEvent,
+	publishSignedEvent,
+	queryRelayEvents,
+	verifyEvent,
 	isUuid,
 	NOSTR_KIND_STREAM_MESSAGE
 } from './nostr';
@@ -88,6 +92,7 @@ class FakeWebSocket {
 		this.sent.push(frame);
 		if (frame[0] === 'AUTH') {
 			this.authenticated = true;
+			this.reply(['OK', (frame[1] as { id: string }).id, true, '']);
 			if (FakeWebSocket.latePreAuthRejection && this.initialEventId) {
 				const eventId = this.initialEventId;
 				setTimeout(() => this.reply(['OK', eventId, false, 'auth-required: not authenticated']), 0);
@@ -117,9 +122,8 @@ class FakeWebSocket {
 
 /** A socket that errors before it can answer, like a refused connection. */
 class ErroringSocket extends FakeWebSocket {
-	constructor() {
-		super();
-		queueMicrotask(() => this.onerror?.());
+	send() {
+		this.onerror?.();
 	}
 }
 
@@ -266,7 +270,7 @@ describe('publishEvent', () => {
 		expect(result).toEqual({ ok: false, reason: 'rejected', detail: 'blocked: not admitted' });
 	});
 
-	it('resolves transport on a socket error before any OK frame', async () => {
+	it('resolves transport when the socket fails before EVENT transmission', async () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
@@ -311,5 +315,246 @@ describe('publishEvent without an AUTH challenge', () => {
 		expect(ws.sent.some((frame) => frame[0] === 'EVENT')).toBe(true);
 		// No auth dance on a challenge-less relay.
 		expect(ws.sent.some((frame) => frame[0] === 'AUTH')).toBe(false);
+	});
+});
+
+describe('publish ambiguity and exact retries', () => {
+	beforeEach(() => {
+		FakeWebSocket.instances = [];
+		FakeWebSocket.challengeOnEvent = false;
+		FakeWebSocket.autoOkOnEvent = false;
+		vi.stubGlobal('WebSocket', FakeWebSocket);
+	});
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('retains the exact signed event on close after transmission and retries it unchanged', async () => {
+		const sk = generateSecretKey();
+		const unsigned = await buildUnsignedEvent(9, 'draft', [['h', 'channel']], publicKeyOf(sk));
+		const pending = publishEvent('wss://relay.test', unsigned, sk);
+		await vi.waitFor(() => expect(FakeWebSocket.instances[0]?.sent).toHaveLength(1));
+		const firstSocket = FakeWebSocket.instances[0];
+		firstSocket.onclose?.();
+		const result = await pending;
+		expect(result).toMatchObject({ ok: false, reason: 'uncertain' });
+		if (result.ok || result.reason !== 'uncertain') throw new Error('expected uncertain');
+		expect(result.event).toEqual(firstSocket.sent[0][1]);
+		const retry = publishSignedEvent('wss://relay.test', result.event, sk);
+		await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+		const retrySocket = FakeWebSocket.instances[1];
+		await vi.waitFor(() => expect(retrySocket.sent).toHaveLength(1));
+		expect(retrySocket.sent[0]).toEqual(firstSocket.sent[0]);
+		retrySocket.reply(['OK', result.event_id, true, 'duplicate: already have this event']);
+		await expect(retry).resolves.toEqual({
+			ok: true,
+			event_id: result.event_id,
+			detail: 'duplicate: already have this event'
+		});
+	});
+
+	it('does not connect when durable signed-event retention fails', async () => {
+		const sk = generateSecretKey();
+		const unsigned = await buildUnsignedEvent(9, 'draft', [], publicKeyOf(sk));
+		await expect(
+			publishEvent('wss://relay.test', unsigned, sk, () => {
+				throw new Error('storage unavailable');
+			})
+		).rejects.toThrow('storage unavailable');
+		expect(FakeWebSocket.instances).toHaveLength(0);
+	});
+
+	it('rejects a retry with a different signing identity before connecting', async () => {
+		const sk = generateSecretKey();
+		const event = await signEvent(await buildUnsignedEvent(9, '', [], publicKeyOf(sk)), sk);
+		await expect(
+			publishSignedEvent('wss://relay.test', event, generateSecretKey())
+		).resolves.toMatchObject({ ok: false, reason: 'rejected' });
+		expect(FakeWebSocket.instances).toHaveLength(0);
+	});
+
+	it('does not resend EVENT until authentication is acknowledged', async () => {
+		const sk = generateSecretKey();
+		const pending = publishEvent(
+			'wss://relay.test',
+			await buildUnsignedEvent(9, '', [], publicKeyOf(sk)),
+			sk
+		);
+		await vi.waitFor(() => expect(FakeWebSocket.instances[0]?.sent).toHaveLength(1));
+		const ws = FakeWebSocket.instances[0];
+		const originalSend = ws.send.bind(ws);
+		ws.send = (data) => {
+			const frame = JSON.parse(data);
+			if (frame[0] === 'AUTH') ws.sent.push(frame);
+			else originalSend(data);
+		};
+		ws.reply(['AUTH', 'challenge']);
+		await vi.waitFor(() => expect(ws.sent).toHaveLength(2));
+		expect(ws.sent.filter((f) => f[0] === 'EVENT')).toHaveLength(1);
+		ws.reply(['OK', (ws.sent[1][1] as { id: string }).id, false, 'restricted: not a member']);
+		await expect(pending).resolves.toMatchObject({
+			ok: false,
+			reason: 'rejected',
+			detail: 'restricted: not a member'
+		});
+	});
+});
+
+class QuerySocket extends FakeWebSocket {
+	constructor() {
+		super();
+		queueMicrotask(() => this.reply(['AUTH', 'query-challenge']));
+	}
+	send(data: string) {
+		const frame = JSON.parse(data) as unknown[];
+		this.sent.push(frame);
+		if (frame[0] === 'AUTH') this.reply(['OK', (frame[1] as { id: string }).id, true, '']);
+	}
+}
+
+describe('subject-authenticated relay reads', () => {
+	beforeEach(() => {
+		FakeWebSocket.instances = [];
+		vi.stubGlobal('WebSocket', QuerySocket);
+	});
+	afterEach(() => vi.unstubAllGlobals());
+
+	async function query(snapshot: NostrEvent, channel = 'channel') {
+		const sk = generateSecretKey();
+		const pending = queryRelayEvents(
+			'wss://relay.test',
+			{ kinds: [39002], '#d': [channel] },
+			sk,
+			snapshot.pubkey
+		);
+		await vi.waitFor(() =>
+			expect(FakeWebSocket.instances[0]?.sent.filter((f) => f[0] === 'REQ')).toHaveLength(2)
+		);
+		const ws = FakeWebSocket.instances[0];
+		const req = ws.sent.find((f) => f[0] === 'REQ')!;
+		return { pending, ws, subscription: req[1] };
+	}
+
+	it('accepts only matching signed snapshots after subject AUTH and verifies before EOSE', async () => {
+		const relaySk = generateSecretKey();
+		const snapshot = await signEvent(
+			await buildUnsignedEvent(39002, '', [['d', 'channel']], publicKeyOf(relaySk)),
+			relaySk
+		);
+		const { pending, ws, subscription } = await query(snapshot);
+		ws.reply(['EVENT', subscription, snapshot]);
+		ws.reply(['EOSE', subscription]);
+		await expect(pending).resolves.toEqual({ ok: true, events: [snapshot] });
+	});
+
+	it('fails closed on a valid snapshot for the wrong channel', async () => {
+		const relaySk = generateSecretKey();
+		const snapshot = await signEvent(
+			await buildUnsignedEvent(39002, '', [['d', 'elsewhere']], publicKeyOf(relaySk)),
+			relaySk
+		);
+		const { pending, ws, subscription } = await query(snapshot);
+		ws.reply(['EVENT', subscription, snapshot]);
+		ws.reply(['EOSE', subscription]);
+		await expect(pending).resolves.toMatchObject({ ok: false, reason: 'invalid' });
+	});
+
+	it('fails closed on a signed snapshot from an untrusted relay key', async () => {
+		const trusted = generateSecretKey();
+		const other = generateSecretKey();
+		const snapshot = await signEvent(
+			await buildUnsignedEvent(39002, '', [['d', 'channel']], publicKeyOf(other)),
+			other
+		);
+		const { pending, ws, subscription } = await query({
+			...snapshot,
+			pubkey: publicKeyOf(trusted)
+		});
+		ws.reply(['EVENT', subscription, snapshot]);
+		await expect(pending).resolves.toMatchObject({ ok: false, reason: 'invalid' });
+	});
+
+	it('returns denied rather than a partial event list on CLOSED', async () => {
+		const relaySk = generateSecretKey();
+		const snapshot = await signEvent(
+			await buildUnsignedEvent(39002, '', [['d', 'channel']], publicKeyOf(relaySk)),
+			relaySk
+		);
+		const { pending, ws, subscription } = await query(snapshot);
+		ws.reply(['EVENT', subscription, snapshot]);
+		ws.reply(['CLOSED', subscription, 'restricted: private channel']);
+		await expect(pending).resolves.toEqual({
+			ok: false,
+			reason: 'rejected',
+			detail: 'restricted: private channel'
+		});
+	});
+
+	it('rejects malformed limits before connecting', async () => {
+		const sk = generateSecretKey();
+		await expect(
+			queryRelayEvents('wss://relay.test', { kinds: [39000], limit: NaN }, sk, publicKeyOf(sk))
+		).resolves.toEqual({ ok: false, reason: 'invalid' });
+		expect(FakeWebSocket.instances).toHaveLength(0);
+	});
+
+	it('fails closed when more events arrive than requested', async () => {
+		const sk = generateSecretKey();
+		const event = await signEvent(
+			await buildUnsignedEvent(39002, '', [['d', 'channel']], publicKeyOf(sk)),
+			sk
+		);
+		const pending = queryRelayEvents(
+			'wss://relay.test',
+			{ kinds: [39002], '#d': ['channel'], limit: 1 },
+			sk,
+			publicKeyOf(sk)
+		);
+		await vi.waitFor(() =>
+			expect(FakeWebSocket.instances[0]?.sent.filter((f) => f[0] === 'REQ')).toHaveLength(2)
+		);
+		const ws = FakeWebSocket.instances[0];
+		const subscription = ws.sent.find((f) => f[0] === 'REQ')![1];
+		ws.reply(['EVENT', subscription, event]);
+		ws.reply(['EVENT', subscription, event]);
+		ws.reply(['EOSE', subscription]);
+		await expect(pending).resolves.toEqual({ ok: false, reason: 'invalid' });
+	});
+
+	it('binds thread queries to the requested parent event', async () => {
+		const sk = generateSecretKey();
+		const snapshot = await signEvent(
+			await buildUnsignedEvent(
+				9,
+				'',
+				[
+					['h', 'channel'],
+					['e', 'other-parent']
+				],
+				publicKeyOf(sk)
+			),
+			sk
+		);
+		const pending = queryRelayEvents(
+			'wss://relay.test',
+			{ kinds: [9], '#h': ['channel'], '#e': ['requested-parent'] },
+			sk,
+			publicKeyOf(sk)
+		);
+		await vi.waitFor(() =>
+			expect(FakeWebSocket.instances[0]?.sent.filter((f) => f[0] === 'REQ')).toHaveLength(2)
+		);
+		const ws = FakeWebSocket.instances[0];
+		const subscription = ws.sent.find((f) => f[0] === 'REQ')![1];
+		ws.reply(['EVENT', subscription, snapshot]);
+		await expect(pending).resolves.toEqual({ ok: false, reason: 'invalid' });
+	});
+
+	it('rejects content mutation even when the signature still matches the old ID', async () => {
+		const sk = generateSecretKey();
+		const snapshot = await signEvent(
+			await buildUnsignedEvent(39000, '', [['d', 'channel']], publicKeyOf(sk)),
+			sk
+		);
+		expect(await verifyEvent(snapshot)).toBe(true);
+		expect(await verifyEvent({ ...snapshot, content: 'tampered' })).toBe(false);
 	});
 });

@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Gate fork-backed Chat posting on verified relay metadata and membership, show channel details, and preserve exact signed messages across uncertain acknowledgments and browser reloads.
+
 - Establish the first supported Elembra database baseline for clean installs; existing pre-release POC databases require a fresh database and application storage.
 - Declare Chat admission, revocation, and staged-release events so durable replacement commands pass the integration outbox ownership check.
 - Wait for NIP-42 authentication acknowledgment before sending conditional Buzz membership commands.

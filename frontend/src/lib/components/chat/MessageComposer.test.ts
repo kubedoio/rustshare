@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => {
 	return {
 		getSigningKey: vi.fn((): string | null => 'sk-1'),
 		publishEvent: vi.fn(),
+		publishSignedEvent: vi.fn(),
 		publicKeyOf: vi.fn(() => 'pk-1'),
 		buildUnsignedEvent: vi.fn(
 			async (_kind: number, content: string, _tags: unknown[], _pubkey: string) => ({
@@ -34,6 +35,7 @@ vi.mock('$lib/chat/session', () => ({
 
 vi.mock('$lib/chat/nostr', () => ({
 	publishEvent: mocks.publishEvent,
+	publishSignedEvent: mocks.publishSignedEvent,
 	publicKeyOf: mocks.publicKeyOf,
 	buildUnsignedEvent: mocks.buildUnsignedEvent,
 	isUuid: (value: string) =>
@@ -61,6 +63,7 @@ function renderComposer(
 		channelName?: string;
 		boundPubkey?: string;
 		signingKey?: string | null;
+		postingAllowed?: boolean;
 	} = {}
 ) {
 	const {
@@ -68,7 +71,8 @@ function renderComposer(
 		channelId = 'general',
 		channelName = 'general',
 		boundPubkey = 'pk-1',
-		signingKey = 'sk-1'
+		signingKey = 'sk-1',
+		postingAllowed = true
 	} = props;
 	mocks.getSigningKey.mockReturnValue(signingKey);
 	return {
@@ -78,6 +82,7 @@ function renderComposer(
 			channelId,
 			channelName,
 			boundPubkey,
+			postingAllowed,
 			onSendFailure
 		})
 	};
@@ -85,6 +90,10 @@ function renderComposer(
 
 describe('MessageComposer', () => {
 	beforeEach(() => {
+		sessionStorage.clear();
+		vi.mocked(mocks.publishSignedEvent)
+			.mockReset()
+			.mockResolvedValue({ ok: true, event_id: 'same-event' });
 		vi.mocked(mocks.getSigningKey).mockReset().mockReturnValue('sk-1');
 		vi.mocked(mocks.publishEvent).mockReset().mockResolvedValue({ ok: true });
 		vi.mocked(mocks.publicKeyOf).mockReset().mockReturnValue('pk-1');
@@ -273,5 +282,87 @@ describe('MessageComposer', () => {
 			)
 		);
 		expect(onSendFailure).toHaveBeenCalledWith('');
+	});
+	it('denies posting without an explicit channel permission', async () => {
+		renderComposer({ postingAllowed: false });
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'not authorized' }
+		});
+		expect(
+			(screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement).disabled
+		).toBe(true);
+		await fireEvent.keyDown(screen.getByLabelText('Message text'), { key: 'Enter' });
+		expect(mocks.publishEvent).not.toHaveBeenCalled();
+	});
+
+	it('preserves channel-scoped drafts across remount without sharing them to another channel', async () => {
+		const first = renderComposer({ channelId: 'first' });
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'first draft' }
+		});
+		first.unmount();
+		const second = renderComposer({ channelId: 'second' });
+		expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe('');
+		second.unmount();
+		renderComposer({ channelId: 'first' });
+		await waitFor(() =>
+			expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe(
+				'first draft'
+			)
+		);
+	});
+
+	it('retains an uncertain signed message across reload and retries the exact event', async () => {
+		const event = {
+			id: 'same-event',
+			pubkey: 'pk-1',
+			kind: 1,
+			created_at: 123,
+			content: 'maybe sent',
+			tags: [],
+			sig: 'signature'
+		};
+		mocks.publishEvent.mockResolvedValue({
+			ok: false,
+			reason: 'uncertain',
+			event_id: event.id,
+			event
+		});
+		const first = renderComposer();
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'maybe sent' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+		await screen.findByRole('button', { name: 'Retry same message' });
+		expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).disabled).toBe(true);
+		first.unmount();
+		renderComposer();
+		await fireEvent.click(await screen.findByRole('button', { name: 'Retry same message' }));
+		await waitFor(() =>
+			expect(mocks.publishSignedEvent).toHaveBeenCalledWith('wss://relay.example', event, 'sk-1')
+		);
+		expect(mocks.publishEvent).toHaveBeenCalledTimes(1);
+		await waitFor(() =>
+			expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe('')
+		);
+	});
+
+	it('persists the signed event before the first send and refuses to send when storage fails', async () => {
+		mocks.publishEvent.mockImplementation(async (_url, _event, _sk, onSigned) => {
+			onSigned({ id: 'pending', pubkey: 'pk-1', kind: 1, tags: [] });
+			throw new Error('should not reach network after persistence error');
+		});
+		const { onSendFailure } = renderComposer();
+		await fireEvent.input(screen.getByLabelText('Message text'), { target: { value: 'draft' } });
+		const storage = vi.spyOn(sessionStorage, 'setItem').mockImplementation(() => {
+			throw new Error('quota exceeded');
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+		await waitFor(() =>
+			expect(onSendFailure).toHaveBeenCalledWith(
+				'Cannot preserve the signed message safely. Browser storage is unavailable.'
+			)
+		);
+		storage.mockRestore();
 	});
 });
