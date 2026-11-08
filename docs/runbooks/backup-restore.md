@@ -153,6 +153,11 @@ Check the service journal, the external monitor, and the S3 object list after
 the first run. A timer configuration alone is not proof that a backup reached
 the remote bucket.
 
+The existing snapshot helper copies live RustFS volumes and dumps the two
+databases separately. It does not provide an atomic snapshot across services.
+Schedule a quiet write window and verify application-level integrity during the
+independent restore drill before treating this procedure as qualified recovery.
+
 #### Independent restore
 
 On a separate restore host, use the independently held S3 read credential and

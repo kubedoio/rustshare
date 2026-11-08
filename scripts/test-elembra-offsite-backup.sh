@@ -44,13 +44,14 @@ docker image inspect "${AWS_CLI_IMAGE}" >/dev/null
 test_project="${TEST_ROOT}/project"
 mkdir -p "${test_project}"
 git -C "${ROOT}" archive HEAD | tar -x -C "${test_project}"
-cp "${ROOT}/scripts/elembra-offsite-backup.sh" "${test_project}/scripts/"
+cp "${ROOT}/scripts/elembra-offsite-backup.sh" "${ROOT}/scripts/backup-stack.sh" "${test_project}/scripts/"
 mkdir -p "${test_project}/.elembra"
 cat >"${test_project}/.env" <<EOF
 COMPOSE_PROJECT_NAME=${PROJECT}
 POSTGRES_USER=rustshare
 POSTGRES_PASSWORD=disposable-test-db-password
 POSTGRES_DB=rustshare
+ELEMBRA_COMPOSE_EXTRA_FILE=.elembra/rustfs-kms.override.yml
 EOF
 chmod 600 "${test_project}/.env"
 cat >"${test_project}/.elembra/chat.env" <<'EOF'
@@ -159,6 +160,7 @@ export ELEMBRA_BACKUP_TEST_ALLOW_HTTP_LOOPBACK=true
 export ELEMBRA_BACKUP_STAGING_DIR="${TEST_ROOT}/staging"
 export COMPOSE_FILE="${TEST_ROOT}/compose.yml"
 export COMPOSE_PROJECT_NAME="${PROJECT}"
+export ELEMBRA_COMPOSE_EXTRA_FILE="${test_project}/.elembra/rustfs-kms.override.yml"
 export POSTGRES_USER=rustshare POSTGRES_DB=rustshare
 export BUZZ_POSTGRES_SERVICE=buzz-postgres BUZZ_RUSTFS_SERVICE=buzz-rustfs
 

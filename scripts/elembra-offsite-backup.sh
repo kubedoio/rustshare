@@ -10,8 +10,8 @@ HEARTBEAT_URL="${ELEMBRA_BACKUP_HEARTBEAT_URL:-}"
 
 ping_monitor() {
 	local url="$1"
-	[[ "${url}" != *$'\n'* && "${url}" != *$'\r'* && "${url}" != *'"'* && "${url}" != *'\\'* ]] || return 2
-	printf 'url = "%s"\n' "${url}" | curl --config - --fail --silent --max-time 10 >/dev/null 2>&1
+	[[ "${url}" != *$'\n'* && "${url}" != *$'\r'* && "${url}" != *'"'* && "${url}" != *'\'* ]] || return 2
+	printf 'url = "%s"\n' "${url}" | curl --disable --config - --proto =https,http --fail --silent --max-time 10 >/dev/null 2>&1
 }
 
 on_error() {
