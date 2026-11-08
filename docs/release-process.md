@@ -227,6 +227,12 @@ publication. Both use the exact same immutable image digests:
    qualified image digests (it fails if qualification is missing), repeats the
    platform boot and strict vulnerability scans, then promotes the verified
    digests to the version and `sha-<short>` tags. It does not rebuild images.
+   Digest inspection captures the full registry response before parsing it;
+   this avoids a possible SIGPIPE when an early parser exit is combined with
+   `pipefail`. The recorded alpha.7 tag run ended at this lookup with exit 255
+   and no underlying registry diagnostic. The CI release-digest contract
+   checks both exact source-qualified refs and confirms this lookup invokes no
+   build or promotion command.
 5. **Release** — after promotion, SBOMs, and attestations all pass, create the
    GitHub Release from the version tag.
 
