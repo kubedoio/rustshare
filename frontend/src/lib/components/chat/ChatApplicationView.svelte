@@ -14,10 +14,13 @@
 	import ChannelList from './ChannelList.svelte';
 	import ChannelHeader from './ChannelHeader.svelte';
 	import ChannelPermissions from './ChannelPermissions.svelte';
+	import CreateChannelPanel from './CreateChannelPanel.svelte';
 	import MessageTimeline from './MessageTimeline.svelte';
 	import MessageComposer from './MessageComposer.svelte';
 	import ChatIdentityUnlock from './ChatIdentityUnlock.svelte';
-	import { chatSessionStore, lock } from '$lib/chat/session';
+	import { chatSessionStore, lock, getSigningKey } from '$lib/chat/session';
+	import { getChatCapabilities } from '$lib/chat/capabilities';
+	import { listVisibleChannels, type ChannelDirectoryResult } from '$lib/chat/channels';
 
 	$effect(() => {
 		const session = $chatSessionStore;
@@ -39,6 +42,15 @@
 		queryFn: () => getChatChannels(),
 		enabled: false
 	});
+	// Relay-backed directory: group discovery via kinds-[39000] historical REQ
+	// lists every channel this identity may see, including channels with zero
+	// messages. The relay applies access control before returning, so private
+	// channels the caller may not see never reach this query's result.
+	const directoryQuery = createQuery<ChannelDirectoryResult>({
+		queryKey: ['chat-channel-directory', null, null],
+		queryFn: () => Promise.resolve({ ok: true, channels: [] }),
+		enabled: false
+	});
 
 	let selectedChannelId = $state<string | null>(null);
 	let focusedMessageId = $state<string | null>(null);
@@ -53,6 +65,22 @@
 		if (message) focusedMessageId = message;
 	});
 
+	// Keep the URL addressable without adding history entries: reloading the
+	// page must reconstruct selection from the relay directory, not from any
+	// local cache, so the URL is a view parameter only.
+	$effect(() => {
+		const id = selectedChannelId;
+		if (!id) return;
+		try {
+			const url = new URL($page.url);
+			if (url.searchParams.get('channel') === id) return;
+			url.searchParams.set('channel', id);
+			history.replaceState(history.state, '', url);
+		} catch {
+			/* History unavailable (e.g. embedded); selection still works. */
+		}
+	});
+
 	$effect(() => {
 		channelsQuery.setOptions({
 			queryKey: ['chat-channels'],
@@ -61,11 +89,73 @@
 		});
 	});
 
+	const status = $derived($statusQuery.data);
+	const capabilities = $derived(getChatCapabilities(status?.runtime_profile ?? 'upstream_managed'));
+	const directoryEnabled = $derived(
+		capabilities.directory.available &&
+			status?.mapping?.relay_url != null &&
+			status.mapping.relay_pubkey != null &&
+			$chatSessionStore.state === 'unlocked'
+	);
+
 	$effect(() => {
-		const channels = $channelsQuery.data;
-		if (!channels || channels.length === 0) return;
-		if (selectedChannelId && channels.some((c) => c.channel_id === selectedChannelId)) return;
-		selectedChannelId = channels[0].channel_id;
+		directoryQuery.setOptions({
+			queryKey: [
+				'chat-channel-directory',
+				status?.mapping?.relay_url ?? null,
+				status?.mapping?.relay_pubkey ?? null
+			],
+			queryFn: () => {
+				const mapping = status?.mapping;
+				const key = getSigningKey();
+				if (!mapping?.relay_url || !mapping.relay_pubkey || !key)
+					return Promise.resolve({ ok: true as const, channels: [] });
+				return listVisibleChannels({
+					relayUrl: mapping.relay_url,
+					secretKey: key,
+					relayPubkey: mapping.relay_pubkey
+				});
+			},
+			enabled: directoryEnabled,
+			staleTime: 15_000,
+			placeholderData: (previous) => previous
+		});
+	});
+
+	// Relay directory entries merged with the observation-derived channel list.
+	// Observation rows win for shared ids (they carry latest_event_at); the
+	// relay side contributes channels that have no observed messages yet.
+	const relayChannels = $derived.by(() => {
+		const data = $directoryQuery.data;
+		if (!data?.ok) return [];
+		return data.channels.map((entry) => ({
+			channel_id: entry.channelId,
+			name: entry.name,
+			channel_kind: 'stream',
+			channel_type: entry.channelType,
+			visibility: entry.visibility,
+			member: null,
+			latest_event_at: ''
+		}));
+	});
+	const channelEntries = $derived.by(() => {
+		const observed = $channelsQuery.data ?? [];
+		const observedIds = new Set(observed.map((channel) => channel.channel_id));
+		return [
+			...observed,
+			...relayChannels.filter((channel) => !observedIds.has(channel.channel_id))
+		];
+	});
+	// Selection may only be validated once the directory outcome is known;
+	// otherwise a deep link to an empty (relay-only) channel would be clobbered
+	// while the discovery query is still in flight.
+	const directoryReady = $derived(!directoryEnabled || $directoryQuery.isFetched);
+
+	$effect(() => {
+		const entries = channelEntries;
+		if (!directoryReady || entries.length === 0) return;
+		if (selectedChannelId && entries.some((c) => c.channel_id === selectedChannelId)) return;
+		selectedChannelId = entries[0].channel_id;
 	});
 
 	// A citation deep link names only the message; once it resolves, switch to
@@ -124,6 +214,7 @@
 			if (selectedChannelId) messagesQuery.refetch();
 			const status = $statusQuery.data;
 			if (status?.mapping != null && status?.binding != null) channelsQuery.refetch();
+			if (directoryEnabled) directoryQuery.refetch();
 		}, 15_000);
 		return () => clearInterval(interval);
 	});
@@ -218,10 +309,9 @@
 		postingAllowed = false;
 	});
 
-	const status = $derived($statusQuery.data);
 	const bindingActive = $derived(status?.binding != null && status.binding.status === 'Active');
 	const selectedChannel = $derived(
-		$channelsQuery.data?.find((c) => c.channel_id === selectedChannelId) ?? null
+		channelEntries.find((c) => c.channel_id === selectedChannelId) ?? null
 	);
 	const channelDisplayName = $derived(selectedChannel?.name ?? selectedChannelId ?? 'unknown');
 	const askChannelHref = $derived(
@@ -257,7 +347,7 @@
 {:else}
 	<div class="flex h-full min-h-0">
 		<ChannelList
-			channels={$channelsQuery.data ?? []}
+			channels={channelEntries}
 			loading={$channelsQuery.isLoading}
 			{selectedChannelId}
 			onSelect={(id: string) => {
@@ -265,7 +355,20 @@
 				focusedMessageId = null;
 				cursor = null;
 			}}
-		/>
+		>
+			{#snippet header()}
+				{#if capabilities.createChannel.available && status.mapping?.relay_url && status.mapping.relay_pubkey}
+					<CreateChannelPanel
+						relayUrl={status.mapping.relay_url}
+						relayPubkey={status.mapping.relay_pubkey}
+						onCreated={(id: string) => {
+							selectedChannelId = id;
+							directoryQuery.refetch();
+						}}
+					/>
+				{/if}
+			{/snippet}
+		</ChannelList>
 		<div class="flex min-w-0 flex-1 flex-col">
 			<ChannelHeader
 				channelId={selectedChannelId ?? ''}
@@ -286,6 +389,7 @@
 						channelId={selectedChannelId}
 						pubkey={$chatSessionStore.pubkey}
 						onPostingChange={(allowed) => (postingAllowed = allowed)}
+						onChanged={() => directoryQuery.refetch()}
 					/>
 				{/key}
 			{/if}
@@ -349,7 +453,7 @@
 						boundPubkey={status.binding?.buzz_pubkey ?? ''}
 						postingAllowed={status.runtime_profile === 'fork_client_held'
 							? postingAllowed &&
-								selectedChannel?.member === true &&
+								selectedChannel != null &&
 								!$statusQuery.isError &&
 								!$channelsQuery.isError
 							: status.runtime_profile === 'local_client_held' &&
