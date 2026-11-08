@@ -293,21 +293,16 @@ jobs:
         id: qualified
         if: needs.validate-tag.outputs.qualification_only != 'true'
         shell: bash
+        env:
+          RELEASE_COMMIT: ${{ needs.validate-tag.outputs.commit }}
         run: |
           set -euo pipefail
-          qualified_tag="qualified-${GITHUB_SHA}"
-          for image in backend observer; do
-            if [[ "${image}" == backend ]]; then selected_image="${IMAGE_NAME}"; else selected_image="${OBSERVER_IMAGE_NAME}"; fi
-            output_name="${image}_digest"
-            ref="${selected_image}:${qualified_tag}"
-            digest="$(docker buildx imagetools inspect "${ref}" | awk '$1 == "Digest:" { print $2; exit }')"
-            if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "::error::No qualified multi-platform image found for ${ref}"
-              exit 1
-            fi
-            echo "${output_name}=${digest}" >> "${GITHUB_OUTPUT}"
-          done
-          echo "Using pre-tag qualified images for ${GITHUB_SHA}"
+          qualified_tag="qualified-${RELEASE_COMMIT}"
+          digests="$(scripts/resolve-qualified-image-digests.sh \
+            "${IMAGE_NAME}:${qualified_tag}" \
+            "${OBSERVER_IMAGE_NAME}:${qualified_tag}")"
+          printf '%s\n' "${digests}" >> "${GITHUB_OUTPUT}"
+          echo "Using pre-tag qualified images for ${RELEASE_COMMIT}"
 
       - name: Extract Docker metadata
         id: meta
@@ -373,12 +368,13 @@ jobs:
         shell: bash
         env:
           QUALIFICATION_ONLY: ${{ needs.validate-tag.outputs.qualification_only }}
+          RELEASE_COMMIT: ${{ needs.validate-tag.outputs.commit }}
         run: |
           set -euo pipefail
           if [[ "${QUALIFICATION_ONLY}" == true ]]; then
             IMAGE_REF="${OBSERVER_IMAGE_NAME}:candidate-${GITHUB_RUN_ID}"
           else
-            IMAGE_REF="${OBSERVER_IMAGE_NAME}:qualified-${GITHUB_SHA}"
+            IMAGE_REF="${OBSERVER_IMAGE_NAME}:qualified-${RELEASE_COMMIT}"
           fi
           for platform in linux/amd64 linux/arm64; do
             docker run --rm --platform "${platform}" "${IMAGE_REF}" \
@@ -389,12 +385,13 @@ jobs:
         shell: bash
         env:
           QUALIFICATION_ONLY: ${{ needs.validate-tag.outputs.qualification_only }}
+          RELEASE_COMMIT: ${{ needs.validate-tag.outputs.commit }}
         run: |
           set -euo pipefail
           if [[ "${QUALIFICATION_ONLY}" == true ]]; then
             IMAGE_REF="${IMAGE_NAME}:candidate-${GITHUB_RUN_ID}"
           else
-            IMAGE_REF="${IMAGE_NAME}:qualified-${GITHUB_SHA}"
+            IMAGE_REF="${IMAGE_NAME}:qualified-${RELEASE_COMMIT}"
           fi
           for platform in linux/amd64 linux/arm64; do
             container_id="$(docker create --platform "${platform}" "${IMAGE_REF}" /usr/local/bin/rustshare-server)"
@@ -417,13 +414,14 @@ jobs:
         shell: bash
         env:
           QUALIFICATION_ONLY: ${{ needs.validate-tag.outputs.qualification_only }}
+          RELEASE_COMMIT: ${{ needs.validate-tag.outputs.commit }}
         run: |
           # Re-resolve the multi-platform tag on each leg; the runner's classic
           # Docker store cannot replace one platform digest with another.
           if [[ "${QUALIFICATION_ONLY}" == true ]]; then
             IMAGE_REF="${IMAGE_NAME}:candidate-${GITHUB_RUN_ID}"
           else
-            IMAGE_REF="${IMAGE_NAME}:qualified-${GITHUB_SHA}"
+            IMAGE_REF="${IMAGE_NAME}:qualified-${RELEASE_COMMIT}"
           fi
           # The server has no --help/--version: main() ignores argv and boots
           # straight into startup, which first validates config and connects to
@@ -652,6 +650,7 @@ jobs:
         env:
           QUALIFICATION_ONLY: ${{ needs.validate-tag.outputs.qualification_only }}
           RELEASE_TAGS: ${{ needs.validate-tag.outputs.docker_tags }}
+          RELEASE_COMMIT: ${{ needs.validate-tag.outputs.commit }}
           IMAGE_DIGEST: ${{ needs.build-and-push-image.outputs.digest }}
           OBSERVER_IMAGE_DIGEST: ${{ needs.build-and-push-image.outputs.observer_digest }}
         shell: bash
@@ -671,7 +670,7 @@ jobs:
           }
 
           if [[ "${QUALIFICATION_ONLY}" == true ]]; then
-            tag="qualified-${GITHUB_SHA}"
+            tag="qualified-${RELEASE_COMMIT}"
             for image in "${IMAGE_NAME}" "${OBSERVER_IMAGE_NAME}"; do
               ensure_tag_absent "${image}:${tag}"
             done
@@ -699,7 +698,7 @@ jobs:
             ensure_tag_absent "${IMAGE_NAME}:${tag}"
             tags+=(--tag "${IMAGE_NAME}:${tag}")
           done <<< "${RELEASE_TAGS}"
-          sha_tag="sha-${GITHUB_SHA:0:7}"
+          sha_tag="sha-${RELEASE_COMMIT:0:7}"
           ensure_tag_absent "${IMAGE_NAME}:${sha_tag}"
           tags+=(--tag "${IMAGE_NAME}:${sha_tag}")
           docker buildx imagetools create "${tags[@]}" "${IMAGE_NAME}@${IMAGE_DIGEST}"
