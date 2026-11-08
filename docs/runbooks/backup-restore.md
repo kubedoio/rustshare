@@ -1,9 +1,9 @@
 # Backup and Restore Runbook
 
-> **Audience:** Operators responsible for RustShare data protection and recovery  
+> **Audience:** Operators responsible for Elembra data protection and recovery
 > **Scope:** Docker Compose deployments using the bundled backup and restore scripts  
 > **RPO target:** < 24 hours  
-> **RTO target:** < 2 hours
+> **RTO target:** < 2 hours (must be confirmed by a real isolated restore drill)
 
 ---
 
@@ -27,11 +27,13 @@ This covers the three critical layers of a RustShare deployment:
 2. **Object storage** — actual file content and versions stored in RustFS/S3.
 3. **Configuration** — compose files, environment references, and operational docs.
 
-> **Important:** The `.env` file is **not** included in the backup bundle. Keep it in a separate secrets manager or secure location, since it contains passwords and encryption keys.
+> **Important:** The local bundle created directly by `backup-stack.sh` omits
+> `.env` and `.elembra/chat.env`. The encrypted archive made by
+> `elembra-offsite-backup.sh` includes them, plus the RustFS KMS override when
+> present. Never upload the local plaintext bundle.
 
-For the bundled Chat deployment, use `--with-chat`. It adds the dedicated
-Buzz database and object store while keeping `.env` and `.elembra/chat.env`
-outside the bundle for encrypted, access-controlled secrets backup.
+For the bundled Chat deployment, the offsite workflow uses `--with-chat` to
+include Buzz's dedicated database and object store in the encrypted archive.
 
 ---
 
@@ -64,6 +66,10 @@ To use a custom backup root:
 
 ### 2.3 Automated Backups (Cron)
 
+The cron examples below are local staging backups only. They are not a
+host-independent recovery copy, do not include `.env` or `.elembra/chat.env`,
+and must not be treated as disaster recovery.
+
 Daily backups at 02:00 UTC:
 
 ```bash
@@ -77,7 +83,119 @@ For a bundled Chat Alpha, the scheduled command must include
 0 2 * * * cd /opt/rustshare && ./scripts/backup-stack.sh --with-chat /mnt/backups/rustshare >> /var/log/rustshare-backup.log 2>&1
 ```
 
-Pair automated backups with a retention policy (see [Retention](#6-retention-policy)).
+Use the encrypted S3 workflow below for the supported Elembra/Buzz off-host
+copy. Do not clean backup directories with a broad `find ... -exec rm` command.
+
+### 2.4 Encrypted S3 backups for Elembra and Buzz
+
+`scripts/elembra-offsite-backup.sh` creates and verifies a full `--with-chat`
+bundle, includes deployment secrets and the local RustFS override when present,
+encrypts the archive to an age **public recipient**, uploads it under the fixed
+`elembra/` prefix, and uploads a SHA-256 sidecar. AWS CLI v2 requests S3
+SHA-256 upload checksums; the S3 service validates the checksum during upload.
+The script has no delete permission. The bucket lifecycle rule expires objects
+after 90 days and removes abandoned multipart uploads after 7 days. See the
+[AWS CLI checksum documentation](https://docs.aws.amazon.com/cli/latest/topic/s3-faq.html)
+and the tested rule at `ops/s3/elembra-lifecycle.json`.
+
+#### Operator inputs
+
+Before activation, an operator must provide all of the following. Do not put a
+backup endpoint, recipient, writer secret, or alert URL into the repository.
+
+| Setting | Required value and custody |
+|---------|-----------------------------|
+| `ELEMBRA_BACKUP_S3_ENDPOINT` | HTTPS S3-compatible endpoint in a separate host/account/failure domain from Elembra. |
+| `ELEMBRA_BACKUP_S3_BUCKET` | Dedicated private bucket; the script writes only to `elembra/`. |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Least-privilege uploader credential for `PutObject` and multipart upload actions under `elembra/*`; no delete or bucket-administration permission. Store only in a root-owned mode-0600 host environment file. |
+| `ELEMBRA_BACKUP_AGE_RECIPIENT` | Operator-provided age public recipient. The matching private identity stays encrypted and independently held off-host. |
+| `ELEMBRA_BACKUP_HEARTBEAT_URL` | HTTPS ping URL from an external check/alert service. Configure that service to alert on failed and missed daily pings. |
+| `ELEMBRA_BACKUP_STAGING_DIR` | Optional private staging path with enough free space; use tmpfs or encrypted storage because the source bundle exists briefly before age encryption. |
+
+The decryption identity and S3 read/recovery credential are not installed on the
+application host. The host credential can write ciphertext but cannot retrieve
+or decrypt backups. Keep the alert service's notification recipients in that
+external service, not on Elembra.
+
+#### Configure and enable
+
+1. Install Docker Compose, AWS CLI v2, age, curl, and the backup tools already
+   listed by `scripts/backup-stack.sh` on the host. The offsite service runs as
+   root because the existing volume snapshot helper uses the Docker socket.
+2. Create `/etc/elembra/offsite-backup.env` as root with mode `0600`. Populate
+   only the operator-supplied settings above and, if needed,
+   `AWS_DEFAULT_REGION`. Do not add a private age identity or S3 recovery key.
+3. From a separate storage-admin workstation, create the private bucket and
+   apply the lifecycle policy. The administrative credential must stay off the
+   application host:
+
+   ```bash
+   aws --endpoint-url "$ELEMBRA_BACKUP_S3_ENDPOINT" s3api put-bucket-lifecycle-configuration \
+     --bucket "$ELEMBRA_BACKUP_S3_BUCKET" \
+     --lifecycle-configuration file://ops/s3/elembra-lifecycle.json
+   ```
+
+4. Install `ops/systemd/elembra-offsite-backup.service` and
+   `ops/systemd/elembra-offsite-backup.timer` under
+   `/etc/systemd/system/`. Change `/opt/elembra` in the service to the actual
+   deployment checkout path, then enable the timer:
+
+   ```bash
+   systemctl daemon-reload
+   systemctl enable --now elembra-offsite-backup.timer
+   systemctl start elembra-offsite-backup.service
+   systemctl status elembra-offsite-backup.service
+   ```
+
+The timer runs daily at 02:00 UTC with a randomized delay. The script pings the
+external monitor after upload and sends its `/fail` endpoint on runtime errors.
+Check the service journal, the external monitor, and the S3 object list after
+the first run. A timer configuration alone is not proof that a backup reached
+the remote bucket.
+
+#### Independent restore
+
+On a separate restore host, use the independently held S3 read credential and
+age private identity. Download the archive and sidecar, verify the ciphertext
+hash, decrypt into a private staging directory, then follow [Full Stack
+Restore](#41-full-stack-restore) in an isolated Compose project:
+
+Set `BACKUP_NAME` to the timestamped object name without `.tar.gz.age`, and
+set `OFF_HOST_AGE_IDENTITY` to the independently held private identity file.
+The S3 endpoint, bucket, and read credential must come from the operator's
+recovery record, not from the application host.
+
+```bash
+umask 077
+aws --endpoint-url "$ELEMBRA_BACKUP_S3_ENDPOINT" s3 cp \
+  "s3://$ELEMBRA_BACKUP_S3_BUCKET/elembra/$BACKUP_NAME.tar.gz.age" .
+aws --endpoint-url "$ELEMBRA_BACKUP_S3_ENDPOINT" s3 cp \
+  "s3://$ELEMBRA_BACKUP_S3_BUCKET/elembra/$BACKUP_NAME.tar.gz.age.sha256" .
+sha256sum --check "$BACKUP_NAME.tar.gz.age.sha256"
+age --decrypt --identity "$OFF_HOST_AGE_IDENTITY" \
+  --output "$BACKUP_NAME.tar.gz" "$BACKUP_NAME.tar.gz.age"
+mkdir -m 700 restored
+tar -xzf "$BACKUP_NAME.tar.gz" -C restored
+```
+
+The encrypted archive contains Elembra and Buzz databases, both RustFS volume
+snapshots, deployment files, `.env`, `.elembra/chat.env`, and the RustFS KMS
+override when present. Restore those identities only in the isolated recovery
+environment. Browser-local Chat signing keys are not in server backups; each
+user must retain and test their own encrypted browser-key export separately.
+Do not report independent recovery as passed until this restore uses only the
+off-host object and independently held recovery material.
+
+Test the automation against disposable RustFS and PostgreSQL services with:
+
+```bash
+./scripts/test-elembra-offsite-backup.sh
+```
+
+The test creates and removes only its uniquely named containers and volumes.
+It validates lifecycle retention, S3 checksum upload/readback, age decryption,
+database and object-volume contents, and success/failure monitor pings. It does
+not prove recovery from the production backup target.
 
 ---
 
@@ -244,49 +362,11 @@ If folder listings, search results, or parent/child relationships look inconsist
 
 ## 8. Retention Policy
 
-A sensible default for production:
-
-| Tier | Frequency | Retention | Storage |
-|------|-----------|-----------|---------|
-| Daily | Every 24h | 7 days | Local or NFS |
-| Weekly | Every Sunday | 4 weeks | Remote (S3, rsync) |
-| Monthly | First of month | 12 months | Cold storage |
-
-### Example Cleanup Script
-
-```bash
-#!/bin/bash
-# /opt/rustshare/backup-with-retention.sh
-
-BACKUP_ROOT=/mnt/backups/rustshare
-DAILY_RETENTION=7
-WEEKLY_RETENTION=28
-MONTHLY_RETENTION=365
-
-cd /opt/rustshare || exit 1
-
-# Create backup
-./scripts/backup-stack.sh "$BACKUP_ROOT"
-
-# Clean old daily backups
-find "$BACKUP_ROOT" -maxdepth 1 -type d -name '20*' -mtime +$DAILY_RETENTION -exec rm -rf {} +
-```
-
-Add to cron:
-
-```bash
-0 2 * * * /opt/rustshare/backup-with-retention.sh >> /var/log/rustshare-backup.log 2>&1
-```
-
-### Off-Site Copies
-
-For true disaster recovery, replicate weekly backups off-site:
-
-```bash
-aws s3 sync /mnt/backups/rustshare s3://my-backup-bucket/rustshare/ \
-  --exclude '*' --include '*/postgres.sql.gz' --include '*/rustfs-data.tar.gz' \
-  --storage-class GLACIER
-```
+The Elembra offsite timer writes daily backups. The bucket lifecycle file keeps
+current objects for 90 days, noncurrent versions for 90 days, and aborts
+incomplete multipart uploads after 7 days. Change this policy only through the
+storage administrator, then verify it on the destination. The application-host
+writer credential has no object-delete or lifecycle-administration permission.
 
 ---
 
