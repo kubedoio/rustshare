@@ -60,6 +60,27 @@ community identity.
 
 ### 2.2 Bring up
 
+For a release-pinned deployment, check out the reviewed operational branch or
+later protected-main commit and configure `.env` with
+`ELEMBRA_DEPLOYMENT_PROFILE=release`, backend and Chat observer image references
+pinned by digest, `COMPOSE_PROJECT_NAME=rustshare`, and
+`ELEMBRA_COMPOSE_EXTRA_FILE=.elembra/rustfs-kms.override.yml` when local RustFS
+KMS is enabled. Do not commit deployment configuration or identities. A clean checkout reproduces the
+stack with only those deployment files copied in place:
+
+```bash
+./scripts/elembra.sh status
+./scripts/elembra.sh up
+```
+
+The wrapper always includes `docker-compose.yml`, `docker-compose.alpha.yml`,
+`docker-compose.dogfood.yml`, and the release profile overlay. It appends the
+configured extra Compose file last, so operator-specific settings override
+defaults without editing tracked Compose files. Verify the effective config
+before starting services with `docker compose --profile chat config --quiet`
+using the same Compose files and environment. Keep `.env`,
+`.elembra/chat.env`, and the KMS override mode `0600`.
+
 ```bash
 # One supported path. It generates base secrets and Chat identities in a
 # mode-0600 .elembra/chat.env; private keys are never printed.
@@ -107,6 +128,18 @@ an explicit trusted destination. Redirects remain disabled, resolved addresses
 are pinned for each request, and the signed relay identity is still checked by
 the gateway and observer. Arbitrary unconfigured loopback, RFC1918, link-local,
 and metadata targets remain rejected.
+
+### Browser-local Chat identity recovery
+
+Each user's Chat signing key stays in that user's browser storage and is not
+included in Elembra or Buzz server backups. In Chat, open the identity menu by
+the message composer and select **Export key backup**. Store the encrypted
+backup and its passphrase in separate, user-controlled recovery locations. To
+recover on a replacement browser, sign in as the same Elembra user, choose
+**Import existing Chat identity**, provide the backup and passphrase, then
+complete binding and admission. Administrators cannot restore a lost key from
+the server backup; account revocation also does not erase copies on user
+devices. Verify each user's recovery copy independently before relying on it.
 
 No direct SQL is needed to create the mapping anymore: in `auto` mode
 enabling Chat provisions it (§2.2 step 8), and in `manual` mode the admin
