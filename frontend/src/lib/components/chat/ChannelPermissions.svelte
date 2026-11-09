@@ -32,8 +32,19 @@
 		// Called after a confirmed mutation so the parent can refresh the
 		// relay-backed directory (membership changes what is listed).
 		onChanged?: () => void;
+		// Publishes the relay-confirmed channel state (role roster included) so
+		// the parent can role-gate conversation affordances (e.g. admin delete).
+		onStateChange?: (state: ChatChannelState | null) => void;
 	}
-	let { relayUrl, relayPubkey, channelId, pubkey, onPostingChange, onChanged }: Props = $props();
+	let {
+		relayUrl,
+		relayPubkey,
+		channelId,
+		pubkey,
+		onPostingChange,
+		onChanged,
+		onStateChange
+	}: Props = $props();
 	let channelState = $state<ChatChannelState | null>(null);
 	let loading = $state(true);
 	let error = $state('');
@@ -59,6 +70,7 @@
 	async function refresh(): Promise<void> {
 		const current = ++generation;
 		onPostingChange(false);
+		onStateChange?.(null);
 		const key = getSigningKey();
 		if (!key) return;
 		loading = true;
@@ -80,6 +92,7 @@
 		if (!channelState)
 			error = 'Channel metadata or membership could not be confirmed. Posting is disabled.';
 		onPostingChange(canPostToChannel(channelState));
+		onStateChange?.(channelState);
 	}
 
 	function mutationInput() {
@@ -221,6 +234,7 @@
 			generation++;
 			channelState = null;
 			onPostingChange(false);
+			onStateChange?.(null);
 			error = 'Offline — posting disabled.';
 		};
 		window.addEventListener('online', reconnect);
