@@ -40,7 +40,9 @@ compose() {
 BASE_URL="${ACCEPTANCE_BASE_URL:-http://127.0.0.1:18080}"
 RELAY_URL="${BUZZ_RELAY_WS:-ws://localhost:17447}"
 EVIDENCE_PATH="${ACCEPTANCE_EVIDENCE:-docs/pilot/evidence/chat-channel-acceptance-$(date +%Y%m%d).json}"
-GIT_SHA="$(git rev-parse HEAD)"
+# ACCEPTANCE_GIT_SHA lets evidence runs record the exact CODE commit under
+# test even when infra/evidence commits sit on top of it.
+GIT_SHA="${ACCEPTANCE_GIT_SHA:-$(git rev-parse HEAD)}"
 
 echo "== chat channel acceptance: waiting for the stack =="
 backend_container="$(compose ps -q backend)"

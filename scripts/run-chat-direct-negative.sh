@@ -3,7 +3,7 @@
 # =============================================================================
 # Direct-relay negative acceptance driver (mission E): guest-role write denial
 # and two-tenant isolation against the LOCALLY QUALIFIED candidate relay image
-# (buzz-elembra-candidate:f68a4c59) on a disposable two-community harness
+# (buzz-elembra-candidate:8ce0b7bd) on a disposable two-community harness
 # (docker-compose.chat-direct-negative.yml).
 #
 # The harness is created, seeded with two Host-keyed communities, tested via
@@ -24,9 +24,11 @@ FILE="docker-compose.chat-direct-negative.yml"
 # The relay serves GET /health on its MAIN (WS) listener; the dedicated
 # health port only answers /_liveness|/_readiness|/_status|/_mesh.
 HEALTH_URL="http://127.0.0.1:17547/health"
-IMAGE="buzz-elembra-candidate:f68a4c59"
+IMAGE="buzz-elembra-candidate:8ce0b7bd"
 EVIDENCE_PATH="${CHAT_DIRECT_NEG_EVIDENCE:-docs/pilot/evidence/chat-direct-negative-acceptance-$(date +%Y%m%d).json}"
-GIT_SHA="$(git rev-parse HEAD)"
+# ACCEPTANCE_GIT_SHA lets evidence runs record the exact CODE commit under
+# test even when infra/evidence commits sit on top of it.
+GIT_SHA="${ACCEPTANCE_GIT_SHA:-$(git rev-parse HEAD)}"
 
 compose() {
 	docker compose -p "${PROJECT}" -f "${FILE}" "$@"

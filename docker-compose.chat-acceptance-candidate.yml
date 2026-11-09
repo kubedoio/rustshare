@@ -4,7 +4,7 @@
 # place of docker-compose.chat-acceptance.yml. It carries the SAME loopback
 # port layout as that file (see its header for the map) and additionally pins
 # the buzz-relay service to the LOCALLY QUALIFIED candidate image
-# (buzz-elembra-candidate:f68a4c59, image id 7eacf645fc25 — supported baseline
+# (buzz-elembra-candidate:8ce0b7bd, image id ac966d7723ae — supported baseline
 # c9a373b + guest-write-denial hotfix) instead of the production
 # BUZZ_RELAY_IMAGE pin from config/buzz-compatibility.env.
 #
@@ -27,7 +27,7 @@ services:
       - "127.0.0.1:19102:19102"
 
   buzz-relay:
-    image: buzz-elembra-candidate:f68a4c59
+    image: buzz-elembra-candidate:8ce0b7bd
     environment:
       BUZZ_BIND_ADDR: 0.0.0.0:17447
       RELAY_URL: ws://localhost:17447

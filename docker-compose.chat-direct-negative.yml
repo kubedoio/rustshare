@@ -1,7 +1,7 @@
 # Disposable DIRECT-RELAY negative-test harness (mission-E hardening runs).
 # =============================================================================
 # A standalone two-community Buzz relay running the LOCALLY QUALIFIED candidate
-# image (buzz-elembra-candidate:f68a4c59 = supported baseline c9a373b +
+# image (buzz-elembra-candidate:8ce0b7bd = supported baseline c9a373b +
 # guest-write-denial hotfix), used for the direct-relay scenarios the Elembra
 # acceptance stack cannot provision:
 #
@@ -32,7 +32,7 @@
 
 services:
   relay:
-    image: buzz-elembra-candidate:f68a4c59
+    image: buzz-elembra-candidate:8ce0b7bd
     environment:
       DATABASE_URL: postgres://buzz:buzz_dev@pg:5432/buzz
       REDIS_URL: redis://redis:6379
