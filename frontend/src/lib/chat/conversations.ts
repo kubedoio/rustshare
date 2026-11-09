@@ -33,6 +33,11 @@ export const NOSTR_KIND_CHANNEL_SYSTEM = 40099;
 export const REACTION_EMOJIS = ['👍', '🎉', '❤️', '🙏', '👀'] as const;
 
 const HEX64 = /^[0-9a-f]{64}$/;
+// Lowercase-only on purpose: every Nostr event id and pubkey this client
+// produces or consumes is lowercase hex by construction. The pinned relay
+// parses tag hex case-insensitively (is_ascii_hexdigit), so mixed-case tag
+// values would still resolve there — but accepting them here would only
+// widen the parser surface for ids the rest of the pipeline never emits.
 
 // ---------------------------------------------------------------------------
 // NIP-10 thread identity
@@ -120,6 +125,25 @@ export interface ReactionGroup {
 	myEventId: string | null;
 }
 
+/** Display clamp for reaction content: user input rendered verbatim in the
+ *  timeline, so cap it at a few grapheme clusters (relay-side limit is far
+ *  higher) and fall back to '+' for unusable payloads. */
+const REACTION_DISPLAY_GRAPHEMES = 4;
+
+export function clampReactionEmoji(content: string): string {
+	if (content === '') return '+';
+	let graphemes: string[];
+	if (typeof Intl?.Segmenter === 'function') {
+		graphemes = [...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(content)].map(
+			(part) => part.segment
+		);
+	} else {
+		graphemes = Array.from(content);
+	}
+	const clamped = graphemes.slice(0, REACTION_DISPLAY_GRAPHEMES).join('');
+	return clamped === '' ? '+' : clamped;
+}
+
 /**
  * Aggregate kind-7 events into per-target, per-emoji groups. Input events
  * must already have passed the transport's signature/kind validation; the
@@ -136,7 +160,7 @@ export function parseReactions(
 		if (event.kind !== NOSTR_KIND_REACTION) continue;
 		const targetId = [...event.tags].reverse().find((t) => t[0] === 'e' && HEX64.test(t[1]))?.[1];
 		if (!targetId) continue;
-		const emoji = event.content === '' ? '+' : event.content;
+		const emoji = clampReactionEmoji(event.content);
 		const key = `${targetId}|${emoji}`;
 		let group = groups.get(key);
 		if (!group) {
@@ -180,21 +204,31 @@ export interface DeletionInfo {
  * relay-signed kind 40099 `message_deleted` tombstone is accepted ONLY from
  * the trusted relay signer — a user-signed lookalike must never drive UI
  * state (queryRelayEvents only enforces the trusted signer for 39000–39003).
+ *
+ * Defense in depth for kind 5: when `authorOf` is provided, a self-deletion
+ * only counts if the deletion signer IS the target's author as known by the
+ * timeline. The relay already rejects author-mismatched kind 5 at ingest, so
+ * a mismatched entry means an untrustworthy relay response — drop it. Targets
+ * whose author the timeline does not know yet are dropped as well (fail
+ * closed for user-signed deletions; kind 9005 moderation and relay-signed
+ * tombstones keep their relay-side authorization).
  */
 export function parseDeletionTargets(
 	events: NostrEvent[],
-	relayPubkey: string
+	relayPubkey: string,
+	authorOf?: (eventId: string) => string | null
 ): Map<string, DeletionInfo> {
 	const targets = new Map<string, DeletionInfo>();
 	for (const event of events) {
 		if (event.kind === NOSTR_KIND_DELETION || event.kind === NOSTR_KIND_ADMIN_DELETE_EVENT) {
 			const target = event.tags.find((t) => t[0] === 'e' && HEX64.test(t[1]))?.[1];
-			if (target && !targets.has(target)) {
-				targets.set(target, {
-					actor: event.pubkey,
-					via: event.kind === NOSTR_KIND_DELETION ? 'nip09' : 'nip29'
-				});
+			if (!target || targets.has(target)) continue;
+			const via = event.kind === NOSTR_KIND_DELETION ? 'nip09' : 'nip29';
+			if (via === 'nip09' && authorOf) {
+				const author = authorOf(target);
+				if (author === null || author !== event.pubkey) continue;
 			}
+			targets.set(target, { actor: event.pubkey, via });
 			continue;
 		}
 		if (event.kind === NOSTR_KIND_CHANNEL_SYSTEM && event.pubkey === relayPubkey) {

@@ -68,12 +68,19 @@ reads a per-channel **conversation overlay** from the relay
 
 - kind 5/9005 events are user-signed but were authorization-checked at the
   relay's ingest (self-author for kind 5, owner/admin for 9005), so their
-  single `e` target is applied as deleted;
+  single `e` target is applied as deleted; as defense in depth, kind 5
+  entries are additionally dropped unless the timeline confirms the deletion
+  signer IS the target's author (`parseDeletionTargets`' `authorOf` lookup —
+  unknown authors fail closed; 9005 moderation and tombstones keep their
+  relay-side authorization);
 - kind 40099 tombstones are accepted **only** from the trusted relay
   signer — `queryRelayEvents` only enforces that signer for kinds
   39000–39003, so `parseDeletionTargets` re-checks `pubkey === relayPubkey`
   and ignores malformed payloads. A user-signed lookalike must never drive
   UI state.
+- Reaction content is user input rendered verbatim: `clampReactionEmoji`
+  caps display at four grapheme clusters (Intl.Segmenter, code-point
+  fallback) with a `+` fallback, applied before grouping.
 
 The observer (`frontend/scripts/buzz-observer.mjs`) now projects
 `thread_root_id` from the event's own NIP-10 tags (root marker, or the
@@ -96,9 +103,12 @@ page refresh. Acceptance asserts both renderings.
   thread" banner and attaches canonical NIP-10 tags. Inside a thread view
   the composer defaults to the thread root; an explicit reply target can be
   cancelled back to the root, and cancelling the root closes the thread.
-- Thread view: replaces the timeline when opened (relay history grouped by
-  root, root first, then oldest-first). Renders relay events directly —
-  author pubkeys only, no Elembra display names (relay history has none).
+- Thread view: replaces the timeline when opened; renders `threadReplies
+  (events, rootId)` (root first, then oldest-first) because the raw `#e`
+  query can also return markerless references to the root — display grouping
+  resolves ancestry per event, not by tag presence. Renders relay events
+  directly — author pubkeys only, no Elembra display names (relay history
+  has none).
 - Reactions: per-message chips (count, author shortlist on hover,
   `aria-pressed` for the viewer's own) plus a small palette for new emoji;
   click toggles the viewer's reaction (kind 7, or kind 5 targeting the
@@ -116,8 +126,10 @@ page refresh. Acceptance asserts both renderings.
 Draft keys extend the existing per-account scoping with the thread
 dimension: `draftStorageKey(relayUrl, boundPubkey, channelId, threadRootId)`
 (`conversations.ts`). Legacy three-element keys are read as channel-level
-drafts, so pre-upgrade drafts survive. Pending (uncertain) events are only
-restored when their thread tags match the current scope.
+drafts and migrated on read (written to the new key, then deleted — so
+clearing the new draft cannot resurrect the old channel draft); pending
+(uncertain) events are only restored when their thread tags match the
+current scope.
 
 Losing posting eligibility (removal from a private channel, role change,
 offline) clears the open thread, the reply target, and stale operation

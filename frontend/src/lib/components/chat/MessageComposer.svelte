@@ -92,11 +92,14 @@
 			pendingEvent = null;
 			try {
 				// Upgrade path: drafts saved before thread scoping used the
-				// three-element key; read them as channel-level drafts.
+				// three-element key; read them as channel-level drafts and
+				// migrate: write the new key and drop the legacy one, otherwise
+				// clearing the new draft would resurrect the old channel draft.
 				const legacyScope = `elembra.chat.draft:${JSON.stringify([relayUrl, boundPubkey, channelId])}`;
-				const raw =
-					sessionStorage.getItem(scope) ??
-					(threadRootId === null ? sessionStorage.getItem(legacyScope) : null);
+				const current = sessionStorage.getItem(scope);
+				const legacyRaw =
+					current === null && threadRootId === null ? sessionStorage.getItem(legacyScope) : null;
+				const raw = current ?? legacyRaw;
 				if (raw) {
 					const saved = JSON.parse(raw);
 					if (typeof saved.draft === 'string') draft = saved.draft;
@@ -114,6 +117,10 @@
 						pendingMatchesScope(event)
 					)
 						pendingEvent = event;
+				}
+				if (legacyRaw !== null) {
+					sessionStorage.setItem(scope, raw as string);
+					sessionStorage.removeItem(legacyScope);
 				}
 			} catch {
 				storageError = 'Saved draft unavailable. Browser storage may be disabled.';

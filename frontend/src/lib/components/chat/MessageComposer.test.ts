@@ -461,8 +461,9 @@ describe('MessageComposer', () => {
 
 	it('reads legacy three-element draft keys as channel-level drafts', async () => {
 		const channelUuid = '11111111-2222-4333-8444-555555555555';
+		const legacyKey = `elembra.chat.draft:${JSON.stringify(['wss://relay.example', 'pk-1', channelUuid])}`;
 		sessionStorage.setItem(
-			`elembra.chat.draft:${JSON.stringify(['wss://relay.example', 'pk-1', channelUuid])}`,
+			legacyKey,
 			JSON.stringify({ draft: 'legacy draft', attachmentTag: null, pendingEvent: null })
 		);
 		renderComposer({ channelId: channelUuid });
@@ -471,6 +472,11 @@ describe('MessageComposer', () => {
 				'legacy draft'
 			)
 		);
+		// Migration: the legacy key is folded into the new four-element key and
+		// deleted, so clearing the new draft cannot resurrect the old one.
+		const newKey = `elembra.chat.draft:${JSON.stringify(['wss://relay.example', 'pk-1', channelUuid, null])}`;
+		expect(sessionStorage.getItem(legacyKey)).toBeNull();
+		expect(JSON.parse(sessionStorage.getItem(newKey) ?? '{}').draft).toBe('legacy draft');
 	});
 
 	it('invokes onCancelReply from the reply banner', async () => {

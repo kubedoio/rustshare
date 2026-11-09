@@ -2,6 +2,7 @@
 	import type { NostrEvent } from '$lib/chat/nostr';
 	import {
 		parseThreadRefs,
+		threadReplies,
 		type DeletionInfo,
 		type ReactionGroup,
 		type ThreadParentRef
@@ -47,11 +48,10 @@
 	}: Props = $props();
 
 	const rootEvent = $derived(events.find((event) => event.id === rootId) ?? null);
-	const replies = $derived(
-		events
-			.filter((event) => event.id !== rootId)
-			.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
-	);
+	// Ancestry-filtered, oldest-first: the #e query also returns sibling
+	// threads' events that happen to reference this root, so rendering must
+	// group by resolved thread root, not by tag presence.
+	const replies = $derived(threadReplies(events, rootId));
 
 	function formatTime(secs: number): string {
 		const date = new Date(secs * 1000);

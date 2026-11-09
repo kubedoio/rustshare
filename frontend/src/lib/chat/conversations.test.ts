@@ -165,6 +165,23 @@ describe('parseReactions', () => {
 		expect(byTarget.has(parentId)).toBe(false);
 	});
 
+	it('clamps reaction content to a few graphemes for display', () => {
+		const long = event(
+			'8'.repeat(64),
+			NOSTR_KIND_REACTION,
+			alice,
+			[['e', rootId]],
+			'🎉'.repeat(20) + ' spam payload'
+		);
+		const skinTone = event('7'.repeat(64), NOSTR_KIND_REACTION, alice, [['e', rootId]], '👍🏽');
+		const byTarget = parseReactions([long, skinTone], alice);
+		const emojis = (byTarget.get(rootId) ?? []).map((group) => group.emoji);
+		// The 20-party string clamps to 4 graphemes; 👍🏽 is one grapheme
+		// (two code points) and stays intact.
+		expect(emojis).toContain('🎉🎉🎉🎉');
+		expect(emojis).toContain('👍🏽');
+	});
+
 	it('ignores non-reaction kinds and author-duplicates within a group', () => {
 		const events = [
 			react('1'.repeat(64), alice, rootId, '👍'),
@@ -212,6 +229,38 @@ describe('parseDeletionTargets', () => {
 		const targets = parseDeletionTargets(events, relayPubkey);
 		expect(targets.get(rootId)).toEqual({ actor: alice, via: 'system' });
 		expect(targets.size).toBe(1);
+	});
+
+	it('drops kind 5 entries whose signer is not the target author when the timeline knows the author', () => {
+		const events = [
+			// Signer is NOT the author (the relay should have rejected this at
+			// ingest, so a mismatched entry means an untrustworthy response).
+			event('1'.repeat(64), NOSTR_KIND_DELETION, bob, [['e', rootId]], 'vandalism'),
+			// Signer IS the author.
+			event('2'.repeat(64), NOSTR_KIND_DELETION, alice, [['e', parentId]], 'undo'),
+			// Author unknown to the timeline: fail closed for user-signed deletions.
+			event('3'.repeat(64), NOSTR_KIND_DELETION, alice, [['e', replyId]], 'orphan')
+		];
+		const authorOf = (id: string) => (id === rootId || id === parentId ? alice : null);
+		const targets = parseDeletionTargets(events, relayPubkey, authorOf);
+		expect(targets.has(rootId)).toBe(false);
+		expect(targets.get(parentId)).toEqual({ actor: alice, via: 'nip09' });
+		expect(targets.has(replyId)).toBe(false);
+	});
+
+	it('keeps kind 9005 and relay-signed tombstones regardless of the author lookup', () => {
+		const content = JSON.stringify({
+			type: 'message_deleted',
+			actor: alice,
+			target_event_id: rootId
+		});
+		const events = [
+			event('1'.repeat(64), NOSTR_KIND_ADMIN_DELETE_EVENT, bob, [['e', parentId]]),
+			event('2'.repeat(64), NOSTR_KIND_CHANNEL_SYSTEM, relayPubkey, [['h', 'x']], content)
+		];
+		const targets = parseDeletionTargets(events, relayPubkey, () => null);
+		expect(targets.get(parentId)).toEqual({ actor: bob, via: 'nip29' });
+		expect(targets.get(rootId)).toEqual({ actor: alice, via: 'system' });
 	});
 });
 

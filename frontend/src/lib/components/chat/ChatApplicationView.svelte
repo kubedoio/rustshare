@@ -323,8 +323,16 @@
 	);
 	const overlayEvents = $derived($conversationQuery.data?.ok ? $conversationQuery.data.events : []);
 	const reactionsByTarget = $derived(parseReactions(overlayEvents, viewerPubkey));
+	const threadEvents = $derived($threadQuery.data?.ok ? $threadQuery.data.events : []);
+	// Author lookup for the kind-5 defense-in-depth check: the observed
+	// timeline knows each message's author; relay thread events are their own
+	// authors. Unknown ids fail closed for user-signed deletions.
 	const deletedTargets = $derived(
-		parseDeletionTargets(overlayEvents, status?.mapping?.relay_pubkey ?? '')
+		parseDeletionTargets(overlayEvents, status?.mapping?.relay_pubkey ?? '', (eventId) => {
+			const observed = accumulatedMessages.find((message) => message.event_id === eventId);
+			if (observed) return observed.author_pubkey;
+			return threadEvents.find((event) => event.id === eventId)?.pubkey ?? null;
+		})
 	);
 	// Reply badges come from the observed timeline (the projection carries
 	// thread_root_id), so they appear as Elembra observes each reply.
@@ -337,7 +345,6 @@
 		}
 		return counts;
 	});
-	const threadEvents = $derived($threadQuery.data?.ok ? $threadQuery.data.events : []);
 	const deleteModeFor = (authorPubkey: string): 'self' | 'admin' | null => {
 		if (!viewerPubkey || !capabilities.deleteMessage.available) return null;
 		return canDeleteMessage(channelState?.role ?? null, authorPubkey, viewerPubkey);
