@@ -1,0 +1,10 @@
+[Unit]
+Description=Create and upload an encrypted Elembra and Buzz backup
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+EnvironmentFile=/etc/elembra/offsite-backup.env
+WorkingDirectory=/opt/elembra
+ExecStart=/opt/elembra/scripts/elembra-offsite-backup.sh
