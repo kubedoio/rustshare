@@ -709,8 +709,14 @@ test.describe('Chat conversation product acceptance (PR #481)', () => {
 		const open = state.channels.open;
 		const targetId = state.eventIds.replyOne!;
 
+		// The previous serial test leaves A in the thread view.
+		const aClose = a.page.getByRole('button', { name: 'Close thread' });
+		if (await aClose.isVisible().catch(() => false)) await aClose.click();
+		await expect(a.page.getByRole('heading', { name: 'Thread' })).toBeHidden();
+		const threadBadge = a.page.getByRole('button', { name: 'View thread, 2 replies' });
+		await expect(threadBadge).toBeVisible({ timeout: 60_000 });
 		// A reacts 👍 to B's first reply from the thread view (row-scoped).
-		await a.page.getByRole('button', { name: 'View thread, 2 replies' }).click();
+		await threadBadge.click();
 		await expect(a.page.getByRole('heading', { name: 'Thread' })).toBeVisible();
 		const aPalette = a.page
 			.locator(`[data-event-id="${targetId}"]`)
