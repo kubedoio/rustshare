@@ -783,4 +783,74 @@ describe('ChatApplicationView relay directory (fork_client_held)', () => {
 		await waitFor(() => expect(screen.getByRole('option', { name: /Active room/ })).toBeTruthy());
 		expect(screen.queryByText('Archived room')).toBeNull();
 	});
+
+	it('ignores a deep-link channel param that is not a relay-assigned UUID', async () => {
+		useDirectory([directoryEvent(EMPTY_CHANNEL_ID, 'Empty room')]);
+		unlockSession();
+		mocks.pageUrl.search = '?channel=../../not-a-channel-id';
+		renderView();
+		// The invalid param is ignored rather than trusted as a selection: no
+		// messages query is ever issued for it, and selection rebuilds from
+		// the directory like a normal load.
+		await waitFor(
+			() =>
+				expect(
+					screen.getByRole('option', { name: /Empty room/ }).getAttribute('aria-selected')
+				).toBe('true'),
+			{ timeout: 3000 }
+		);
+		expect(mocks.getChatMessages).not.toHaveBeenCalledWith('../../not-a-channel-id', null);
+	});
+
+	it('scopes the directory cache to the bound identity — B never sees A’s cached entries', async () => {
+		// Identity A (sk-1) has a private channel; identity B (sk-2) on the same
+		// relay must never be served A's cached directory from the TanStack
+		// cache: the query key carries the session pubkey, so the identity
+		// switch refetches under a fresh key.
+		mocks.getChatStatus.mockResolvedValue(forkStatus());
+		mocks.getChatChannels.mockResolvedValue([]);
+		mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
+		mocks.queryRelayEvents.mockImplementation(
+			async (_url: string, filter: { '#d'?: string[] }, secretKey: string) => {
+				if (filter['#d']) return { ok: true, events: channelStateEvents(filter['#d'][0]) };
+				if (secretKey === 'sk-1')
+					return {
+						ok: true,
+						events: [
+							directoryEvent(PRIVATE_CHANNEL_ID, 'A private room', [['private']]),
+							directoryEvent(EMPTY_CHANNEL_ID, 'A open room')
+						]
+					};
+				return { ok: true, events: [directoryEvent(EMPTY_CHANNEL_ID, 'B open room')] };
+			}
+		);
+		unlockSession();
+		const first = renderView();
+		await waitFor(() =>
+			expect(screen.getByRole('option', { name: /A private room/ })).toBeTruthy()
+		);
+		first.unmount();
+
+		// Same relay, same page lifetime, different bound identity (fresh
+		// browser profile / re-bind). B's directory must come from B's own
+		// relay query — never from A's cached private entries.
+		queryClient.setQueryData(
+			['chat-status'],
+			forkStatus({ binding: { status: 'Active', buzz_pubkey: 'pk-2' } })
+		);
+		mocks.signingKey = 'sk-2';
+		mocks.sessionState.set({ state: 'unlocked', pubkey: 'pk-2' });
+		renderView();
+		await waitFor(() => expect(screen.getByRole('option', { name: /B open room/ })).toBeTruthy());
+		expect(screen.queryByRole('option', { name: /A private room/ })).toBeNull();
+		expect(screen.queryByRole('option', { name: /A open room/ })).toBeNull();
+		await waitFor(() =>
+			expect(mocks.queryRelayEvents).toHaveBeenCalledWith(
+				'wss://relay.example',
+				{ kinds: [39000] },
+				'sk-2',
+				'relay-pubkey'
+			)
+		);
+	});
 });

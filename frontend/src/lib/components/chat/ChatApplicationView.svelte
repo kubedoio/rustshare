@@ -20,7 +20,11 @@
 	import ChatIdentityUnlock from './ChatIdentityUnlock.svelte';
 	import { chatSessionStore, lock, getSigningKey } from '$lib/chat/session';
 	import { getChatCapabilities } from '$lib/chat/capabilities';
-	import { listVisibleChannels, type ChannelDirectoryResult } from '$lib/chat/channels';
+	import {
+		listVisibleChannels,
+		isChannelId,
+		type ChannelDirectoryResult
+	} from '$lib/chat/channels';
 
 	$effect(() => {
 		const session = $chatSessionStore;
@@ -45,9 +49,12 @@
 	// Relay-backed directory: group discovery via kinds-[39000] historical REQ
 	// lists every channel this identity may see, including channels with zero
 	// messages. The relay applies access control before returning, so private
-	// channels the caller may not see never reach this query's result.
+	// channels the caller may not see never reach this query's result. The
+	// query key carries the bound identity: the cached directory is scoped per
+	// identity, so one identity can never be served another identity's
+	// private-channel entries from the TanStack cache.
 	const directoryQuery = createQuery<ChannelDirectoryResult>({
-		queryKey: ['chat-channel-directory', null, null],
+		queryKey: ['chat-channel-directory', null, null, null],
 		queryFn: () => Promise.resolve({ ok: true, channels: [] }),
 		enabled: false
 	});
@@ -56,12 +63,14 @@
 	let focusedMessageId = $state<string | null>(null);
 	let cursor = $state<string | null>(null);
 
-	// Deep links: /apps/chat?channel=<id>&message=<id>
+	// Deep links: /apps/chat?channel=<id>&message=<id>. The channel param is
+	// honored only when it is a relay-assigned channel UUID; anything else is
+	// ignored rather than trusted as a selection.
 	$effect(() => {
 		const params = $page.url.searchParams;
 		const channel = params.get('channel');
 		const message = params.get('message');
-		if (channel) selectedChannelId = channel;
+		if (channel && isChannelId(channel)) selectedChannelId = channel;
 		if (message) focusedMessageId = message;
 	});
 
@@ -99,11 +108,15 @@
 	);
 
 	$effect(() => {
+		// The directory cache is scoped to the bound chat identity: switching
+		// identities must never surface the previous identity's private entries.
+		const identity = $chatSessionStore.state === 'unlocked' ? $chatSessionStore.pubkey : null;
 		directoryQuery.setOptions({
 			queryKey: [
 				'chat-channel-directory',
 				status?.mapping?.relay_url ?? null,
-				status?.mapping?.relay_pubkey ?? null
+				status?.mapping?.relay_pubkey ?? null,
+				identity
 			],
 			queryFn: () => {
 				const mapping = status?.mapping;
@@ -118,7 +131,10 @@
 			},
 			enabled: directoryEnabled,
 			staleTime: 15_000,
-			placeholderData: (previous) => previous
+			// Keep the previous snapshot only while the identity is unchanged;
+			// a fresh identity must never be shown the previous identity's data.
+			placeholderData: (previous, previousQuery) =>
+				previousQuery?.queryKey[3] === identity ? previous : undefined
 		});
 	});
 
@@ -131,7 +147,7 @@
 		return data.channels.map((entry) => ({
 			channel_id: entry.channelId,
 			name: entry.name,
-			channel_kind: 'stream',
+			channel_kind: entry.channelType ?? 'stream',
 			channel_type: entry.channelType,
 			visibility: entry.visibility,
 			member: null,
