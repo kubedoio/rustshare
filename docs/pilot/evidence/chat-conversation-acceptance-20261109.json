@@ -1,51 +1,52 @@
 {
-  "generatedAt": "2026-11-09T09:37:16.696Z",
-  "baseUrl": "http://127.0.0.1:18080",
-  "relayUrl": "ws://localhost:17447",
+  "generatedAt": "2026-11-09T10:24:09.110Z",
+  "baseUrl": "http://127.0.0.1:18081",
+  "relayUrl": "ws://localhost:17448",
   "provenance": {
-    "gitSha": "bb75ce6c0bfab4c9bc68775a11ad6a97c74f300c",
-    "stack": "convaccept20261109 (source build, worktree elembra-conversations, relay ws://localhost:17447)",
-    "images": null
+    "gitSha": "d4945840a69e03142d3503240e77966f0c53f1bb",
+    "stack": "convaccept20261109 (source build at d4945840, worktree elembra-conversations, relay ws://localhost:17448, shifted ports alongside accharden stack)",
+    "images": null,
+    "gitShaNote": "gitSha is the code commit under test (the review-fix commit d4945840). This evidence file lands in a final tip commit on top of that code commit, so the tip commit SHA cannot be recorded here."
   },
   "tenantId": "00000000-0000-0000-0000-000000000000",
-  "communityId": "0d4c224f-c4ba-44ba-b10a-7a3156e7b2ba",
-  "relayPubkey": "84409ace02104dbf9c499db29e3f572b47d35eb44f8523aa9d287927bf4327fd",
+  "communityId": "82d408e8-11c8-4329-ab61-07b096786468",
+  "relayPubkey": "7866e42deadc544ebb53d6a03129dd345082438eec4d960c2df3f1a0b64c5b32",
   "users": {
     "a": {
-      "username": "conv_a_mw92fam67577",
-      "email": "conv_a_mw92fam67577@acceptance.local",
-      "userId": "c52e1845-210a-4f69-924b-7c794290dee6",
-      "pubkey": "9a135734d50b7c678a2c2e739cceaadfc3d7e44c7403f37d5ab36348d134679d"
+      "username": "conv_a_mw943jmp1729",
+      "email": "conv_a_mw943jmp1729@acceptance.local",
+      "userId": "de143ca6-54cf-4a47-af8c-904e990a1309",
+      "pubkey": "c39d6e84dda4d947dbd5be5c366af662753b4352f74eb324b5e942785cf2a561"
     },
     "b": {
-      "username": "conv_b_mw92fam67577",
-      "email": "conv_b_mw92fam67577@acceptance.local",
-      "userId": "b9accbda-2689-4172-a032-380a11744d9e",
-      "pubkey": "295e4276dc54ba0a30bd3a339c7cc442524d15344db6e00d9feff68e2b89c097"
+      "username": "conv_b_mw943jmp1729",
+      "email": "conv_b_mw943jmp1729@acceptance.local",
+      "userId": "fad2e2ce-732c-4bbb-b2f5-af630fa9bd4a",
+      "pubkey": "fae78821af8d3f8e7bbf59e88eb2f6b45e120474e860e0cdaa75e32abaf20ef0"
     },
     "c": {
-      "username": "conv_c_mw92fam67577",
-      "email": "conv_c_mw92fam67577@acceptance.local",
-      "userId": "a0ce8e48-f5f4-4419-96b3-7a30bfbc1716",
-      "pubkey": "76f10e1dec2bc2fbdb9949d79b7011e9744e0c5e00811d2d51a7b1fb18c500b1"
+      "username": "conv_c_mw943jmp1729",
+      "email": "conv_c_mw943jmp1729@acceptance.local",
+      "userId": "64fa6d75-c5a1-4731-88dd-d1a58ce3cbdb",
+      "pubkey": "8965dd223f47d13b61a0fea9883473f2b7909cdb5abbb630ed1811f560526971"
     }
   },
   "channels": {
     "open": {
-      "id": "dbdfd636-c954-4459-8a2a-653b11a7817d",
-      "name": "conv-open-mw92fam67577"
+      "id": "37eb68a4-e9f7-4781-83de-c8ea7ca72469",
+      "name": "conv-open-mw943jmp1729"
     },
     "private": {
-      "id": "9e95f10e-a112-4c8d-bbc1-e3eb489c21d1",
-      "name": "conv-private-mw92fam67577"
+      "id": "7a086720-6428-4155-ab2b-bfa8937a184f",
+      "name": "conv-private-mw943jmp1729"
     }
   },
   "eventIds": {
-    "root": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059",
-    "replyOne": "36ce5ce641cc017262d1b43b2f2bf084376bc6ce0eb66e8e17235faf330bc1b5",
-    "replyTwo": "d5a798e1b96ec23f145b855f4b94b01d06fe4f3f4ab39ba91390d1fe24476e39",
-    "reactionA": "ab43d1eec2b84a07cf373204d8d35d4cafb4eba7b2f5a0eed85aca76bcdc3ff6",
-    "privRoot": "3587792ef05a3da3cd7d694cf6896ae77a11b02241159351df0bbb50d492d444"
+    "root": "f2873c9955b90b8d9ae77d92f2280dcfc1ab5213c0a1de300e018f4ef5319e24",
+    "replyOne": "ad6e3bd2b89cdf8c1a5573156f207530a9eeb0f644c48a0cc498bc4bc4e3564f",
+    "replyTwo": "7654a6dcaf70156963ae5a44abadad8b854d69127f84fe1f55eee7cb858ba853",
+    "reactionA": "03461bff51e9ed8f4161710cf4213ef3358391751cfe004262c76df37439dc42",
+    "privRoot": "13088fce85f3e33e66eac53eae47674aba1579b2f3284ae86055c89525e6ab8e"
   },
   "matrix": [
     {
@@ -54,9 +55,9 @@
       "status": "PASS",
       "evidence": {
         "pubkeys": {
-          "a": "9a135734d50b7c678a2c2e739cceaadfc3d7e44c7403f37d5ab36348d134679d",
-          "b": "295e4276dc54ba0a30bd3a339c7cc442524d15344db6e00d9feff68e2b89c097",
-          "c": "76f10e1dec2bc2fbdb9949d79b7011e9744e0c5e00811d2d51a7b1fb18c500b1"
+          "a": "c39d6e84dda4d947dbd5be5c366af662753b4352f74eb324b5e942785cf2a561",
+          "b": "fae78821af8d3f8e7bbf59e88eb2f6b45e120474e860e0cdaa75e32abaf20ef0",
+          "c": "8965dd223f47d13b61a0fea9883473f2b7909cdb5abbb630ed1811f560526971"
         }
       }
     },
@@ -65,8 +66,8 @@
       "title": "Open channel created and discovered by both identities",
       "status": "PASS",
       "evidence": {
-        "channelId": "dbdfd636-c954-4459-8a2a-653b11a7817d",
-        "channelName": "conv-open-mw92fam67577"
+        "channelId": "37eb68a4-e9f7-4781-83de-c8ea7ca72469",
+        "channelName": "conv-open-mw943jmp1729"
       }
     },
     {
@@ -74,13 +75,13 @@
       "title": "Reply published with exact NIP-10 root/reply tags and author",
       "status": "PASS",
       "evidence": {
-        "channelId": "dbdfd636-c954-4459-8a2a-653b11a7817d",
-        "rootEventId": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059",
-        "replyEventId": "36ce5ce641cc017262d1b43b2f2bf084376bc6ce0eb66e8e17235faf330bc1b5",
-        "replyAuthor": "295e4276dc54ba0a30bd3a339c7cc442524d15344db6e00d9feff68e2b89c097",
+        "channelId": "37eb68a4-e9f7-4781-83de-c8ea7ca72469",
+        "rootEventId": "f2873c9955b90b8d9ae77d92f2280dcfc1ab5213c0a1de300e018f4ef5319e24",
+        "replyEventId": "ad6e3bd2b89cdf8c1a5573156f207530a9eeb0f644c48a0cc498bc4bc4e3564f",
+        "replyAuthor": "fae78821af8d3f8e7bbf59e88eb2f6b45e120474e860e0cdaa75e32abaf20ef0",
         "tags": {
-          "root": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059",
-          "reply": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059"
+          "root": "f2873c9955b90b8d9ae77d92f2280dcfc1ab5213c0a1de300e018f4ef5319e24",
+          "reply": "f2873c9955b90b8d9ae77d92f2280dcfc1ab5213c0a1de300e018f4ef5319e24"
         }
       }
     },
@@ -89,12 +90,12 @@
       "title": "Thread view groups replies by root; nested reply ancestry exact",
       "status": "PASS",
       "evidence": {
-        "channelId": "dbdfd636-c954-4459-8a2a-653b11a7817d",
-        "threadRootId": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059",
-        "nestedEventId": "d5a798e1b96ec23f145b855f4b94b01d06fe4f3f4ab39ba91390d1fe24476e39",
+        "channelId": "37eb68a4-e9f7-4781-83de-c8ea7ca72469",
+        "threadRootId": "f2873c9955b90b8d9ae77d92f2280dcfc1ab5213c0a1de300e018f4ef5319e24",
+        "nestedEventId": "7654a6dcaf70156963ae5a44abadad8b854d69127f84fe1f55eee7cb858ba853",
         "tags": {
-          "root": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059",
-          "reply": "36ce5ce641cc017262d1b43b2f2bf084376bc6ce0eb66e8e17235faf330bc1b5"
+          "root": "f2873c9955b90b8d9ae77d92f2280dcfc1ab5213c0a1de300e018f4ef5319e24",
+          "reply": "ad6e3bd2b89cdf8c1a5573156f207530a9eeb0f644c48a0cc498bc4bc4e3564f"
         }
       }
     },
@@ -103,10 +104,10 @@
       "title": "Reaction add/duplicate-count/toggle-off verified relay-direct",
       "status": "PASS",
       "evidence": {
-        "targetId": "36ce5ce641cc017262d1b43b2f2bf084376bc6ce0eb66e8e17235faf330bc1b5",
-        "aReactionEventId": "ab43d1eec2b84a07cf373204d8d35d4cafb4eba7b2f5a0eed85aca76bcdc3ff6",
+        "targetId": "ad6e3bd2b89cdf8c1a5573156f207530a9eeb0f644c48a0cc498bc4bc4e3564f",
+        "aReactionEventId": "03461bff51e9ed8f4161710cf4213ef3358391751cfe004262c76df37439dc42",
         "remainingAuthors": [
-          "295e4276dc54ba0a30bd3a339c7cc442524d15344db6e00d9feff68e2b89c097"
+          "fae78821af8d3f8e7bbf59e88eb2f6b45e120474e860e0cdaa75e32abaf20ef0"
         ]
       }
     },
@@ -115,8 +116,8 @@
       "title": "Thread draft and channel draft persist independently across reload",
       "status": "PASS",
       "evidence": {
-        "channelId": "dbdfd636-c954-4459-8a2a-653b11a7817d",
-        "threadRootId": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059"
+        "channelId": "37eb68a4-e9f7-4781-83de-c8ea7ca72469",
+        "threadRootId": "f2873c9955b90b8d9ae77d92f2280dcfc1ab5213c0a1de300e018f4ef5319e24"
       }
     },
     {
@@ -124,7 +125,7 @@
       "title": "Self-deletion applied relay-side; deleted state on both sides",
       "status": "PASS",
       "evidence": {
-        "targetId": "d5a798e1b96ec23f145b855f4b94b01d06fe4f3f4ab39ba91390d1fe24476e39",
+        "targetId": "7654a6dcaf70156963ae5a44abadad8b854d69127f84fe1f55eee7cb858ba853",
         "kind5Stored": true,
         "relayAbsent": true
       }
@@ -134,10 +135,10 @@
       "title": "Owner admin-delete applied; relay-signed tombstone with actor",
       "status": "PASS",
       "evidence": {
-        "targetId": "36ce5ce641cc017262d1b43b2f2bf084376bc6ce0eb66e8e17235faf330bc1b5",
-        "tombstoneEventId": "5cff6b46c7545d61aa306390786901e3aa2ea3076973552564e90875db310d49",
-        "tombstoneSigner": "84409ace02104dbf9c499db29e3f572b47d35eb44f8523aa9d287927bf4327fd",
-        "actor": "9a135734d50b7c678a2c2e739cceaadfc3d7e44c7403f37d5ab36348d134679d"
+        "targetId": "ad6e3bd2b89cdf8c1a5573156f207530a9eeb0f644c48a0cc498bc4bc4e3564f",
+        "tombstoneEventId": "370b3f1b2cf14f3012579465f343734c0ef82038186503dbac7915fbe55787d4",
+        "tombstoneSigner": "7866e42deadc544ebb53d6a03129dd345082438eec4d960c2df3f1a0b64c5b32",
+        "actor": "c39d6e84dda4d947dbd5be5c366af662753b4352f74eb324b5e942785cf2a561"
       }
     },
     {
@@ -145,9 +146,9 @@
       "title": "Private-channel removal hides thread state, disables composer, denies relay reads",
       "status": "PASS",
       "evidence": {
-        "channelId": "9e95f10e-a112-4c8d-bbc1-e3eb489c21d1",
-        "threadRootId": "3587792ef05a3da3cd7d694cf6896ae77a11b02241159351df0bbb50d492d444",
-        "removed": "295e4276dc54ba0a30bd3a339c7cc442524d15344db6e00d9feff68e2b89c097"
+        "channelId": "7a086720-6428-4155-ab2b-bfa8937a184f",
+        "threadRootId": "13088fce85f3e33e66eac53eae47674aba1579b2f3284ae86055c89525e6ab8e",
+        "removed": "fae78821af8d3f8e7bbf59e88eb2f6b45e120474e860e0cdaa75e32abaf20ef0"
       }
     }
   ]
