@@ -16,8 +16,11 @@
 //   ACCEPTANCE_GIT_SHA / ACCEPTANCE_IMAGE_DIGESTS / ACCEPTANCE_STACK
 //                                     provenance recorded verbatim in evidence
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { bytesToHex, hexToBytes } from '@noble/curves/utils.js';
 
 // Typed globals the matrix-g ACK-delay WebSocket wrapper injects into the
 // page (see test g); declared once so page.evaluate callbacks type-check.
@@ -38,7 +41,16 @@ const ADMIN_EMAIL = process.env.ACCEPTANCE_ADMIN_EMAIL ?? 'admin@localhost';
 const ADMIN_PASSWORD = process.env.ACCEPTANCE_ADMIN_PASSWORD ?? '';
 const EVIDENCE_PATH =
 	process.env.ACCEPTANCE_EVIDENCE ?? '../docs/pilot/evidence/chat-channel-acceptance-20261109.json';
-const RUN_SUFFIX = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;
+// CSPRNG-backed run uniqueness: the disposable-user password, channel names,
+// canary bodies, and message bodies all derive from this suffix, so it must
+// not come from Math.random() (CodeQL js/insecure-randomness).
+function randomRunSuffix(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(6));
+	const randomPart = [...bytes].map((b) => b.toString(36).padStart(2, '0')).join('');
+	return `${Date.now().toString(36)}${randomPart}`;
+}
+const RUN_SUFFIX = randomRunSuffix();
+const COMPOSE_PROJECT = process.env.COMPOSE_PROJECT_NAME ?? 'accharden';
 
 if (!ADMIN_PASSWORD) {
 	throw new Error('ACCEPTANCE_ADMIN_PASSWORD is required (bootstrap admin password)');
@@ -74,6 +86,10 @@ interface UserState {
 	password: string;
 	userId: string;
 	pubkey: string;
+	/** Browser-held Chat secret key, decrypted in-test with the known
+	 *  acceptance passphrase (see decryptChatKey). Owned-key material for
+	 *  relay-direct NIP-42 scenarios only. */
+	secretKey: string | null;
 	context: BrowserContext;
 	page: Page;
 }
@@ -84,7 +100,8 @@ const state = {
 	relayPubkey: '',
 	users: {} as Record<'a' | 'b' | 'c', UserState>,
 	channels: {} as Record<string, { id: string; name: string }>,
-	eventIds: {} as Record<string, string | null>
+	eventIds: {} as Record<string, string | null>,
+	attachmentFileId: ''
 };
 
 // ---------------------------------------------------------------------------
@@ -295,6 +312,254 @@ async function expectAbsentAcrossWindow(
 }
 
 // ---------------------------------------------------------------------------
+// Relay-direct scenarios (NIP-42 authenticated WebSocket, owned test keys).
+// Node 22's global WebSocket speaks the same wire protocol as the browser;
+// signatures are BIP-340 Schnorr via @noble/curves (mirrors the product's
+// frontend/src/lib/chat/keys.ts envelope for key-backup decryption).
+// ---------------------------------------------------------------------------
+async function decryptChatKey(user: UserState): Promise<string | null> {
+	const envelopeJson = await user.page.evaluate(
+		(key) => localStorage.getItem(key),
+		`elembra.chat.key.v1.${user.userId}`
+	);
+	if (!envelopeJson) return null;
+	const envelope = JSON.parse(envelopeJson);
+	const iterations = envelope.iter ?? 100_000;
+	const aad =
+		envelope.aad === 1
+			? new TextEncoder().encode(JSON.stringify([1, user.userId, state.tenantId]))
+			: undefined;
+	const material = await crypto.subtle.importKey(
+		'raw',
+		new TextEncoder().encode(`${user.password}-key`),
+		'PBKDF2',
+		false,
+		['deriveKey']
+	);
+	const derived = await crypto.subtle.deriveKey(
+		{ name: 'PBKDF2', salt: hexToBytes(envelope.salt), iterations, hash: 'SHA-256' },
+		material,
+		{ name: 'AES-GCM', length: 256 },
+		false,
+		['decrypt']
+	);
+	try {
+		const plain = await crypto.subtle.decrypt(
+			{ name: 'AES-GCM', iv: hexToBytes(envelope.iv), additionalData: aad },
+			derived,
+			hexToBytes(envelope.ciphertext)
+		);
+		return bytesToHex(new Uint8Array(plain));
+	} catch {
+		return null;
+	}
+}
+
+function publicKeyOf(secretKey: string): string {
+	return bytesToHex(schnorr.getPublicKey(hexToBytes(secretKey)));
+}
+
+async function sha256Hex(input: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+interface UnsignedEvent {
+	kind: number;
+	tags: string[][];
+	content: string;
+}
+
+async function signEvent(unsigned: UnsignedEvent, secretKey: string, pubkey: string) {
+	const created_at = Math.floor(Date.now() / 1000);
+	const id = await sha256Hex(
+		JSON.stringify([0, pubkey, created_at, unsigned.kind, unsigned.tags, unsigned.content])
+	);
+	const sig = bytesToHex(schnorr.sign(hexToBytes(id), hexToBytes(secretKey)));
+	return {
+		id,
+		sig,
+		kind: unsigned.kind,
+		tags: unsigned.tags,
+		content: unsigned.content,
+		pubkey,
+		created_at
+	};
+}
+
+/**
+ * NIP-42 authenticated relay READ. The relay closes any unauthenticated REQ
+ * immediately (auth-required) and answers the NIP-42 challenge separately, so
+ * the real REQ goes out only AFTER the auth OK. A throwaway probe absorbs the
+ * early close; probe frames are ignored by design.
+ */
+function nextSubId(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(4));
+	return `acc${[...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+}
+
+interface RelayQueryResult {
+	ok: boolean;
+	detail: string;
+	events: any[];
+}
+
+async function relayQuery(
+	secretKey: string,
+	filter: Record<string, unknown>
+): Promise<RelayQueryResult> {
+	const pubkey = publicKeyOf(secretKey);
+	return new Promise((resolve) => {
+		const ws = new WebSocket(RELAY_URL);
+		const sub = nextSubId();
+		const events: any[] = [];
+		let authId: string | null = null;
+		let settled = false;
+		const finish = (result: RelayQueryResult) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			try {
+				ws.close();
+			} catch {
+				/* already closed */
+			}
+			resolve(result);
+		};
+		const timer = setTimeout(() => finish({ ok: false, detail: 'timeout', events }), 20_000);
+		// Choreography (mirrors the direct-negative harness): an UNauthenticated
+		// REQ is closed instantly with auth-required, so the real REQ must wait
+		// for the NIP-42 handshake. A throwaway probe absorbs that early close
+		// and the relay's proactive challenge; the real REQ goes out only after
+		// the auth OK (the relay commits auth state before sending it).
+		ws.onopen = () => ws.send(JSON.stringify(['REQ', 'probe', { kinds: [39000], limit: 1 }]));
+		ws.onerror = () => finish({ ok: false, detail: 'transport', events });
+		ws.onclose = () => finish({ ok: false, detail: 'closed', events });
+		ws.onmessage = (raw) => {
+			void (async () => {
+				let msg: unknown;
+				try {
+					msg = JSON.parse(String(raw.data));
+				} catch {
+					return;
+				}
+				if (!Array.isArray(msg)) return;
+				if (msg[0] === 'AUTH' && typeof msg[1] === 'string' && !authId) {
+					const auth = await signEvent(
+						{
+							kind: 22242,
+							tags: [
+								['relay', RELAY_URL],
+								['challenge', msg[1]]
+							],
+							content: ''
+						},
+						secretKey,
+						pubkey
+					);
+					authId = auth.id;
+					ws.send(JSON.stringify(['AUTH', auth]));
+					return;
+				}
+				if (msg[0] === 'OK' && authId && msg[1] === authId) {
+					if (msg[2] === true) ws.send(JSON.stringify(['REQ', sub, filter]));
+					else finish({ ok: false, detail: `auth rejected: ${msg[3]}`, events });
+					return;
+				}
+				if (msg[0] === 'EVENT' && msg[1] === sub) events.push(msg[2]);
+				else if (msg[0] === 'EOSE' && msg[1] === sub) finish({ ok: true, detail: '', events });
+				else if (msg[0] === 'CLOSED' && msg[1] === sub)
+					finish({ ok: false, detail: `closed: ${msg[2]}`, events });
+				// Frames for the throwaway probe sub are ignored by design.
+			})();
+		};
+	});
+}
+
+interface RelayPublishResult {
+	eventId: string;
+	accepted: boolean;
+	message: string;
+}
+
+/** NIP-42 authenticated relay WRITE: publish a freshly signed EVENT. Same
+ *  lazy-auth choreography as relayQuery — the EVENT goes out on open; when
+ *  the relay challenges, the auth OK is followed by a re-send of the exact
+ *  same signed event (the relay is idempotent by event id). */
+async function relayPublish(
+	secretKey: string,
+	unsigned: UnsignedEvent
+): Promise<RelayPublishResult> {
+	const pubkey = publicKeyOf(secretKey);
+	const event = await signEvent(unsigned, secretKey, pubkey);
+	return new Promise((resolve) => {
+		const ws = new WebSocket(RELAY_URL);
+		let authId: string | null = null;
+		let settled = false;
+		const finish = (result: RelayPublishResult) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			try {
+				ws.close();
+			} catch {
+				/* already closed */
+			}
+			resolve(result);
+		};
+		const timer = setTimeout(
+			() => finish({ eventId: event.id, accepted: false, message: 'timeout' }),
+			20_000
+		);
+		// Same lazy-handshake choreography as relayQuery: probe first, publish
+		// only after the auth OK.
+		ws.onopen = () => ws.send(JSON.stringify(['REQ', 'probe', { kinds: [39000], limit: 1 }]));
+		ws.onerror = () => finish({ eventId: event.id, accepted: false, message: 'transport' });
+		ws.onclose = () => finish({ eventId: event.id, accepted: false, message: 'closed' });
+		ws.onmessage = (raw) => {
+			void (async () => {
+				let msg: unknown;
+				try {
+					msg = JSON.parse(String(raw.data));
+				} catch {
+					return;
+				}
+				if (!Array.isArray(msg)) return;
+				if (msg[0] === 'AUTH' && typeof msg[1] === 'string' && !authId) {
+					const auth = await signEvent(
+						{
+							kind: 22242,
+							tags: [
+								['relay', RELAY_URL],
+								['challenge', msg[1]]
+							],
+							content: ''
+						},
+						secretKey,
+						pubkey
+					);
+					authId = auth.id;
+					ws.send(JSON.stringify(['AUTH', auth]));
+					return;
+				}
+				if (msg[0] === 'OK' && authId && msg[1] === authId) {
+					if (msg[2] === true) ws.send(JSON.stringify(['EVENT', event]));
+					else finish({ eventId: event.id, accepted: false, message: `auth rejected: ${msg[3]}` });
+					return;
+				}
+				if (msg[0] === 'OK' && msg[1] === event.id) {
+					finish({
+						eventId: event.id,
+						accepted: msg[2] === true,
+						message: typeof msg[3] === 'string' ? msg[3] : ''
+					});
+				}
+			})();
+		};
+	});
+}
+
+// ---------------------------------------------------------------------------
 // Matrix
 // ---------------------------------------------------------------------------
 test.describe.configure({ mode: 'serial' });
@@ -305,6 +570,11 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 	const adminContextHolder: { ctx?: BrowserContext } = {};
 
 	test.beforeAll(async ({ browser: b }) => {
+		// Hook timeouts do NOT inherit the describe-level test.setTimeout in
+		// this Playwright version (the hook caps at the global 30 s default,
+		// which the Chat enablement + community provisioning wait can exceed
+		// on a fresh stack) — set it explicitly for the hook body.
+		test.setTimeout(420_000);
 		browser = b;
 		// --- Seed: admin login + Chat enablement + auto-provisioning ----------
 		const admin = await b.newContext({ baseURL: BASE_URL });
@@ -384,6 +654,7 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				password,
 				userId: body.id,
 				pubkey: '',
+				secretKey: null,
 				context,
 				page
 			};
@@ -391,6 +662,7 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 	});
 
 	test.afterAll(async () => {
+		test.setTimeout(120_000);
 		for (const user of Object.values(state.users)) await user.context.close().catch(() => {});
 		await adminContextHolder.ctx?.close().catch(() => {});
 		const evidence = {
@@ -437,10 +709,16 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			expect(body.binding?.status).toBe('Active');
 			expect(body.admission_active).toBe(true);
 			user.pubkey = body.binding.buzz_pubkey;
+			// Decrypt the browser-held key backup with the known acceptance
+			// passphrase so relay-direct scenarios can sign as this identity.
+			user.secretKey = await decryptChatKey(user);
+			expect(user.secretKey).toBeTruthy();
+			expect(publicKeyOf(user.secretKey!)).toBe(user.pubkey);
 		}
 		record('bind', 'Real login + binding + relay admission (A/B/C)', 'PASS', {
 			runtimeProfile: 'fork_client_held',
-			pubkeys: Object.fromEntries(Object.entries(state.users).map(([k, u]) => [k, u.pubkey]))
+			pubkeys: Object.fromEntries(Object.entries(state.users).map(([k, u]) => [k, u.pubkey])),
+			keyBackupDecryptMatchesBindingPubkey: true
 		});
 	});
 
@@ -682,6 +960,7 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 
 	test('g: lost ACK does not duplicate the message (retry same signed event)', async () => {
 		const a = state.users.a;
+		const b = state.users.b;
 		const open = state.channels.open;
 		const body = `uncertain-path ${RUN_SUFFIX}`;
 		await ensureUnlocked(a);
@@ -785,6 +1064,13 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				return saved.pendingEvent?.id ?? null;
 			});
 			expect(capturedId).toBeTruthy();
+			const pendingSig = await a.page.evaluate(() => {
+				const key = Object.keys(sessionStorage).find((k) => k.startsWith('elembra.chat.draft:'));
+				if (!key) return null;
+				const saved = JSON.parse(sessionStorage.getItem(key) ?? '{}');
+				return saved.pendingEvent?.sig ?? null;
+			});
+			expect(pendingSig).toBeTruthy();
 			// The byte-identical retry publishes through a clean transport.
 			await a.page.evaluate(() => {
 				const original = window.__gOriginalWS;
@@ -807,12 +1093,40 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			expect(matches).toHaveLength(1);
 			expect(matches[0].event_id).toBe(capturedId);
 			expect(matches[0].author_pubkey).toBe(a.pubkey);
+			// Relay-direct: the candidate relay must hold the retried event
+			// exactly once, byte-identical (id + sig + author), and the same
+			// single copy must be visible to the other member. The original
+			// (delayed-ACK) send and the byte-identical retry share one event
+			// id — a duplicate store would show up as two EVENT frames here.
+			// (kinds is mandatory: the relay's p-gate rejects kindless filters.)
+			const relayById = await relayQuery(a.secretKey!, {
+				ids: [capturedId],
+				kinds: [9],
+				'#h': [open.id]
+			});
+			expect(relayById.ok, `relay-direct ids read as A: ${relayById.detail}`).toBe(true);
+			expect(relayById.events).toHaveLength(1);
+			expect(relayById.events[0].id).toBe(capturedId);
+			expect(relayById.events[0].sig).toBe(pendingSig);
+			expect(relayById.events[0].pubkey).toBe(a.pubkey);
+			const relayByIdAsB = await relayQuery(b.secretKey!, {
+				ids: [capturedId],
+				kinds: [9],
+				'#h': [open.id]
+			});
+			expect(relayByIdAsB.ok, `relay-direct ids read as B: ${relayByIdAsB.detail}`).toBe(true);
+			expect(relayByIdAsB.events).toHaveLength(1);
+			expect(relayByIdAsB.events[0].id).toBe(capturedId);
+			expect(relayByIdAsB.events[0].sig).toBe(pendingSig);
 			state.eventIds.uncertain = capturedId;
 			record('g', 'Uncertain ACK path retried byte-identically; single application', 'PASS', {
 				channelId: open.id,
 				pendingEventId: capturedId,
 				appliedCopies: matches.length,
-				retainedEventId: matches[0].event_id
+				retainedEventId: matches[0].event_id,
+				relayDirectCopies: relayById.events.length,
+				relayDirectSigMatchesRetryBytes: relayById.events[0].sig === pendingSig,
+				relayDirectCopiesAsB: relayByIdAsB.events.length
 			});
 		} finally {
 			// Unconditionally restore the real WebSocket even on failure.
@@ -823,12 +1137,188 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		}
 	});
 
-	test('e: member removal revokes discovery, reads, and posting; B’s session stays live', async () => {
+	test('i: role downgrade to guest denies posting immediately (relay-direct)', async () => {
 		const a = state.users.a;
 		const b = state.users.b;
+		const open = state.channels.open;
+		// The fork's role change is an owner-signed kind 9000 carrying a
+		// ['role', ...] tag (relay side_effects.rs::handle_put_user; the UI's
+		// add-member deliberately omits it). Provisioning guest relay-direct
+		// is intentional: Elembra exposes no guest assignment, and this is a
+		// DIRECT-RELAY enforcement scenario, not a UI flow.
+		const downgrade = await relayPublish(a.secretKey!, {
+			kind: 9000,
+			tags: [
+				['h', open.id],
+				['p', b.pubkey],
+				['role', 'guest']
+			],
+			content: ''
+		});
+		expect(downgrade.accepted).toBe(true);
+		// IMMEDIACY: no sleep, no directory poll — B's freshly signed kind-9
+		// attempt right after the downgrade's OK frame must be denied by the
+		// candidate relay itself.
+		const downgradeAt = Date.now();
+		const denied = await relayPublish(b.secretKey!, {
+			kind: 9,
+			tags: [['h', open.id]],
+			content: `guest write attempt ${RUN_SUFFIX}`
+		});
+		const denialMs = Date.now() - downgradeAt;
+		expect(denied.accepted).toBe(false);
+		// Guest read stays intact: B still sees the earlier exchange.
+		const guestRead = await relayQuery(b.secretKey!, { kinds: [9], '#h': [open.id] });
+		expect(guestRead.ok).toBe(true);
+		expect(guestRead.events.map((e: any) => e.id)).toContain(state.eventIds.msgA);
+		// Positive control: restoring the member role re-allows posting. The
+		// denial above is role-driven, not a broken session. (Promotion may
+		// lag snapshot propagation; revocation above must NOT lag.)
+		const restore = await relayPublish(a.secretKey!, {
+			kind: 9000,
+			tags: [
+				['h', open.id],
+				['p', b.pubkey],
+				['role', 'member']
+			],
+			content: ''
+		});
+		expect(restore.accepted).toBe(true);
+		let restoredAccepted = false;
+		let restoreMs = 0;
+		const restoreAt = Date.now();
+		await expect
+			.poll(
+				async () => {
+					const probe = await relayPublish(b.secretKey!, {
+						kind: 9,
+						tags: [['h', open.id]],
+						content: `member restore probe ${RUN_SUFFIX}`
+					});
+					restoreMs = Date.now() - restoreAt;
+					restoredAccepted = probe.accepted;
+					return probe.accepted;
+				},
+				{ timeout: 60_000, intervals: [2_000, 4_000, 4_000] }
+			)
+			.toBe(true);
+		record(
+			'i',
+			'Role downgrade to guest: relay denies B signed post immediately; read intact; restore re-allows',
+			'PASS',
+			{
+				channelId: open.id,
+				downgradeEventId: downgrade.eventId,
+				guestWriteDenied: !denied.accepted,
+				guestWriteDenialMessage: denied.message,
+				denialAfterDowngradeMs: denialMs,
+				guestReadEventCount: guestRead.events.length,
+				guestReadSeesEarlierMessage: guestRead.events
+					.map((e: any) => e.id)
+					.includes(state.eventIds.msgA),
+				restoreEventId: restore.eventId,
+				restoreProbeAccepted: restoredAccepted,
+				restoreProbeMs: restoreMs
+			}
+		);
+	});
+
+	test('e: member removal revokes discovery, reads, posting, and attachments; B’s session stays live', async () => {
+		const a = state.users.a;
+		const b = state.users.b;
+		const c = state.users.c;
 		const priv = state.channels.private;
 		const open = state.channels.open;
-		// A removes B from the private channel.
+
+		// --- Pre-removal baseline: an attachment posted INSIDE the private
+		//     channel is openable by the member B (and only by members) --------
+		const attachUpload = await a.context.request.post('/api/v1/files/upload', {
+			multipart: {
+				file: {
+					name: `priv-attached-${RUN_SUFFIX}.txt`,
+					mimeType: 'text/plain',
+					buffer: Buffer.from(`private channel attachment ${RUN_SUFFIX}`)
+				},
+				name: `priv-attached-${RUN_SUFFIX}.txt`
+			},
+			headers: { 'X-Rustshare-Csrf': await csrfOf(a.context) }
+		});
+		expect(attachUpload.ok()).toBeTruthy();
+		const attached = await attachUpload.json();
+		state.attachmentFileId = attached.id;
+		const privResource = {
+			application: 'io.elembra.files',
+			resourceType: 'file',
+			resourceId: attached.id
+		};
+		await channelOption(a.page, priv.name).click();
+		await ensureUnlocked(a);
+		await a.page.getByLabel('Message text').fill(`private attachment message ${RUN_SUFFIX}`);
+		await a.page.getByRole('button', { name: 'Attach file' }).click();
+		await a.page.getByRole('heading', { name: 'Attach a file' }).waitFor({ timeout: 15_000 });
+		await a.page.getByRole('button', { name: `priv-attached-${RUN_SUFFIX}.txt` }).click();
+		await expect(a.page.getByText(/Attachment: elembra:\/\//)).toBeVisible({ timeout: 15_000 });
+		await expect(a.page.getByRole('button', { name: 'Send message' })).toBeEnabled({
+			timeout: 90_000
+		});
+		await a.page.getByRole('button', { name: 'Send message' }).click();
+		await expect(a.page.getByText('Observed by Elembra.')).toBeVisible({ timeout: 90_000 });
+		// Bytes authorization for chat attachments is the FILES grant plane
+		// (existence-hiding 404), NOT channel membership: the owner opens, the
+		// member WITHOUT a Files share and the unrelated user C cannot (this is
+		// the Files-side leak gate — the message metadata shows the ref, the
+		// bytes stay sealed), and an explicit Files share opens it for B.
+		const aOpenOwner = await api(a.context, 'POST', '/api/v1/applications/chat/attachments/open', {
+			resource: privResource
+		});
+		expect(aOpenOwner.status).toBe(200);
+		const bOpenNoShare = await api(
+			b.context,
+			'POST',
+			'/api/v1/applications/chat/attachments/open',
+			{
+				resource: privResource
+			}
+		);
+		expect([403, 404]).toContain(bOpenNoShare.status);
+		const cOpenBefore = await api(c.context, 'POST', '/api/v1/applications/chat/attachments/open', {
+			resource: privResource
+		});
+		expect([403, 404]).toContain(cOpenBefore.status);
+		// Positive control: a Files share opens the same attachment for B…
+		const shared = await api(a.context, 'POST', `/api/v1/files/${attached.id}/share`, {
+			recipient_email: b.email,
+			permission: 'View'
+		});
+		expect([200, 201]).toContain(shared.status);
+		const bShareId = (await shared.json())?.share_id;
+		let bOpenWithShare = 0;
+		await expect
+			.poll(
+				async () => {
+					const res = await api(b.context, 'POST', '/api/v1/applications/chat/attachments/open', {
+						resource: privResource
+					});
+					bOpenWithShare = res.status;
+					return res.status;
+				},
+				{ timeout: 90_000, intervals: [3_000, 5_000, 5_000] }
+			)
+			.toBe(200);
+		// …and revoking the share seals it again (Files revocation is
+		// channel-orthogonal by design; the channel-removal leak checks are
+		// the relay/API ones below).
+		const unshared = await api(a.context, 'DELETE', `/api/v1/shares/${bShareId}`);
+		expect([200, 204]).toContain(unshared.status);
+		const bOpenAfterUnshare = await api(
+			b.context,
+			'POST',
+			'/api/v1/applications/chat/attachments/open',
+			{ resource: privResource }
+		);
+		expect([403, 404]).toContain(bOpenAfterUnshare.status);
+
+		// --- A removes B from the private channel ----------------------------
 		await channelOption(a.page, priv.name).click();
 		await a.page.getByRole('button', { name: 'Channel details' }).click();
 		await a.page.getByRole('button', { name: `Remove member ${b.pubkey.slice(0, 8)}` }).click();
@@ -845,14 +1335,14 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			(bDir.body ?? []).find((c: { channel_id: string }) => c.channel_id === priv.id)
 		).toBeFalsy();
 
-		// --- B attempts a write; the product denies it ------------------------
+		// --- B attempts a write through the UI; the product gives no path ------
 		// What the product actually does: the relay-signed directory is the only
 		// channel-addressability source, and it no longer lists the private
 		// channel for B. While the deep link still addresses the removed
 		// channel the composer is default-denied (Send disabled); once the
 		// directory settles the deep link cannot hold and B falls back to a
-		// visible channel. Both behaviors are sampled live below — no write is
-		// ever submitted, because the product gives B no path to submit one.
+		// visible channel. The window is sampled live; the authoritative
+		// cannot-post evidence is the relay-direct rejection below.
 		const bAttempt = `b write attempt ${RUN_SUFFIX}`;
 		await b.page.goto(`/apps/chat?channel=${priv.id}`);
 		// Wait for the view to boot before unlocking: ensureUnlocked only acts
@@ -863,15 +1353,17 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		await ensureUnlocked(b);
 		await b.page.getByLabel('Message text').fill(bAttempt);
 		// Sample the window while the deep link addresses the removed channel:
-		// the composer must stay default-denied there (Send disabled). The
+		// the composer must stay default-denied there (Send never enabled). The
 		// window closes as soon as the relay-signed directory settles.
 		let addressedSamples = 0;
 		let composerDeniedSamples = 0;
+		let composerEnabledWhileAddressed = 0;
 		const sampleComposerDenial = async (): Promise<void> => {
 			if (!(await b.page.url().includes(priv.id))) return;
 			addressedSamples += 1;
 			const send = b.page.getByRole('button', { name: 'Send message' });
 			if (await send.isDisabled().catch(() => false)) composerDeniedSamples += 1;
+			if (await send.isEnabled().catch(() => false)) composerEnabledWhileAddressed += 1;
 		};
 		await sampleComposerDenial();
 		// Nudge the permission refresh instead of waiting a whole poll cycle.
@@ -892,6 +1384,15 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				{ timeout: 60_000, intervals: [2_000, 4_000] }
 			)
 			.toBe(false);
+		if (addressedSamples > 0) {
+			// Deterministic product-state gate: whenever the UI was observed
+			// addressing the removed channel, Send must NEVER have been
+			// enabled there. (addressedSamples === 0 means the directory had
+			// already settled before the page loaded — the channel was then
+			// simply unaddressable; the relay-direct denial below is the
+			// cannot-post proof either way.)
+			expect(composerEnabledWhileAddressed).toBe(0);
+		}
 		await expect(channelOption(b.page, priv.name)).toHaveCount(0, { timeout: 60_000 });
 		// The private channel remains unaddressable and unreadable for B after
 		// the write attempt (sampled across the propagation window rather than
@@ -902,6 +1403,35 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			bPrivateRows = (attemptView.body?.messages ?? []).length;
 			expect(bPrivateRows).toBe(0);
 		});
+
+		// --- DIRECT-RELAY negative tests (owned keys, candidate relay) --------
+		// 1) B's freshly signed kind-9 to the removed channel is rejected by
+		//    the relay itself — the authoritative "cannot post" for a removed
+		//    member, independent of any UI safeguard.
+		const directWrite = await relayPublish(b.secretKey!, {
+			kind: 9,
+			tags: [['h', priv.id]],
+			content: `removed member direct write ${RUN_SUFFIX}`
+		});
+		expect(directWrite.accepted).toBe(false);
+		// 2) B's relay-direct read of the channel returns nothing.
+		const directRead = await relayQuery(b.secretKey!, { kinds: [9], '#h': [priv.id] });
+		const directReadLeaked = directRead.events.filter(
+			(e: any) => e.id === state.eventIds.canary
+		).length;
+		expect(directReadLeaked).toBe(0);
+		// 3) The attachment bytes stay sealed for B after removal (B holds no
+		//    Files grant; existence-hiding denial — Files access is never
+		//    derived from channel membership).
+		let bOpenAfterRemoval = 0;
+		await expectAbsentAcrossWindow(3, 4_000, async () => {
+			const res = await api(b.context, 'POST', '/api/v1/applications/chat/attachments/open', {
+				resource: privResource
+			});
+			bOpenAfterRemoval = res.status;
+			expect([403, 404]).toContain(res.status);
+		});
+
 		// B never sees a post-removal message either (UI + API fail closed):
 		// the secret event must not appear for B at all, not merely its body.
 		const secret = `post-removal secret ${RUN_SUFFIX}`;
@@ -928,17 +1458,152 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		const bOpen = await messagesOf(b, open.id);
 		expect(bOpen.status).toBe(200);
 		expect((bOpen.body?.messages ?? []).length).toBeGreaterThan(0);
-		record('e', 'Removal revokes discovery, reads, and posting; B session stays live', 'PASS', {
-			channelId: priv.id,
-			removed: b.pubkey,
-			bDirectoryAfterRemoval: bDir.status,
-			bComposerDeniedWhileAddressed: composerDeniedSamples,
-			bAddressedSamples: addressedSamples,
-			deepLinkHeldAfterRemoval: deepLinkHeld,
-			bPrivateTimelineRows: bPrivateRows,
-			bReadAfterRemoval: 'zero-rows',
-			bLivenessOpenChannelReads: bOpen.status
+		record(
+			'e',
+			'Removal revokes discovery, reads, posting (UI+relay), and attachments; B session stays live',
+			'PASS',
+			{
+				channelId: priv.id,
+				removed: b.pubkey,
+				privAttachmentFileId: attached.id,
+				aOpenAttachmentAsOwner: aOpenOwner.status,
+				bOpenAttachmentAsMemberNoShare: bOpenNoShare.status,
+				bOpenAttachmentWithFilesShare: bOpenWithShare,
+				bOpenAttachmentAfterShareRevoke: bOpenAfterUnshare.status,
+				cOpenAttachmentBeforeRemoval: cOpenBefore.status,
+				bDirectoryAfterRemoval: bDir.status,
+				bAddressedSamples: addressedSamples,
+				bComposerDeniedWhileAddressed: composerDeniedSamples,
+				bComposerEnabledWhileAddressed: composerEnabledWhileAddressed,
+				deepLinkHeldAfterRemoval: deepLinkHeld,
+				bPrivateTimelineRows: bPrivateRows,
+				directRelayWriteAccepted: directWrite.accepted,
+				directRelayWriteDenialMessage: directWrite.message,
+				directRelayReadOk: directRead.ok,
+				directRelayReadDetail: directRead.detail,
+				directRelayReadEvents: directRead.events.length,
+				bOpenAttachmentAfterRemoval: bOpenAfterRemoval,
+				bReadAfterRemoval: 'zero-rows',
+				bLivenessOpenChannelReads: bOpen.status
+			}
+		);
+	});
+
+	test('f2: private-channel leaks closed — search, deep links, history, relay reads for C and removed B', async () => {
+		const a = state.users.a;
+		const b = state.users.b;
+		const c = state.users.c;
+		const priv = state.channels.private;
+		// Search must not surface private-channel content for the unrelated
+		// user C or the removed member B. The terms are tokens that appear ONLY
+		// in private-channel bodies of this run ('canary' in the canary, 'post-
+		// removal' in the post-removal secret); the run suffix is deliberately
+		// NOT used here because it also occurs in open-channel messages, which
+		// are community-visible and legitimately searchable. The owner-side
+		// positive control below proves the canary body IS indexed — the zero-
+		// hit results for C/B are per-candidate authorization, not absence.
+		const leakTerms = ['canary', 'post-removal', 'priv-attached'];
+		const cSearch = [];
+		for (const term of leakTerms) {
+			const res = await api(c.context, 'POST', '/api/v1/search', { query: term });
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			expect(Array.isArray(body?.results)).toBe(true);
+			cSearch.push({ term, hits: (body.results ?? []).length });
+			expect((body.results ?? []).length).toBe(0);
+		}
+		// Same for B after removal from the private channel.
+		const bSearch = [];
+		for (const term of leakTerms) {
+			const res = await api(b.context, 'POST', '/api/v1/search', { query: term });
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			bSearch.push({ term, hits: (body.results ?? []).length });
+			expect((body.results ?? []).length).toBe(0);
+		}
+		// Positive controls, so the zero-hit results for C/B above are provably
+		// authorization decisions, not an empty index:
+		// 1) A's suffix search returns the community-visible open-channel
+		//    messages immediately (chat catalog is live).
+		// 2) 'priv-attached' is the NAME of the file posted inside the private
+		//    channel — the owner must find it (file metadata indexing), and
+		//    the same term is a C/B leak term above (metadata leak gate). The
+		//    private-channel MESSAGE bodies are never projected at all, so
+		//    message leak terms are guarded by both the projection gate and
+		//    the per-candidate authorization filter.
+		const aSuffixSearch = await api(a.context, 'POST', '/api/v1/search', {
+			query: RUN_SUFFIX
 		});
+		expect(aSuffixSearch.status).toBe(200);
+		const aSuffixBody = await aSuffixSearch.json();
+		expect((aSuffixBody.results ?? []).length).toBeGreaterThan(0);
+		let ownerFileHits = -1;
+		let ownerAttachmentRefs: string[] = [];
+		await expect
+			.poll(
+				async () => {
+					const res = await api(a.context, 'POST', '/api/v1/search', {
+						query: 'priv-attached'
+					});
+					const body = await res.json();
+					ownerAttachmentRefs = (body.results ?? []).map((r: any) => r.resource_ref ?? '');
+					ownerFileHits = ownerAttachmentRefs.length;
+					return ownerAttachmentRefs.some((ref: string) => ref.endsWith(state.attachmentFileId));
+				},
+				{ timeout: 120_000, intervals: [3_000, 5_000, 10_000] }
+			)
+			.toBe(true);
+		const aCanarySearch = await api(a.context, 'POST', '/api/v1/search', { query: 'canary' });
+		const aCanaryBody = await aCanarySearch.json();
+		const ownerPrivateMessageHits = (aCanaryBody.results ?? []).length;
+		// Deep link + reload for C cannot surface the channel or its history.
+		await c.page.goto(`/apps/chat?channel=${priv.id}`);
+		await expect(c.page.getByRole('heading', { name: 'Channels' })).toBeVisible({
+			timeout: 30_000
+		});
+		await c.page.reload();
+		await expect(channelOption(c.page, priv.name)).toHaveCount(0, { timeout: 60_000 });
+		await expectAbsentAcrossWindow(3, 4_000, async () => {
+			const cMsgs = await messagesOf(c, priv.id);
+			expect(cMsgs.body?.messages ?? []).toHaveLength(0);
+		});
+		// Relay-direct read as C: the canary/secret event ids must never appear.
+		const cRelayRead = await relayQuery(c.secretKey!, { kinds: [9], '#h': [priv.id] });
+		const cLeaked = cRelayRead.events.filter((e: any) => e.id === state.eventIds.canary).length;
+		expect(cLeaked).toBe(0);
+		// Relay-direct read as removed B (same requirement, second identity).
+		const bRelayRead = await relayQuery(b.secretKey!, { kinds: [9], '#h': [priv.id] });
+		const bLeaked = bRelayRead.events.filter((e: any) => e.id === state.eventIds.canary).length;
+		expect(bLeaked).toBe(0);
+		// Positive control: the owner still reads the private history (so the
+		// zero-hits above cannot be vacuous — the channel does exist and the
+		// relay does serve it to authorized sessions).
+		const aView = await messagesOf(a, priv.id);
+		expect((aView.body?.messages ?? []).length).toBeGreaterThan(0);
+		record(
+			'f2',
+			'Private-channel leak checks: search/deep-link/history/relay reads closed for C and removed B',
+			'PASS',
+			{
+				channelId: priv.id,
+				cSearch,
+				bSearch,
+				ownerSuffixSearchHits: (aSuffixBody.results ?? []).length,
+				ownerAttachmentSearchHits: ownerFileHits,
+				ownerAttachmentSearchFoundFile: ownerAttachmentRefs.some((ref: string) =>
+					ref.endsWith(state.attachmentFileId)
+				),
+				ownerPrivateMessageBodyHits: ownerPrivateMessageHits,
+				cDeepLinkRows: 0,
+				cRelayReadOk: cRelayRead.ok,
+				cRelayReadDetail: cRelayRead.detail,
+				cRelayReadEvents: cRelayRead.events.length,
+				bRelayReadOk: bRelayRead.ok,
+				bRelayReadDetail: bRelayRead.detail,
+				bRelayReadEvents: bRelayRead.events.length,
+				ownerPositiveControlRows: (aView.body?.messages ?? []).length
+			}
+		);
 	});
 
 	test('f: Files attachment authorization — grant succeeds, revocation fails', async () => {
@@ -998,6 +1663,172 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				bOpen: bOpen.status,
 				cOpen: cOpen.status,
 				bOpenAfterRevoke: bOpenAfter.status
+			}
+		);
+	});
+
+	test('j: relay + backend + observer restart retains authorized history and posting', async () => {
+		const a = state.users.a;
+		const b = state.users.b;
+		const open = state.channels.open;
+		// Restart the three Chat-path services inside the acceptance project.
+		// Backend: a plain `docker restart` (same container) — the backend
+		// container holds the bootstrap-password artifact in /tmp, which must
+		// survive for later acceptance runs. buzz-relay and chat-observer share
+		// the backend container's network namespace (dogfood layout): a backend
+		// restart gives it a FRESH namespace, so the sharers must be
+		// RE-CREATED (`up -d --force-recreate`) to reattach — a plain restart
+		// would leave them in the backend's stale namespace. Volumes (relay
+		// event store, backend DB, observer durable outbox) persist throughout.
+		const extraFile =
+			process.env.ELEMBRA_COMPOSE_EXTRA_FILE ?? 'docker-compose.chat-acceptance-candidate.yml';
+		const repoRoot = dirname(process.cwd());
+		const chatEnv: Record<string, string> = {};
+		try {
+			const raw = readFileSync(`${repoRoot}/.elembra/chat.env`, 'utf8');
+			for (const line of raw.split('\n')) {
+				const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+				if (m) chatEnv[m[1]] = m[2].replace(/^["']|["']$/g, '');
+			}
+		} catch {
+			// chat.env missing: compose defaults apply (acceptance stacks
+			// always provision it via init --with-chat).
+		}
+		const backendName = `${COMPOSE_PROJECT}-backend-1`;
+		execFileSync('docker', ['restart', backendName], { stdio: 'pipe', timeout: 120_000 });
+		const composeArgs = [
+			'compose',
+			'-p',
+			COMPOSE_PROJECT,
+			'-f',
+			'docker-compose.yml',
+			'-f',
+			'docker-compose.alpha.yml',
+			'-f',
+			'docker-compose.dogfood.yml',
+			'-f',
+			extraFile,
+			'up',
+			'-d',
+			'--force-recreate',
+			'buzz-relay',
+			'chat-observer'
+		];
+		execFileSync('docker', composeArgs, {
+			cwd: repoRoot,
+			env: { ...process.env, ...chatEnv },
+			stdio: 'pipe',
+			timeout: 300_000
+		});
+		// Backend ready again (restart is in-place; usually fast).
+		await expect
+			.poll(
+				async () => {
+					try {
+						const res = await fetch(`${BASE_URL}/health/ready`);
+						return res.status;
+					} catch {
+						return 0;
+					}
+				},
+				{ timeout: 180_000, intervals: [2_000, 3_000, 5_000] }
+			)
+			.toBe(200);
+		// Relay healthy again. NOTE: the relay serves GET /health on its MAIN
+		// listener (published via the backend namespace as 17447), not on the
+		// dedicated health port (which only answers /_liveness etc.).
+		await expect
+			.poll(
+				async () => {
+					try {
+						const res = await fetch('http://127.0.0.1:17447/health');
+						return res.status;
+					} catch {
+						return 0;
+					}
+				},
+				{ timeout: 180_000, intervals: [2_000, 3_000, 5_000] }
+			)
+			.toBe(200);
+		// Backend ready.
+		await expect
+			.poll(
+				async () => {
+					try {
+						const res = await fetch(`${BASE_URL}/health/ready`);
+						return res.status;
+					} catch {
+						return 0;
+					}
+				},
+				{ timeout: 180_000, intervals: [2_000, 3_000, 5_000] }
+			)
+			.toBe(200);
+		// Observer ready (re-admitted through the durable outbox path).
+		const observerName = `${COMPOSE_PROJECT}-chat-observer-1`;
+		await expect
+			.poll(
+				() => {
+					try {
+						execFileSync('docker', [
+							'exec',
+							observerName,
+							'wget',
+							'-q',
+							'-O',
+							'-',
+							'http://127.0.0.1:8091/ready'
+						]);
+						return true;
+					} catch {
+						return false;
+					}
+				},
+				{ timeout: 180_000, intervals: [2_000, 3_000, 5_000] }
+			)
+			.toBe(true);
+		// Authorized history retained for both members. The reload restores the
+		// last selected channel (the private one for A) — deep-link to the open
+		// channel explicitly, re-establish the signing session, then assert the
+		// pre-restart messages render.
+		for (const user of [a, b]) {
+			await user.page.reload();
+			await user.page.goto(`/apps/chat?channel=${open.id}`);
+			await expect(channelOption(user.page, open.name)).toBeVisible({ timeout: 90_000 });
+			await ensureUnlocked(user);
+			await expect(user.page.getByText(`hello from A ${RUN_SUFFIX}`)).toBeVisible({
+				timeout: 90_000
+			});
+			await expect(user.page.getByText(`reply from B ${RUN_SUFFIX}`)).toBeVisible({
+				timeout: 90_000
+			});
+		}
+		// API history retained with the exact pre-restart event ids.
+		const aView = await messagesOf(a, open.id);
+		const postRestartIds = (aView.body?.messages ?? []).map((m: any) => m.event_id);
+		expect(postRestartIds).toContain(state.eventIds.msgA);
+		expect(postRestartIds).toContain(state.eventIds.msgB);
+		expect(postRestartIds).toContain(state.eventIds.uncertain);
+		// Posting works again end-to-end after the restart: A posts, B sees it
+		// (browser clients reconnected through the fresh relay/backend).
+		await sendMessage(a, `post-restart ${RUN_SUFFIX}`);
+		await expect(b.page.getByText(`post-restart ${RUN_SUFFIX}`)).toBeVisible({ timeout: 120_000 });
+		record(
+			'j',
+			'Restart of relay+backend+observer: history retained, sessions reconnect, posting works',
+			'PASS',
+			{
+				channelId: open.id,
+				restarted: { backend: 'docker restart (in place)' },
+				recreated: ['buzz-relay', 'chat-observer'],
+				recreatedReason: 'dogfood netns sharers must reattach to the restarted backend namespace',
+				composeProject: COMPOSE_PROJECT,
+				historyEventIdsRetained: {
+					msgA: postRestartIds.includes(state.eventIds.msgA),
+					msgB: postRestartIds.includes(state.eventIds.msgB),
+					uncertain: postRestartIds.includes(state.eventIds.uncertain)
+				},
+				postRestartMessageObservedByB: true
 			}
 		);
 	});

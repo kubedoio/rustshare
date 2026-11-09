@@ -1,0 +1,197 @@
+{
+  "generatedAt": "2026-11-09T11:53:38.951Z",
+  "runId": "c64719a96660",
+  "relay": {
+    "image": "buzz-elembra-candidate:f68a4c59",
+    "imageId": "sha256:7eacf645fc25641bebc30ef42c6b4ec55bdb908fc4653e92e85cba7745d600df",
+    "builtFrom": "f68a4c59 (final qualified candidate; supported baseline c9a373b + guest-write-denial hotfix)",
+    "wsCommunityA": "ws://a.localhost:17547",
+    "wsCommunityB": "ws://b.localhost:17547"
+  },
+  "topology": {
+    "layout": "one relay process, two communities keyed by Host header (buzz nip42_host_binding_live pattern)",
+    "communities": [
+      {
+        "id": "8b215a30-741b-4617-b669-175e73cbc301",
+        "host": "a.localhost:17547",
+        "note": "relay auto-provisions its RELAY_URL host community at startup"
+      },
+      {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "host": "b.localhost:17547"
+      }
+    ],
+    "requireRelayMembership": false,
+    "rationale": "Membership gate disabled so any NIP-42-authed key can publish; the checks isolate channel-role (guest write denial) and community boundaries (two-tenant isolation). The Elembra acceptance stack covers the community-membership gate separately."
+  },
+  "provenance": {
+    "gitSha": "775fb2da7f427551626a78a08a59a0672749698e",
+    "stack": "chatnegharden (direct-negative harness, relay 127.0.0.1:17547, image buzz-elembra-candidate:f68a4c59)"
+  },
+  "checks": [
+    {
+      "id": "a_auth",
+      "title": "Alice NIP-42 AUTH on community A accepted",
+      "status": "PASS",
+      "evidence": {
+        "relayTag": "ws://a.localhost:17547",
+        "message": ""
+      }
+    },
+    {
+      "id": "a_create_channel",
+      "title": "Alice creates a private channel on community A",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "e3e5adae-bee6-44b3-8259-25a37f72c686",
+        "eventId": "e6af007b7603baa8d1839191cd3ea864eb613f2505ca8953bc084275366107a1",
+        "message": ""
+      }
+    },
+    {
+      "id": "a_snapshot",
+      "title": "Relay-signed 39000 metadata snapshot for the channel exists on A",
+      "status": "PASS",
+      "evidence": {
+        "ok": true,
+        "detail": "",
+        "snapshotEventId": "a3d7c68b2c993bb74c2d9a64245ca35a020513f0693cb8bc13a8c89c3f7d5e51"
+      }
+    },
+    {
+      "id": "a_post",
+      "title": "Alice posts a kind-9 message on community A",
+      "status": "PASS",
+      "evidence": {
+        "eventId": "ea7f5bb9ec82448a095796b345b2c2ee98114583f2091720e348da0fd2dbc007",
+        "message": ""
+      }
+    },
+    {
+      "id": "a_member_write",
+      "title": "Member added and member kind-9 accepted (positive control)",
+      "status": "PASS",
+      "evidence": {
+        "addMemberEventId": "3af89e7ed1d17cebc0db43c3d7b2cbd10970c02463f496a6a1473c6b14130c4b",
+        "memberPostEventId": "43b5cd614f07ef9dbc1d65595dc915590d3fd5ec5e113da2ee2364882bf77a8c",
+        "memberPostMessage": ""
+      }
+    },
+    {
+      "id": "a_guest_role",
+      "title": "Owner-signed 9000 with role tag provisions the guest role (relay-direct)",
+      "status": "PASS",
+      "evidence": {
+        "addGuestEventId": "1ebede16cb951b4547f34cdef2d1a625f0e99d1a56cfa34644ae683345980a41",
+        "rosterShowsGuestRole": true,
+        "rosterEventId": "d94bd1f880c0d869461521e02d6052edc30a150b2ebea2354586f996994fde9b"
+      }
+    },
+    {
+      "id": "a_guest_read",
+      "title": "Guest read still works: guest sees the owner message",
+      "status": "PASS",
+      "evidence": {
+        "ok": true,
+        "detail": "",
+        "events": 2
+      }
+    },
+    {
+      "id": "a_guest_write_denied",
+      "title": "CORE: guest-role signed kind-9 is REJECTED by the candidate relay",
+      "status": "PASS",
+      "evidence": {
+        "eventId": "de3751a0c22673cd1219f2d8e2fb0103569a1ff95fc04c7fd5fc8f7e24e07c4a",
+        "accepted": false,
+        "denialMessage": "restricted: guest members are read-only",
+        "msAfterRoleAssignment": 84
+      }
+    },
+    {
+      "id": "b_auth",
+      "title": "Bob NIP-42 AUTH on community B accepted (tenant B operable)",
+      "status": "PASS",
+      "evidence": {
+        "relayTag": "ws://b.localhost:17547",
+        "message": ""
+      }
+    },
+    {
+      "id": "b_discovery_isolated",
+      "title": "Tenant B discovery does not list tenant A channels",
+      "status": "PASS",
+      "evidence": {
+        "ok": true,
+        "detail": "",
+        "channelACount": 0
+      }
+    },
+    {
+      "id": "b_read_isolated",
+      "title": "Tenant B cannot read tenant A channel content (even by guessing the id)",
+      "status": "PASS",
+      "evidence": {
+        "ok": false,
+        "detail": "closed: restricted: not a channel member",
+        "events": 0,
+        "leakedEventIds": 0
+      }
+    },
+    {
+      "id": "b_write_denied",
+      "title": "Tenant B signed kind-9 to a tenant A channel is REJECTED",
+      "status": "PASS",
+      "evidence": {
+        "eventId": "bfe5d00856126d8447d062a51cee6938d9ef98d66b411599a9e344e6ee23f86e",
+        "accepted": false,
+        "denialMessage": "restricted: not a channel member"
+      }
+    },
+    {
+      "id": "b_cross_host_auth_denied",
+      "title": "CORE: cross-host NIP-42 AUTH (relay tag A on B connection) is REJECTED",
+      "status": "PASS",
+      "evidence": {
+        "accepted": false,
+        "denialMessage": "auth-required: verification failed"
+      }
+    },
+    {
+      "id": "b_positive",
+      "title": "Tenant B channel creation and posting work (positive control)",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "30d1b503-81a6-422e-adcb-484cac3f466b",
+        "createEventId": "f0388749bcf603980f1563868f57caed34e49969c7ceef93f26248520c0abb0f",
+        "postEventId": "f757cb43e943257c14a15b175f5c12ebd040165b61bc21ddafed06ea790d9d08"
+      }
+    },
+    {
+      "id": "a_reverse_isolation",
+      "title": "Reverse isolation: tenant A cannot discover or read tenant B content",
+      "status": "PASS",
+      "evidence": {
+        "aliceSeesChannelB": false,
+        "aliceReadOk": false,
+        "aliceReadDetail": "closed: restricted: not a channel member",
+        "aliceReadEvents": 0
+      }
+    }
+  ],
+  "identities": {
+    "alice": "0d34df96d69e7e09dc51e00fca82a167a2722671841366f40df06ac9681360ed",
+    "member": "755a5c0eacee2fc5e17ba752c6d4d0fcc8da373afd22d556a1c4bdb49b19d1dc",
+    "guest": "685876ed4e8d3dc69a2c431a46057e1f2a351c579cabd347a211499aa2f51d4b",
+    "bob": "0fc8e684258b6add8921a1c82f2f713ae8c79ba503a2b1b707eaa5b4cf45667e"
+  },
+  "channels": {
+    "a": "e3e5adae-bee6-44b3-8259-25a37f72c686",
+    "b": "30d1b503-81a6-422e-adcb-484cac3f466b"
+  },
+  "summary": {
+    "total": 15,
+    "passed": 15,
+    "failed": 0
+  }
+}

@@ -1,0 +1,37 @@
+# Disposable local Chat acceptance override (mission-E hardening runs).
+# =============================================================================
+# Loaded AFTER docker-compose.dogfood.yml via ELEMBRA_COMPOSE_EXTRA_FILE in
+# place of docker-compose.chat-acceptance.yml. It carries the SAME loopback
+# port layout as that file (see its header for the map) and additionally pins
+# the buzz-relay service to the LOCALLY QUALIFIED candidate image
+# (buzz-elembra-candidate:f68a4c59, image id 7eacf645fc25 — supported baseline
+# c9a373b + guest-write-denial hotfix) instead of the production
+# BUZZ_RELAY_IMAGE pin from config/buzz-compatibility.env.
+#
+# This is TEST INFRASTRUCTURE for acceptance runs only: the production pin in
+# config/buzz-compatibility.env is intentionally untouched, and so is
+# docker-compose.chat-acceptance.yml (the pinned-image variant). All new
+# negative acceptance scenarios must run against the fixed relay; the
+# candidate override is how the acceptance stack expresses that.
+#
+# Teardown: docker compose -p <project> -f docker-compose.yml \
+#   -f docker-compose.alpha.yml -f docker-compose.dogfood.yml \
+#   -f docker-compose.chat-acceptance-candidate.yml --profile chat down -v
+# =============================================================================
+
+services:
+  backend:
+    ports: !override
+      - "127.0.0.1:17447:17447"
+      - "127.0.0.1:18088:18088"
+      - "127.0.0.1:19102:19102"
+
+  buzz-relay:
+    image: buzz-elembra-candidate:f68a4c59
+    environment:
+      BUZZ_BIND_ADDR: 0.0.0.0:17447
+      RELAY_URL: ws://localhost:17447
+
+  nginx:
+    ports: !override
+      - "127.0.0.1:18080:80"
