@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-11-09T11:53:38.951Z",
-  "runId": "c64719a96660",
+  "generatedAt": "2026-11-09T13:28:43.346Z",
+  "runId": "d68e2e3cc179",
   "relay": {
     "image": "buzz-elembra-candidate:f68a4c59",
     "imageId": "sha256:7eacf645fc25641bebc30ef42c6b4ec55bdb908fc4653e92e85cba7745d600df",
@@ -12,7 +12,7 @@
     "layout": "one relay process, two communities keyed by Host header (buzz nip42_host_binding_live pattern)",
     "communities": [
       {
-        "id": "8b215a30-741b-4617-b669-175e73cbc301",
+        "id": "e80b0725-e520-401f-913a-845605f34f35",
         "host": "a.localhost:17547",
         "note": "relay auto-provisions its RELAY_URL host community at startup"
       },
@@ -25,7 +25,7 @@
     "rationale": "Membership gate disabled so any NIP-42-authed key can publish; the checks isolate channel-role (guest write denial) and community boundaries (two-tenant isolation). The Elembra acceptance stack covers the community-membership gate separately."
   },
   "provenance": {
-    "gitSha": "775fb2da7f427551626a78a08a59a0672749698e",
+    "gitSha": "3a81041227e25c3ab6f0d574c85b328c2e249c47",
     "stack": "chatnegharden (direct-negative harness, relay 127.0.0.1:17547, image buzz-elembra-candidate:f68a4c59)"
   },
   "checks": [
@@ -43,8 +43,8 @@
       "title": "Alice creates a private channel on community A",
       "status": "PASS",
       "evidence": {
-        "channelId": "e3e5adae-bee6-44b3-8259-25a37f72c686",
-        "eventId": "e6af007b7603baa8d1839191cd3ea864eb613f2505ca8953bc084275366107a1",
+        "channelId": "9c04aa6b-393d-40f1-9255-009aba39e1f3",
+        "eventId": "6c3010769d057dade33ceca5d98ed2ce9c93ed63678b9c47ed802b74ed4c7fc4",
         "message": ""
       }
     },
@@ -55,7 +55,7 @@
       "evidence": {
         "ok": true,
         "detail": "",
-        "snapshotEventId": "a3d7c68b2c993bb74c2d9a64245ca35a020513f0693cb8bc13a8c89c3f7d5e51"
+        "snapshotEventId": "60493402984e405db8775aeaf560420cbaa8facbe94311f61ec9d40397e82152"
       }
     },
     {
@@ -63,7 +63,7 @@
       "title": "Alice posts a kind-9 message on community A",
       "status": "PASS",
       "evidence": {
-        "eventId": "ea7f5bb9ec82448a095796b345b2c2ee98114583f2091720e348da0fd2dbc007",
+        "eventId": "10918064bc9da7428a0aebbd3d0e0a718e70fcd6a055b3bcb508ddc72678291c",
         "message": ""
       }
     },
@@ -72,8 +72,8 @@
       "title": "Member added and member kind-9 accepted (positive control)",
       "status": "PASS",
       "evidence": {
-        "addMemberEventId": "3af89e7ed1d17cebc0db43c3d7b2cbd10970c02463f496a6a1473c6b14130c4b",
-        "memberPostEventId": "43b5cd614f07ef9dbc1d65595dc915590d3fd5ec5e113da2ee2364882bf77a8c",
+        "addMemberEventId": "c9bf6a6e2d5f26b46446f920406f2c3be6e6925efc6926347f7f6612bbc7595a",
+        "memberPostEventId": "117e7212e6abc4e227006517a46c3a5982417b6242bb21514a70749826f4f5f0",
         "memberPostMessage": ""
       }
     },
@@ -82,9 +82,10 @@
       "title": "Owner-signed 9000 with role tag provisions the guest role (relay-direct)",
       "status": "PASS",
       "evidence": {
-        "addGuestEventId": "1ebede16cb951b4547f34cdef2d1a625f0e99d1a56cfa34644ae683345980a41",
+        "addGuestEventId": "04a0ac9ede1bd5d48b7ebd52d301a171b3b585f62e1455d454953265a1808270",
         "rosterShowsGuestRole": true,
-        "rosterEventId": "d94bd1f880c0d869461521e02d6052edc30a150b2ebea2354586f996994fde9b"
+        "rosterSnapshotsScanned": 1,
+        "rosterEventId": "d62320eaef66f18e0888cd9c93502a76998b4711fd8fa53c74bb1f2855d629fa"
       }
     },
     {
@@ -102,8 +103,9 @@
       "title": "CORE: guest-role signed kind-9 is REJECTED by the candidate relay",
       "status": "PASS",
       "evidence": {
-        "eventId": "de3751a0c22673cd1219f2d8e2fb0103569a1ff95fc04c7fd5fc8f7e24e07c4a",
+        "eventId": "90bd4e0622ed0b5da0ce451fe8272228bd3d0cdeb9f1d521b0d1fbc3ecdf0840",
         "accepted": false,
+        "denialAnchoredToGuestRole": true,
         "denialMessage": "restricted: guest members are read-only",
         "msAfterRoleAssignment": 84
       }
@@ -143,7 +145,7 @@
       "title": "Tenant B signed kind-9 to a tenant A channel is REJECTED",
       "status": "PASS",
       "evidence": {
-        "eventId": "bfe5d00856126d8447d062a51cee6938d9ef98d66b411599a9e344e6ee23f86e",
+        "eventId": "049e931046f092b612d1d29f6a92ae3f7275e87e0b40ead4324f6530d6adacee",
         "accepted": false,
         "denialMessage": "restricted: not a channel member"
       }
@@ -162,9 +164,9 @@
       "title": "Tenant B channel creation and posting work (positive control)",
       "status": "PASS",
       "evidence": {
-        "channelId": "30d1b503-81a6-422e-adcb-484cac3f466b",
-        "createEventId": "f0388749bcf603980f1563868f57caed34e49969c7ceef93f26248520c0abb0f",
-        "postEventId": "f757cb43e943257c14a15b175f5c12ebd040165b61bc21ddafed06ea790d9d08"
+        "channelId": "e09c8969-87e6-4bd7-b6ed-ac999b03a004",
+        "createEventId": "61c93636ceb6b552629d73bd14be1649d705cf549b19132ab278f08f58e0ab89",
+        "postEventId": "99a1303b996c055b6b48109c9b19d9adf7cdf727c585c0c57c695dfd5be8f9db"
       }
     },
     {
@@ -180,14 +182,14 @@
     }
   ],
   "identities": {
-    "alice": "0d34df96d69e7e09dc51e00fca82a167a2722671841366f40df06ac9681360ed",
-    "member": "755a5c0eacee2fc5e17ba752c6d4d0fcc8da373afd22d556a1c4bdb49b19d1dc",
-    "guest": "685876ed4e8d3dc69a2c431a46057e1f2a351c579cabd347a211499aa2f51d4b",
-    "bob": "0fc8e684258b6add8921a1c82f2f713ae8c79ba503a2b1b707eaa5b4cf45667e"
+    "alice": "6284073ac75bd2b47355be233ced7518306fb227ea080f6004145aa5479b7402",
+    "member": "192d6cc65e49e8891192119524bc7479a939774fe32408fd35addda3d9069a6f",
+    "guest": "ea07c7dca07bb4b8e76312dfd97e78d7d54f06c8c37cdb26a494cbd32475cffc",
+    "bob": "9d0da236776abc50d8f4d3a103eb020a42ba4b56c66821725e39063e00e6e125"
   },
   "channels": {
-    "a": "e3e5adae-bee6-44b3-8259-25a37f72c686",
-    "b": "30d1b503-81a6-422e-adcb-484cac3f466b"
+    "a": "9c04aa6b-393d-40f1-9255-009aba39e1f3",
+    "b": "e09c8969-87e6-4bd7-b6ed-ac999b03a004"
   },
   "summary": {
     "total": 15,
