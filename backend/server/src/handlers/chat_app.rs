@@ -31,6 +31,7 @@ fn principal(auth: &AuthenticatedUser) -> PrincipalContext {
 pub struct CommunityMappingInfo {
     pub community_id: String,
     pub relay_url: String,
+    pub relay_pubkey: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -41,6 +42,8 @@ pub struct BindingInfo {
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ChatStatusResponse {
+    /// This endpoint serves only the existing browser-held-key integration.
+    pub runtime_profile: &'static str,
     pub chat_enabled: bool,
     pub mapping: Option<CommunityMappingInfo>,
     pub binding: Option<BindingInfo>,
@@ -165,6 +168,7 @@ pub async fn chat_status(
         .map(|m| CommunityMappingInfo {
             community_id: m.community_id.clone(),
             relay_url: m.relay_url.clone(),
+            relay_pubkey: m.relay_pubkey.clone(),
         });
 
     let mut admission_active = false;
@@ -177,6 +181,11 @@ pub async fn chat_status(
         }
     }
     Ok(Json(ChatStatusResponse {
+        runtime_profile: if state.buzz_gateway.is_some() {
+            "fork_client_held"
+        } else {
+            "local_client_held"
+        },
         chat_enabled,
         mapping: mapping_info,
         binding: binding.map(|b| BindingInfo {
@@ -188,8 +197,8 @@ pub async fn chat_status(
     }))
 }
 
-/// Channels of the mapped community the caller may currently read. Derived
-/// from the observation index and gated channel-by-channel.
+/// Channels the caller may currently read, including empty channels in Buzz
+/// gateway mode. Local mode uses the authorized observation index.
 #[utoipa::path(
     get,
     path = "/api/v1/applications/chat/channels",
