@@ -37,7 +37,13 @@ signer for kinds 39000–39003 and NIP-42 subject authentication:
   query. It returns every channel the authenticated identity may see,
   **including channels with zero messages** (directory membership is
   metadata-driven, not history-driven). Hidden DM channels and archived
-  channels are filtered client-side for the sidebar.
+  channels are filtered client-side for the sidebar. The relay-signed
+  metadata always carries the channel type as the `t` tag
+  (`["t", channel.channel_type]`, emitted unconditionally by
+  `side_effects.rs::emit_group_discovery_events` at c9a373b with the value
+  stored at the 9007 ingest, defaulting to `stream`); NOSTR.md's 39000 tag
+  table omits it, but the fork source is authoritative. The client reads the
+  type from `t` and sends it on 9007 as the `channel_type` tag.
 - Roster/confirmation: `REQ {kinds:[39002], "#d":[<uuid>]}` — the newest
   relay-signed snapshot carries `["p", pubkey, "", role]` for every member;
   the role is read from the fourth field.

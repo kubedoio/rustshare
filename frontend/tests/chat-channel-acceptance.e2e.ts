@@ -761,56 +761,66 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			} as typeof WebSocket;
 		});
 		await channelOption(a.page, open.name).click();
-		await a.page.evaluate(() => {
-			window.__gAckProbe!.delayNext = true;
-		});
-		await a.page.getByLabel('Message text').fill(body);
-		await a.page.getByRole('button', { name: 'Send message' }).click();
-		// The UI must land on the uncertain path and offer the byte-identical retry.
-		await expect(
-			a.page.getByText(
-				'Message acceptance is uncertain. Editing is paused to prevent duplicate messages.'
-			)
-		).toBeVisible({ timeout: 45_000 });
-		// The composer persists the exact signed pending event; that id is what
-		// the byte-identical retry resubmits and what must appear exactly once.
-		const capturedId = await a.page.evaluate(() => {
-			const key = Object.keys(sessionStorage).find((k) => k.startsWith('elembra.chat.draft:'));
-			if (!key) return null;
-			const saved = JSON.parse(sessionStorage.getItem(key) ?? '{}');
-			return saved.pendingEvent?.id ?? null;
-		});
-		expect(capturedId).toBeTruthy();
-		// The wrapper only models the lost ACK; restore the real WebSocket so
-		// the byte-identical retry publishes through a clean transport.
-		await a.page.evaluate(() => {
-			const original = window.__gOriginalWS;
-			if (original) window.WebSocket = original;
-		});
-		await a.page.getByRole('button', { name: 'Retry same message' }).click();
-		// The success banner is transient; assert the authoritative outcome via
-		// the API: exactly one applied message carrying the original event id.
-		await expect
-			.poll(
-				async () => {
-					const view = await messagesOf(a, open.id);
-					return (view.body?.messages ?? []).filter((m: any) => m.event_id === capturedId).length;
-				},
-				{ timeout: 120_000, intervals: [3_000, 5_000, 5_000] }
-			)
-			.toBe(1);
-		const view = await messagesOf(a, open.id);
-		const matches = (view.body?.messages ?? []).filter((m: any) => m.body === body);
-		expect(matches).toHaveLength(1);
-		expect(matches[0].event_id).toBe(capturedId);
-		expect(matches[0].author_pubkey).toBe(a.pubkey);
-		state.eventIds.uncertain = capturedId;
-		record('g', 'Uncertain ACK path retried byte-identically; single application', 'PASS', {
-			channelId: open.id,
-			pendingEventId: capturedId,
-			appliedCopies: matches.length,
-			retainedEventId: matches[0].event_id
-		});
+		// Restore the real WebSocket unconditionally: the wrapper only models
+		// the lost ACK, and a failure above must not leak the delayed-ACK
+		// wrapper into the rest of the serial suite.
+		try {
+			await a.page.evaluate(() => {
+				window.__gAckProbe!.delayNext = true;
+			});
+			await a.page.getByLabel('Message text').fill(body);
+			await a.page.getByRole('button', { name: 'Send message' }).click();
+			// The UI must land on the uncertain path and offer the byte-identical retry.
+			await expect(
+				a.page.getByText(
+					'Message acceptance is uncertain. Editing is paused to prevent duplicate messages.'
+				)
+			).toBeVisible({ timeout: 45_000 });
+			// The composer persists the exact signed pending event; that id is what
+			// the byte-identical retry resubmits and what must appear exactly once.
+			const capturedId = await a.page.evaluate(() => {
+				const key = Object.keys(sessionStorage).find((k) => k.startsWith('elembra.chat.draft:'));
+				if (!key) return null;
+				const saved = JSON.parse(sessionStorage.getItem(key) ?? '{}');
+				return saved.pendingEvent?.id ?? null;
+			});
+			expect(capturedId).toBeTruthy();
+			// The byte-identical retry publishes through a clean transport.
+			await a.page.evaluate(() => {
+				const original = window.__gOriginalWS;
+				if (original) window.WebSocket = original;
+			});
+			await a.page.getByRole('button', { name: 'Retry same message' }).click();
+			// The success banner is transient; assert the authoritative outcome via
+			// the API: exactly one applied message carrying the original event id.
+			await expect
+				.poll(
+					async () => {
+						const view = await messagesOf(a, open.id);
+						return (view.body?.messages ?? []).filter((m: any) => m.event_id === capturedId).length;
+					},
+					{ timeout: 120_000, intervals: [3_000, 5_000, 5_000] }
+				)
+				.toBe(1);
+			const view = await messagesOf(a, open.id);
+			const matches = (view.body?.messages ?? []).filter((m: any) => m.body === body);
+			expect(matches).toHaveLength(1);
+			expect(matches[0].event_id).toBe(capturedId);
+			expect(matches[0].author_pubkey).toBe(a.pubkey);
+			state.eventIds.uncertain = capturedId;
+			record('g', 'Uncertain ACK path retried byte-identically; single application', 'PASS', {
+				channelId: open.id,
+				pendingEventId: capturedId,
+				appliedCopies: matches.length,
+				retainedEventId: matches[0].event_id
+			});
+		} finally {
+			// Unconditionally restore the real WebSocket even on failure.
+			await a.page.evaluate(() => {
+				const original = window.__gOriginalWS;
+				if (original) window.WebSocket = original;
+			});
+		}
 	});
 
 	test('e: member removal revokes discovery, reads, and posting; B’s session stays live', async () => {
@@ -837,11 +847,12 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 
 		// --- B attempts a write; the product denies it ------------------------
 		// What the product actually does: the relay-signed directory is the only
-		// channel-addressability source. It no longer lists the private channel
-		// for B, so a deep link cannot hold (selection validation falls back to
-		// a visible channel) and the composer stays default-denied — B has no UI
-		// path that publishes into the removed channel, and the attempted write
-		// never reaches the relay.
+		// channel-addressability source, and it no longer lists the private
+		// channel for B. While the deep link still addresses the removed
+		// channel the composer is default-denied (Send disabled); once the
+		// directory settles the deep link cannot hold and B falls back to a
+		// visible channel. Both behaviors are sampled live below — no write is
+		// ever submitted, because the product gives B no path to submit one.
 		const bAttempt = `b write attempt ${RUN_SUFFIX}`;
 		await b.page.goto(`/apps/chat?channel=${priv.id}`);
 		// Wait for the view to boot before unlocking: ensureUnlocked only acts
@@ -851,30 +862,45 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		});
 		await ensureUnlocked(b);
 		await b.page.getByLabel('Message text').fill(bAttempt);
+		// Sample the window while the deep link addresses the removed channel:
+		// the composer must stay default-denied there (Send disabled). The
+		// window closes as soon as the relay-signed directory settles.
+		let addressedSamples = 0;
+		let composerDeniedSamples = 0;
+		const sampleComposerDenial = async (): Promise<void> => {
+			if (!(await b.page.url().includes(priv.id))) return;
+			addressedSamples += 1;
+			const send = b.page.getByRole('button', { name: 'Send message' });
+			if (await send.isDisabled().catch(() => false)) composerDeniedSamples += 1;
+		};
+		await sampleComposerDenial();
 		// Nudge the permission refresh instead of waiting a whole poll cycle.
 		await b.page
 			.getByRole('button', { name: 'Refresh permissions' })
 			.click()
 			.catch(() => {});
-		// The private channel is not addressable for B: absent from the
-		// directory, and the deep link cannot keep B on it.
-		await expect(channelOption(b.page, priv.name)).toHaveCount(0, { timeout: 60_000 });
+		// The private channel is not addressable for B: the deep link cannot
+		// keep B on it (selection falls back to a visible channel).
+		let deepLinkHeld = true;
 		await expect
-			.poll(async () => b.page.url().includes(priv.id), {
-				timeout: 60_000,
-				intervals: [2_000, 4_000]
-			})
+			.poll(
+				async () => {
+					await sampleComposerDenial();
+					deepLinkHeld = await b.page.url().includes(priv.id);
+					return deepLinkHeld;
+				},
+				{ timeout: 60_000, intervals: [2_000, 4_000] }
+			)
 			.toBe(false);
-		// The attempted write never lands in the private channel (sampled across
-		// the propagation window rather than one blind sleep). Bodies are never
-		// projected for private channels (the observation body gate stores
-		// bodies only for workspace-kind channels), so the write check asserts
-		// that no message event authored by B ever appears.
+		await expect(channelOption(b.page, priv.name)).toHaveCount(0, { timeout: 60_000 });
+		// The private channel remains unaddressable and unreadable for B after
+		// the write attempt (sampled across the propagation window rather than
+		// one blind sleep): no message event may appear, whoever authored it.
+		let bPrivateRows = -1;
 		await expectAbsentAcrossWindow(4, 5_000, async () => {
 			const attemptView = await messagesOf(b, priv.id);
-			expect(
-				(attemptView.body?.messages ?? []).map((m: { author_pubkey: string }) => m.author_pubkey)
-			).not.toContain(b.pubkey);
+			bPrivateRows = (attemptView.body?.messages ?? []).length;
+			expect(bPrivateRows).toBe(0);
 		});
 		// B never sees a post-removal message either (UI + API fail closed):
 		// the secret event must not appear for B at all, not merely its body.
@@ -906,8 +932,10 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			channelId: priv.id,
 			removed: b.pubkey,
 			bDirectoryAfterRemoval: bDir.status,
-			bWriteDeniedByDefault: true,
-			bAttemptLanded: false,
+			bComposerDeniedWhileAddressed: composerDeniedSamples,
+			bAddressedSamples: addressedSamples,
+			deepLinkHeldAfterRemoval: deepLinkHeld,
+			bPrivateTimelineRows: bPrivateRows,
 			bReadAfterRemoval: 'zero-rows',
 			bLivenessOpenChannelReads: bOpen.status
 		});

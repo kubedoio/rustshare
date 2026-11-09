@@ -260,6 +260,16 @@ describe('membership operations', () => {
 		expect(await leaveChannel(input, channelId)).toEqual({ status: 'confirmed' });
 		expect(mocks.publishEvent.mock.calls[1][1].kind).toBe(9022);
 	});
+
+	it('reports unconfirmed when the post-OK roster snapshot is empty (add/join)', async () => {
+		// Inverse of the removal semantics: for an add/join the expected state
+		// is the target's VISIBLE membership, so an empty snapshot can never
+		// mean success.
+		mocks.publishEvent.mockResolvedValue({ ok: true, event_id: 'e6' });
+		mocks.queryRelayEvents.mockResolvedValue({ ok: true, events: [] });
+		expect(await addChannelMember(input, channelId, target)).toEqual({ status: 'unconfirmed' });
+		expect(await joinChannel(input, channelId)).toEqual({ status: 'unconfirmed' });
+	});
 });
 
 describe('listVisibleChannels', () => {

@@ -104,6 +104,13 @@ function latestSnapshots(events: NostrEvent[], kind: number): Map<string, NostrE
  * Hidden DM channels and archived channels stay out of the sidebar; access
  * control already happened at the relay, so a private channel either appears
  * (caller may see it) or never reaches this parser.
+ *
+ * Channel type is read from the `t` tag, which the pinned fork
+ * (c9a373b, `side_effects.rs::emit_group_discovery_events`) ALWAYS emits on
+ * kind 39000 as `["t", channel.channel_type]` with the value stored at the
+ * kind 9007 ingest (`channel_type` tag, defaulting to "stream") — NOSTR.md's
+ * 39000 tag table omits it, but the fork source is authoritative here. The
+ * `?? null` fallback therefore only covers metadata events from other relays.
  */
 export function parseChannelDirectory(events: NostrEvent[]): ChannelDirectoryEntry[] {
 	const entries: ChannelDirectoryEntry[] = [];

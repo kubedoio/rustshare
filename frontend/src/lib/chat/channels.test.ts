@@ -86,6 +86,21 @@ describe('parseChannelDirectory', () => {
 		expect(directory).toHaveLength(1);
 		expect(directory.some((entry) => entry.name === 'Secret')).toBe(false);
 	});
+
+	it('reads the channel type from the relay-emitted t tag (null when absent)', () => {
+		// The pinned fork always emits ["t", channel_type] on 39000; the null
+		// fallback only covers metadata from other relays.
+		const events = [
+			metadata('11111111-1111-4111-8111-111111111111', [
+				['name', 'Typed'],
+				['t', 'stream']
+			]),
+			metadata('22222222-2222-4222-8222-222222222222', [['name', 'Untyped']])
+		];
+		const directory = parseChannelDirectory(events);
+		expect(directory.find((entry) => entry.name === 'Typed')?.channelType).toBe('stream');
+		expect(directory.find((entry) => entry.name === 'Untyped')?.channelType).toBeNull();
+	});
 });
 
 describe('parseChannelRoster', () => {

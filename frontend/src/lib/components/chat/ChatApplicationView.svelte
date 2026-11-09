@@ -147,6 +147,9 @@
 		return data.channels.map((entry) => ({
 			channel_id: entry.channelId,
 			name: entry.name,
+			// The pinned fork always emits the channel type as the 39000 `t`
+			// tag, so channelType is null only for metadata from other relays;
+			// 'stream' is the fork's ingest-time default (ingest.rs).
 			channel_kind: entry.channelType ?? 'stream',
 			channel_type: entry.channelType,
 			visibility: entry.visibility,
