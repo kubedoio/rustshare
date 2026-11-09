@@ -19,7 +19,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
-PROJECT="${CHAT_DIRECT_NEG_PROJECT:-chatnegharden}"
+PROJECT="${CHAT_DIRECT_NEG_PROJECT:-chatnegharden-$(date +%s)-$$}"
 FILE="docker-compose.chat-direct-negative.yml"
 # The relay serves GET /health on its MAIN (WS) listener; the dedicated
 # health port only answers /_liveness|/_readiness|/_status|/_mesh.
@@ -37,6 +37,19 @@ compose() {
 down() {
 	compose down -v --remove-orphans || true
 }
+
+# `down -v` is destructive for every resource in a Compose project, so never
+# attach the harness to a project that already owns containers, volumes, or networks.
+for resources in \
+	"$(docker ps -aq --filter "label=com.docker.compose.project=${PROJECT}")" \
+	"$(docker volume ls -q --filter "label=com.docker.compose.project=${PROJECT}")" \
+	"$(docker network ls -q --filter "label=com.docker.compose.project=${PROJECT}")"; do
+	if [[ -n "${resources}" ]]; then
+		echo "refusing to use non-empty Docker Compose project ${PROJECT}" >&2
+		exit 1
+	fi
+done
+
 trap down EXIT
 
 echo "== direct-negative harness: starting ${PROJECT} =="

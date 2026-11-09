@@ -1435,8 +1435,12 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			content: `removed member direct write ${RUN_SUFFIX}`
 		});
 		expect(directWrite.accepted).toBe(false);
+		expect(directWrite.message).toMatch(/restricted: not a channel member/i);
 		// 2) B's relay-direct read of the channel returns nothing.
 		const directRead = await relayQuery(b.secretKey!, { kinds: [9], '#h': [priv.id] });
+		expect(
+			directRead.ok || /^closed: restricted: not a channel member$/i.test(directRead.detail)
+		).toBe(true);
 		const directReadLeaked = directRead.events.filter(
 			(e: any) => e.id === state.eventIds.canary
 		).length;
@@ -1590,10 +1594,16 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		});
 		// Relay-direct read as C: the canary/secret event ids must never appear.
 		const cRelayRead = await relayQuery(c.secretKey!, { kinds: [9], '#h': [priv.id] });
+		expect(
+			cRelayRead.ok || /^closed: restricted: not a channel member$/i.test(cRelayRead.detail)
+		).toBe(true);
 		const cLeaked = cRelayRead.events.filter((e: any) => e.id === state.eventIds.canary).length;
 		expect(cLeaked).toBe(0);
 		// Relay-direct read as removed B (same requirement, second identity).
 		const bRelayRead = await relayQuery(b.secretKey!, { kinds: [9], '#h': [priv.id] });
+		expect(
+			bRelayRead.ok || /^closed: restricted: not a channel member$/i.test(bRelayRead.detail)
+		).toBe(true);
 		const bLeaked = bRelayRead.events.filter((e: any) => e.id === state.eventIds.canary).length;
 		expect(bLeaked).toBe(0);
 		// Positive control: the owner still reads the private history (so the

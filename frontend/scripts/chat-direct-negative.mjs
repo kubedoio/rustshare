@@ -420,6 +420,30 @@ async function main() {
 		bobSession.auth.accepted,
 		{ relayTag: URL_B, message: bobSession.auth.message }
 	);
+	const aliceOnB = await openSession(URL_B, alice.secretKey);
+	const aliceOnARead = await aliceSession.query({ kinds: [9], '#h': [channelA] });
+	const aliceOnBRead = await aliceOnB.query({ kinds: [9], '#h': [channelA] });
+	const aliceOnBReadCompleted =
+		aliceOnBRead.ok || /^closed: restricted: not a channel member$/i.test(aliceOnBRead.detail);
+	check(
+		'b_same_identity_positive',
+		'Alice reads her private channel on community A (tenant-scope positive control)',
+		aliceOnARead.ok && aliceOnARead.events.some((e) => e.id === posted.eventId),
+		{ ok: aliceOnARead.ok, eventId: posted.eventId, events: aliceOnARead.events.length }
+	);
+	check(
+		'b_same_identity_isolated',
+		'The same Alice identity cannot read its community A channel on community B',
+		aliceOnB.auth.accepted &&
+			aliceOnBReadCompleted &&
+			!aliceOnBRead.events.some((e) => e.id === posted.eventId),
+		{
+			authAccepted: aliceOnB.auth.accepted,
+			readCompleted: aliceOnBReadCompleted,
+			readDetail: aliceOnBRead.detail,
+			leakedEventIds: aliceOnBRead.events.filter((e) => e.id === posted.eventId).length
+		}
+	);
 
 	const bobDiscovery = await bobSession.query({ kinds: [39000] });
 	const bobSeesChannelA = (bobDiscovery.events ?? []).some((e) =>
@@ -438,12 +462,15 @@ async function main() {
 
 	const bobRead = await bobSession.query({ kinds: [9], '#h': [channelA] });
 	const bobLeaked = (bobRead.events ?? []).filter((e) => e.id === posted.eventId).length;
+	const bobReadCompleted =
+		bobRead.ok || /^closed: restricted: not a channel member$/i.test(bobRead.detail);
 	check(
 		'b_read_isolated',
 		'Tenant B cannot read tenant A channel content (even by guessing the id)',
-		bobLeaked === 0,
+		bobReadCompleted && bobLeaked === 0,
 		{
 			ok: bobRead.ok,
+			readCompleted: bobReadCompleted,
 			detail: bobRead.detail ?? '',
 			events: bobRead.events.length,
 			leakedEventIds: bobLeaked
@@ -458,7 +485,7 @@ async function main() {
 	check(
 		'b_write_denied',
 		'Tenant B signed kind-9 to a tenant A channel is REJECTED',
-		!bobWrite.accepted,
+		!bobWrite.accepted && /restricted: not a channel member/i.test(bobWrite.message),
 		{ eventId: bobWrite.eventId, accepted: bobWrite.accepted, denialMessage: bobWrite.message }
 	);
 
@@ -500,19 +527,22 @@ async function main() {
 	);
 	const aliceRead = await aliceSession.query({ kinds: [9], '#h': [channelB] });
 	const aliceLeaked = (aliceRead.events ?? []).filter((e) => e.id === bobPost.eventId).length;
+	const aliceReverseReadCompleted =
+		aliceRead.ok || /^closed: restricted: not a channel member$/i.test(aliceRead.detail);
 	check(
 		'a_reverse_isolation',
 		'Reverse isolation: tenant A cannot discover or read tenant B content',
-		!aliceSeesChannelB && aliceLeaked === 0,
+		aliceDiscovery.ok && aliceReverseReadCompleted && !aliceSeesChannelB && aliceLeaked === 0,
 		{
 			aliceSeesChannelB,
 			aliceReadOk: aliceRead.ok,
+			aliceReadCompleted: aliceReverseReadCompleted,
 			aliceReadDetail: aliceRead.detail ?? '',
 			aliceReadEvents: aliceRead.events.length
 		}
 	);
 
-	for (const session of [aliceSession, memberSession, guestSession, bobSession]) {
+	for (const session of [aliceSession, memberSession, guestSession, bobSession, aliceOnB]) {
 		try {
 			session.close();
 		} catch {
