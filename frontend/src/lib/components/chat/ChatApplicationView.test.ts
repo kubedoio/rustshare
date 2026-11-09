@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => {
 		signingKey: null as string | null,
 		hasChatKey: false,
 		publishEvent: vi.fn(),
+		publishSignedEvent: vi.fn(),
+		queryRelayEvents: vi.fn(),
 		publicKeyOf: vi.fn(() => 'pk-1'),
 		buildUnsignedEvent: vi.fn(
 			async (kind: number, content: string, tags: unknown[], pubkey: string) => ({
@@ -80,6 +82,8 @@ vi.mock('$lib/chat/session', () => ({
 
 vi.mock('$lib/chat/nostr', () => ({
 	publishEvent: mocks.publishEvent,
+	publishSignedEvent: mocks.publishSignedEvent,
+	queryRelayEvents: mocks.queryRelayEvents,
 	publicKeyOf: mocks.publicKeyOf,
 	buildUnsignedEvent: mocks.buildUnsignedEvent,
 	isUuid: (value: string) =>
@@ -148,6 +152,8 @@ describe('ChatApplicationView', () => {
 		vi.mocked(mocks.getChatMessages).mockReset();
 		vi.mocked(mocks.getChatMessage).mockReset();
 		vi.mocked(mocks.publishEvent).mockReset();
+		vi.mocked(mocks.publishSignedEvent).mockReset();
+		vi.mocked(mocks.queryRelayEvents).mockReset();
 		vi.mocked(mocks.buildUnsignedEvent)
 			.mockReset()
 			.mockImplementation(
@@ -605,5 +611,246 @@ describe('ChatApplicationView', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe('ChatApplicationView relay directory (fork_client_held)', () => {
+	const EMPTY_CHANNEL_ID = '11111111-1111-4111-8111-111111111111';
+	const PRIVATE_CHANNEL_ID = '22222222-2222-4222-8222-222222222222';
+
+	function directoryEvent(channelId: string, name: string, extraTags: string[][] = []) {
+		return {
+			id: `m-${channelId}`,
+			kind: 39000,
+			created_at: 2,
+			pubkey: 'relay-pubkey',
+			tags: [['d', channelId], ['name', name], ...extraTags],
+			content: '',
+			sig: ''
+		};
+	}
+
+	function channelStateEvents(channelId: string) {
+		return [
+			directoryEvent(channelId, 'Relay channel'),
+			{
+				id: 'r-1',
+				kind: 39002,
+				created_at: 2,
+				pubkey: 'relay-pubkey',
+				tags: [
+					['d', channelId],
+					['p', 'pk-1', '', 'member']
+				],
+				content: '',
+				sig: ''
+			}
+		];
+	}
+
+	function forkStatus(overrides: Partial<ChatStatus> = {}): ChatStatus {
+		return activeStatus({
+			runtime_profile: 'fork_client_held',
+			mapping: {
+				community_id: 'community-1',
+				relay_url: 'wss://relay.example',
+				relay_pubkey: 'relay-pubkey'
+			},
+			...overrides
+		});
+	}
+
+	function unlockSession() {
+		mocks.hasChatKey = true;
+		mocks.sessionState.set({ state: 'unlocked', pubkey: 'pk-1' });
+		mocks.signingKey = 'sk-1';
+	}
+
+	function useDirectory(directoryEvents: unknown[], extra: Record<string, unknown> = {}): void {
+		mocks.getChatStatus.mockResolvedValue(forkStatus());
+		mocks.getChatChannels.mockResolvedValue([]);
+		mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
+		mocks.queryRelayEvents.mockImplementation(async (_url: string, filter: { '#d'?: string[] }) => {
+			if (filter['#d']) return { ok: true, events: channelStateEvents(filter['#d'][0]) };
+			return { ok: true, events: directoryEvents, ...extra };
+		});
+	}
+
+	beforeEach(() => {
+		vi.mocked(mocks.getChatStatus).mockReset();
+		vi.mocked(mocks.getChatChannels).mockReset();
+		vi.mocked(mocks.getChatMessages).mockReset();
+		vi.mocked(mocks.getChatMessage).mockReset();
+		vi.mocked(mocks.publishEvent).mockReset();
+		vi.mocked(mocks.publishSignedEvent).mockReset();
+		vi.mocked(mocks.queryRelayEvents).mockReset();
+		mocks.sessionState.set({ state: 'locked' });
+		mocks.signingKey = null;
+		mocks.hasChatKey = false;
+		mocks.pageUrl.search = '';
+		queryClient.clear();
+	});
+
+	it('lists relay directory channels that have no observed messages', async () => {
+		useDirectory([
+			directoryEvent(EMPTY_CHANNEL_ID, 'Empty room'),
+			directoryEvent(PRIVATE_CHANNEL_ID, 'Private room', [['private']])
+		]);
+		unlockSession();
+		renderView();
+		await waitFor(() => expect(screen.getByRole('option', { name: /Empty room/ })).toBeTruthy());
+		expect(screen.getByRole('option', { name: /Private room/ })).toBeTruthy();
+		expect(screen.getByLabelText('Private channel')).toBeTruthy();
+		// The relay discovery query is the fork's kinds-[39000] REQ.
+		expect(mocks.queryRelayEvents).toHaveBeenCalledWith(
+			'wss://relay.example',
+			{ kinds: [39000] },
+			'sk-1',
+			'relay-pubkey'
+		);
+	});
+
+	it('keeps a deep link to an empty relay channel and reconstructs it on reload', async () => {
+		useDirectory([directoryEvent(EMPTY_CHANNEL_ID, 'Empty room')]);
+		unlockSession();
+		mocks.pageUrl.search = `?channel=${EMPTY_CHANNEL_ID}`;
+		const first = renderView();
+		await waitFor(
+			() =>
+				expect(
+					screen.getByRole('option', { name: /Empty room/ }).getAttribute('aria-selected')
+				).toBe('true'),
+			{ timeout: 3000 }
+		);
+		first.unmount();
+
+		// Reload: no local state survives, so selection must rebuild from the
+		// relay directory alone.
+		queryClient.clear();
+		mocks.pageUrl.search = `?channel=${EMPTY_CHANNEL_ID}`;
+		renderView();
+		await waitFor(
+			() =>
+				expect(
+					screen.getByRole('option', { name: /Empty room/ }).getAttribute('aria-selected')
+				).toBe('true'),
+			{ timeout: 3000 }
+		);
+	});
+
+	it('makes channel selection addressable in the URL', async () => {
+		useDirectory([]);
+		unlockSession();
+		mocks.getChatChannels.mockResolvedValue(CHANNELS);
+		const replace = vi.spyOn(history, 'replaceState');
+		try {
+			renderView();
+			await waitFor(() => expect(screen.getByRole('option', { name: /random/ })).toBeTruthy());
+			await fireEvent.click(screen.getByRole('option', { name: /random/ }));
+			await waitFor(() =>
+				expect(replace.mock.calls.some((call) => String(call[2]).includes('channel=random'))).toBe(
+					true
+				)
+			);
+		} finally {
+			replace.mockRestore();
+		}
+	});
+
+	it('never renders channels the relay does not disclose, including hidden DMs', async () => {
+		useDirectory([
+			directoryEvent(EMPTY_CHANNEL_ID, 'Public room'),
+			directoryEvent('33333333-3333-4333-8333-333333333333', 'Secret DM', [['hidden']])
+		]);
+		unlockSession();
+		renderView();
+		await waitFor(() => expect(screen.getByRole('option', { name: /Public room/ })).toBeTruthy());
+		// Access control happened at the relay: anything it did not return
+		// (other workspaces' private channels, DMs) must not appear here.
+		expect(screen.queryByText('Secret DM')).toBeNull();
+		expect(screen.queryByText('Someone else’s private channel')).toBeNull();
+	});
+
+	it('excludes archived channels from the relay directory listing', async () => {
+		useDirectory([
+			directoryEvent(EMPTY_CHANNEL_ID, 'Active room'),
+			directoryEvent('44444444-4444-4444-8444-444444444444', 'Archived room', [
+				['archived', 'true']
+			])
+		]);
+		unlockSession();
+		renderView();
+		await waitFor(() => expect(screen.getByRole('option', { name: /Active room/ })).toBeTruthy());
+		expect(screen.queryByText('Archived room')).toBeNull();
+	});
+
+	it('ignores a deep-link channel param that is not a relay-assigned UUID', async () => {
+		useDirectory([directoryEvent(EMPTY_CHANNEL_ID, 'Empty room')]);
+		unlockSession();
+		mocks.pageUrl.search = '?channel=../../not-a-channel-id';
+		renderView();
+		// The invalid param is ignored rather than trusted as a selection: no
+		// messages query is ever issued for it, and selection rebuilds from
+		// the directory like a normal load.
+		await waitFor(
+			() =>
+				expect(
+					screen.getByRole('option', { name: /Empty room/ }).getAttribute('aria-selected')
+				).toBe('true'),
+			{ timeout: 3000 }
+		);
+		expect(mocks.getChatMessages).not.toHaveBeenCalledWith('../../not-a-channel-id', null);
+	});
+
+	it('scopes the directory cache to the bound identity — B never sees A’s cached entries', async () => {
+		// Identity A (sk-1) has a private channel; identity B (sk-2) on the same
+		// relay must never be served A's cached directory from the TanStack
+		// cache: the query key carries the session pubkey, so the identity
+		// switch refetches under a fresh key.
+		mocks.getChatStatus.mockResolvedValue(forkStatus());
+		mocks.getChatChannels.mockResolvedValue([]);
+		mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
+		mocks.queryRelayEvents.mockImplementation(
+			async (_url: string, filter: { '#d'?: string[] }, secretKey: string) => {
+				if (filter['#d']) return { ok: true, events: channelStateEvents(filter['#d'][0]) };
+				if (secretKey === 'sk-1')
+					return {
+						ok: true,
+						events: [
+							directoryEvent(PRIVATE_CHANNEL_ID, 'A private room', [['private']]),
+							directoryEvent(EMPTY_CHANNEL_ID, 'A open room')
+						]
+					};
+				return { ok: true, events: [directoryEvent(EMPTY_CHANNEL_ID, 'B open room')] };
+			}
+		);
+		unlockSession();
+		const first = renderView();
+		await waitFor(() =>
+			expect(screen.getByRole('option', { name: /A private room/ })).toBeTruthy()
+		);
+		first.unmount();
+
+		// Same relay, same page lifetime, different bound identity (fresh
+		// browser profile / re-bind). B's directory must come from B's own
+		// relay query — never from A's cached private entries.
+		queryClient.setQueryData(
+			['chat-status'],
+			forkStatus({ binding: { status: 'Active', buzz_pubkey: 'pk-2' } })
+		);
+		mocks.signingKey = 'sk-2';
+		mocks.sessionState.set({ state: 'unlocked', pubkey: 'pk-2' });
+		renderView();
+		await waitFor(() => expect(screen.getByRole('option', { name: /B open room/ })).toBeTruthy());
+		expect(screen.queryByRole('option', { name: /A private room/ })).toBeNull();
+		expect(screen.queryByRole('option', { name: /A open room/ })).toBeNull();
+		await waitFor(() =>
+			expect(mocks.queryRelayEvents).toHaveBeenCalledWith(
+				'wss://relay.example',
+				{ kinds: [39000] },
+				'sk-2',
+				'relay-pubkey'
+			)
+		);
 	});
 });

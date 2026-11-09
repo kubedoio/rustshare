@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Manage Chat channels directly against the community relay: browse every visible channel including empty ones, create open or private channels with the browser-held identity, edit channel details, and review or change membership from relay-confirmed channel state, with uncertain outcomes retried as the identical signed request.
 - Gate fork-backed Chat posting on verified relay metadata and membership, show channel details, and preserve exact signed messages across uncertain acknowledgments and browser reloads.
 
 - Establish the first supported Elembra database baseline for clean installs; existing pre-release POC databases require a fresh database and application storage.
