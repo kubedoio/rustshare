@@ -853,4 +853,149 @@ describe('ChatApplicationView relay directory (fork_client_held)', () => {
 			)
 		);
 	});
+
+	describe('permission refresh vs thread state', () => {
+		const THREAD_CHANNEL = '33333333-3333-4333-8333-333333333333';
+		// parseChannelState only counts 64-hex pubkeys in relay-signed rosters,
+		// so the viewer must present a real hex pubkey for membership to parse.
+		const VIEWER = 'f1'.repeat(32);
+		// Mutable snapshot so individual tests can flip the relay answer between
+		// refreshes; read at call time by the mocked transport.
+		let permissionResult: { ok: true; events: unknown[] } | { ok: false; reason: string };
+
+		function permissionSnapshot(member: boolean) {
+			const roster = [
+				directoryEvent(THREAD_CHANNEL, 'Thread channel'),
+				{
+					id: 'r-thread',
+					kind: 39002,
+					created_at: 2,
+					pubkey: 'relay-pubkey',
+					tags: member
+						? [
+								['d', THREAD_CHANNEL],
+								['p', VIEWER, '', 'member']
+							]
+						: [['d', THREAD_CHANNEL]],
+					content: '',
+					sig: ''
+				}
+			];
+			return { ok: true as const, events: roster };
+		}
+
+		function threadMessages() {
+			const base = {
+				community_id: 'community-1',
+				channel_id: THREAD_CHANNEL,
+				channel_kind: 'stream',
+				author: { display_name: 'Bob', avatar_url: null, is_current_user: false },
+				event_created_at: '2026-11-09T10:00:00Z',
+				attachments: []
+			};
+			return {
+				messages: [
+					{
+						...base,
+						message_id: 'm-root',
+						event_id: 'e-root',
+						author_pubkey: 'pk-9',
+						thread_root_id: null,
+						body: 'root body'
+					},
+					{
+						...base,
+						message_id: 'm-reply',
+						event_id: 'e-reply',
+						author_pubkey: 'pk-9',
+						thread_root_id: 'e-root',
+						body: 'reply body'
+					}
+				],
+				next_before: null
+			};
+		}
+
+		function installRelayDispatcher() {
+			mocks.queryRelayEvents.mockImplementation(
+				async (_url: string, filter: { '#d'?: string[] }) =>
+					filter['#d'] ? permissionResult : { ok: true, events: [] }
+			);
+		}
+
+		async function openThread() {
+			await fireEvent.click(screen.getByRole('button', { name: 'View thread, 1 reply' }));
+			await screen.findByRole('heading', { name: 'Thread' });
+		}
+
+		function setup(member = true) {
+			useDirectory([]);
+			mocks.getChatStatus.mockResolvedValue(
+				forkStatus({ binding: { status: 'Active', buzz_pubkey: VIEWER } })
+			);
+			mocks.getChatChannels.mockResolvedValue([
+				{
+					channel_id: THREAD_CHANNEL,
+					name: 'Thread channel',
+					channel_kind: 'stream',
+					channel_type: 'stream',
+					visibility: 'open',
+					member: true,
+					latest_event_at: '2026-08-12T10:00:00Z'
+				}
+			]);
+			mocks.getChatMessages.mockResolvedValue(threadMessages());
+			permissionResult = permissionSnapshot(member);
+			installRelayDispatcher();
+			unlockSession();
+			mocks.sessionState.set({ state: 'unlocked', pubkey: VIEWER });
+			renderView();
+		}
+
+		it('keeps an open thread across a routine refresh with unchanged permissions', async () => {
+			setup();
+			await screen.findByRole('button', { name: 'View thread, 1 reply' });
+			await openThread();
+			await fireEvent.click(screen.getByRole('button', { name: 'Refresh permissions' }));
+			await waitFor(() => expect(screen.getByRole('heading', { name: 'Thread' })).toBeTruthy());
+			expect(screen.getByText('root body')).toBeTruthy();
+		});
+
+		it('clears the open thread when the refresh CONFIRMS revocation', async () => {
+			setup();
+			await screen.findByRole('button', { name: 'View thread, 1 reply' });
+			await openThread();
+			permissionResult = permissionSnapshot(false);
+			await fireEvent.click(screen.getByRole('button', { name: 'Refresh permissions' }));
+			await waitFor(() =>
+				expect(screen.getByText('Posting unavailable for your current channel role.')).toBeTruthy()
+			);
+			expect(screen.queryByRole('heading', { name: 'Thread' })).toBeNull();
+			// Re-admission alone must not resurrect the cleared thread…
+			permissionResult = permissionSnapshot(true);
+			await fireEvent.click(screen.getByRole('button', { name: 'Refresh permissions' }));
+			await waitFor(() =>
+				expect(screen.queryByText('Posting unavailable for your current channel role.')).toBeNull()
+			);
+			expect(screen.queryByRole('heading', { name: 'Thread' })).toBeNull();
+			// …but the thread is re-openable from the timeline badge.
+			expect(screen.getByRole('button', { name: 'View thread, 1 reply' })).toBeTruthy();
+		});
+
+		it('keeps thread state across a transient (unknown) refresh outcome', async () => {
+			setup();
+			await screen.findByRole('button', { name: 'View thread, 1 reply' });
+			await openThread();
+			// Transport failure: posting goes fail-closed but the denial is not
+			// confirmed, so the open thread must survive and come back once a
+			// refresh confirms membership again.
+			permissionResult = { ok: false, reason: 'transport' };
+			await fireEvent.click(screen.getByRole('button', { name: 'Refresh permissions' }));
+			await waitFor(() => expect(screen.getByText(/Channel permissions unavailable/)).toBeTruthy());
+			permissionResult = permissionSnapshot(true);
+			await fireEvent.click(screen.getByRole('button', { name: 'Refresh permissions' }));
+			await waitFor(() => expect(screen.getByRole('heading', { name: 'Thread' })).toBeTruthy());
+			expect(screen.getByText('root body')).toBeTruthy();
+		});
+	});
 });

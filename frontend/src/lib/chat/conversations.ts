@@ -285,24 +285,74 @@ export interface ConversationReadInput {
  * all four kinds; the relay applies channel access control before returning,
  * so a lost membership fails closed here exactly like the roster query.
  */
-export function fetchConversationOverlay(
+export type ConversationOverlayResult =
+	| { ok: true; events: NostrEvent[]; capped: boolean }
+	| { ok: false; reason: 'transport' | 'rejected' | 'invalid'; detail?: string };
+
+/** One page is one transport read (1000-event/1 MiB bounds are the #479
+ *  per-connection security cap, unchanged). The aggregate hard bound across
+ *  pages stays deliberate: CONVERSATION_OVERLAY_MAX_PAGES × page size. */
+export const CONVERSATION_OVERLAY_MAX_PAGES = 5;
+const OVERLAY_PAGE_SIZE = 1000;
+const OVERLAY_KINDS = [
+	NOSTR_KIND_DELETION,
+	NOSTR_KIND_REACTION,
+	NOSTR_KIND_ADMIN_DELETE_EVENT,
+	NOSTR_KIND_CHANNEL_SYSTEM
+];
+
+/**
+ * The conversation overlay for a channel: reactions plus every deletion
+ * signal (user-signed requests and relay-signed tombstones), paginated
+ * older-than-oldest (`until` windowing) so channels with more overlay events
+ * than a single read's cap still surface everything up to the aggregate
+ * bound. The relay applies channel access control before returning, so a
+ * lost membership fails closed here exactly like the roster query.
+ *
+ * `capped` reports a PARTIAL overlay: true when the aggregate page bound was
+ * exhausted with more results possibly remaining, when the window stopped
+ * making progress (a relay that ignores `until` would loop forever
+ * otherwise), or when a later page failed after page one succeeded. Callers
+ * must surface the partial state instead of silently dropping it. A failed
+ * FIRST page means there is no overlay at all and is propagated as-is.
+ *
+ * Note: `until` is inclusive per NIP-01, so the next window steps strictly
+ * below the page's oldest event; same-`created_at` events beyond a page cut
+ * can be skipped — standard Nostr pagination imprecision, guarded by dedupe.
+ */
+export async function fetchConversationOverlay(
 	input: ConversationReadInput,
 	channelId: string
-): Promise<RelayQueryResult> {
-	return queryRelayEvents(
-		input.relayUrl,
-		{
-			kinds: [
-				NOSTR_KIND_DELETION,
-				NOSTR_KIND_REACTION,
-				NOSTR_KIND_ADMIN_DELETE_EVENT,
-				NOSTR_KIND_CHANNEL_SYSTEM
-			],
-			'#h': [channelId]
-		},
-		input.secretKey,
-		input.relayPubkey
-	);
+): Promise<ConversationOverlayResult> {
+	const merged = new Map<string, NostrEvent>();
+	let until: number | undefined;
+	let oldest: number | null = null;
+	for (let page = 0; page < CONVERSATION_OVERLAY_MAX_PAGES; page += 1) {
+		const result = await queryRelayEvents(
+			input.relayUrl,
+			{ kinds: [...OVERLAY_KINDS], '#h': [channelId], limit: OVERLAY_PAGE_SIZE, until },
+			input.secretKey,
+			input.relayPubkey
+		);
+		if (!result.ok) {
+			return page === 0 ? result : { ok: true, events: [...merged.values()], capped: true };
+		}
+		for (const event of result.events) {
+			if (!merged.has(event.id)) merged.set(event.id, event);
+		}
+		if (result.events.length < OVERLAY_PAGE_SIZE) {
+			return { ok: true, events: [...merged.values()], capped: false };
+		}
+		const pageOldest = Math.min(...result.events.map((event) => event.created_at));
+		// created_at 0 is the floor of the window; there is no older page.
+		if (pageOldest <= 0 || (oldest !== null && pageOldest >= oldest)) {
+			return { ok: true, events: [...merged.values()], capped: true };
+		}
+		oldest = pageOldest;
+		until = pageOldest - 1;
+	}
+	// Every page came back full at the aggregate bound: more may exist.
+	return { ok: true, events: [...merged.values()], capped: true };
 }
 
 /**

@@ -19,7 +19,11 @@
 	import MessageComposer from './MessageComposer.svelte';
 	import ChatIdentityUnlock from './ChatIdentityUnlock.svelte';
 	import { chatSessionStore, lock, getSigningKey } from '$lib/chat/session';
-	import { getChatCapabilities, type ChatChannelState } from '$lib/chat/capabilities';
+	import {
+		canPostToChannel,
+		getChatCapabilities,
+		type ChatChannelState
+	} from '$lib/chat/capabilities';
 	import {
 		listVisibleChannels,
 		isChannelId,
@@ -224,7 +228,7 @@
 	// relay, so a lost membership fails closed here.
 	const conversationQuery = createQuery<Awaited<ReturnType<typeof fetchConversationOverlay>>>({
 		queryKey: ['chat-conversation-overlay', null, null, null, null],
-		queryFn: () => Promise.resolve({ ok: true as const, events: [] }),
+		queryFn: () => Promise.resolve({ ok: true as const, events: [], capped: false }),
 		enabled: false
 	});
 
@@ -279,7 +283,7 @@
 			queryFn: () => {
 				const key = getSigningKey();
 				if (!mapping?.relay_url || !mapping.relay_pubkey || !key || !selectedChannelId)
-					return Promise.resolve({ ok: true as const, events: [] });
+					return Promise.resolve({ ok: true as const, events: [], capped: false });
 				return fetchConversationOverlay(
 					{ relayUrl: mapping.relay_url, secretKey: key, relayPubkey: mapping.relay_pubkey },
 					selectedChannelId
@@ -322,6 +326,11 @@
 		$chatSessionStore.state === 'unlocked' ? $chatSessionStore.pubkey : null
 	);
 	const overlayEvents = $derived($conversationQuery.data?.ok ? $conversationQuery.data.events : []);
+	// Documented partial-overlay state: the aggregate page bound was hit (or a
+	// later page failed), so reaction/deletion history may be incomplete.
+	const overlayCapped = $derived(
+		$conversationQuery.data?.ok === true && $conversationQuery.data.capped
+	);
 	const reactionsByTarget = $derived(parseReactions(overlayEvents, viewerPubkey));
 	const threadEvents = $derived($threadQuery.data?.ok ? $threadQuery.data.events : []);
 	// Author lookup for the kind-5 defense-in-depth check: the observed
@@ -376,6 +385,13 @@
 	// Conversation state (PR #481): reply composer target, open thread root, and
 	// the relay-confirmed channel state used to role-gate deletion.
 	let channelState = $state<ChatChannelState | null>(null);
+	// Confirmed-denial latch: set ONLY when a fresh relay-signed snapshot
+	// parses and says this identity may not post (role change, open-channel
+	// removal, archived). Unknown/transient refresh outcomes (in flight,
+	// transport failure, unconfirmable snapshot) leave the latch untouched so
+	// routine polling cannot nuke an open thread or a drafted reply; the
+	// composer itself stays fail-closed via `postingAllowed` on its own rules.
+	let postingDenied = $state(false);
 	let threadRootId = $state<string | null>(null);
 	let replyTarget = $state<ThreadParentRef | null>(null);
 	let conversationBusy = $state(false);
@@ -448,18 +464,20 @@
 			relayError = '';
 			threadRootId = null;
 			replyTarget = null;
+			postingDenied = false;
 			conversationError = '';
 			conversationNotice = '';
 			pendingConversationRetry = null;
 		}
 	});
 
-	// Losing posting eligibility (role change, removal from a private channel,
-	// offline) must hide thread state and drop any pending reply: the composer
-	// is default-denied in that state, and leaving a stale thread view open
-	// would show history the current role may no longer act on.
+	// Only a CONFIRMED denial (fresh relay-signed roster/metadata saying this
+	// identity may not post) clears thread and reply state. Routine permission
+	// refreshes that come back unknown (in flight, fetch failure, unconfirmable
+	// snapshot) keep the view and draft state so polling cannot destroy work;
+	// posting eligibility itself stays fail-closed through `postingAllowed`.
 	$effect(() => {
-		if (!postingAllowed) {
+		if (postingDenied) {
 			threadRootId = null;
 			replyTarget = null;
 		}
@@ -724,13 +742,19 @@
 						channelId={selectedChannelId}
 						pubkey={$chatSessionStore.pubkey}
 						onPostingChange={(allowed) => (postingAllowed = allowed)}
-						onStateChange={(state) => (channelState = state)}
+						onStateChange={(state) => {
+							channelState = state;
+							// Only a parsed, fresh snapshot is authoritative for
+							// clearing view state; null (in flight / failure /
+							// unconfirmable) keeps the previous verdict latched.
+							if (state) postingDenied = !canPostToChannel(state);
+						}}
 						onChanged={() => directoryQuery.refetch()}
 					/>
 				{/key}
 			{/if}
 
-			{#if syncState !== 'idle' || cursor || relayError || conversationError || conversationNotice || conversationBusy}
+			{#if syncState !== 'idle' || cursor || relayError || conversationError || conversationNotice || conversationBusy || overlayCapped}
 				<div class="border-b border-base-300 bg-base-100 px-4 py-2">
 					<div class="flex flex-wrap items-center gap-3 text-sm">
 						{#if syncState === 'waiting'}
@@ -749,6 +773,11 @@
 						{/if}
 						{#if conversationNotice}
 							<span class="text-success" role="status">{conversationNotice}</span>
+						{/if}
+						{#if overlayCapped}
+							<span class="text-warning" role="status">
+								Reaction and deletion history is partial — the relay window cap was reached.
+							</span>
 						{/if}
 						{#if cursor}
 							<button

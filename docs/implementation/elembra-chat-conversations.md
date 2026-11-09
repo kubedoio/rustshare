@@ -27,7 +27,7 @@ on 2026-11-09 (23 protocol checks, see §6).
 | Delete (self)    | 5 (NIP-09)    | `h`, `e` (target)                      | Target must be self-authored (`must be event author`). Soft-deletes the event; thread counters decrement atomically; reactions to the target are unaffected. |
 | Delete (admin)   | 9005 (NIP-29) | `h`, `e` (target)                      | Owner/admin of the `h` channel; the target must belong to that channel. Additionally emits a relay-signed kind-40099 in-channel system message `{"type":"message_deleted","actor":…,"target_event_id":…}`. |
 | Thread history   | read          | `REQ {kinds:[9], "#e":[rootId]}`       | Channel access control applies before returning; deleted events are filtered by the query path (`deleted_at IS NULL`).                                      |
-| Conversation overlay | read      | `REQ {kinds:[5,7,9005,40099], "#h":[channelId]}` | Same access control; private-channel non-disclosure is structural, so losing membership fails closed exactly like the roster query.                    |
+| Conversation overlay | read      | `REQ {kinds:[5,7,9005,40099], "#h":[channelId], limit:1000, until?}` | Same access control; private-channel non-disclosure is structural, so losing membership fails closed exactly like the roster query. Paginated older-than-oldest (see §3). |
 
 Thread tag semantics that shape the client (verified live):
 
@@ -64,7 +64,20 @@ see `buzz_observation.rs::is_chat_kind`), so reactions, deletion requests,
 and tombstones never reach the Elembra projection. The frontend therefore
 reads a per-channel **conversation overlay** from the relay
 (kinds 5/7/9005/40099 filtered by `#h`), parsed by `parseReactions` and
-`parseDeletionTargets`:
+`parseDeletionTargets`.
+
+The overlay read is **paginated older-than-oldest**: each page is one
+transport read (the #479 1000-event/1 MiB per-connection bounds are
+unchanged), and the next page windows with `until = oldest - 1` (NIP-01
+`until` is inclusive; the pinned relay honors it on the REQ path). An
+aggregate hard bound stays deliberate — `CONVERSATION_OVERLAY_MAX_PAGES`
+(5) × page size — and the result carries a `capped` flag when that bound
+was exhausted with a full last page, when the window stopped moving (a
+relay ignoring `until` would otherwise loop forever), or when a later
+page failed after page one succeeded. `capped` renders as an explicit
+"history is partial" status line instead of silently dropping events; a
+failed first page still fails the whole overlay. Boundary events are
+deduped by id across pages.
 
 - kind 5/9005 events are user-signed but were authorization-checked at the
   relay's ingest (self-author for kind 5, owner/admin for 9005), so their
@@ -131,11 +144,22 @@ clearing the new draft cannot resurrect the old channel draft); pending
 (uncertain) events are only restored when their thread tags match the
 current scope.
 
-Losing posting eligibility (removal from a private channel, role change,
-offline) clears the open thread, the reply target, and stale operation
-status, matching the composer's default-deny; the relay-backed overlay and
-thread queries fail closed on their own because the relay applies channel
-access control before returning anything.
+Losing posting eligibility is split into two signals. Composer gating stays
+fail-closed on anything that is not a confirmed allow (unchanged). Thread
+and reply state, however, are cleared ONLY on a **confirmed denial**: a
+fresh relay-signed snapshot that parses and says this identity may not
+post (`postingDenied` latch in `ChatApplicationView`, maintained from
+`ChannelPermissions.onStateChange` — set when `state !== null &&
+!canPostToChannel(state)`; open-channel removal leaves the viewer off the
+readable roster, role demotion and archival read as not-postable).
+Unknown/transient refresh outcomes — in flight, transport failure,
+unconfirmable snapshot, offline — leave the latch (and the open
+thread/draft) untouched, so the 15 s permission poll cannot destroy view
+state; a confirmed allow resets the latch. Existence-hidden private
+channels cannot confirm denial to the removed party by design; their
+access control still fails the overlay and thread queries closed, and the
+directory fallback switches the channel, which clears channel-scoped state
+through the channel-switch reset.
 
 ## 6. Verification evidence
 

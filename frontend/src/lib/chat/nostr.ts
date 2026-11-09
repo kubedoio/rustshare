@@ -233,6 +233,9 @@ export interface RelayEventFilter {
 	search?: string;
 	ids?: string[];
 	limit?: number;
+	/** NIP-01 `until` (inclusive, seconds): window the history read for
+	 *  older-than-oldest pagination. */
+	until?: number;
 }
 
 export type RelayQueryResult =
@@ -250,7 +253,8 @@ export async function queryRelayEvents(
 		!/^[0-9a-f]{64}$/.test(expectedRelayPubkey) ||
 		!filter.kinds.length ||
 		filter.kinds.some((k) => !Number.isSafeInteger(k) || k < 0) ||
-		(filter.limit !== undefined && (!Number.isSafeInteger(filter.limit) || filter.limit < 1))
+		(filter.limit !== undefined && (!Number.isSafeInteger(filter.limit) || filter.limit < 1)) ||
+		(filter.until !== undefined && (!Number.isSafeInteger(filter.until) || filter.until < 0))
 	) {
 		return { ok: false, reason: 'invalid' };
 	}

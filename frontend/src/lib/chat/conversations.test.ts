@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import type { NostrEvent } from './nostr';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NostrEvent, RelayQueryResult } from './nostr';
 import {
+	CONVERSATION_OVERLAY_MAX_PAGES,
 	NOSTR_KIND_ADMIN_DELETE_EVENT,
 	NOSTR_KIND_CHANNEL_SYSTEM,
 	NOSTR_KIND_DELETION,
@@ -8,12 +9,22 @@ import {
 	buildReplyTags,
 	canDeleteMessage,
 	draftStorageKey,
+	fetchConversationOverlay,
 	parseDeletionTargets,
 	parseReactions,
 	parseThreadRefs,
 	threadReplies,
 	threadRootOf
 } from './conversations';
+
+// Only the overlay pagination talks to the transport; everything else under
+// test here is pure parsing over in-memory events.
+const relayMocks = vi.hoisted(() => ({ queryRelayEvents: vi.fn() }));
+
+vi.mock('./nostr', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('./nostr')>();
+	return { ...actual, queryRelayEvents: relayMocks.queryRelayEvents };
+});
 
 const relayPubkey = 'b'.repeat(64);
 const alice = 'a'.repeat(64);
@@ -290,5 +301,128 @@ describe('draftStorageKey', () => {
 		expect(
 			draftStorageKey('ws://relay', bob, '11111111-1111-4111-8111-111111111111', null)
 		).not.toBe(base);
+	});
+});
+
+describe('fetchConversationOverlay pagination', () => {
+	const input = { relayUrl: 'ws://relay', secretKey: 'sk', relayPubkey: 'b'.repeat(64) };
+	const CHANNEL = '11111111-1111-4111-8111-111111111111';
+
+	/** `count` kind-7 events with unique ids and strictly descending
+	 *  created_at starting at `base`, newest-first like a relay page. */
+	function pageEvents(count: number, base: number, idPrefix: string): NostrEvent[] {
+		return Array.from({ length: count }, (_, i) =>
+			event(
+				`${idPrefix}${String(i).padStart(4, '0')}${'0'.repeat(60)}`.slice(0, 64),
+				7,
+				alice,
+				[['e', rootId]],
+				'+',
+				base - i
+			)
+		);
+	}
+
+	function okPage(events: NostrEvent[]): RelayQueryResult {
+		return { ok: true, events };
+	}
+
+	beforeEach(() => {
+		relayMocks.queryRelayEvents.mockReset();
+	});
+
+	it('merges multiple pages and windows the next page below the oldest event', async () => {
+		const first = pageEvents(1000, 2000, 'aa');
+		const second = pageEvents(3, 1000, 'bb');
+		relayMocks.queryRelayEvents
+			.mockResolvedValueOnce(okPage(first))
+			.mockResolvedValueOnce(okPage(second));
+		const result = await fetchConversationOverlay(input, CHANNEL);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.capped).toBe(false);
+		expect(result.events).toHaveLength(1003);
+		expect(relayMocks.queryRelayEvents).toHaveBeenCalledTimes(2);
+		// Page one: no window, page size at the transport cap.
+		expect(relayMocks.queryRelayEvents.mock.calls[0][1]).toMatchObject({
+			kinds: [
+				NOSTR_KIND_DELETION,
+				NOSTR_KIND_REACTION,
+				NOSTR_KIND_ADMIN_DELETE_EVENT,
+				NOSTR_KIND_CHANNEL_SYSTEM
+			],
+			'#h': [CHANNEL],
+			limit: 1000
+		});
+		expect(relayMocks.queryRelayEvents.mock.calls[0][1].until).toBeUndefined();
+		// Page two: until is inclusive, so it steps strictly below the page's
+		// oldest event (2000 - 999 = 1001 → until 1000).
+		expect(relayMocks.queryRelayEvents.mock.calls[1][1].until).toBe(1000);
+	});
+
+	it('dedupes events that appear on both sides of a window boundary', async () => {
+		const first = pageEvents(1000, 2000, 'aa');
+		relayMocks.queryRelayEvents
+			.mockResolvedValueOnce(okPage(first))
+			.mockResolvedValueOnce(okPage([first[first.length - 1]]));
+		const result = await fetchConversationOverlay(input, CHANNEL);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.capped).toBe(false);
+		expect(result.events).toHaveLength(1000);
+	});
+
+	it('stops at the aggregate page bound with a full last page and reports capped', async () => {
+		const pages = Array.from({ length: CONVERSATION_OVERLAY_MAX_PAGES }, (_, p) =>
+			pageEvents(1000, 1_000_000 - p * 1000, `p${p}`)
+		);
+		relayMocks.queryRelayEvents.mockImplementation(async () => okPage(pages.shift() ?? []));
+		const result = await fetchConversationOverlay(input, CHANNEL);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.capped).toBe(true);
+		expect(result.events).toHaveLength(CONVERSATION_OVERLAY_MAX_PAGES * 1000);
+		expect(relayMocks.queryRelayEvents).toHaveBeenCalledTimes(CONVERSATION_OVERLAY_MAX_PAGES);
+	});
+
+	it('stops when the window stops moving (relay ignoring until) instead of looping', async () => {
+		const same = pageEvents(1000, 2000, 'aa');
+		relayMocks.queryRelayEvents.mockResolvedValue(okPage(same));
+		const result = await fetchConversationOverlay(input, CHANNEL);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.capped).toBe(true);
+		expect(result.events).toHaveLength(1000);
+		expect(relayMocks.queryRelayEvents.mock.calls.length).toBeLessThan(
+			CONVERSATION_OVERLAY_MAX_PAGES
+		);
+	});
+
+	it('stops at the created_at floor without issuing an until < 0 query', async () => {
+		relayMocks.queryRelayEvents.mockResolvedValueOnce(okPage(pageEvents(1000, 999, 'aa')));
+		const result = await fetchConversationOverlay(input, CHANNEL);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.capped).toBe(true);
+		expect(relayMocks.queryRelayEvents).toHaveBeenCalledTimes(1);
+	});
+
+	it('propagates a failed first page (no overlay at all)', async () => {
+		relayMocks.queryRelayEvents.mockResolvedValue({ ok: false, reason: 'transport' });
+		const result = await fetchConversationOverlay(input, CHANNEL);
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.reason).toBe('transport');
+	});
+
+	it('returns the pages already fetched when a later page fails', async () => {
+		relayMocks.queryRelayEvents
+			.mockResolvedValueOnce(okPage(pageEvents(1000, 2000, 'aa')))
+			.mockResolvedValueOnce({ ok: false, reason: 'rejected' });
+		const result = await fetchConversationOverlay(input, CHANNEL);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.capped).toBe(true);
+		expect(result.events).toHaveLength(1000);
 	});
 });
