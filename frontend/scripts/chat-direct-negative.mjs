@@ -142,12 +142,21 @@ async function openSession(connectUrl, secretKey, { relayTag = connectUrl } = {}
 			}
 		})();
 	};
+	// One onerror handler fans out to both consumers: pre-open failures
+	// reject the connect promise, post-open failures reject the session
+	// error promise. (Assigning ws.onerror twice would leave the first
+	// promise's rejection path dead.)
+	let opened = false;
+	let reportError = null;
 	const wsError = new Promise((_, reject) => {
-		ws.onerror = () => reject(new Error(`ws error on ${connectUrl}`));
+		reportError = (what) => reject(new Error(`${what} on ${connectUrl}`));
 	});
-	const open = new Promise((resolve, reject) => {
-		ws.onopen = resolve;
-		ws.onerror = () => reject(new Error(`ws connect failed: ${connectUrl}`));
+	ws.onerror = () => reportError?.(opened ? 'ws error' : 'ws connect failed');
+	const open = new Promise((resolve) => {
+		ws.onopen = () => {
+			opened = true;
+			resolve(undefined);
+		};
 	});
 	await Promise.race([open, wsError]);
 	const authPromise = new Promise((resolve, reject) => {
@@ -329,10 +338,14 @@ async function main() {
 	const roster = await poll('39002 roster', () =>
 		aliceSession.query({ kinds: [39002], '#d': [channelA] })
 	);
-	const rosterEvent = (roster.events ?? [])[0];
-	const guestEntry = (rosterEvent?.tags ?? [])
+	const rosterEvents = roster.events ?? [];
+	const guestEntry = rosterEvents
+		.flatMap((e) => e.tags ?? [])
 		.filter((t) => t[0] === 'p' && t[1] === guest.pubkey)
 		.map((t) => t[3] ?? 'member')[0];
+	const rosterEvent = rosterEvents.find((e) =>
+		(e.tags ?? []).some((t) => t[0] === 'p' && t[1] === guest.pubkey)
+	);
 	check(
 		'a_guest_role',
 		'Owner-signed 9000 with role tag provisions the guest role (relay-direct)',
@@ -340,6 +353,7 @@ async function main() {
 		{
 			addGuestEventId: addedGuest.eventId,
 			rosterShowsGuestRole: guestEntry === 'guest',
+			rosterSnapshotsScanned: rosterEvents.length,
 			rosterEventId: rosterEvent?.id ?? null
 		}
 	);
@@ -358,13 +372,15 @@ async function main() {
 		tags: [['h', channelA]],
 		content: `guest write ${RUN_ID}`
 	});
+	const denialAnchored = /guest/.test(guestWrite.message);
 	check(
 		'a_guest_write_denied',
 		'CORE: guest-role signed kind-9 is REJECTED by the candidate relay',
-		!guestWrite.accepted,
+		!guestWrite.accepted && denialAnchored,
 		{
 			eventId: guestWrite.eventId,
 			accepted: guestWrite.accepted,
+			denialAnchoredToGuestRole: denialAnchored,
 			denialMessage: guestWrite.message,
 			msAfterRoleAssignment: Date.now() - guestAssignedAt
 		}

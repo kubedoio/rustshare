@@ -1167,6 +1167,9 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		});
 		const denialMs = Date.now() - downgradeAt;
 		expect(denied.accepted).toBe(false);
+		// Pin the denial to the role gate (not some other auth/membership
+		// rejection) — the guest-write-denial reason is the assertion's point.
+		expect(denied.message).toMatch(/restricted: guest/);
 		// Guest read stays intact: B still sees the earlier exchange.
 		const guestRead = await relayQuery(b.secretKey!, { kinds: [9], '#h': [open.id] });
 		expect(guestRead.ok).toBe(true);
@@ -1681,7 +1684,7 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		// would leave them in the backend's stale namespace. Volumes (relay
 		// event store, backend DB, observer durable outbox) persist throughout.
 		const extraFile =
-			process.env.ELEMBRA_COMPOSE_EXTRA_FILE ?? 'docker-compose.chat-acceptance-candidate.yml';
+			process.env.ELEMBRA_COMPOSE_EXTRA_FILE ?? 'docker-compose.chat-acceptance.yml';
 		const repoRoot = dirname(process.cwd());
 		const chatEnv: Record<string, string> = {};
 		try {
