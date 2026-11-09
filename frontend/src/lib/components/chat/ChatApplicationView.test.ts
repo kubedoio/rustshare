@@ -127,6 +127,7 @@ const CHANNELS: ChatChannelInfo[] = [
 
 function activeStatus(overrides: Partial<ChatStatus> = {}): ChatStatus {
 	return {
+		runtime_profile: 'local_client_held',
 		chat_enabled: true,
 		mapping: { community_id: 'community-1', relay_url: 'wss://relay.example' },
 		binding: { status: 'Active', buzz_pubkey: 'pk-1' },
@@ -268,6 +269,26 @@ describe('ChatApplicationView', () => {
 		await waitFor(() => expect(mocks.publishEvent).toHaveBeenCalled());
 		await waitFor(() => expect(screen.getByText('Sent — waiting for Elembra sync…')).toBeTruthy());
 	});
+
+	it.each([undefined, 'upstream_managed'] as const)(
+		'does not authorize posting for profile %s',
+		async (runtime_profile) => {
+			mocks.getChatStatus.mockResolvedValue(activeStatus({ runtime_profile }));
+			mocks.getChatChannels.mockResolvedValue(CHANNELS);
+			mocks.getChatMessages.mockResolvedValue({ messages: [], next_before: null });
+			mocks.sessionState.set({ state: 'unlocked', pubkey: 'pk-1' });
+			mocks.signingKey = 'sk-1';
+			renderView();
+			await screen.findByLabelText('Message text');
+			await fireEvent.input(screen.getByLabelText('Message text'), {
+				target: { value: 'blocked' }
+			});
+			expect(
+				(screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement).disabled
+			).toBe(true);
+			expect(mocks.publishEvent).not.toHaveBeenCalled();
+		}
+	);
 
 	it('advertises Ask Elembra when the provider is available', async () => {
 		mocks.getChatStatus.mockResolvedValue(activeStatus({ ask_available: true }));

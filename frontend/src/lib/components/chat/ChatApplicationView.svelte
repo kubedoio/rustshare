@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { keepPreviousData } from '@tanstack/query-core';
 	import { page } from '$app/stores';
 	import { createQuery } from '$lib/query-compat';
 	import {
@@ -14,6 +13,7 @@
 	import BindingPanel from './BindingPanel.svelte';
 	import ChannelList from './ChannelList.svelte';
 	import ChannelHeader from './ChannelHeader.svelte';
+	import ChannelPermissions from './ChannelPermissions.svelte';
 	import MessageTimeline from './MessageTimeline.svelte';
 	import MessageComposer from './MessageComposer.svelte';
 	import ChatIdentityUnlock from './ChatIdentityUnlock.svelte';
@@ -100,7 +100,8 @@
 			// Keep the current page visible while an older page loads, so
 			// pagination never flashes an empty timeline or hides recent
 			// messages.
-			placeholderData: keepPreviousData
+			placeholderData: (previous, previousQuery) =>
+				previousQuery?.queryKey[1] === selectedChannelId ? previous : undefined
 		});
 	});
 
@@ -183,6 +184,7 @@
 	// state; the warning persists only until the user sends again or switches.
 	$effect(() => {
 		if (selectedChannelId !== null) {
+			accumulatedMessages = [];
 			pendingEventId = null;
 			syncState = 'idle';
 			relayError = '';
@@ -209,6 +211,12 @@
 	}
 
 	let relayError = $state('');
+	let postingAllowed = $state(false);
+	$effect(() => {
+		void selectedChannelId;
+		void $chatSessionStore;
+		postingAllowed = false;
+	});
 
 	const status = $derived($statusQuery.data);
 	const bindingActive = $derived(status?.binding != null && status.binding.status === 'Active');
@@ -270,6 +278,18 @@
 				communityId={status.mapping?.community_id ?? ''}
 			/>
 
+			{#if status.runtime_profile === 'fork_client_held' && status.mapping.relay_pubkey && selectedChannelId && $chatSessionStore.state === 'unlocked'}
+				{#key `${selectedChannelId}:${status.mapping.relay_url}:${status.mapping.relay_pubkey}:${$chatSessionStore.pubkey}`}
+					<ChannelPermissions
+						relayUrl={status.mapping.relay_url}
+						relayPubkey={status.mapping.relay_pubkey}
+						channelId={selectedChannelId}
+						pubkey={$chatSessionStore.pubkey}
+						onPostingChange={(allowed) => (postingAllowed = allowed)}
+					/>
+				{/key}
+			{/if}
+
 			{#if syncState !== 'idle' || cursor || relayError}
 				<div class="border-b border-base-300 bg-base-100 px-4 py-2">
 					<div class="flex flex-wrap items-center gap-3 text-sm">
@@ -321,12 +341,21 @@
 				}}
 			/>
 			{#if $chatSessionStore.state === 'unlocked' && $chatSessionStore.pubkey === status.binding?.buzz_pubkey}
-				{#key selectedChannelId}
+				{#key `${selectedChannelId}:${status.mapping.relay_url}:${status.binding?.buzz_pubkey}`}
 					<MessageComposer
 						relayUrl={status.mapping.relay_url}
 						channelId={selectedChannelId ?? ''}
 						channelName={channelDisplayName}
 						boundPubkey={status.binding?.buzz_pubkey ?? ''}
+						postingAllowed={status.runtime_profile === 'fork_client_held'
+							? postingAllowed &&
+								selectedChannel?.member === true &&
+								!$statusQuery.isError &&
+								!$channelsQuery.isError
+							: status.runtime_profile === 'local_client_held' &&
+								selectedChannel != null &&
+								selectedChannel.member !== false}
+						observedEventIds={accumulatedMessages.map((message) => message.event_id)}
 						onSendFailure={handleSendFailure}
 						onSent={(eventId: string) => {
 							cursor = null;
