@@ -5,6 +5,7 @@ import {
 	canEditChannelMetadata,
 	canJoinChannel,
 	canRemoveMembers,
+	isChannelId,
 	isLastOwner,
 	parseChannelDirectory,
 	parseChannelRoster
@@ -133,6 +134,32 @@ describe('parseChannelRoster', () => {
 			channelId
 		);
 		expect(entries).toEqual([{ pubkey: memberA, role: 'guest' }]);
+	});
+
+	it('breaks equal created_at ties by lowest event id, matching parseChannelState', () => {
+		const tied = (id: string, role: string): NostrEvent => ({
+			id,
+			kind: 39002,
+			created_at: 5,
+			pubkey: relayPubkey,
+			tags: [
+				['d', channelId],
+				['p', memberA, '', role]
+			],
+			content: '',
+			sig: ''
+		});
+		const entries = parseChannelRoster([tied('r:z', 'owner'), tied('r:a', 'guest')], channelId);
+		expect(entries).toEqual([{ pubkey: memberA, role: 'guest' }]);
+	});
+});
+
+describe('isChannelId', () => {
+	it('accepts relay-assigned UUIDs and rejects everything else', () => {
+		expect(isChannelId('11111111-1111-4111-8111-111111111111')).toBe(true);
+		expect(isChannelId('not-a-uuid')).toBe(false);
+		expect(isChannelId('../../etc/passwd')).toBe(false);
+		expect(isChannelId('')).toBe(false);
 	});
 });
 

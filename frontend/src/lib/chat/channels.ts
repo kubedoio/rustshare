@@ -78,7 +78,9 @@ function tagValue(event: NostrEvent, name: string): string | undefined {
 	return event.tags.find((tag) => tag[0] === name)?.[1];
 }
 
-/** Newest snapshot per channel id; relay emission makes ties deterministic. */
+/** Newest snapshot per channel id; on equal created_at the lowest event id
+ *  wins — the same tie-break parseChannelState applies in capabilities.ts, so
+ *  both newest-snapshot selectors agree deterministically. */
 function latestSnapshots(events: NostrEvent[], kind: number): Map<string, NostrEvent> {
 	const snapshots = new Map<string, NostrEvent>();
 	for (const event of events) {
@@ -86,7 +88,12 @@ function latestSnapshots(events: NostrEvent[], kind: number): Map<string, NostrE
 		const channelId = tagValue(event, 'd');
 		if (!channelId) continue;
 		const current = snapshots.get(channelId);
-		if (!current || event.created_at > current.created_at) snapshots.set(channelId, event);
+		if (
+			!current ||
+			event.created_at > current.created_at ||
+			(event.created_at === current.created_at && event.id < current.id)
+		)
+			snapshots.set(channelId, event);
 	}
 	return snapshots;
 }
@@ -263,7 +270,9 @@ export async function editChannel(
  * Add a member via kind 9000. No role tag is sent, so the fork defaults new
  * members to `member` and preserves an existing member's role; elevated and
  * guest grants are intentionally not offered. Confirmed against a fresh,
- * relay-signed 39002 roster containing the target.
+ * relay-signed 39002 roster containing the target — an EMPTY roster snapshot
+ * is *unconfirmed* here: for an add the expected state is the target's
+ * visible membership, so "no roster" can never mean success.
  */
 export async function addChannelMember(
 	input: ChannelMutationInput,
@@ -293,7 +302,12 @@ export async function addChannelMember(
 	return settle(await publishEvent(input.relayUrl, unsigned, input.secretKey), confirm);
 }
 
-/** Remove a member via kind 9001; confirmed when the fresh roster omits them. */
+/** Remove a member via kind 9001; confirmed when the fresh roster omits them.
+ *  An EMPTY roster snapshot intentionally counts as confirmation here (unlike
+ *  add/join): the fork sends the publish OK only after the removal's side
+ *  effects are awaited, and after a private-channel removal the roster is
+ *  legitimately unreadable to the removed identity — emptiness means "no
+ *  visible members", never "removal not applied". */
 export async function removeChannelMember(
 	input: ChannelMutationInput,
 	channelId: string,
@@ -321,7 +335,9 @@ export async function removeChannelMember(
 	return settle(await publishEvent(input.relayUrl, unsigned, input.secretKey), confirm);
 }
 
-/** Self-join an open channel via kind 9021 (private joins are relay-rejected). */
+/** Self-join an open channel via kind 9021 (private joins are relay-rejected).
+ *  Like addChannelMember, an empty roster snapshot is unconfirmed: the
+ *  expected state is your own visible membership. */
 export async function joinChannel(
 	input: ChannelMutationInput,
 	channelId: string
@@ -344,7 +360,10 @@ export async function joinChannel(
 	return settle(await publishEvent(input.relayUrl, unsigned, input.secretKey), confirm);
 }
 
-/** Leave a channel via kind 9022; confirmed when the fresh roster omits you. */
+/** Leave a channel via kind 9022; confirmed when the fresh roster omits you.
+ *  Same empty-snapshot rationale as removeChannelMember: the OK is sent only
+ *  after awaited side effects, and a private self-leave makes the roster
+ *  legitimately unreadable to you afterwards. */
 export async function leaveChannel(
 	input: ChannelMutationInput,
 	channelId: string
@@ -376,6 +395,8 @@ export type ChannelDirectoryResult =
  * A single kinds-[39000] historical REQ is the fork's group-discovery query;
  * the relay applies access control before returning, so private channels the
  * caller may not see never appear in the result (NOSTR.md "Group Discovery").
+ * The REQ inherits queryRelayEvents' default limit of 1000 events (no
+ * pagination), so a directory saturates at the newest 1000 metadata snapshots.
  */
 export async function listVisibleChannels(
 	input: ChannelMutationInput
