@@ -76,9 +76,23 @@ async function openSession(connectUrl, secretKey, { relayTag = connectUrl } = {}
 	const pending = new Map();
 	let authResolve = null;
 	let authId = null;
+	let authSettled = false;
 	let authResult = null;
 	let subCounter = 0;
 	const sessions = new Map();
+	// Frame-type allowlist: every wire value is classified against these
+	// fixed constants before it can influence any local state. Trust never
+	// derives from the frame type alone — the handshake settles only when a
+	// frame echoes OUR locally-computed auth event id (see authSettled).
+	const FRAME = Object.freeze({
+		AUTH: 'AUTH',
+		OK: 'OK',
+		EVENT: 'EVENT',
+		EOSE: 'EOSE',
+		CLOSED: 'CLOSED'
+	});
+	const frameType = (value) =>
+		typeof value === 'string' && Object.values(FRAME).includes(value) ? value : null;
 	ws.onmessage = (raw) => {
 		void (async () => {
 			let msg;
@@ -88,7 +102,9 @@ async function openSession(connectUrl, secretKey, { relayTag = connectUrl } = {}
 				return;
 			}
 			if (!Array.isArray(msg)) return;
-			if (msg[0] === 'AUTH' && typeof msg[1] === 'string' && !authId) {
+			const type = frameType(msg[0]);
+			if (type === null) return;
+			if (type === FRAME.AUTH && typeof msg[1] === 'string' && !authId) {
 				const auth = await signEvent(
 					{
 						kind: 22242,
@@ -105,8 +121,12 @@ async function openSession(connectUrl, secretKey, { relayTag = connectUrl } = {}
 				ws.send(JSON.stringify(['AUTH', auth]));
 				return;
 			}
-			if (msg[0] === 'OK' && authId && msg[1] === authId) {
+			// Locally-anchored guard: only a frame echoing the auth event id
+			// WE signed may settle the handshake; authSettled is local state.
+			if (type === FRAME.OK && !authSettled && authId !== null && msg[1] === authId) {
+				authSettled = true;
 				authResult = {
+					settled: true,
 					accepted: msg[2] === true,
 					message: typeof msg[3] === 'string' ? msg[3] : ''
 				};
@@ -171,6 +191,12 @@ async function openSession(connectUrl, secretKey, { relayTag = connectUrl } = {}
 		JSON.stringify(['REQ', `probe${(++subCounter).toString(36)}`, { kinds: [39000], limit: 1 }])
 	);
 	const auth = await Promise.race([authPromise, wsError]);
+	// Usability gate on LOCAL state: the handshake must have settled (a
+	// frame matched our own auth event id). The wire boolean only chooses
+	// between a usable session and an explicitly rejected one.
+	if (!auth || auth.settled !== true) {
+		throw new Error('relay handshake did not settle against our auth event id');
+	}
 	if (!auth.accepted) {
 		ws.close();
 		return { auth, publish: unavailable, query: unavailable, close: () => ws.close() };
