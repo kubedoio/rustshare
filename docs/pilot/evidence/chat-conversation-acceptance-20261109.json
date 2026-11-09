@@ -1,0 +1,154 @@
+{
+  "generatedAt": "2026-11-09T09:37:16.696Z",
+  "baseUrl": "http://127.0.0.1:18080",
+  "relayUrl": "ws://localhost:17447",
+  "provenance": {
+    "gitSha": "bb75ce6c0bfab4c9bc68775a11ad6a97c74f300c",
+    "stack": "convaccept20261109 (source build, worktree elembra-conversations, relay ws://localhost:17447)",
+    "images": null
+  },
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+  "communityId": "0d4c224f-c4ba-44ba-b10a-7a3156e7b2ba",
+  "relayPubkey": "84409ace02104dbf9c499db29e3f572b47d35eb44f8523aa9d287927bf4327fd",
+  "users": {
+    "a": {
+      "username": "conv_a_mw92fam67577",
+      "email": "conv_a_mw92fam67577@acceptance.local",
+      "userId": "c52e1845-210a-4f69-924b-7c794290dee6",
+      "pubkey": "9a135734d50b7c678a2c2e739cceaadfc3d7e44c7403f37d5ab36348d134679d"
+    },
+    "b": {
+      "username": "conv_b_mw92fam67577",
+      "email": "conv_b_mw92fam67577@acceptance.local",
+      "userId": "b9accbda-2689-4172-a032-380a11744d9e",
+      "pubkey": "295e4276dc54ba0a30bd3a339c7cc442524d15344db6e00d9feff68e2b89c097"
+    },
+    "c": {
+      "username": "conv_c_mw92fam67577",
+      "email": "conv_c_mw92fam67577@acceptance.local",
+      "userId": "a0ce8e48-f5f4-4419-96b3-7a30bfbc1716",
+      "pubkey": "76f10e1dec2bc2fbdb9949d79b7011e9744e0c5e00811d2d51a7b1fb18c500b1"
+    }
+  },
+  "channels": {
+    "open": {
+      "id": "dbdfd636-c954-4459-8a2a-653b11a7817d",
+      "name": "conv-open-mw92fam67577"
+    },
+    "private": {
+      "id": "9e95f10e-a112-4c8d-bbc1-e3eb489c21d1",
+      "name": "conv-private-mw92fam67577"
+    }
+  },
+  "eventIds": {
+    "root": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059",
+    "replyOne": "36ce5ce641cc017262d1b43b2f2bf084376bc6ce0eb66e8e17235faf330bc1b5",
+    "replyTwo": "d5a798e1b96ec23f145b855f4b94b01d06fe4f3f4ab39ba91390d1fe24476e39",
+    "reactionA": "ab43d1eec2b84a07cf373204d8d35d4cafb4eba7b2f5a0eed85aca76bcdc3ff6",
+    "privRoot": "3587792ef05a3da3cd7d694cf6896ae77a11b02241159351df0bbb50d492d444"
+  },
+  "matrix": [
+    {
+      "id": "bind",
+      "title": "Bound A/B/C; decrypted key backups match bound pubkeys",
+      "status": "PASS",
+      "evidence": {
+        "pubkeys": {
+          "a": "9a135734d50b7c678a2c2e739cceaadfc3d7e44c7403f37d5ab36348d134679d",
+          "b": "295e4276dc54ba0a30bd3a339c7cc442524d15344db6e00d9feff68e2b89c097",
+          "c": "76f10e1dec2bc2fbdb9949d79b7011e9744e0c5e00811d2d51a7b1fb18c500b1"
+        }
+      }
+    },
+    {
+      "id": "a",
+      "title": "Open channel created and discovered by both identities",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "dbdfd636-c954-4459-8a2a-653b11a7817d",
+        "channelName": "conv-open-mw92fam67577"
+      }
+    },
+    {
+      "id": "reply",
+      "title": "Reply published with exact NIP-10 root/reply tags and author",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "dbdfd636-c954-4459-8a2a-653b11a7817d",
+        "rootEventId": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059",
+        "replyEventId": "36ce5ce641cc017262d1b43b2f2bf084376bc6ce0eb66e8e17235faf330bc1b5",
+        "replyAuthor": "295e4276dc54ba0a30bd3a339c7cc442524d15344db6e00d9feff68e2b89c097",
+        "tags": {
+          "root": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059",
+          "reply": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059"
+        }
+      }
+    },
+    {
+      "id": "thread",
+      "title": "Thread view groups replies by root; nested reply ancestry exact",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "dbdfd636-c954-4459-8a2a-653b11a7817d",
+        "threadRootId": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059",
+        "nestedEventId": "d5a798e1b96ec23f145b855f4b94b01d06fe4f3f4ab39ba91390d1fe24476e39",
+        "tags": {
+          "root": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059",
+          "reply": "36ce5ce641cc017262d1b43b2f2bf084376bc6ce0eb66e8e17235faf330bc1b5"
+        }
+      }
+    },
+    {
+      "id": "react",
+      "title": "Reaction add/duplicate-count/toggle-off verified relay-direct",
+      "status": "PASS",
+      "evidence": {
+        "targetId": "36ce5ce641cc017262d1b43b2f2bf084376bc6ce0eb66e8e17235faf330bc1b5",
+        "aReactionEventId": "ab43d1eec2b84a07cf373204d8d35d4cafb4eba7b2f5a0eed85aca76bcdc3ff6",
+        "remainingAuthors": [
+          "295e4276dc54ba0a30bd3a339c7cc442524d15344db6e00d9feff68e2b89c097"
+        ]
+      }
+    },
+    {
+      "id": "drafts",
+      "title": "Thread draft and channel draft persist independently across reload",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "dbdfd636-c954-4459-8a2a-653b11a7817d",
+        "threadRootId": "5bb06800138680f72704c6018801623f01c6d17a279b46fb35e2305d32bac059"
+      }
+    },
+    {
+      "id": "del-self",
+      "title": "Self-deletion applied relay-side; deleted state on both sides",
+      "status": "PASS",
+      "evidence": {
+        "targetId": "d5a798e1b96ec23f145b855f4b94b01d06fe4f3f4ab39ba91390d1fe24476e39",
+        "kind5Stored": true,
+        "relayAbsent": true
+      }
+    },
+    {
+      "id": "del-admin",
+      "title": "Owner admin-delete applied; relay-signed tombstone with actor",
+      "status": "PASS",
+      "evidence": {
+        "targetId": "36ce5ce641cc017262d1b43b2f2bf084376bc6ce0eb66e8e17235faf330bc1b5",
+        "tombstoneEventId": "5cff6b46c7545d61aa306390786901e3aa2ea3076973552564e90875db310d49",
+        "tombstoneSigner": "84409ace02104dbf9c499db29e3f572b47d35eb44f8523aa9d287927bf4327fd",
+        "actor": "9a135734d50b7c678a2c2e739cceaadfc3d7e44c7403f37d5ab36348d134679d"
+      }
+    },
+    {
+      "id": "member",
+      "title": "Private-channel removal hides thread state, disables composer, denies relay reads",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "9e95f10e-a112-4c8d-bbc1-e3eb489c21d1",
+        "threadRootId": "3587792ef05a3da3cd7d694cf6896ae77a11b02241159351df0bbb50d492d444",
+        "removed": "295e4276dc54ba0a30bd3a339c7cc442524d15344db6e00d9feff68e2b89c097"
+      }
+    }
+  ]
+}

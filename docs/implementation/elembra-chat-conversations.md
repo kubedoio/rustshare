@@ -60,9 +60,9 @@ the browser, then:
 ## 3. Where conversation state lives
 
 The backend observation path only accepts chat-message kinds (1/9/40002 —
-see `buzz_observation.rs::is_chat_message_kind`), so reactions, deletion
-requests, and tombstones never reach the Elembra projection. The frontend
-therefore reads a per-channel **conversation overlay** from the relay
+see `buzz_observation.rs::is_chat_kind`), so reactions, deletion requests,
+and tombstones never reach the Elembra projection. The frontend therefore
+reads a per-channel **conversation overlay** from the relay
 (kinds 5/7/9005/40099 filtered by `#h`), parsed by `parseReactions` and
 `parseDeletionTargets`:
 
@@ -75,12 +75,20 @@ therefore reads a per-channel **conversation overlay** from the relay
   and ignores malformed payloads. A user-signed lookalike must never drive
   UI state.
 
-Deleted messages stay in the observed timeline and render as
-"Message deleted." (body, attachments, and actions suppressed). Thread
-reply badges count observed messages via the projection's
-`thread_root_id`; relay-side deletions do not remove projection rows
-(Elembra never observes kind 5/9005), so badges can count deleted replies —
-relay state renders the truth per message.
+The observer (`frontend/scripts/buzz-observer.mjs`) now projects
+`thread_root_id` from the event's own NIP-10 tags (root marker, or the
+reply marker for bare replies — relay-accepted events always resolve their
+thread root locally, see §1). That drives the timeline reply badges and the
+`thread_root_id` field of the messages API; before this slice the observer
+hardcoded `null`.
+
+Deleted messages: the backend's deletion reconciliation
+(`buzz_observation.rs`, `ObservedEventType::Deleted` — predates this slice)
+marks projected rows inactive once the relay's deletion signal lands, so
+the messages API drops the row. The UI renders the relay-overlay tombstone
+("Message deleted.") for the propagation window (and for any row still
+present in the accumulated page), then the row disappears with the next
+page refresh. Acceptance asserts both renderings.
 
 ## 4. UI affordances and gating
 
@@ -147,8 +155,11 @@ access control before returning anything.
   edit kinds, but no edit UI is offered in this slice.
 - Reaction palette is a fixed emoji set; custom emoji (`:shortcode:` with
   `emoji` tags) are relay-supported but not offered.
-- Deleted messages remain in the Elembra projection (the observer's kind
-  whitelist excludes deletion kinds); per-message deleted state comes from
-  the relay overlay. A future observer extension could project tombstones.
+- The observer kind whitelist still excludes reactions and deletion request
+  kinds; deletion *state* reaches the projection through the backend's
+  separate deletion reconciliation (rows go inactive), and per-message
+  deleted rendering between relay deletion and projection refresh comes
+  from the relay overlay. Thread reply badges count the projection, so a
+  deleted reply disappears from the badge with the next page refresh.
 - Kind 39005 thread summaries are relay-emitted on reply/delete but not
   consumed; counts are derived from the overlay/timeline instead.

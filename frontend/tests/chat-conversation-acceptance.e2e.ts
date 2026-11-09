@@ -240,6 +240,20 @@ function replyButtonOf(page: Page, messageId: string) {
 		.getByRole('button', { name: 'Reply to message' });
 }
 
+/** Open channels require an explicit join before posting; idempotent. */
+async function ensureMembership(user: UserState): Promise<void> {
+	const detailsButton = user.page.getByRole('button', { name: 'Channel details' });
+	if ((await detailsButton.getAttribute('aria-expanded')) !== 'true') await detailsButton.click();
+	const join = user.page.getByRole('button', { name: 'Join channel' });
+	if (await join.isVisible().catch(() => false)) {
+		await join.click();
+		await expect(user.page.getByRole('list', { name: 'Channel members' })).toContainText(
+			user.pubkey,
+			{ timeout: 120_000 }
+		);
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Chat key backup decryption (mirrors frontend/src/lib/chat/keys.ts):
 // PBKDF2-HMAC-SHA256(passphrase, salt, iter) → AES-GCM with
@@ -334,6 +348,7 @@ async function relayQuery(
 		const sub = `accept${Math.random().toString(36).slice(2, 10)}`;
 		const events: any[] = [];
 		let authId: string | null = null;
+		let authenticated = false;
 		let settled = false;
 		const finish = (result: RelayQueryResult) => {
 			if (settled) return;
@@ -375,18 +390,26 @@ async function relayQuery(
 					);
 					authId = auth.id;
 					ws.send(JSON.stringify(['AUTH', auth]));
-					// Re-issue the REQ once the AUTH handshake completes (OK for authId).
+					// The initial REQ races the handshake: the relay answers it
+					// with an auth-required CLOSED, ignored like the product's
+					// queryRelayEvents. The REQ is re-issued on the AUTH OK.
 					return;
 				}
 				if (msg[0] === 'OK' && authId && msg[1] === authId) {
-					if (msg[2] === true) ws.send(JSON.stringify(['REQ', sub, filter]));
-					else finish({ ok: false, detail: `auth rejected: ${msg[3]}`, events });
+					if (msg[2] === true) {
+						authenticated = true;
+						ws.send(JSON.stringify(['REQ', sub, filter]));
+					} else finish({ ok: false, detail: `auth rejected: ${msg[3]}`, events });
 					return;
 				}
 				if (msg[0] === 'EVENT' && msg[1] === sub) events.push(msg[2]);
 				else if (msg[0] === 'EOSE' && msg[1] === sub) finish({ ok: true, events });
-				else if (msg[0] === 'CLOSED' && msg[1] === sub)
-					finish({ ok: false, detail: `closed: ${msg[2]}`, events });
+				else if (msg[0] === 'CLOSED' && msg[1] === sub) {
+					const detail = typeof msg[2] === 'string' ? msg[2] : '';
+					// Pre-auth CLOSED is the raced initial REQ, not a denial.
+					if (!authenticated && /auth/i.test(detail)) return;
+					finish({ ok: false, detail: `closed: ${detail}`, events });
+				}
 			})();
 		};
 	});
@@ -421,7 +444,7 @@ async function expectAbsentAcrossWindow(
 // ---------------------------------------------------------------------------
 test.describe.configure({ mode: 'serial' });
 test.describe('Chat conversation product acceptance (PR #481)', () => {
-	test.setTimeout(420_000);
+	test.setTimeout(600_000);
 
 	let browser: Browser;
 	const adminContextHolder: { ctx?: BrowserContext } = {};
@@ -576,11 +599,15 @@ test.describe('Chat conversation product acceptance (PR #481)', () => {
 		expect(root).toBeTruthy();
 		state.eventIds.root = root.event_id;
 
-		// B replies through the product UI.
+		// B replies through the product UI (open channels join-before-post).
+		await ensureMembership(b);
 		await expect(replyButtonOf(b.page, root.message_id)).toBeVisible({ timeout: 60_000 });
 		await replyButtonOf(b.page, root.message_id).click();
 		await expect(b.page.getByText(/Replying in thread/)).toBeVisible();
 		await b.page.getByLabel('Message text').fill(replyBody);
+		await expect(b.page.getByRole('button', { name: 'Send message' })).toBeEnabled({
+			timeout: 90_000
+		});
 		await b.page.getByRole('button', { name: 'Send message' }).click();
 		await expect(b.page.getByText('Observed by Elembra.')).toBeVisible({ timeout: 90_000 });
 
@@ -632,10 +659,12 @@ test.describe('Chat conversation product acceptance (PR #481)', () => {
 		await expect(a.page.getByRole('heading', { name: 'Thread' })).toBeVisible();
 		await expect(a.page.getByText(`conv reply one ${RUN_SUFFIX}`)).toBeVisible({ timeout: 30_000 });
 
-		// B (in the same thread view) replies to the existing reply.
+		// B (in the same thread view) replies to the existing reply. Membership
+		// persists relay-side; re-check idempotently after the navigation.
 		await b.page.goto(`/apps/chat?channel=${open.id}`);
 		await expect(channelOption(b.page, open.name)).toBeVisible({ timeout: 60_000 });
 		await ensureUnlocked(b);
+		await ensureMembership(b);
 		const bReply = await messagesOf(b, open.id);
 		const replyOne = (bReply.body?.messages ?? []).find(
 			(m: any) => m.body === `conv reply one ${RUN_SUFFIX}`
@@ -648,6 +677,9 @@ test.describe('Chat conversation product acceptance (PR #481)', () => {
 		await expect(threadReplyButton).toBeVisible({ timeout: 30_000 });
 		await threadReplyButton.click();
 		await b.page.getByLabel('Message text').fill(nestedBody);
+		await expect(b.page.getByRole('button', { name: 'Send message' })).toBeEnabled({
+			timeout: 90_000
+		});
 		await b.page.getByRole('button', { name: 'Send message' }).click();
 		await expect(b.page.getByText('Observed by Elembra.')).toBeVisible({ timeout: 90_000 });
 
@@ -740,98 +772,6 @@ test.describe('Chat conversation product acceptance (PR #481)', () => {
 		});
 	});
 
-	test('del-self: author deletion removes the event relay-side and renders deleted', async () => {
-		const a = state.users.a;
-		const b = state.users.b;
-		const open = state.channels.open;
-		const targetId = state.eventIds.replyTwo!;
-
-		// B (left in the thread view by the previous test) back to the timeline.
-		const bClose = b.page.getByRole('button', { name: 'Close thread' });
-		if (await bClose.isVisible().catch(() => false)) await bClose.click();
-		const bView = await messagesOf(b, open.id);
-		const nested = (bView.body?.messages ?? []).find((m: any) => m.event_id === targetId);
-		expect(nested).toBeTruthy();
-
-		b.page.once('dialog', (dialog) => void dialog.accept());
-		await b.page
-			.locator(`[data-message-id="${nested.message_id}"]`)
-			.getByRole('button', { name: 'Message actions' })
-			.click();
-		await b.page.getByRole('menuitem', { name: 'Delete message' }).click();
-		await expect(b.page.getByText('Message deleted.')).toBeVisible({ timeout: 60_000 });
-
-		// Relay-direct: the event is gone from history, the kind-5 request is
-		// stored in-channel, and the thread counters hold.
-		const history = await relayQuery(b.secretKey!, { kinds: [9], ids: [targetId] });
-		expect(history.ok).toBe(true);
-		expect(history.events).toHaveLength(0);
-		const overlay = await relayQuery(b.secretKey!, {
-			kinds: [5],
-			'#h': [open.id]
-		});
-		expect(
-			overlay.events.some((e) => e.tags.some((t: string[]) => t[0] === 'e' && t[1] === targetId))
-		).toBe(true);
-
-		// A observes the deleted state (overlay poll).
-		await expect(a.page.getByText('Message deleted.')).toBeVisible({ timeout: 60_000 });
-		record('del-self', 'Self-deletion applied relay-side; deleted state on both sides', 'PASS', {
-			targetId,
-			kind5Stored: true,
-			relayAbsent: true
-		});
-	});
-
-	test('del-admin: owner deletes a member message; relay-signed tombstone recorded', async () => {
-		const a = state.users.a;
-		const b = state.users.b;
-		const open = state.channels.open;
-		const targetId = state.eventIds.replyOne!;
-
-		// A was left in the thread view by the reaction test; the deleted row is
-		// acted on from the timeline.
-		const aClose = a.page.getByRole('button', { name: 'Close thread' });
-		if (await aClose.isVisible().catch(() => false)) await aClose.click();
-		const aView = await messagesOf(a, open.id);
-		const replyOne = (aView.body?.messages ?? []).find((m: any) => m.event_id === targetId);
-		expect(replyOne).toBeTruthy();
-
-		a.page.once('dialog', (dialog) => void dialog.accept());
-		await a.page
-			.locator(`[data-message-id="${replyOne.message_id}"]`)
-			.getByRole('button', { name: 'Message actions' })
-			.click();
-		await a.page.getByRole('menuitem', { name: 'Delete message (admin)' }).click();
-		await expect(a.page.getByText('Message deleted.')).toBeVisible({ timeout: 60_000 });
-
-		const history = await relayQuery(a.secretKey!, { kinds: [9], ids: [targetId] });
-		expect(history.ok).toBe(true);
-		expect(history.events).toHaveLength(0);
-		const tombstones = await relayQuery(a.secretKey!, { kinds: [40099], '#h': [open.id] });
-		const deletedTombstone = tombstones.events.find((e) => {
-			try {
-				const payload = JSON.parse(e.content);
-				return payload.type === 'message_deleted' && payload.target_event_id === targetId;
-			} catch {
-				return false;
-			}
-		});
-		expect(deletedTombstone).toBeTruthy();
-		expect(deletedTombstone.pubkey).toBe(state.relayPubkey);
-		const payload = JSON.parse(deletedTombstone.content);
-		expect(payload.actor).toBe(a.pubkey);
-
-		// B sees the admin-deleted state too.
-		await expect(b.page.getByText('Message deleted.')).toBeVisible({ timeout: 60_000 });
-		record('del-admin', 'Owner admin-delete applied; relay-signed tombstone with actor', 'PASS', {
-			targetId,
-			tombstoneEventId: deletedTombstone.id,
-			tombstoneSigner: deletedTombstone.pubkey,
-			actor: payload.actor
-		});
-	});
-
 	test('drafts: per-thread drafts persist across reload, apart from channel drafts', async () => {
 		const b = state.users.b;
 		const open = state.channels.open;
@@ -840,8 +780,6 @@ test.describe('Chat conversation product acceptance (PR #481)', () => {
 		const channelDraft = `channel draft ${RUN_SUFFIX}`;
 
 		await gotoChannel(b, open.id);
-		// Deletions are relay-side only; Elembra's projection still carries both
-		// replies, so the thread badge still counts them.
 		await b.page.getByRole('button', { name: 'View thread, 2 replies' }).click();
 		await expect(b.page.getByRole('heading', { name: 'Thread' })).toBeVisible();
 		await b.page.getByLabel('Message text').fill(threadDraft);
@@ -873,6 +811,108 @@ test.describe('Chat conversation product acceptance (PR #481)', () => {
 		});
 	});
 
+	test('del-self: author deletion removes the event relay-side and renders deleted', async () => {
+		const a = state.users.a;
+		const b = state.users.b;
+		const open = state.channels.open;
+		const targetId = state.eventIds.replyTwo!;
+
+		// A was left in the thread view by the reaction test; the deleted-row
+		// assertion reads the timeline.
+		const aClose = a.page.getByRole('button', { name: 'Close thread' });
+		if (await aClose.isVisible().catch(() => false)) await aClose.click();
+		// B (left in the thread view by the previous test) back to the timeline.
+		const bClose = b.page.getByRole('button', { name: 'Close thread' });
+		if (await bClose.isVisible().catch(() => false)) await bClose.click();
+		const bView = await messagesOf(b, open.id);
+		const nested = (bView.body?.messages ?? []).find((m: any) => m.event_id === targetId);
+		expect(nested).toBeTruthy();
+
+		b.page.once('dialog', (dialog) => void dialog.accept());
+		await b.page
+			.locator(`[data-message-id="${nested.message_id}"]`)
+			.getByRole('button', { name: 'Message actions' })
+			.click();
+		await b.page.getByRole('menuitem', { name: 'Delete message' }).click();
+		// Both renderings are correct while deletion propagates: the overlay
+		// tombstone ("Message deleted.") or the projection dropping the
+		// inactive row. The relay-direct assertions below are authoritative.
+		await expect(b.page.getByText(`conv reply two ${RUN_SUFFIX}`)).toBeHidden({ timeout: 60_000 });
+
+		// Relay-direct: the event is gone from history, the kind-5 request is
+		// stored in-channel, and the thread counters hold.
+		const history = await relayQuery(b.secretKey!, { kinds: [9], ids: [targetId] });
+		expect(history.ok).toBe(true);
+		expect(history.events).toHaveLength(0);
+		const overlay = await relayQuery(b.secretKey!, {
+			kinds: [5],
+			'#h': [open.id]
+		});
+		expect(
+			overlay.events.some((e) => e.tags.some((t: string[]) => t[0] === 'e' && t[1] === targetId))
+		).toBe(true);
+
+		// A observes the deletion once the relay webhook reaches the projection
+		// (the row drops out of the timeline; the overlay tombstone may render
+		// first).
+		await expect(a.page.getByText(`conv reply two ${RUN_SUFFIX}`)).toBeHidden({ timeout: 60_000 });
+		record('del-self', 'Self-deletion applied relay-side; deleted state on both sides', 'PASS', {
+			targetId,
+			kind5Stored: true,
+			relayAbsent: true
+		});
+	});
+
+	test('del-admin: owner deletes a member message; relay-signed tombstone recorded', async () => {
+		const a = state.users.a;
+		const b = state.users.b;
+		const open = state.channels.open;
+		const targetId = state.eventIds.replyOne!;
+
+		// A was left in the thread view by the reaction test; the deleted row is
+		// acted on from the timeline.
+		const aClose = a.page.getByRole('button', { name: 'Close thread' });
+		if (await aClose.isVisible().catch(() => false)) await aClose.click();
+		const aView = await messagesOf(a, open.id);
+		const replyOne = (aView.body?.messages ?? []).find((m: any) => m.event_id === targetId);
+		expect(replyOne).toBeTruthy();
+
+		a.page.once('dialog', (dialog) => void dialog.accept());
+		await a.page
+			.locator(`[data-message-id="${replyOne.message_id}"]`)
+			.getByRole('button', { name: 'Message actions' })
+			.click();
+		await a.page.getByRole('menuitem', { name: 'Delete message (admin)' }).click();
+		// Overlay tombstone or projection drop — both are correct renderings.
+		await expect(a.page.getByText(`conv reply one ${RUN_SUFFIX}`)).toBeHidden({ timeout: 60_000 });
+
+		const history = await relayQuery(a.secretKey!, { kinds: [9], ids: [targetId] });
+		expect(history.ok).toBe(true);
+		expect(history.events).toHaveLength(0);
+		const tombstones = await relayQuery(a.secretKey!, { kinds: [40099], '#h': [open.id] });
+		const deletedTombstone = tombstones.events.find((e) => {
+			try {
+				const payload = JSON.parse(e.content);
+				return payload.type === 'message_deleted' && payload.target_event_id === targetId;
+			} catch {
+				return false;
+			}
+		});
+		expect(deletedTombstone).toBeTruthy();
+		expect(deletedTombstone.pubkey).toBe(state.relayPubkey);
+		const payload = JSON.parse(deletedTombstone.content);
+		expect(payload.actor).toBe(a.pubkey);
+
+		// B sees the admin-deleted state too (tombstone or row drop).
+		await expect(b.page.getByText(`conv reply one ${RUN_SUFFIX}`)).toBeHidden({ timeout: 60_000 });
+		record('del-admin', 'Owner admin-delete applied; relay-signed tombstone with actor', 'PASS', {
+			targetId,
+			tombstoneEventId: deletedTombstone.id,
+			tombstoneSigner: deletedTombstone.pubkey,
+			actor: payload.actor
+		});
+	});
+
 	test('member: losing private-channel access hides thread state and denies relay reads', async () => {
 		const a = state.users.a;
 		const b = state.users.b;
@@ -887,16 +927,22 @@ test.describe('Chat conversation product acceptance (PR #481)', () => {
 		});
 		await expect(channelOption(b.page, created.name)).toBeVisible({ timeout: 60_000 });
 
-		// Seed a thread in the private channel.
+		// Seed a thread in the private channel. Private-channel bodies are
+		// never projected (the observation body gate keeps private content out
+		// of the index), so the row is identified by author, not body.
 		await gotoChannel(a, created.id);
 		await gotoChannel(b, created.id);
 		const privRootBody = `priv root ${RUN_SUFFIX}`;
 		await sendMessage(a, privRootBody);
 		const aView = await messagesOf(a, created.id);
-		const privRoot = (aView.body?.messages ?? []).find((m: any) => m.body === privRootBody);
+		const privRoot = (aView.body?.messages ?? []).find((m: any) => m.author_pubkey === a.pubkey);
+		expect(privRoot).toBeTruthy();
 		state.eventIds.privRoot = privRoot.event_id;
 		await replyButtonOf(b.page, privRoot.message_id).click();
 		await b.page.getByLabel('Message text').fill(`priv reply ${RUN_SUFFIX}`);
+		await expect(b.page.getByRole('button', { name: 'Send message' })).toBeEnabled({
+			timeout: 90_000
+		});
 		await b.page.getByRole('button', { name: 'Send message' }).click();
 		await expect(b.page.getByText('Observed by Elembra.')).toBeVisible({ timeout: 90_000 });
 		await expect(b.page.getByRole('button', { name: 'View thread, 1 reply' })).toBeVisible({

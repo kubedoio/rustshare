@@ -852,7 +852,7 @@
 						observedEventIds={accumulatedMessages.map((message) => message.event_id)}
 						replyTarget={threadRootId && postingAllowed
 							? (replyTarget ?? { eventId: threadRootId, rootId: threadRootId })
-							: null}
+							: replyTarget}
 						onCancelReply={() => {
 							// In a thread the composer defaults to the thread root: cancel
 							// an explicit reply target first, then close the thread.
