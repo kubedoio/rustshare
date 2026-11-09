@@ -116,17 +116,17 @@
 	async function run(
 		operation: (input: ChannelMutationInput) => Promise<ChannelMutationResult>,
 		success: string
-	): Promise<void> {
-		if (opPending) return;
+	): Promise<ChannelMutationResult | null> {
+		if (opPending) return null;
 		const input = mutationInput();
-		if (!input) return;
+		if (!input) return null;
 		opPending = true;
 		opError = '';
 		opNotice = '';
 		try {
 			let confirm: (() => Promise<boolean>) | null = null;
 			const result = await operation({ ...input, onConfirm: (c) => (confirm = c) });
-			if (!getSigningKey()) return;
+			if (!getSigningKey()) return null;
 			applyResult(result, success);
 			if (result.status === 'uncertain') {
 				pendingRetry = {
@@ -135,6 +135,7 @@
 					success
 				};
 			}
+			return result;
 		} finally {
 			opPending = false;
 		}
@@ -183,7 +184,7 @@
 			editing = false;
 			return;
 		}
-		await run(
+		const result = await run(
 			(input) =>
 				editChannel(input, channelId, {
 					name,
@@ -191,7 +192,10 @@
 				}),
 			'Channel details updated.'
 		);
-		editing = false;
+		// Only a relay-confirmed edit closes the editor. Any other outcome keeps
+		// it open with the user's input intact and the failure surfaced inside
+		// it, so the user can retry or fix the input instead of losing it.
+		if (result?.status === 'confirmed') editing = false;
 	}
 
 	async function addMember(): Promise<void> {
@@ -200,8 +204,13 @@
 			opError = 'Enter the member’s 64-character hex pubkey.';
 			return;
 		}
-		await run((input) => addChannelMember(input, channelId, target), 'Member added.');
-		addPubkey = '';
+		const result = await run(
+			(input) => addChannelMember(input, channelId, target),
+			'Member added.'
+		);
+		// Clear the field only on confirmation; a rejection, transport failure,
+		// or unconfirmed outcome keeps the entered pubkey for retry.
+		if (result?.status === 'confirmed') addPubkey = '';
 	}
 
 	onMount(() => {

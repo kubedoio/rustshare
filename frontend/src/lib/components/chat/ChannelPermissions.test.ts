@@ -263,7 +263,61 @@ describe('ChannelPermissions', () => {
 			'channel',
 			{ name: 'Renamed', description: 'New purpose' }
 		);
+		// A confirmed save closes the editor.
+		expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
 		await waitFor(() => expect(onChanged).toHaveBeenCalled());
+	});
+
+	it.each(['rejected', 'unconfirmed', 'transport'] as const)(
+		'keeps the edit form open with the input intact when the save is %s',
+		async (status) => {
+			mocks.query.mockResolvedValue(snapshot({ role: 'owner' }));
+			mocks.editChannel.mockResolvedValue(
+				status === 'rejected'
+					? { status, detail: 'name changes require owner or admin' }
+					: { status }
+			);
+			mount();
+			await openDetails();
+			await fireEvent.click(screen.getByRole('button', { name: 'Edit channel' }));
+			const nameInput = screen.getByLabelText('Channel name') as HTMLInputElement;
+			await fireEvent.input(nameInput, { target: { value: 'Hijack' } });
+			await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+			await screen.findByRole('alert');
+			// The editor stays open and the attempted name is preserved so the
+			// user can retry or fix the input instead of losing it.
+			expect(screen.getByRole('button', { name: 'Save changes' })).toBeTruthy();
+			expect(nameInput.value).toBe('Hijack');
+			expect(mocks.editChannel).toHaveBeenCalledTimes(1);
+		}
+	);
+
+	it.each(['rejected', 'unconfirmed', 'transport'] as const)(
+		'keeps the entered member pubkey when the add is %s',
+		async (status) => {
+			mocks.query.mockResolvedValue(snapshot({ role: 'owner' }));
+			mocks.addChannelMember.mockResolvedValue({ status });
+			mount();
+			await openDetails();
+			const input = screen.getByLabelText('Member pubkey') as HTMLInputElement;
+			await fireEvent.input(input, { target: { value: 'e'.repeat(64) } });
+			await fireEvent.click(screen.getByRole('button', { name: 'Add member' }));
+			await screen.findByRole('alert');
+			expect(input.value).toBe('e'.repeat(64));
+			expect(mocks.addChannelMember).toHaveBeenCalledTimes(1);
+		}
+	);
+
+	it('clears the member pubkey input on a confirmed add', async () => {
+		mocks.query.mockResolvedValue(snapshot({ role: 'owner' }));
+		mocks.addChannelMember.mockResolvedValue({ status: 'confirmed' });
+		mount();
+		await openDetails();
+		const input = screen.getByLabelText('Member pubkey') as HTMLInputElement;
+		await fireEvent.input(input, { target: { value: 'e'.repeat(64) } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Add member' }));
+		await screen.findByText('Member added.');
+		expect(input.value).toBe('');
 	});
 
 	it('does not offer metadata editing to non-privileged roles', async () => {
