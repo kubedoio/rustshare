@@ -138,14 +138,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HTTP 404 and nothing is written.
 - Cross-organization group membership removals refused (AR-03; ADR-0040
   D4 strict organization equality): `DELETE
-/api/v1/admin/groups/{id}/members/{user_id}` now compares the target
+  /api/v1/admin/groups/{id}/members/{user_id}` now compares the target
   user's `users.tenant_id` with the group's `user_groups.tenant_id` and
   rejects the request with HTTP 400 when they differ, deleting no
   `group_members` row.
 - Group membership endpoints report a missing group as HTTP 404 (AR-03):
   `POST /api/v1/admin/groups/{id}/members` previously raised a `RowNotFound`
   database error for an unknown group id (HTTP 500) and `DELETE
-/api/v1/admin/groups/{id}/members/{user_id}` now distinguishes a missing
+  /api/v1/admin/groups/{id}/members/{user_id}` now distinguishes a missing
   group (404) from an unknown user (404) instead of conflating them. The
   `POST …/members` OpenAPI response is corrected from `200` to `204`, which
   is the status the handler has always returned. Group and share OpenAPI
@@ -452,7 +452,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grammar explicitly.
 
 - Customer Alpha operations now include a secret-safe `./scripts/elembra.sh
-support-bundle` command, an immutable release-profile lifecycle for the
+  support-bundle` command, an immutable release-profile lifecycle for the
   backend and managed observer, complete bundled-Chat backup/restore, and a
   checked-in machine-readable Alpha gate evidence record.
 - Alpha Buzz key validation: `frontend/scripts/alpha-validate-buzz-config.mjs`
@@ -567,7 +567,7 @@ support-bundle` command, an immutable release-profile lifecycle for the
   index, and re-projects the Memory catalog idempotently without touching the
   durable outbox or consumer receipts. Community mappings gain an admin
   relay-pin rotation endpoint (`PATCH
-/api/v1/admin/applications/chat/workspaces/{workspace_id}/community`, both
+  /api/v1/admin/applications/chat/workspaces/{workspace_id}/community`, both
   `relay_url` and `relay_pubkey` always written — omitting `relay_pubkey`
   unpins and fails closed), so a relay signing-key rotation no longer bricks
   buzz-mode reads, and the Memory-catalog fold is tombstone-immutable:
