@@ -540,17 +540,27 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		// vacuous on an empty channel — there would be nothing C could read.
 		const canary = `private canary ${RUN_SUFFIX}`;
 		await sendMessage(a, canary);
-		// Positive control: an authorized member (B) CAN read the canary, so C's
-		// denial below proves isolation rather than a broken message pipeline.
+		// Positive control: the canary event must exist in the projection under
+		// the owner's authorized session. Private-channel bodies are never
+		// projected (the observation body gate only stores bodies for
+		// workspace-kind channels, keeping private content out of the content
+		// index), so the canary is asserted by event visibility: the channel is
+		// new and this is its only message, authored by A.
+		let canaryEventId: string | null = null;
 		await expect
 			.poll(
-				async () =>
-					((await messagesOf(b, created.id)).body?.messages ?? []).some(
-						(m: { body?: string | null }) => m.body === canary
-					),
+				async () => {
+					const view = await messagesOf(a, created.id);
+					const row = (view.body?.messages ?? []).find(
+						(m: { author_pubkey: string }) => m.author_pubkey === a.pubkey
+					);
+					canaryEventId = row?.event_id ?? null;
+					return canaryEventId != null;
+				},
 				{ timeout: 90_000, intervals: [3_000, 5_000, 5_000] }
 			)
 			.toBe(true);
+		state.eventIds.canary = canaryEventId;
 		// C never discovers the channel: not in C's UI list, not in C's API
 		// directory (sampled across the propagation window, not one immediate
 		// check that could race the relay).
@@ -561,31 +571,35 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			).toBeFalsy();
 		});
 		await expect(channelOption(c.page, created.name)).toHaveCount(0);
-		// C cannot read the canary through C's own API session…
+		// C cannot read the canary through C's own API session: not just the
+		// body — the event itself must not appear (metadata denial, sampled)…
 		await expectAbsentAcrossWindow(3, 4_000, async () => {
 			const cMsgs = await messagesOf(c, created.id);
-			const cBodies = (cMsgs.body?.messages ?? []).map(
-				(m: { body?: string | null }) => m.body ?? ''
-			);
-			expect(cBodies).not.toContain(canary);
+			const cEventIds = (cMsgs.body?.messages ?? []).map((m: { event_id: string }) => m.event_id);
+			expect(cEventIds).not.toContain(canaryEventId);
+			expect(cMsgs.body?.messages ?? []).toHaveLength(0);
 		});
-		// …and a C deep-link UI navigation to the private channel surfaces no
-		// canary in the timeline either (existence hiding through the UI path).
+		// …and a C deep-link UI navigation to the private channel cannot read it
+		// either: the deep link cannot hold (the channel is not in C's
+		// directory) and C's session still returns zero timeline rows.
 		await c.page.goto(`/apps/chat?channel=${created.id}`);
 		await expectAbsentAcrossWindow(3, 4_000, async () => {
-			expect(await c.page.getByText(canary).count()).toBe(0);
+			const cDeepMsgs = await messagesOf(c, created.id);
+			expect(cDeepMsgs.body?.messages ?? []).toHaveLength(0);
 		});
+		await expect(channelOption(c.page, created.name)).toHaveCount(0);
 		record(
 			'b',
-			'Private channel: B added and reads the canary; C cannot discover or read it',
+			'Private channel: B added and discovers; owner reads the canary, C cannot discover or read it',
 			'PASS',
 			{
 				channelId: created.id,
-				canary,
-				bPositiveControl: true,
+				canaryEventId,
+				ownerPositiveControl: true,
+				bDirectoryVisibility: true,
 				cDirectoryExclusion: true,
 				cApiReadDenied: true,
-				cDeepLinkLeak: false
+				cDeepLinkRows: 0
 			}
 		);
 	});
@@ -830,6 +844,11 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		// never reaches the relay.
 		const bAttempt = `b write attempt ${RUN_SUFFIX}`;
 		await b.page.goto(`/apps/chat?channel=${priv.id}`);
+		// Wait for the view to boot before unlocking: ensureUnlocked only acts
+		// when the unlock panel is already rendered.
+		await expect(b.page.getByRole('heading', { name: 'Channels' })).toBeVisible({
+			timeout: 30_000
+		});
 		await ensureUnlocked(b);
 		await b.page.getByLabel('Message text').fill(bAttempt);
 		// Nudge the permission refresh instead of waiting a whole poll cycle.
@@ -847,23 +866,35 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			})
 			.toBe(false);
 		// The attempted write never lands in the private channel (sampled across
-		// the propagation window rather than one blind sleep).
+		// the propagation window rather than one blind sleep). Bodies are never
+		// projected for private channels (the observation body gate stores
+		// bodies only for workspace-kind channels), so the write check asserts
+		// that no message event authored by B ever appears.
 		await expectAbsentAcrossWindow(4, 5_000, async () => {
 			const attemptView = await messagesOf(b, priv.id);
 			expect(
-				(attemptView.body?.messages ?? []).map((m: { body?: string | null }) => m.body ?? '')
-			).not.toContain(bAttempt);
+				(attemptView.body?.messages ?? []).map((m: { author_pubkey: string }) => m.author_pubkey)
+			).not.toContain(b.pubkey);
 		});
-		// B never sees a post-removal secret either (UI + API fail closed).
+		// B never sees a post-removal message either (UI + API fail closed):
+		// the secret event must not appear for B at all, not merely its body.
 		const secret = `post-removal secret ${RUN_SUFFIX}`;
 		await ensureUnlocked(a);
 		await sendMessage(a, secret);
+		// Positive control: the secret event exists in the projection for the
+		// owner's authorized session, so B's denial below cannot be vacuous.
+		await expect
+			.poll(
+				async () =>
+					((await messagesOf(a, priv.id)).body?.messages ?? []).some(
+						(m: { author_pubkey: string }) => m.author_pubkey === a.pubkey
+					),
+				{ timeout: 90_000, intervals: [3_000, 5_000, 5_000] }
+			)
+			.toBe(true);
 		await expectAbsentAcrossWindow(5, 5_000, async () => {
 			const bView = await messagesOf(b, priv.id);
-			const bBodies = (bView.body?.messages ?? []).map(
-				(m: { body?: string | null }) => m.body ?? ''
-			);
-			expect(bBodies).not.toContain(secret);
+			expect(bView.body?.messages ?? []).toHaveLength(0);
 		});
 		// --- Liveness: B's session itself still works -------------------------
 		// B still reads the open channel through its own session, proving the
@@ -877,7 +908,7 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			bDirectoryAfterRemoval: bDir.status,
 			bWriteDeniedByDefault: true,
 			bAttemptLanded: false,
-			bReadAfterRemoval: 'secret-never-observed',
+			bReadAfterRemoval: 'zero-rows',
 			bLivenessOpenChannelReads: bOpen.status
 		});
 	});
