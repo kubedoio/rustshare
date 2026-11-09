@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ChatMessageDto } from '$lib/api/chat';
 	import MessageRow from './MessageRow.svelte';
+	import type { DeletionInfo, ReactionGroup } from '$lib/chat/conversations';
 	import { Loader2 } from 'lucide-svelte';
 
 	interface Props {
@@ -11,6 +12,17 @@
 		hasMore?: boolean;
 		askAvailable?: boolean;
 		communityId?: string;
+		reactionsAvailable?: boolean;
+		reactionsByTarget?: Map<string, ReactionGroup[]>;
+		deletedTargets?: Map<string, DeletionInfo>;
+		deleteModeFor?: (authorPubkey: string) => 'self' | 'admin' | null;
+		threadAvailable?: boolean;
+		replyCounts?: Map<string, number>;
+		busyTarget?: string | null;
+		onReply?: (message: ChatMessageDto) => void;
+		onOpenThread?: (message: ChatMessageDto) => void;
+		onReact?: (targetId: string, emoji: string) => void;
+		onDelete?: (message: ChatMessageDto) => void;
 	}
 
 	let {
@@ -20,7 +32,18 @@
 		onLoadMore,
 		hasMore = true,
 		askAvailable = false,
-		communityId = ''
+		communityId = '',
+		reactionsAvailable = false,
+		reactionsByTarget = new Map(),
+		deletedTargets = new Map(),
+		deleteModeFor = () => null,
+		threadAvailable = false,
+		replyCounts = new Map(),
+		busyTarget = null,
+		onReply = () => {},
+		onOpenThread = () => {},
+		onReact = () => {},
+		onDelete = () => {}
 	}: Props = $props();
 
 	let container = $state<HTMLDivElement | null>(null);
@@ -175,6 +198,17 @@
 					{askAvailable}
 					{communityId}
 					isFocused={focusTarget?.message_id === message.message_id}
+					{reactionsAvailable}
+					reactions={reactionsByTarget.get(message.event_id) ?? []}
+					deletedInfo={deletedTargets.get(message.event_id) ?? null}
+					deleteMode={deleteModeFor(message.author_pubkey)}
+					{threadAvailable}
+					replyCount={replyCounts.get(message.event_id) ?? 0}
+					busy={busyTarget === message.event_id}
+					onReply={() => onReply(message)}
+					onOpenThread={() => onOpenThread(message)}
+					onReact={(emoji) => onReact(message.event_id, emoji)}
+					onDelete={() => onDelete(message)}
 				/>
 			{/each}
 		</div>

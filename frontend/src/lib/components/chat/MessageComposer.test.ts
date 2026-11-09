@@ -64,6 +64,8 @@ function renderComposer(
 		boundPubkey?: string;
 		signingKey?: string | null;
 		postingAllowed?: boolean;
+		replyTarget?: { eventId: string; rootId?: string | null } | null;
+		onCancelReply?: () => void;
 	} = {}
 ) {
 	const {
@@ -72,17 +74,22 @@ function renderComposer(
 		channelName = 'general',
 		boundPubkey = 'pk-1',
 		signingKey = 'sk-1',
-		postingAllowed = true
+		postingAllowed = true,
+		replyTarget = null,
+		onCancelReply = vi.fn()
 	} = props;
 	mocks.getSigningKey.mockReturnValue(signingKey);
 	return {
 		onSendFailure,
+		onCancelReply,
 		...render(MessageComposer, {
 			relayUrl: 'wss://relay.example',
 			channelId,
 			channelName,
 			boundPubkey,
 			postingAllowed,
+			replyTarget,
+			onCancelReply,
 			onSendFailure
 		})
 	};
@@ -364,5 +371,114 @@ describe('MessageComposer', () => {
 			)
 		);
 		storage.mockRestore();
+	});
+
+	it('publishes a reply with canonical NIP-10 root/reply tags', async () => {
+		const channelUuid = '11111111-2222-4333-8444-555555555555';
+		const rootId = 'a1'.repeat(32);
+		const parentId = 'b2'.repeat(32);
+		const { onSendFailure } = renderComposer({
+			channelId: channelUuid,
+			replyTarget: { eventId: parentId, rootId }
+		});
+
+		expect(screen.getByText(/Replying in thread/)).toBeTruthy();
+		await fireEvent.input(screen.getByLabelText('Message text'), { target: { value: 'a reply' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+		await waitFor(() =>
+			expect(mocks.buildUnsignedEvent).toHaveBeenCalledWith(
+				9,
+				'a reply',
+				[
+					['h', channelUuid],
+					['e', rootId, '', 'root'],
+					['e', parentId, '', 'reply']
+				],
+				'pk-1'
+			)
+		);
+		expect(onSendFailure).toHaveBeenCalledWith('');
+	});
+
+	it('never publishes a reply whose thread parent is malformed', async () => {
+		const { onSendFailure } = renderComposer({
+			channelId: '11111111-2222-4333-8444-555555555555',
+			replyTarget: { eventId: 'not-hex' }
+		});
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'bad reply' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+		await waitFor(() =>
+			expect(onSendFailure).toHaveBeenCalledWith(
+				'Reply target is invalid. Cancel the reply and try again.'
+			)
+		);
+		expect(mocks.publishEvent).not.toHaveBeenCalled();
+	});
+
+	it('scopes drafts per thread and keeps them apart from the channel draft', async () => {
+		const channelUuid = '11111111-2222-4333-8444-555555555555';
+		const rootId = 'a1'.repeat(32);
+		const otherRootId = 'c3'.repeat(32);
+
+		const channelLevel = renderComposer({ channelId: channelUuid });
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'channel draft' }
+		});
+		channelLevel.unmount();
+
+		const inThread = renderComposer({
+			channelId: channelUuid,
+			replyTarget: { eventId: rootId, rootId }
+		});
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'thread draft' }
+		});
+		inThread.unmount();
+
+		renderComposer({
+			channelId: channelUuid,
+			replyTarget: { eventId: otherRootId, rootId: otherRootId }
+		});
+		expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe('');
+		cleanup();
+		renderComposer({ channelId: channelUuid, replyTarget: { eventId: rootId, rootId } });
+		await waitFor(() =>
+			expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe(
+				'thread draft'
+			)
+		);
+		cleanup();
+		renderComposer({ channelId: channelUuid });
+		await waitFor(() =>
+			expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe(
+				'channel draft'
+			)
+		);
+	});
+
+	it('reads legacy three-element draft keys as channel-level drafts', async () => {
+		const channelUuid = '11111111-2222-4333-8444-555555555555';
+		sessionStorage.setItem(
+			`elembra.chat.draft:${JSON.stringify(['wss://relay.example', 'pk-1', channelUuid])}`,
+			JSON.stringify({ draft: 'legacy draft', attachmentTag: null, pendingEvent: null })
+		);
+		renderComposer({ channelId: channelUuid });
+		await waitFor(() =>
+			expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe(
+				'legacy draft'
+			)
+		);
+	});
+
+	it('invokes onCancelReply from the reply banner', async () => {
+		const { onCancelReply } = renderComposer({
+			channelId: '11111111-2222-4333-8444-555555555555',
+			replyTarget: { eventId: 'a1'.repeat(32) }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Cancel reply' }));
+		expect(onCancelReply).toHaveBeenCalled();
 	});
 });

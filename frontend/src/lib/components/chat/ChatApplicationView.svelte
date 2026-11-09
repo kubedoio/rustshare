@@ -19,12 +19,28 @@
 	import MessageComposer from './MessageComposer.svelte';
 	import ChatIdentityUnlock from './ChatIdentityUnlock.svelte';
 	import { chatSessionStore, lock, getSigningKey } from '$lib/chat/session';
-	import { getChatCapabilities } from '$lib/chat/capabilities';
+	import { getChatCapabilities, type ChatChannelState } from '$lib/chat/capabilities';
 	import {
 		listVisibleChannels,
 		isChannelId,
 		type ChannelDirectoryResult
 	} from '$lib/chat/channels';
+	import {
+		canDeleteMessage,
+		deleteMessage,
+		fetchConversationOverlay,
+		fetchThreadHistory,
+		parseDeletionTargets,
+		parseReactions,
+		removeReaction,
+		retryConversationMutation,
+		sendReaction,
+		type ConversationMutationInput,
+		type ConversationMutationResult,
+		type ThreadParentRef
+	} from '$lib/chat/conversations';
+	import type { NostrEvent } from '$lib/chat/nostr';
+	import ThreadView from './ThreadView.svelte';
 
 	$effect(() => {
 		const session = $chatSessionStore;
@@ -201,6 +217,23 @@
 		enabled: false
 	});
 
+	// Relay-backed conversation overlay (kinds 5/7/9005/40099): reactions and
+	// deletion signals for the selected channel. The backend observation path
+	// only accepts chat-message kinds (1/9/40002), so this state is read from
+	// the relay exactly like the roster query — access control happens at the
+	// relay, so a lost membership fails closed here.
+	const conversationQuery = createQuery<Awaited<ReturnType<typeof fetchConversationOverlay>>>({
+		queryKey: ['chat-conversation-overlay', null, null, null, null],
+		queryFn: () => Promise.resolve({ ok: true as const, events: [] }),
+		enabled: false
+	});
+
+	const threadQuery = createQuery<Awaited<ReturnType<typeof fetchThreadHistory>>>({
+		queryKey: ['chat-thread-history', null, null, null, null],
+		queryFn: () => Promise.resolve({ ok: true as const, events: [] }),
+		enabled: false
+	});
+
 	$effect(() => {
 		messagesQuery.setOptions({
 			queryKey: ['chat-messages', selectedChannelId, cursor],
@@ -222,6 +255,94 @@
 		});
 	});
 
+	const conversationReadsEnabled = $derived(
+		capabilities.reactions.available &&
+			capabilities.deleteMessage.available &&
+			status?.mapping?.relay_url != null &&
+			status.mapping.relay_pubkey != null &&
+			selectedChannelId != null &&
+			isChannelId(selectedChannelId) &&
+			$chatSessionStore.state === 'unlocked'
+	);
+
+	$effect(() => {
+		const mapping = status?.mapping;
+		const identity = $chatSessionStore.state === 'unlocked' ? $chatSessionStore.pubkey : null;
+		conversationQuery.setOptions({
+			queryKey: [
+				'chat-conversation-overlay',
+				mapping?.relay_url ?? null,
+				mapping?.relay_pubkey ?? null,
+				selectedChannelId,
+				identity
+			],
+			queryFn: () => {
+				const key = getSigningKey();
+				if (!mapping?.relay_url || !mapping.relay_pubkey || !key || !selectedChannelId)
+					return Promise.resolve({ ok: true as const, events: [] });
+				return fetchConversationOverlay(
+					{ relayUrl: mapping.relay_url, secretKey: key, relayPubkey: mapping.relay_pubkey },
+					selectedChannelId
+				);
+			},
+			enabled: conversationReadsEnabled,
+			staleTime: 15_000,
+			placeholderData: (previous, previousQuery) =>
+				previousQuery?.queryKey[4] === identity && previousQuery?.queryKey[3] === selectedChannelId
+					? previous
+					: undefined
+		});
+		threadQuery.setOptions({
+			queryKey: [
+				'chat-thread-history',
+				mapping?.relay_url ?? null,
+				mapping?.relay_pubkey ?? null,
+				threadRootId,
+				identity
+			],
+			queryFn: () => {
+				const key = getSigningKey();
+				if (!mapping?.relay_url || !mapping.relay_pubkey || !key || !threadRootId)
+					return Promise.resolve({ ok: true as const, events: [] });
+				return fetchThreadHistory(
+					{ relayUrl: mapping.relay_url, secretKey: key, relayPubkey: mapping.relay_pubkey },
+					threadRootId
+				);
+			},
+			enabled: conversationReadsEnabled && threadRootId !== null,
+			staleTime: 15_000,
+			placeholderData: (previous, previousQuery) =>
+				previousQuery?.queryKey[4] === identity && previousQuery?.queryKey[3] === threadRootId
+					? previous
+					: undefined
+		});
+	});
+
+	const viewerPubkey = $derived(
+		$chatSessionStore.state === 'unlocked' ? $chatSessionStore.pubkey : null
+	);
+	const overlayEvents = $derived($conversationQuery.data?.ok ? $conversationQuery.data.events : []);
+	const reactionsByTarget = $derived(parseReactions(overlayEvents, viewerPubkey));
+	const deletedTargets = $derived(
+		parseDeletionTargets(overlayEvents, status?.mapping?.relay_pubkey ?? '')
+	);
+	// Reply badges come from the observed timeline (the projection carries
+	// thread_root_id), so they appear as Elembra observes each reply.
+	const replyCounts = $derived.by(() => {
+		const counts = new Map<string, number>();
+		for (const message of accumulatedMessages) {
+			if (message.thread_root_id && message.thread_root_id !== message.event_id) {
+				counts.set(message.thread_root_id, (counts.get(message.thread_root_id) ?? 0) + 1);
+			}
+		}
+		return counts;
+	});
+	const threadEvents = $derived($threadQuery.data?.ok ? $threadQuery.data.events : []);
+	const deleteModeFor = (authorPubkey: string): 'self' | 'admin' | null => {
+		if (!viewerPubkey || !capabilities.deleteMessage.available) return null;
+		return canDeleteMessage(channelState?.role ?? null, authorPubkey, viewerPubkey);
+	};
+
 	// Polling fallback: 15 s while mounted, regardless of websocket state.
 	// Messages keep the open timeline current; channels need the same fallback
 	// or a dead websocket freezes the channel list forever (channels are only
@@ -234,6 +355,10 @@
 			const status = $statusQuery.data;
 			if (status?.mapping != null && status?.binding != null) channelsQuery.refetch();
 			if (directoryEnabled) directoryQuery.refetch();
+			if (conversationReadsEnabled) {
+				conversationQuery.refetch();
+				if (threadRootId) threadQuery.refetch();
+			}
 		}, 15_000);
 		return () => clearInterval(interval);
 	});
@@ -241,6 +366,20 @@
 	let pendingEventId = $state<string | null>(null);
 	let syncState = $state<'idle' | 'waiting' | 'observed' | 'warning'>('idle');
 	let accumulatedMessages = $state<ChatMessageDto[]>([]);
+	// Conversation state (PR #481): reply composer target, open thread root, and
+	// the relay-confirmed channel state used to role-gate deletion.
+	let channelState = $state<ChatChannelState | null>(null);
+	let threadRootId = $state<string | null>(null);
+	let replyTarget = $state<ThreadParentRef | null>(null);
+	let conversationBusy = $state(false);
+	let busyTarget = $state<string | null>(null);
+	let conversationError = $state('');
+	let conversationNotice = $state('');
+	let pendingConversationRetry = $state<{
+		event: NostrEvent;
+		confirm: () => Promise<boolean>;
+		success: string;
+	} | null>(null);
 	// Accumulate older message pages when paginating backward.
 	// `prevCursor` uses a module-closure variable (not $state) to avoid
 	// effect_update_depth_exceeded from reading and writing the same reactive
@@ -292,12 +431,30 @@
 	// previous channel's timeline. Reset the pending-event tracking (and the
 	// 15 s warning timer that watches it) so the status cannot hang on stale
 	// state; the warning persists only until the user sends again or switches.
+	// Conversation state is scoped to the channel too: replies, the open
+	// thread, and any stale operation status must not leak across channels.
 	$effect(() => {
 		if (selectedChannelId !== null) {
 			accumulatedMessages = [];
 			pendingEventId = null;
 			syncState = 'idle';
 			relayError = '';
+			threadRootId = null;
+			replyTarget = null;
+			conversationError = '';
+			conversationNotice = '';
+			pendingConversationRetry = null;
+		}
+	});
+
+	// Losing posting eligibility (role change, removal from a private channel,
+	// offline) must hide thread state and drop any pending reply: the composer
+	// is default-denied in that state, and leaving a stale thread view open
+	// would show history the current role may no longer act on.
+	$effect(() => {
+		if (!postingAllowed) {
+			threadRootId = null;
+			replyTarget = null;
 		}
 	});
 
@@ -319,6 +476,158 @@
 	function handleSendFailure(message: string): void {
 		relayError = message;
 	}
+
+	function conversationInput(): ConversationMutationInput | null {
+		const mapping = status?.mapping;
+		const secretKey = getSigningKey();
+		if (!mapping?.relay_url || !mapping.relay_pubkey || !secretKey) {
+			conversationError = 'Chat identity is locked.';
+			return null;
+		}
+		return { relayUrl: mapping.relay_url, secretKey, relayPubkey: mapping.relay_pubkey };
+	}
+
+	function applyConversationResult(result: ConversationMutationResult, success: string): void {
+		conversationNotice = '';
+		if (result.status === 'confirmed') {
+			pendingConversationRetry = null;
+			conversationError = '';
+			conversationNotice = success;
+			void conversationQuery.refetch();
+			if (threadRootId) void threadQuery.refetch();
+		} else if (result.status === 'unconfirmed') {
+			conversationError =
+				'The relay accepted the request but the change is not visible yet. It may still apply; refresh to re-check.';
+		} else if (result.status === 'uncertain') {
+			conversationError =
+				'Relay acknowledgement missing. The operation may already have been accepted — retry only the same signed request.';
+		} else if (result.status === 'rejected') {
+			const detail = result.detail ? `: ${result.detail.slice(0, 200)}` : '';
+			conversationError = `Relay rejected the operation${detail}`;
+		} else {
+			conversationError = 'Relay unreachable. Retry when connected.';
+		}
+	}
+
+	async function runConversationOp(
+		operation: (input: ConversationMutationInput) => Promise<ConversationMutationResult>,
+		success: string,
+		targetId: string | null = null
+	): Promise<ConversationMutationResult | null> {
+		if (conversationBusy) return null;
+		const input = conversationInput();
+		if (!input) return null;
+		conversationBusy = true;
+		busyTarget = targetId;
+		conversationError = '';
+		conversationNotice = '';
+		try {
+			let confirm: (() => Promise<boolean>) | null = null;
+			const result = await operation({ ...input, onConfirm: (c) => (confirm = c) });
+			if (!getSigningKey()) return null;
+			applyConversationResult(result, success);
+			if (result.status === 'uncertain') {
+				pendingConversationRetry = {
+					event: result.event,
+					confirm: confirm ?? (() => Promise.resolve(true)),
+					success
+				};
+			}
+			return result;
+		} finally {
+			conversationBusy = false;
+			busyTarget = null;
+		}
+	}
+
+	async function retryConversationOp(): Promise<void> {
+		if (!pendingConversationRetry || conversationBusy) return;
+		const input = conversationInput();
+		if (!input) return;
+		const pending = pendingConversationRetry;
+		conversationBusy = true;
+		conversationError = '';
+		try {
+			const result = await retryConversationMutation(input, pending.event, pending.confirm);
+			if (!getSigningKey()) return;
+			applyConversationResult(result, pending.success);
+			if (result.status !== 'uncertain') pendingConversationRetry = null;
+		} finally {
+			conversationBusy = false;
+		}
+	}
+
+	async function toggleReaction(targetId: string, emoji: string): Promise<void> {
+		const channelId = selectedChannelId;
+		if (!channelId || !capabilities.reactions.available) return;
+		const mine = reactionsByTarget.get(targetId)?.find((group) => group.emoji === emoji)?.myEventId;
+		if (mine) {
+			await runConversationOp(
+				(input) => removeReaction(input, channelId, { eventId: mine, targetId }),
+				'Reaction removed.',
+				targetId
+			);
+		} else {
+			await runConversationOp(
+				(input) => sendReaction(input, channelId, targetId, emoji),
+				'Reaction added.',
+				targetId
+			);
+		}
+	}
+
+	async function handleDeleteEvent(
+		targetEventId: string,
+		authorPubkey: string,
+		authorShort: string
+	): Promise<void> {
+		const channelId = selectedChannelId;
+		if (!channelId || !viewerPubkey) return;
+		const mode = canDeleteMessage(channelState?.role ?? null, authorPubkey, viewerPubkey);
+		if (!mode) return;
+		const confirmed = window.confirm(
+			mode === 'self'
+				? 'Delete this message for everyone? This cannot be undone.'
+				: `Delete ${authorShort}'s message as channel ${channelState?.role}? The relay records the deletion.`
+		);
+		if (!confirmed) return;
+		await runConversationOp(
+			(input) => deleteMessage(input, channelId, targetEventId, mode),
+			'Message deleted.',
+			targetEventId
+		);
+	}
+
+	function openThread(message: ChatMessageDto): void {
+		threadRootId = message.thread_root_id ?? message.event_id;
+		replyTarget = null;
+	}
+
+	function closeThread(): void {
+		threadRootId = null;
+		replyTarget = null;
+	}
+
+	function handleReplyTo(message: ChatMessageDto): void {
+		replyTarget = {
+			eventId: message.event_id,
+			rootId: message.thread_root_id ?? message.event_id
+		};
+		textareaFocusQueued = true;
+	}
+
+	function handleReplyInThread(parent: ThreadParentRef): void {
+		replyTarget = parent;
+		textareaFocusQueued = true;
+	}
+
+	let textareaFocusQueued = $state(false);
+	$effect(() => {
+		if (!textareaFocusQueued) return;
+		textareaFocusQueued = false;
+		// The composer remounts only per channel; focusing is best-effort.
+		document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message text"]')?.focus();
+	});
 
 	let relayError = $state('');
 	let postingAllowed = $state(false);
@@ -408,12 +717,13 @@
 						channelId={selectedChannelId}
 						pubkey={$chatSessionStore.pubkey}
 						onPostingChange={(allowed) => (postingAllowed = allowed)}
+						onStateChange={(state) => (channelState = state)}
 						onChanged={() => directoryQuery.refetch()}
 					/>
 				{/key}
 			{/if}
 
-			{#if syncState !== 'idle' || cursor || relayError}
+			{#if syncState !== 'idle' || cursor || relayError || conversationError || conversationNotice || conversationBusy}
 				<div class="border-b border-base-300 bg-base-100 px-4 py-2">
 					<div class="flex flex-wrap items-center gap-3 text-sm">
 						{#if syncState === 'waiting'}
@@ -426,6 +736,12 @@
 							</span>
 						{:else if syncState === 'observed'}
 							<span class="text-success" role="status">Observed by Elembra.</span>
+						{/if}
+						{#if conversationBusy}
+							<span class="text-base-content/60" role="status">Updating conversation…</span>
+						{/if}
+						{#if conversationNotice}
+							<span class="text-success" role="status">{conversationNotice}</span>
 						{/if}
 						{#if cursor}
 							<button
@@ -440,29 +756,84 @@
 					{#if relayError}
 						<p class="mt-1 text-sm text-error">{relayError}</p>
 					{/if}
+					{#if conversationError}
+						<p class="mt-1 text-sm text-error" role="alert">{conversationError}</p>
+					{/if}
+					{#if pendingConversationRetry && !conversationBusy}
+						<div role="status" class="mt-1 text-warning">
+							<p>The operation’s acceptance is uncertain. Retry only the same signed request.</p>
+							<button type="button" class="btn btn-sm" onclick={() => void retryConversationOp()}
+								>Retry same request</button
+							>
+						</div>
+					{/if}
 				</div>
 			{/if}
 
-			<MessageTimeline
-				messages={accumulatedMessages}
-				loading={$messagesQuery.isLoading}
-				{focusTarget}
-				hasMore={hasMoreMessages}
-				askAvailable={status.ask_available}
-				communityId={status.mapping?.community_id ?? ''}
-				onLoadMore={() => {
-					if ($messagesQuery.isFetching) return;
-					const next = lastNextBefore;
-					if (next == null) return;
-					if ($messagesQuery.isError) {
-						// The fetch for the current cursor failed; re-assigning
-						// the same cursor would be a no-op, so refetch explicitly.
-						messagesQuery.refetch();
-					} else {
-						cursor = next;
-					}
-				}}
-			/>
+			{#if threadRootId && postingAllowed}
+				{@const rootMessage = accumulatedMessages.find((m) => m.event_id === threadRootId) ?? null}
+				<ThreadView
+					rootId={threadRootId}
+					rootSummary={rootMessage
+						? {
+								authorPubkey: rootMessage.author_pubkey,
+								body: rootMessage.body,
+								createdAt: rootMessage.event_created_at
+							}
+						: null}
+					events={threadEvents}
+					loading={$threadQuery.isLoading}
+					error={$threadQuery.isError || $threadQuery.data?.ok === false}
+					viewerPubkey={viewerPubkey ?? ''}
+					reactions={reactionsByTarget}
+					{deletedTargets}
+					reactionsAvailable={capabilities.reactions.available}
+					canDelete={(author) => deleteModeFor(author)}
+					{busyTarget}
+					onClose={closeThread}
+					onReply={handleReplyInThread}
+					onReact={(targetId, emoji) => void toggleReaction(targetId, emoji)}
+					onDelete={(event) =>
+						void handleDeleteEvent(event.id, event.pubkey, event.pubkey.slice(0, 8))}
+				/>
+			{:else}
+				<MessageTimeline
+					messages={accumulatedMessages}
+					loading={$messagesQuery.isLoading}
+					{focusTarget}
+					hasMore={hasMoreMessages}
+					askAvailable={status.ask_available}
+					communityId={status.mapping?.community_id ?? ''}
+					reactionsAvailable={capabilities.reactions.available}
+					{reactionsByTarget}
+					{deletedTargets}
+					deleteModeFor={(author) => deleteModeFor(author)}
+					threadAvailable={capabilities.threads.available}
+					{replyCounts}
+					{busyTarget}
+					onLoadMore={() => {
+						if ($messagesQuery.isFetching) return;
+						const next = lastNextBefore;
+						if (next == null) return;
+						if ($messagesQuery.isError) {
+							// The fetch for the current cursor failed; re-assigning
+							// the same cursor would be a no-op, so refetch explicitly.
+							messagesQuery.refetch();
+						} else {
+							cursor = next;
+						}
+					}}
+					onReply={handleReplyTo}
+					onOpenThread={openThread}
+					onReact={(targetId, emoji) => void toggleReaction(targetId, emoji)}
+					onDelete={(message) =>
+						void handleDeleteEvent(
+							message.event_id,
+							message.author_pubkey,
+							message.author_pubkey.slice(0, 8)
+						)}
+				/>
+			{/if}
 			{#if $chatSessionStore.state === 'unlocked' && $chatSessionStore.pubkey === status.binding?.buzz_pubkey}
 				{#key `${selectedChannelId}:${status.mapping.relay_url}:${status.binding?.buzz_pubkey}`}
 					<MessageComposer
@@ -479,11 +850,21 @@
 								selectedChannel != null &&
 								selectedChannel.member !== false}
 						observedEventIds={accumulatedMessages.map((message) => message.event_id)}
+						replyTarget={threadRootId && postingAllowed
+							? (replyTarget ?? { eventId: threadRootId, rootId: threadRootId })
+							: null}
+						onCancelReply={() => {
+							// In a thread the composer defaults to the thread root: cancel
+							// an explicit reply target first, then close the thread.
+							if (replyTarget && replyTarget.eventId !== threadRootId) replyTarget = null;
+							else closeThread();
+						}}
 						onSendFailure={handleSendFailure}
 						onSent={(eventId: string) => {
 							cursor = null;
 							pendingEventId = eventId;
 							syncState = 'waiting';
+							if (threadRootId) void threadQuery.refetch();
 						}}
 					/>
 				{/key}
