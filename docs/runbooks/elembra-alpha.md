@@ -399,15 +399,22 @@ It never prints private secrets.
 
 ## 7. Backup considerations
 
-- Elembra data: `scripts/backup-stack.sh` (postgres dump + RustFS + config).
+- `scripts/backup-stack.sh --with-chat` produces a local staging bundle; it is
+  not an off-host recovery copy and excludes deployment secrets.
+- `scripts/elembra-offsite-backup.sh` wraps that bundle with `.env`, Chat relay
+  identities, and the RustFS override when present, encrypts the result to an
+  operator-supplied age public recipient, then uploads to a separately hosted
+  S3-compatible bucket. Configure its timer, lifecycle retention, and external
+  heartbeat as described in the [backup and restore runbook](backup-restore.md).
 - Relay state: `buzz_postgres_data` / `buzz_rustfs_data` volumes — back these up
   for message-history continuity. A relay reset loses the **relay's** event
   history; Elembra's observation index (its own Postgres) survives, and on
   observer reconnect the relay replays whatever events it still holds (deduped
   by event id). Events the relay no longer holds are not re-projected.
-- Keys: the bridge keys live in `.elembra/chat.env` with mode 0600 (not in the
-  backup bundle — store them in a secrets manager). User Buzz keys never leave the browser; backup is the user's
-  encrypted envelope.
+- The age private identity and S3 read credential stay outside the application
+  host. The host stores only its restricted uploader credential and public age
+  recipient. Browser-local Chat signing keys remain separate: each user must
+  keep and test their own encrypted browser-key backup.
 
 ---
 

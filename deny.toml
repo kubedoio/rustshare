@@ -69,6 +69,19 @@ ignore = [
     # and by the AWS SigV4a path. The advisory fix is 0.7.6, which is semver-
     # incompatible; remove this exception when all consumers support the fixed line.
     { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 required by OIDC and AWS SigV4a; fixed 0.7.6 is semver-incompatible" },
+    # libsqlite3-sys 0.30.1 (bundled SQLite < 3.54.0) via rusqlite 0.32.1 ->
+    # client-state -> sync-engine -> rustshare-desktop (RUSTSEC-2026-0459,
+    # CVE-2026-119375, published 2026-10-30; local memory-exposure / info-disclosure
+    # through a db file plus a sibling -wal file written by a less-trusted party).
+    # The only opener in this workspace is the desktop client, which opens its own
+    # state db (default rustshare.db) inside its per-user app data dir
+    # (apps/desktop/src/main.rs); nothing remote, synced, or imported ever writes
+    # that db or its -wal, so the advisory's precondition does not hold here.
+    # Remediation requires rusqlite 0.41 (libsqlite3-sys 0.39 bundles SQLite
+    # 3.54.0); rusqlite 0.32.1 is semver-locked to libsqlite3-sys ^0.30.1, so
+    # `cargo update -p libsqlite3-sys` cannot reach the patched line. Remove this
+    # exception when rusqlite is upgraded to 0.41+.
+    { id = "RUSTSEC-2026-0459", reason = "bundled SQLite only in rustshare-desktop, which opens only its own app-data state db and never less-trusted db/-wal pairs; rusqlite 0.41 upgrade pending" },
 ]
 
 [bans]
