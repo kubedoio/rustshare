@@ -11,10 +11,16 @@
 		type NostrTag,
 		type NostrEvent
 	} from '$lib/chat/nostr';
+	import {
+		buildReplyTags,
+		draftStorageKey,
+		parseThreadRefs,
+		type ThreadParentRef
+	} from '$lib/chat/conversations';
 	import { getSigningKey } from '$lib/chat/session';
 	import AttachmentPicker from './AttachmentPicker.svelte';
 	import ChatIdentityMenu from './ChatIdentityMenu.svelte';
-	import { Send, Smile } from 'lucide-svelte';
+	import { Send, Smile, X } from 'lucide-svelte';
 
 	interface Props {
 		relayUrl: string;
@@ -26,6 +32,10 @@
 		boundPubkey: string;
 		postingAllowed?: boolean;
 		observedEventIds?: string[];
+		// Active reply target: when set, sends carry the canonical NIP-10
+		// root/reply tags and the draft is scoped to the thread root.
+		replyTarget?: ThreadParentRef | null;
+		onCancelReply?: () => void;
 		onSendFailure: (message: string) => void;
 		onSent?: (eventId: string) => void;
 	}
@@ -37,6 +47,8 @@
 		boundPubkey,
 		postingAllowed = false,
 		observedEventIds = [],
+		replyTarget = null,
+		onCancelReply = () => {},
 		onSendFailure,
 		onSent = () => {}
 	}: Props = $props();
@@ -49,9 +61,8 @@
 	let attachmentTag = $state<NostrTag | null>(null);
 	let textarea = $state<HTMLTextAreaElement | null>(null);
 
-	const storageKey = $derived(
-		`elembra.chat.draft:${JSON.stringify([relayUrl, boundPubkey, channelId])}`
-	);
+	const threadRootId = $derived(replyTarget?.rootId ?? null);
+	const storageKey = $derived(draftStorageKey(relayUrl, boundPubkey, channelId, threadRootId));
 
 	function saveDraft(key = storageKey): void {
 		try {
@@ -64,6 +75,15 @@
 		}
 	}
 
+	function pendingMatchesScope(event: NostrEvent): boolean {
+		if (isUuid(channelId)) {
+			if (event.kind !== 9 || !event.tags.some((t) => t[0] === 'h' && t[1] === channelId))
+				return false;
+		} else if (event.kind !== 1) return false;
+		if (threadRootId === null) return true;
+		return parseThreadRefs(event).rootId === threadRootId;
+	}
+
 	$effect(() => {
 		const scope = storageKey;
 		untrack(() => {
@@ -71,7 +91,15 @@
 			attachmentTag = null;
 			pendingEvent = null;
 			try {
-				const raw = sessionStorage.getItem(scope);
+				// Upgrade path: drafts saved before thread scoping used the
+				// three-element key; read them as channel-level drafts and
+				// migrate: write the new key and drop the legacy one, otherwise
+				// clearing the new draft would resurrect the old channel draft.
+				const legacyScope = `elembra.chat.draft:${JSON.stringify([relayUrl, boundPubkey, channelId])}`;
+				const current = sessionStorage.getItem(scope);
+				const legacyRaw =
+					current === null && threadRootId === null ? sessionStorage.getItem(legacyScope) : null;
+				const raw = current ?? legacyRaw;
 				if (raw) {
 					const saved = JSON.parse(raw);
 					if (typeof saved.draft === 'string') draft = saved.draft;
@@ -86,12 +114,13 @@
 						event.pubkey === boundPubkey &&
 						typeof event.id === 'string' &&
 						Array.isArray(event.tags) &&
-						(isUuid(channelId)
-							? event.kind === 9 &&
-								event.tags.some((t: string[]) => t[0] === 'h' && t[1] === channelId)
-							: event.kind === 1)
+						pendingMatchesScope(event)
 					)
 						pendingEvent = event;
+				}
+				if (legacyRaw !== null) {
+					sessionStorage.setItem(scope, raw as string);
+					sessionStorage.removeItem(legacyScope);
 				}
 			} catch {
 				storageError = 'Saved draft unavailable. Browser storage may be disabled.';
@@ -187,11 +216,19 @@
 		// so the stream publish is gated on the active channel id being a canonical
 		// UUID. Name-based channels (observation-derived ids like 'general') fall
 		// back to a legacy kind-1 note with no h tag, served by the observation
-		// path. Thread/reply e-tags are a later feature (issue #243), so no thread
-		// tags are emitted here.
+		// path. Replies add the canonical NIP-10 root/reply e-tags; a reply
+		// without a valid thread parent is never published.
 		const streamScoped = isUuid(channelId);
 		const tags: NostrTag[] = [];
 		if (streamScoped) tags.push(['h', channelId]);
+		if (replyTarget) {
+			const threadTags = buildReplyTags(replyTarget);
+			if (!threadTags) {
+				onSendFailure('Reply target is invalid. Cancel the reply and try again.');
+				return;
+			}
+			tags.push(...threadTags);
+		}
 		if (attachmentTag) tags.push(attachmentTag);
 
 		sending = true;
@@ -302,6 +339,26 @@
 				onclick={() => (attachmentTag = null)}
 			>
 				remove
+			</button>
+		</div>
+	{/if}
+	{#if replyTarget}
+		<div
+			class="mb-2 inline-flex items-center gap-2 rounded-lg border-l-2 border-primary bg-base-200 px-2 py-1 text-xs text-base-content/80"
+			role="status"
+		>
+			<span class="max-w-[24rem] truncate">
+				Replying in thread {threadRootId ? threadRootId.slice(0, 8) : ''}
+			</span>
+			<button
+				type="button"
+				class="inline-flex items-center gap-0.5 text-base-content/60 hover:underline"
+				aria-label="Cancel reply"
+				disabled={sending || pendingEvent !== null}
+				onclick={onCancelReply}
+			>
+				<X size={12} />
+				cancel
 			</button>
 		</div>
 	{/if}
