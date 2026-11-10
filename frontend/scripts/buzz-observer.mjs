@@ -8,6 +8,7 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js';
+import { isUnboundAuthorRejection } from './buzz-observer-policy.mjs';
 
 const relayWs = process.env.BUZZ_RELAY_WS;
 const webhookSecret = process.env.RUSTSHARE_CHAT_WEBHOOK_SECRET;
@@ -303,6 +304,13 @@ async function deliver(event, context) {
 				state.lastError = null;
 				state.lastEventAt = new Date().toISOString();
 				return true;
+			}
+			if (response.status === 403) {
+				const rejection = await response.json().catch(() => null);
+				if (isUnboundAuthorRejection(response.status, rejection)) {
+					console.warn(`buzz-observer: skipping unbound-author event ${event.id.slice(0, 12)}`);
+					return true;
+				}
 			}
 			if (response.status < 500) {
 				state.observation = 'degraded';

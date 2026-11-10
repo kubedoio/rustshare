@@ -9,7 +9,7 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
     && npm cache clean --force \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
-COPY frontend/scripts/buzz-observer.mjs frontend/scripts/chat-bootstrap.mjs \
+COPY frontend/scripts/buzz-observer.mjs frontend/scripts/buzz-observer-policy.mjs frontend/scripts/chat-bootstrap.mjs \
      frontend/scripts/alpha-buzz-ops.mjs ./scripts/
 
 USER node

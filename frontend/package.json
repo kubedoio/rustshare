@@ -15,7 +15,7 @@
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:e2e": "playwright test",
-		"test:buzz-config": "node --test scripts/alpha-validate-buzz-config.test.mjs"
+		"test:buzz-config": "node --test scripts/alpha-validate-buzz-config.test.mjs scripts/buzz-observer-policy.test.mjs"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.1.1",
