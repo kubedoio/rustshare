@@ -2,11 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { hexToBytes, bytesToHex } from '@noble/curves/utils.js';
 import {
+	type NostrEvent,
 	generateSecretKey,
 	publicKeyOf,
 	signEvent,
 	buildUnsignedEvent,
 	publishEvent,
+	publishSignedEvent,
+	queryRelayEvents,
+	verifyEvent,
 	isUuid,
 	NOSTR_KIND_STREAM_MESSAGE
 } from './nostr';
@@ -64,6 +68,8 @@ class FakeWebSocket {
 	static challengeOnEvent = true;
 	// Set false to script every OK frame manually from the test.
 	static autoOkOnEvent = true;
+	static latePreAuthRejection = false;
+	static autoOkDelayMs = 0;
 
 	sent: unknown[][] = [];
 	onopen: (() => void) | null = null;
@@ -72,6 +78,7 @@ class FakeWebSocket {
 	onclose: (() => void) | null = null;
 	closed = false;
 	authenticated = false;
+	initialEventId: string | null = null;
 
 	constructor() {
 		FakeWebSocket.instances.push(this);
@@ -85,13 +92,22 @@ class FakeWebSocket {
 		this.sent.push(frame);
 		if (frame[0] === 'AUTH') {
 			this.authenticated = true;
+			this.reply(['OK', (frame[1] as { id: string }).id, true, '']);
+			if (FakeWebSocket.latePreAuthRejection && this.initialEventId) {
+				const eventId = this.initialEventId;
+				setTimeout(() => this.reply(['OK', eventId, false, 'auth-required: not authenticated']), 0);
+			}
 		} else if (frame[0] === 'EVENT' && FakeWebSocket.challengeOnEvent && !this.authenticated) {
 			// Buzz relay behavior: an unauthenticated EVENT provokes the NIP-42
 			// AUTH challenge instead of an immediate OK.
+			this.initialEventId = (frame[1] as { id: string }).id;
 			this.reply(['AUTH', 'challenge-1']);
 		} else if (frame[0] === 'EVENT' && FakeWebSocket.autoOkOnEvent) {
 			const event = frame[1] as { id: string };
-			this.reply(['OK', event.id, FakeWebSocket.okValue, FakeWebSocket.okMessage]);
+			setTimeout(
+				() => this.reply(['OK', event.id, FakeWebSocket.okValue, FakeWebSocket.okMessage]),
+				FakeWebSocket.autoOkDelayMs
+			);
 		}
 	}
 
@@ -106,9 +122,8 @@ class FakeWebSocket {
 
 /** A socket that errors before it can answer, like a refused connection. */
 class ErroringSocket extends FakeWebSocket {
-	constructor() {
-		super();
-		queueMicrotask(() => this.onerror?.());
+	send() {
+		this.onerror?.();
 	}
 }
 
@@ -119,6 +134,8 @@ describe('publishEvent', () => {
 		FakeWebSocket.okMessage = '';
 		FakeWebSocket.challengeOnEvent = true;
 		FakeWebSocket.autoOkOnEvent = true;
+		FakeWebSocket.latePreAuthRejection = false;
+		FakeWebSocket.autoOkDelayMs = 0;
 		vi.stubGlobal('WebSocket', FakeWebSocket);
 	});
 
@@ -162,6 +179,18 @@ describe('publishEvent', () => {
 		const ws = FakeWebSocket.instances[0];
 		expect(ws.sent.filter((frame) => frame[0] === 'EVENT')).toHaveLength(2);
 		expect(ws.sent.filter((frame) => frame[0] === 'AUTH')).toHaveLength(1);
+	});
+
+	it('waits for a delayed successful resend after a late pre-auth rejection', async () => {
+		FakeWebSocket.latePreAuthRejection = true;
+		FakeWebSocket.autoOkDelayMs = 300;
+		const sk = generateSecretKey();
+		const pk = publicKeyOf(sk);
+		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
+
+		const result = await publishEvent('wss://relay.test', unsigned, sk);
+
+		expect(result).toMatchObject({ ok: true, event_id: expect.any(String) });
 	});
 
 	it('surfaces a persistent auth-flavored rejection instead of swallowing it forever', async () => {
@@ -241,7 +270,7 @@ describe('publishEvent', () => {
 		expect(result).toEqual({ ok: false, reason: 'rejected', detail: 'blocked: not admitted' });
 	});
 
-	it('resolves transport on a socket error before any OK frame', async () => {
+	it('resolves transport when the socket fails before EVENT transmission', async () => {
 		const sk = generateSecretKey();
 		const pk = publicKeyOf(sk);
 		const unsigned = await buildUnsignedEvent(NOSTR_KIND_STREAM_MESSAGE, 'hello relay', [], pk);
@@ -287,4 +316,313 @@ describe('publishEvent without an AUTH challenge', () => {
 		// No auth dance on a challenge-less relay.
 		expect(ws.sent.some((frame) => frame[0] === 'AUTH')).toBe(false);
 	});
+});
+
+describe('publish ambiguity and exact retries', () => {
+	beforeEach(() => {
+		FakeWebSocket.instances = [];
+		FakeWebSocket.challengeOnEvent = false;
+		FakeWebSocket.autoOkOnEvent = false;
+		vi.stubGlobal('WebSocket', FakeWebSocket);
+	});
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('retains the exact signed event on close after transmission and retries it unchanged', async () => {
+		const sk = generateSecretKey();
+		const unsigned = await buildUnsignedEvent(9, 'draft', [['h', 'channel']], publicKeyOf(sk));
+		const pending = publishEvent('wss://relay.test', unsigned, sk);
+		await vi.waitFor(() => expect(FakeWebSocket.instances[0]?.sent).toHaveLength(1));
+		const firstSocket = FakeWebSocket.instances[0];
+		firstSocket.onclose?.();
+		const result = await pending;
+		expect(result).toMatchObject({ ok: false, reason: 'uncertain' });
+		if (result.ok || result.reason !== 'uncertain') throw new Error('expected uncertain');
+		expect(result.event).toEqual(firstSocket.sent[0][1]);
+		const retry = publishSignedEvent('wss://relay.test', result.event, sk);
+		await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+		const retrySocket = FakeWebSocket.instances[1];
+		await vi.waitFor(() => expect(retrySocket.sent).toHaveLength(1));
+		expect(retrySocket.sent[0]).toEqual(firstSocket.sent[0]);
+		retrySocket.reply(['OK', result.event_id, true, 'duplicate: already have this event']);
+		await expect(retry).resolves.toEqual({
+			ok: true,
+			event_id: result.event_id,
+			detail: 'duplicate: already have this event'
+		});
+	});
+
+	it('does not connect when durable signed-event retention fails', async () => {
+		const sk = generateSecretKey();
+		const unsigned = await buildUnsignedEvent(9, 'draft', [], publicKeyOf(sk));
+		await expect(
+			publishEvent('wss://relay.test', unsigned, sk, () => {
+				throw new Error('storage unavailable');
+			})
+		).rejects.toThrow('storage unavailable');
+		expect(FakeWebSocket.instances).toHaveLength(0);
+	});
+
+	it('rejects a retry with a different signing identity before connecting', async () => {
+		const sk = generateSecretKey();
+		const event = await signEvent(await buildUnsignedEvent(9, '', [], publicKeyOf(sk)), sk);
+		await expect(
+			publishSignedEvent('wss://relay.test', event, generateSecretKey())
+		).resolves.toMatchObject({ ok: false, reason: 'rejected' });
+		expect(FakeWebSocket.instances).toHaveLength(0);
+	});
+
+	it('does not resend EVENT until authentication is acknowledged', async () => {
+		const sk = generateSecretKey();
+		const pending = publishEvent(
+			'wss://relay.test',
+			await buildUnsignedEvent(9, '', [], publicKeyOf(sk)),
+			sk
+		);
+		await vi.waitFor(() => expect(FakeWebSocket.instances[0]?.sent).toHaveLength(1));
+		const ws = FakeWebSocket.instances[0];
+		const originalSend = ws.send.bind(ws);
+		ws.send = (data) => {
+			const frame = JSON.parse(data);
+			if (frame[0] === 'AUTH') ws.sent.push(frame);
+			else originalSend(data);
+		};
+		ws.reply(['AUTH', 'challenge']);
+		await vi.waitFor(() => expect(ws.sent).toHaveLength(2));
+		expect(ws.sent.filter((f) => f[0] === 'EVENT')).toHaveLength(1);
+		ws.reply(['OK', (ws.sent[1][1] as { id: string }).id, false, 'restricted: not a member']);
+		await expect(pending).resolves.toMatchObject({
+			ok: false,
+			reason: 'rejected',
+			detail: 'restricted: not a member'
+		});
+	});
+});
+
+class QuerySocket extends FakeWebSocket {
+	constructor() {
+		super();
+		queueMicrotask(() => this.reply(['AUTH', 'query-challenge']));
+	}
+	send(data: string) {
+		const frame = JSON.parse(data) as unknown[];
+		this.sent.push(frame);
+		if (frame[0] === 'AUTH') this.reply(['OK', (frame[1] as { id: string }).id, true, '']);
+	}
+}
+
+describe('subject-authenticated relay reads', () => {
+	beforeEach(() => {
+		FakeWebSocket.instances = [];
+		vi.stubGlobal('WebSocket', QuerySocket);
+	});
+	afterEach(() => vi.unstubAllGlobals());
+
+	async function query(snapshot: NostrEvent, channel = 'channel') {
+		const sk = generateSecretKey();
+		const pending = queryRelayEvents(
+			'wss://relay.test',
+			{ kinds: [39002], '#d': [channel] },
+			sk,
+			snapshot.pubkey
+		);
+		await vi.waitFor(() =>
+			expect(FakeWebSocket.instances[0]?.sent.filter((f) => f[0] === 'REQ')).toHaveLength(2)
+		);
+		const ws = FakeWebSocket.instances[0];
+		const req = ws.sent.find((f) => f[0] === 'REQ')!;
+		return { pending, ws, subscription: req[1] };
+	}
+
+	it('accepts only matching signed snapshots after subject AUTH and verifies before EOSE', async () => {
+		const relaySk = generateSecretKey();
+		const snapshot = await signEvent(
+			await buildUnsignedEvent(39002, '', [['d', 'channel']], publicKeyOf(relaySk)),
+			relaySk
+		);
+		const { pending, ws, subscription } = await query(snapshot);
+		ws.reply(['EVENT', subscription, snapshot]);
+		ws.reply(['EOSE', subscription]);
+		await expect(pending).resolves.toEqual({ ok: true, events: [snapshot] });
+	});
+
+	it('fails closed on a valid snapshot for the wrong channel', async () => {
+		const relaySk = generateSecretKey();
+		const snapshot = await signEvent(
+			await buildUnsignedEvent(39002, '', [['d', 'elsewhere']], publicKeyOf(relaySk)),
+			relaySk
+		);
+		const { pending, ws, subscription } = await query(snapshot);
+		ws.reply(['EVENT', subscription, snapshot]);
+		ws.reply(['EOSE', subscription]);
+		await expect(pending).resolves.toMatchObject({ ok: false, reason: 'invalid' });
+	});
+
+	it('fails closed on a signed snapshot from an untrusted relay key', async () => {
+		const trusted = generateSecretKey();
+		const other = generateSecretKey();
+		const snapshot = await signEvent(
+			await buildUnsignedEvent(39002, '', [['d', 'channel']], publicKeyOf(other)),
+			other
+		);
+		const { pending, ws, subscription } = await query({
+			...snapshot,
+			pubkey: publicKeyOf(trusted)
+		});
+		ws.reply(['EVENT', subscription, snapshot]);
+		await expect(pending).resolves.toMatchObject({ ok: false, reason: 'invalid' });
+	});
+
+	it('returns denied rather than a partial event list on CLOSED', async () => {
+		const relaySk = generateSecretKey();
+		const snapshot = await signEvent(
+			await buildUnsignedEvent(39002, '', [['d', 'channel']], publicKeyOf(relaySk)),
+			relaySk
+		);
+		const { pending, ws, subscription } = await query(snapshot);
+		ws.reply(['EVENT', subscription, snapshot]);
+		ws.reply(['CLOSED', subscription, 'restricted: private channel']);
+		await expect(pending).resolves.toEqual({
+			ok: false,
+			reason: 'rejected',
+			detail: 'restricted: private channel'
+		});
+	});
+
+	it('rejects malformed limits before connecting', async () => {
+		const sk = generateSecretKey();
+		await expect(
+			queryRelayEvents('wss://relay.test', { kinds: [39000], limit: NaN }, sk, publicKeyOf(sk))
+		).resolves.toEqual({ ok: false, reason: 'invalid' });
+		expect(FakeWebSocket.instances).toHaveLength(0);
+	});
+
+	it('fails closed when more events arrive than requested', async () => {
+		const sk = generateSecretKey();
+		const event = await signEvent(
+			await buildUnsignedEvent(39002, '', [['d', 'channel']], publicKeyOf(sk)),
+			sk
+		);
+		const pending = queryRelayEvents(
+			'wss://relay.test',
+			{ kinds: [39002], '#d': ['channel'], limit: 1 },
+			sk,
+			publicKeyOf(sk)
+		);
+		await vi.waitFor(() =>
+			expect(FakeWebSocket.instances[0]?.sent.filter((f) => f[0] === 'REQ')).toHaveLength(2)
+		);
+		const ws = FakeWebSocket.instances[0];
+		const subscription = ws.sent.find((f) => f[0] === 'REQ')![1];
+		ws.reply(['EVENT', subscription, event]);
+		ws.reply(['EVENT', subscription, event]);
+		ws.reply(['EOSE', subscription]);
+		await expect(pending).resolves.toEqual({ ok: false, reason: 'invalid' });
+	});
+
+	it('binds thread queries to the requested parent event', async () => {
+		const sk = generateSecretKey();
+		const snapshot = await signEvent(
+			await buildUnsignedEvent(
+				9,
+				'',
+				[
+					['h', 'channel'],
+					['e', 'other-parent']
+				],
+				publicKeyOf(sk)
+			),
+			sk
+		);
+		const pending = queryRelayEvents(
+			'wss://relay.test',
+			{ kinds: [9], '#h': ['channel'], '#e': ['requested-parent'] },
+			sk,
+			publicKeyOf(sk)
+		);
+		await vi.waitFor(() =>
+			expect(FakeWebSocket.instances[0]?.sent.filter((f) => f[0] === 'REQ')).toHaveLength(2)
+		);
+		const ws = FakeWebSocket.instances[0];
+		const subscription = ws.sent.find((f) => f[0] === 'REQ')![1];
+		ws.reply(['EVENT', subscription, snapshot]);
+		await expect(pending).resolves.toEqual({ ok: false, reason: 'invalid' });
+	});
+
+	it('rejects content mutation even when the signature still matches the old ID', async () => {
+		const sk = generateSecretKey();
+		const snapshot = await signEvent(
+			await buildUnsignedEvent(39000, '', [['d', 'channel']], publicKeyOf(sk)),
+			sk
+		);
+		expect(await verifyEvent(snapshot)).toBe(true);
+		expect(await verifyEvent({ ...snapshot, content: 'tampered' })).toBe(false);
+	});
+});
+
+/** A relay that never challenges and tries to serve events without AUTH. */
+class UngatedRelaySocket extends FakeWebSocket {
+	static snapshot: NostrEvent | null = null;
+	static mode: 'direct' | 'forged-ok' | 'bare-ok' = 'direct';
+	send(data: string) {
+		const frame = JSON.parse(data) as unknown[];
+		this.sent.push(frame);
+		if (frame[0] === 'AUTH') {
+			this.reply(['OK', (frame[1] as { id: string }).id, true, '']);
+		} else if (frame[0] === 'REQ') {
+			const subscription = frame[1] as string;
+			if (UngatedRelaySocket.mode === 'forged-ok') {
+				// The relay asserts a successful AUTH we never performed.
+				this.reply(['OK', 'relay-chosen-auth-id', true, '']);
+			} else if (UngatedRelaySocket.mode === 'bare-ok') {
+				// A JSON array with no second element yields frame[1] === undefined,
+				// which a bare `frame[1] === authId` comparison would match while
+				// no AUTH is in flight.
+				this.reply(['OK']);
+			}
+			if (UngatedRelaySocket.snapshot) {
+				this.reply(['EVENT', subscription, UngatedRelaySocket.snapshot]);
+				this.reply(['EOSE', subscription]);
+			}
+		}
+	}
+}
+
+describe('relay-side authentication bypass attempts on reads', () => {
+	beforeEach(() => {
+		FakeWebSocket.instances = [];
+		UngatedRelaySocket.snapshot = null;
+		UngatedRelaySocket.mode = 'direct';
+		vi.stubGlobal('WebSocket', UngatedRelaySocket);
+	});
+	afterEach(() => vi.unstubAllGlobals());
+
+	it.each(['direct', 'forged-ok', 'bare-ok'] as const)(
+		'never accepts events when the relay skips AUTH (%s)',
+		async (mode) => {
+			UngatedRelaySocket.mode = mode;
+			const relaySk = generateSecretKey();
+			UngatedRelaySocket.snapshot = await signEvent(
+				await buildUnsignedEvent(39002, '', [['d', 'channel']], publicKeyOf(relaySk)),
+				relaySk
+			);
+			vi.useFakeTimers();
+			try {
+				const pending = queryRelayEvents(
+					'wss://relay.test',
+					{ kinds: [39002], '#d': ['channel'] },
+					generateSecretKey(),
+					publicKeyOf(relaySk)
+				);
+				// Fail closed on the transport timer: the forged frames must be
+				// dropped, never accepted.
+				await vi.advanceTimersByTimeAsync(10_500);
+				await expect(pending).resolves.toEqual({ ok: false, reason: 'transport' });
+			} finally {
+				vi.useRealTimers();
+			}
+			// No challenge ever arrived, so the client must never have sent AUTH.
+			const ws = FakeWebSocket.instances[0];
+			expect(ws.sent.filter((f) => f[0] === 'AUTH')).toHaveLength(0);
+		}
+	);
 });

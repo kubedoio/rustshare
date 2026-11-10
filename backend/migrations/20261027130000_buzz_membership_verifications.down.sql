@@ -1,1 +1,0 @@
-DROP TABLE chat_buzz_membership_verifications;

@@ -81,7 +81,15 @@ It is not presented as a fully mature enterprise content platform yet. It is a p
 
 ## Getting Started
 
-### Quick Start (Docker Compose)
+### First-use Elembra installation
+
+For a clean Elembra installation using published, immutable release images,
+follow the [Customer Alpha Operations Runbook](docs/runbooks/customer-alpha.md).
+It initializes the deployment with `./scripts/elembra.sh`, applies the clean
+database baseline, and provisions bundled Chat. The source-build quickstart
+below is for local development, not the supported first-use deployment.
+
+### Local development quickstart (Docker Compose)
 
 ```bash
 git clone https://github.com/kubedoio/rustshare.git

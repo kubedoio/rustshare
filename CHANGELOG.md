@@ -8,6 +8,13 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Reply to Chat messages with canonical NIP-10 thread tags, browse thread history from the relay, react to messages with toggleable emoji counts and authors, and delete messages through the relay's authorized deletion operations, with every mutation confirmed against relay state and uncertain acknowledgments retried as the identical signed event.
+- Preserve Chat drafts per account, channel, and thread across reloads, and hide thread and reply state whenever channel posting eligibility is lost.
+- Harden the Chat channel-management acceptance suite: member-removal, role-downgrade, and guest-write denial are now asserted relay-direct with decrypted browser-held keys against a candidate relay image, alongside private-channel leak checks (search, deep links, history, attachments), relay-side duplicate/byte-identity verification for retried signed messages, and relay/backend/observer restart resilience; a disposable two-community relay harness covers guest-role write denial and two-tenant isolation.
+- Manage Chat channels directly against the community relay: browse every visible channel including empty ones, create open or private channels with the browser-held identity, edit channel details, and review or change membership from relay-confirmed channel state, with uncertain outcomes retried as the identical signed request.
+- Gate fork-backed Chat posting on verified relay metadata and membership, show channel details, and preserve exact signed messages across uncertain acknowledgments and browser reloads.
+
+- Establish the first supported Elembra database baseline for clean installs; existing pre-release POC databases require a fresh database and application storage.
 - Declare Chat admission, revocation, and staged-release events so durable replacement commands pass the integration outbox ownership check.
 - Wait for NIP-42 authentication acknowledgment before sending conditional Buzz membership commands.
 - Add authenticated durable Chat identity replacement initiation and scoped redacted status; initiation stays disabled until a separately qualified Buzz v1alpha2 runtime is pinned.

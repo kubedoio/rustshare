@@ -2523,7 +2523,7 @@
         "tags": [
           "Chat"
         ],
-        "summary": "Channels of the mapped community the caller may currently read. Derived\nfrom the observation index and gated channel-by-channel.",
+        "summary": "Channels the caller may currently read, including empty channels in Buzz\ngateway mode. Local mode uses the authorized observation index.",
         "operationId": "list_channels",
         "responses": {
           "200": {
@@ -17967,6 +17967,7 @@
       "ChatStatusResponse": {
         "type": "object",
         "required": [
+          "runtime_profile",
           "chat_enabled",
           "admission_active",
           "ask_available"
@@ -18000,6 +18001,10 @@
                 "$ref": "#/components/schemas/CommunityMappingInfo"
               }
             ]
+          },
+          "runtime_profile": {
+            "type": "string",
+            "description": "This endpoint serves only the existing browser-held-key integration."
           }
         }
       },
@@ -18032,6 +18037,12 @@
         "properties": {
           "community_id": {
             "type": "string"
+          },
+          "relay_pubkey": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "relay_url": {
             "type": "string"

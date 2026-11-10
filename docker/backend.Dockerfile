@@ -1,7 +1,7 @@
 # =============================================================================
 # Stage 1: Frontend Builder
 # =============================================================================
-FROM node:26-bookworm-slim AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:26-bookworm-slim AS frontend-builder
 
 WORKDIR /app/frontend
 
@@ -77,13 +77,18 @@ RUN mkdir -p target/release \
     fi \
     && strip target/release/rustshare-server
 
+# The backend needs libgcc_s for Rust unwinding. Source it from the same
+# official Debian 13 runtime family without inheriting cc's vulnerable zlib.
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1 AS runtime-libraries
+
 # =============================================================================
 # Stage 3: Runtime Image
 # =============================================================================
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e
+FROM gcr.io/distroless/base-nossl-debian13:nonroot@sha256:e6b0f82595aa1edde72c8054de7a9dca30f0f8f54820c37a167c0ddfc21c5c67
 
 # Copy binaries and frontend build
 COPY --from=builder /app/target/release/rustshare-server /usr/local/bin/
+COPY --from=runtime-libraries /lib/*-linux-gnu/libgcc_s.so.1 /usr/lib/
 COPY --from=frontend-builder /app/frontend/build /app/frontend-build
 
 ENV FRONTEND_DIST_DIR=/app/frontend-build

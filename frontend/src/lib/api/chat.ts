@@ -1,6 +1,7 @@
 import { apiClient } from './client';
 
 export interface ChatCommunityMapping {
+	relay_pubkey?: string | null;
 	community_id: string;
 	relay_url: string;
 }
@@ -11,6 +12,7 @@ export interface ChatBinding {
 }
 
 export interface ChatStatus {
+	runtime_profile?: 'fork_client_held' | 'local_client_held' | 'upstream_managed';
 	chat_enabled: boolean;
 	mapping: ChatCommunityMapping | null;
 	binding: ChatBinding | null;

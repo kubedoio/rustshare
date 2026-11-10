@@ -17,7 +17,8 @@ onboards real users who can use Files + Chat + Memory + Ask together.
 Browser ── nginx :80 ── backend :8080 ── postgres :5432
                               │            rustfs :9000
                               │
-Browser ── ws://localhost:7447 ── buzz-relay ── buzz-postgres / buzz-redis / buzz-rustfs
+Browser ── wss://<public-app-host>/ ── HTTPS proxy/nginx ── buzz-relay
+Elembra ── wss://<public-app-host>/ ────────────────────────┘
                                       ▲
              chat-observer (managed Compose service)
              └─ signed community/registry discovery + state recovery
@@ -39,6 +40,13 @@ The canonical Compose wrapper gives the observer and backend the same network
 namespace, so Buzz's host-derived community remains identical for browser,
 gateway, and observer without a host-side Node process.
 
+The public root terminates TLS at the deployment's HTTPS edge. Nginx sends
+WebSocket upgrades and NIP-11 discovery requests to Buzz's root route while
+ordinary page requests continue to Elembra. Nginx preserves the public `Host`;
+the Buzz control API path `/api/v1/relay` is proxied to that same relay. This
+makes the browser, Elembra gateway, and observer use one host-derived
+community identity.
+
 ---
 
 ## 2. Deployment (exact setup)
@@ -51,6 +59,27 @@ gateway, and observer without a host-side Node process.
   contract, and immutable OCI image digest.
 
 ### 2.2 Bring up
+
+For a release-pinned deployment, check out the reviewed operational branch or
+later protected-main commit and configure `.env` with
+`ELEMBRA_DEPLOYMENT_PROFILE=release`, backend and Chat observer image references
+pinned by digest, `COMPOSE_PROJECT_NAME=rustshare`, and
+`ELEMBRA_COMPOSE_EXTRA_FILE=.elembra/rustfs-kms.override.yml` when local RustFS
+KMS is enabled. Do not commit deployment configuration or identities. A clean checkout reproduces the
+stack with only those deployment files copied in place:
+
+```bash
+./scripts/elembra.sh status
+./scripts/elembra.sh up
+```
+
+The wrapper always includes `docker-compose.yml`, `docker-compose.alpha.yml`,
+`docker-compose.dogfood.yml`, and the release profile overlay. It appends the
+configured extra Compose file last, so operator-specific settings override
+defaults without editing tracked Compose files. Verify the effective config
+before starting services with `docker compose --profile chat config --quiet`
+using the same Compose files and environment. Keep `.env`,
+`.elembra/chat.env`, and the KMS override mode `0600`.
 
 ```bash
 # One supported path. It generates base secrets and Chat identities in a
@@ -83,13 +112,34 @@ curl -s http://localhost/health/ready
 
 ### 2.3 Bundled-relay SSRF trust
 
-The bundled path sets `RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL` to exactly
-`ws://localhost:7447`. The Chat URL validator and Buzz gateway allow a private
-destination only when the complete configured URL matches that value. Redirects
-remain disabled, DNS results are pinned for the request, and the signed relay
-identity is still checked by the gateway and observer. Arbitrary loopback,
-RFC1918, link-local, and metadata targets remain rejected. External Buzz mode
-does not use this exception and must use a public/resolvable relay URL.
+For a local-only deployment, the bundled path may use exactly
+`ws://localhost:7447`. For remote browsers, configure the same public WebSocket
+URL in `BUZZ_RELAY_WS`, `BUZZ_RELAY_URL`,
+`RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL`, and
+`RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL`, for example
+`wss://app.example.com`. The public HTTPS edge must pass WebSocket upgrades
+and NIP-11 root requests to Nginx, which routes them to Buzz, and route
+`/api/v1/relay` to that same relay; DNS and TLS must already cover the public
+app host. If `.elembra/chat.env` already exists, update these
+URL values there as well as in `.env`; preserve its generated service keys.
+
+The Chat URL validator and Buzz gateway allow the configured deployment URL as
+an explicit trusted destination. Redirects remain disabled, resolved addresses
+are pinned for each request, and the signed relay identity is still checked by
+the gateway and observer. Arbitrary unconfigured loopback, RFC1918, link-local,
+and metadata targets remain rejected.
+
+### Browser-local Chat identity recovery
+
+Each user's Chat signing key stays in that user's browser storage and is not
+included in Elembra or Buzz server backups. In Chat, open the identity menu by
+the message composer and select **Export key backup**. Store the encrypted
+backup and its passphrase in separate, user-controlled recovery locations. To
+recover on a replacement browser, sign in as the same Elembra user, choose
+**Import existing Chat identity**, provide the backup and passphrase, then
+complete binding and admission. Administrators cannot restore a lost key from
+the server backup; account revocation also does not erase copies on user
+devices. Verify each user's recovery copy independently before relying on it.
 
 No direct SQL is needed to create the mapping anymore: in `auto` mode
 enabling Chat provisions it (§2.2 step 8), and in `manual` mode the admin
@@ -349,15 +399,22 @@ It never prints private secrets.
 
 ## 7. Backup considerations
 
-- Elembra data: `scripts/backup-stack.sh` (postgres dump + RustFS + config).
+- `scripts/backup-stack.sh --with-chat` produces a local staging bundle; it is
+  not an off-host recovery copy and excludes deployment secrets.
+- `scripts/elembra-offsite-backup.sh` wraps that bundle with `.env`, Chat relay
+  identities, and the RustFS override when present, encrypts the result to an
+  operator-supplied age public recipient, then uploads to a separately hosted
+  S3-compatible bucket. Configure its timer, lifecycle retention, and external
+  heartbeat as described in the [backup and restore runbook](backup-restore.md).
 - Relay state: `buzz_postgres_data` / `buzz_rustfs_data` volumes — back these up
   for message-history continuity. A relay reset loses the **relay's** event
   history; Elembra's observation index (its own Postgres) survives, and on
   observer reconnect the relay replays whatever events it still holds (deduped
   by event id). Events the relay no longer holds are not re-projected.
-- Keys: the bridge keys live in `.elembra/chat.env` with mode 0600 (not in the
-  backup bundle — store them in a secrets manager). User Buzz keys never leave the browser; backup is the user's
-  encrypted envelope.
+- The age private identity and S3 read credential stay outside the application
+  host. The host stores only its restricted uploader credential and public age
+  recipient. Browser-local Chat signing keys remain separate: each user must
+  keep and test their own encrypted browser-key backup.
 
 ---
 

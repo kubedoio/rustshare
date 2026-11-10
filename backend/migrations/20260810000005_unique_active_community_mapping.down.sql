@@ -1,1 +1,0 @@
-DROP INDEX IF EXISTS chat_workspace_communities_active_community;

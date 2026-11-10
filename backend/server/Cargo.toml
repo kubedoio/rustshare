@@ -10,6 +10,10 @@ name = "meeting_actions_test"
 path = "../tests/meeting_actions_test.rs"
 
 [[test]]
+name = "upstream_publisher_contract"
+path = "../tests/upstream_publisher_contract.rs"
+
+[[test]]
 name = "meeting_decisions_test"
 path = "../tests/meeting_decisions_test.rs"
 

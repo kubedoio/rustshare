@@ -44,7 +44,6 @@ fn database_url() -> String {
     std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://rustshare:changeme@localhost:5432/rustshare".to_string())
 }
-
 /// Create a brand-new, uniquely named database on the same server, and return
 /// its connection URL together with the admin pool (kept open so the database
 /// can be dropped afterwards).
@@ -211,113 +210,5 @@ async fn fresh_database_bootstrap_inner(fresh_url: &str) -> Result<(), Box<dyn s
         "kanban application_config must contain its config, got: {kanban_config}"
     );
 
-    Ok(())
-}
-
-/// Representative upgrade test: a database that already ran the #217 cutover
-/// migrations (so `templates.module_config` exists with real data) must
-/// preserve that configuration through the rename migration.
-#[tokio::test]
-#[ignore = "requires DATABASE_URL"]
-async fn upgrade_migration_preserves_existing_template_config() {
-    let (admin_pool, fresh_url) = create_fresh_database().await;
-
-    let result = upgrade_migration_inner(&fresh_url).await;
-
-    drop_fresh_database(&admin_pool, &fresh_url).await;
-    result.expect("upgrade migration must preserve existing template configuration");
-}
-
-async fn upgrade_migration_inner(fresh_url: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // Stage 1: apply every migration EXCEPT the rename, i.e. the pre-fix state
-    // after the #217 cutover where `templates.module_config` still exists.
-    let source_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations");
-    let staged_dir = std::env::temp_dir().join(format!("mig_stage_{}", Uuid::new_v4().simple()));
-    std::fs::create_dir(&staged_dir)?;
-    for entry in std::fs::read_dir(&source_dir)? {
-        let entry = entry?;
-        if entry
-            .file_name()
-            .to_str()
-            .map(|n| n.starts_with("20260809000001_"))
-            .unwrap_or(false)
-        {
-            continue; // the rename migration must not be applied yet
-        }
-        std::fs::copy(entry.path(), staged_dir.join(entry.file_name()))?;
-    }
-
-    let pool = PgPool::connect(fresh_url).await?;
-    let pre_fix = sqlx::migrate::Migrator::new(staged_dir.clone()).await?;
-    pre_fix.run(&pool).await?;
-
-    // The pre-fix schema still carries the legacy column.
-    let has_module_config: bool = sqlx::query_scalar(
-        "SELECT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'templates' AND column_name = 'module_config'
-        )",
-    )
-    .fetch_one(&pool)
-    .await?;
-    assert!(
-        has_module_config,
-        "pre-fix schema must still have module_config"
-    );
-
-    // Existing real template configuration under the legacy column.
-    let legacy_config = serde_json::json!({"kanban": {"columns": [{"id": "c1", "title": "Old"}]}});
-    sqlx::query(
-        "INSERT INTO templates (template_key, name, application_id, tenant_id, module_config)
-         VALUES ('upgrade_legacy', 'Legacy', 'io.elembra.kanban', $1, $2)",
-    )
-    .bind(Uuid::nil())
-    .bind(&legacy_config)
-    .execute(&pool)
-    .await?;
-
-    // Stage 2: apply the full embedded chain — the rename migration runs on top
-    // of the staged state, exactly like an upgraded deployment.
-    sqlx::migrate!("../migrations").run(&pool).await?;
-
-    let has_application_config: bool = sqlx::query_scalar(
-        "SELECT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'templates' AND column_name = 'application_config'
-        )",
-    )
-    .fetch_one(&pool)
-    .await?;
-    assert!(
-        has_application_config,
-        "application_config must exist after upgrade"
-    );
-
-    let has_module_config: bool = sqlx::query_scalar(
-        "SELECT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'templates' AND column_name = 'module_config'
-        )",
-    )
-    .fetch_one(&pool)
-    .await?;
-    assert!(
-        !has_module_config,
-        "module_config must not remain after upgrade"
-    );
-
-    // The existing JSON configuration survived the rename intact.
-    let preserved: Option<serde_json::Value> = sqlx::query_scalar(
-        "SELECT application_config FROM templates WHERE template_key = 'upgrade_legacy'",
-    )
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(
-        preserved.as_ref(),
-        Some(&legacy_config),
-        "existing template configuration must be preserved by the rename, got: {preserved:?}"
-    );
-
-    std::fs::remove_dir_all(&staged_dir)?;
     Ok(())
 }
