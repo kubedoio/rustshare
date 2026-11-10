@@ -308,7 +308,7 @@ async function deliver(event, context) {
 			if (response.status === 403) {
 				const rejection = await response.json().catch(() => null);
 				if (isUnboundAuthorRejection(response.status, rejection)) {
-					console.warn(`buzz-observer: skipping unbound-author event ${event.id.slice(0, 12)}`);
+					console.warn('buzz-observer: skipping event from an unbound author');
 					return true;
 				}
 			}
