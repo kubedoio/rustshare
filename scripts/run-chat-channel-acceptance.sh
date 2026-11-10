@@ -40,7 +40,9 @@ compose() {
 BASE_URL="${ACCEPTANCE_BASE_URL:-http://127.0.0.1:18080}"
 RELAY_URL="${BUZZ_RELAY_WS:-ws://localhost:17447}"
 EVIDENCE_PATH="${ACCEPTANCE_EVIDENCE:-docs/pilot/evidence/chat-channel-acceptance-$(date +%Y%m%d).json}"
-GIT_SHA="$(git rev-parse HEAD)"
+# ACCEPTANCE_GIT_SHA lets evidence runs record the exact CODE commit under
+# test even when infra/evidence commits sit on top of it.
+GIT_SHA="${ACCEPTANCE_GIT_SHA:-$(git rev-parse HEAD)}"
 
 echo "== chat channel acceptance: waiting for the stack =="
 backend_container="$(compose ps -q backend)"
@@ -72,29 +74,37 @@ done
 [[ "${observer_ready}" == "yes" ]] || { echo "chat-observer did not become ready" >&2; exit 1; }
 
 echo "== collecting image provenance =="
+# Record the image each RUNNING container actually executes (Config.Image +
+# resolved image id), not the compose-file reference: acceptance runs may
+# override the relay image (e.g. the local candidate via
+# docker-compose.chat-acceptance-candidate.yml), and the evidence must reflect
+# what was really under test. Falls back to the compose reference image when a
+# container is not running.
 IMAGE_DIGESTS="$(
-	python3 - <<'PY' "${COMPOSE_PROJECT_NAME}" "${BUZZ_RELAY_IMAGE}"
-import json, subprocess, sys
-project, relay_image = sys.argv[1], sys.argv[2]
+	python3 - <<'PY' "${COMPOSE_PROJECT_NAME}" "${ELEMBRA_COMPOSE_EXTRA_FILE}"
+import json, os, subprocess, sys
+
+project, extra_file = sys.argv[1], sys.argv[2]
+compose = ["docker", "compose", "-f", "docker-compose.yml", "-f",
+           "docker-compose.alpha.yml", "-f", "docker-compose.dogfood.yml",
+           "-f", extra_file, "-p", project]
+
+def run(cmd):
+    return subprocess.run(cmd, capture_output=True, text=True)
+
 out = {}
-for name, image in [
-    ("backend", f"{project}-backend"),
-    ("chat-observer", f"{project}-chat-observer"),
-    ("postgres", "pgvector/pgvector"),
-    ("rustfs", "rustfs/rustfs"),
-    ("nginx", "nginx"),
-    ("buzz-relay", relay_image),
-]:
-    try:
-        raw = subprocess.run(
-            ["docker", "image", "inspect", image, "--format",
-             "{{index .RepoDigests 0}} {{.Id}}"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        repo_digest, image_id = (raw.split(" ") + [""])[:2]
-        out[name] = {"image": image, "repoDigest": repo_digest, "imageId": image_id}
-    except subprocess.CalledProcessError:
-        out[name] = {"image": image, "repoDigest": None, "imageId": None}
+for name in ["backend", "chat-observer", "postgres", "rustfs", "nginx", "buzz-relay"]:
+    container = run(compose + ["ps", "-q", name]).stdout.strip()
+    if container:
+        proc = run(["docker", "inspect", container,
+                    "--format", "{{.Config.Image}}|{{.Image}}"])
+        if proc.returncode == 0:
+            image, image_id = (proc.stdout.strip().split("|") + [""])[:2]
+            ref = run(["docker", "image", "inspect", image,
+                       "--format", "{{index .RepoDigests 0}}"]).stdout.strip()
+            out[name] = {"image": image, "repoDigest": ref or None, "imageId": image_id}
+            continue
+    out[name] = {"image": None, "repoDigest": None, "imageId": None}
 print(json.dumps(out))
 PY
 )"

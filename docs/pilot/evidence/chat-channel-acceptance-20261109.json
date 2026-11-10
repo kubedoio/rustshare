@@ -1,81 +1,81 @@
 {
-  "generatedAt": "2026-11-09T01:48:04.404Z",
+  "generatedAt": "2026-11-09T21:07:47.816Z",
   "baseUrl": "http://127.0.0.1:18080",
   "relayUrl": "ws://localhost:17447",
   "provenance": {
-    "gitSha": "14431ce1c71a8385016ab8cdf504eb44f2a2cacd",
-    "stack": "chatacc480 (source build at 14431ce1c71a8385016ab8cdf504eb44f2a2cacd, relay ws://localhost:17447)",
+    "gitSha": "5513f5bd9500118e65905634a85e490a5c4430b4",
+    "stack": "accharden (source build at 5513f5bd9500118e65905634a85e490a5c4430b4, relay ws://localhost:17447)",
     "images": {
       "backend": {
-        "image": "chatacc480-backend",
-        "repoDigest": "chatacc480-backend@sha256:f9df5f7534bacded411c9e9813eeecda115d6048982cd91d1b432e003b2922f0",
-        "imageId": "sha256:f9df5f7534bacded411c9e9813eeecda115d6048982cd91d1b432e003b2922f0"
+        "image": "accharden-backend",
+        "repoDigest": "accharden-backend@sha256:77360c36cef62b85a20ec1101eb2913583f09f71859f1b07abb2ff41a5cab3ba",
+        "imageId": "sha256:77360c36cef62b85a20ec1101eb2913583f09f71859f1b07abb2ff41a5cab3ba"
       },
       "chat-observer": {
-        "image": "chatacc480-chat-observer",
-        "repoDigest": "chatacc480-chat-observer@sha256:346fcb2c2cdd770b69457ab44805370fae70d45b5ab89ebc971397ffd4ce2cca",
-        "imageId": "sha256:346fcb2c2cdd770b69457ab44805370fae70d45b5ab89ebc971397ffd4ce2cca"
+        "image": "accharden-chat-observer",
+        "repoDigest": "accharden-chat-observer@sha256:c6f29cfb1f1de9e353736f89f5a4d76df30a75966c24411112642bbccbec09a6",
+        "imageId": "sha256:c6f29cfb1f1de9e353736f89f5a4d76df30a75966c24411112642bbccbec09a6"
       },
       "postgres": {
-        "image": "pgvector/pgvector",
-        "repoDigest": null,
-        "imageId": null
+        "image": "pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b",
+        "repoDigest": "pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b",
+        "imageId": "sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b"
       },
       "rustfs": {
-        "image": "rustfs/rustfs",
-        "repoDigest": "rustfs/rustfs@sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2",
-        "imageId": "sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2"
+        "image": "rustfs/rustfs@sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a",
+        "repoDigest": "rustfs/rustfs@sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a",
+        "imageId": "sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a"
       },
       "nginx": {
-        "image": "nginx",
-        "repoDigest": null,
-        "imageId": null
+        "image": "nginx@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606",
+        "repoDigest": "nginx@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606",
+        "imageId": "sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606"
       },
       "buzz-relay": {
-        "image": "ghcr.io/kubedoio/buzz-elembra@sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a",
-        "repoDigest": "ghcr.io/kubedoio/buzz-elembra@sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a",
-        "imageId": "sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a"
+        "image": "buzz-elembra-candidate:8ce0b7bd",
+        "repoDigest": "buzz-elembra-candidate@sha256:ac966d7723ae416d42045f149f06828a61aa1aae2c946b420bc2dfaacecf4c79",
+        "imageId": "sha256:ac966d7723ae416d42045f149f06828a61aa1aae2c946b420bc2dfaacecf4c79"
       }
     }
   },
   "tenantId": "00000000-0000-0000-0000-000000000000",
-  "communityId": "b599153b-a31a-40ae-a6fd-6827db0c1116",
-  "relayPubkey": "a2507ddda8e178c6890a77150934fe4c070d3ed0901025af9f69ae69a52aa8fa",
+  "communityId": "e3826409-0ada-45e7-b57b-1f8d0d8b4529",
+  "relayPubkey": "30db66e523dd04cebfb92181c3f9829dfc3e1aeefbf5d123c2ea7f3aeee8131f",
   "users": {
     "a": {
-      "username": "accept_a_mw8ljloq4356",
-      "email": "accept_a_mw8ljloq4356@acceptance.local",
-      "userId": "c6482dc8-26aa-4b24-b1f0-7e3c780eeb06",
-      "pubkey": "8ee89d161b5880103bd0068b40745c29d35351ef5325b60aa5dcf06e9a14819e"
+      "username": "accept_a_mw9qydz94172492n2w2g",
+      "email": "accept_a_mw9qydz94172492n2w2g@acceptance.local",
+      "userId": "0b030402-2999-484b-9356-fc507c59b15d",
+      "pubkey": "f18ec3a2adc2d9993db6f2dc6dd47cf71646a02df7578b6d9e39a69ae1660639"
     },
     "b": {
-      "username": "accept_b_mw8ljloq4356",
-      "email": "accept_b_mw8ljloq4356@acceptance.local",
-      "userId": "7bb02d04-9703-41df-b02f-ac32d3aac492",
-      "pubkey": "9b50c80abf64df0136b5b56fbb7e57c881a5de9c6f681f38829b9f27fbce8dc1"
+      "username": "accept_b_mw9qydz94172492n2w2g",
+      "email": "accept_b_mw9qydz94172492n2w2g@acceptance.local",
+      "userId": "33cbfb0f-6e4e-4315-8b8a-093f38eeb0e9",
+      "pubkey": "f1f99bbd17901213d2631c96e75f63ecc197ac7ae1457ecdb614efd11fd4573f"
     },
     "c": {
-      "username": "accept_c_mw8ljloq4356",
-      "email": "accept_c_mw8ljloq4356@acceptance.local",
-      "userId": "3191b800-378a-436b-a679-097adf4c9645",
-      "pubkey": "6f5f8af3403cd7b7ef254206a5280b9cc15c183fc2ac305b2869e6f34f90f821"
+      "username": "accept_c_mw9qydz94172492n2w2g",
+      "email": "accept_c_mw9qydz94172492n2w2g@acceptance.local",
+      "userId": "a2ecb454-3322-43bd-88ff-8b7f2a034518",
+      "pubkey": "54c98cd57c1cfd5cd4ca365019c2cafae78220fbd9985f5fddd46832839b6bd9"
     }
   },
   "channels": {
     "open": {
-      "id": "a80ad380-760f-42fa-a307-0b82df9f9c3c",
-      "name": "accept-open-mw8ljloq4356 renamed"
+      "id": "ef53d7b7-dc2c-4123-b8fc-dc4fab0533ed",
+      "name": "accept-open-mw9qydz94172492n2w2g renamed"
     },
     "private": {
-      "id": "a8753518-f75d-4141-b695-cf567f056907",
-      "name": "accept-private-mw8ljloq4356"
+      "id": "ef13d96f-b427-4d89-b4c0-87b3efcc6ecd",
+      "name": "accept-private-mw9qydz94172492n2w2g"
     }
   },
   "eventIds": {
-    "canary": "6eeafefe623cb2a4a56f1f4e4cdf20fdbad7c9d80139b638cd55886acb77b27a",
-    "msgA": "34ec83206a95179debc4a16ecbba9375d85ac55c3768a54260a32a04e57fc1cb",
-    "msgB": "04cf6bdb660e0adc645464f0d622c2911943a01f599e9c3939877633db946ff3",
-    "uncertain": "cfe393457d43a3a511984ed508dbedf88181bd24ced2fc20abc5826b042e246d"
+    "canary": "a70847e9f065ac6604f61d56d4ec6d7994646c204498a6481b828b428a4590ff",
+    "msgA": "4da08c34d6d1f10f73f0c009baaa28fcb2060dcca5b46c7f4bce1eee4d043ac8",
+    "msgB": "3d7155613aacec47e098846d2f86cfdcc2f71d0be232694d2725dcd54645cc50",
+    "uncertain": "0025e9131505072597adf6fff221f7bb1350b139eb67618bfac4e687764ae9b4"
   },
   "matrix": [
     {
@@ -85,10 +85,11 @@
       "evidence": {
         "runtimeProfile": "fork_client_held",
         "pubkeys": {
-          "a": "8ee89d161b5880103bd0068b40745c29d35351ef5325b60aa5dcf06e9a14819e",
-          "b": "9b50c80abf64df0136b5b56fbb7e57c881a5de9c6f681f38829b9f27fbce8dc1",
-          "c": "6f5f8af3403cd7b7ef254206a5280b9cc15c183fc2ac305b2869e6f34f90f821"
-        }
+          "a": "f18ec3a2adc2d9993db6f2dc6dd47cf71646a02df7578b6d9e39a69ae1660639",
+          "b": "f1f99bbd17901213d2631c96e75f63ecc197ac7ae1457ecdb614efd11fd4573f",
+          "c": "54c98cd57c1cfd5cd4ca365019c2cafae78220fbd9985f5fddd46832839b6bd9"
+        },
+        "keyBackupDecryptMatchesBindingPubkey": true
       }
     },
     {
@@ -96,18 +97,18 @@
       "title": "Empty open channel created by A and discovered by B",
       "status": "PASS",
       "evidence": {
-        "channelId": "a80ad380-760f-42fa-a307-0b82df9f9c3c",
-        "channelName": "accept-open-mw8ljloq4356",
+        "channelId": "ef53d7b7-dc2c-4123-b8fc-dc4fab0533ed",
+        "channelName": "accept-open-mw9qydz94172492n2w2g",
         "bDiscovery": {
           "status": 200,
           "channel": {
-            "channel_id": "a80ad380-760f-42fa-a307-0b82df9f9c3c",
-            "name": "accept-open-mw8ljloq4356",
+            "channel_id": "ef53d7b7-dc2c-4123-b8fc-dc4fab0533ed",
+            "name": "accept-open-mw9qydz94172492n2w2g",
             "channel_kind": "workspace",
             "channel_type": "stream",
             "visibility": "open",
             "member": false,
-            "latest_event_at": "2026-11-09T01:44:17.690085844Z"
+            "latest_event_at": "2026-11-09T21:03:32.422353202Z"
           }
         }
       }
@@ -117,11 +118,11 @@
       "title": "Lifecycle UI: edit name/description, roster roles, join/leave, deep link + reload",
       "status": "PASS",
       "evidence": {
-        "renamedTo": "accept-open-mw8ljloq4356 renamed",
-        "rosterOwner": "8ee89d161b5880103bd0068b40745c29d35351ef5325b60aa5dcf06e9a14819e",
-        "joinLeaveUser": "9b50c80abf64df0136b5b56fbb7e57c881a5de9c6f681f38829b9f27fbce8dc1",
+        "renamedTo": "accept-open-mw9qydz94172492n2w2g renamed",
+        "rosterOwner": "f18ec3a2adc2d9993db6f2dc6dd47cf71646a02df7578b6d9e39a69ae1660639",
+        "joinLeaveUser": "f1f99bbd17901213d2631c96e75f63ecc197ac7ae1457ecdb614efd11fd4573f",
         "memberEditDenied": true,
-        "deepLink": "/apps/chat?channel=a80ad380-760f-42fa-a307-0b82df9f9c3c"
+        "deepLink": "/apps/chat?channel=ef53d7b7-dc2c-4123-b8fc-dc4fab0533ed"
       }
     },
     {
@@ -129,8 +130,8 @@
       "title": "Private channel: B added and discovers; owner reads the canary, C cannot discover or read it",
       "status": "PASS",
       "evidence": {
-        "channelId": "a8753518-f75d-4141-b695-cf567f056907",
-        "canaryEventId": "6eeafefe623cb2a4a56f1f4e4cdf20fdbad7c9d80139b638cd55886acb77b27a",
+        "channelId": "ef13d96f-b427-4d89-b4c0-87b3efcc6ecd",
+        "canaryEventId": "a70847e9f065ac6604f61d56d4ec6d7994646c204498a6481b828b428a4590ff",
         "ownerPositiveControl": true,
         "bDirectoryVisibility": true,
         "cDirectoryExclusion": true,
@@ -143,12 +144,12 @@
       "title": "Message exchange with matching event ids and authors on both sides",
       "status": "PASS",
       "evidence": {
-        "channelId": "a80ad380-760f-42fa-a307-0b82df9f9c3c",
-        "aAuthor": "8ee89d161b5880103bd0068b40745c29d35351ef5325b60aa5dcf06e9a14819e",
-        "bAuthor": "9b50c80abf64df0136b5b56fbb7e57c881a5de9c6f681f38829b9f27fbce8dc1",
+        "channelId": "ef53d7b7-dc2c-4123-b8fc-dc4fab0533ed",
+        "aAuthor": "f18ec3a2adc2d9993db6f2dc6dd47cf71646a02df7578b6d9e39a69ae1660639",
+        "bAuthor": "f1f99bbd17901213d2631c96e75f63ecc197ac7ae1457ecdb614efd11fd4573f",
         "eventIds": {
-          "a": "34ec83206a95179debc4a16ecbba9375d85ac55c3768a54260a32a04e57fc1cb",
-          "b": "04cf6bdb660e0adc645464f0d622c2911943a01f599e9c3939877633db946ff3"
+          "a": "4da08c34d6d1f10f73f0c009baaa28fcb2060dcca5b46c7f4bce1eee4d043ac8",
+          "b": "3d7155613aacec47e098846d2f86cfdcc2f71d0be232694d2725dcd54645cc50"
         },
         "timelineCountA": 3,
         "timelineCountB": 3
@@ -159,7 +160,7 @@
       "title": "Reload keeps the authorized history for A and B",
       "status": "PASS",
       "evidence": {
-        "channelId": "a80ad380-760f-42fa-a307-0b82df9f9c3c",
+        "channelId": "ef53d7b7-dc2c-4123-b8fc-dc4fab0533ed",
         "reloaded": [
           "a",
           "b"
@@ -171,26 +172,109 @@
       "title": "Uncertain ACK path retried byte-identically; single application",
       "status": "PASS",
       "evidence": {
-        "channelId": "a80ad380-760f-42fa-a307-0b82df9f9c3c",
-        "pendingEventId": "cfe393457d43a3a511984ed508dbedf88181bd24ced2fc20abc5826b042e246d",
+        "channelId": "ef53d7b7-dc2c-4123-b8fc-dc4fab0533ed",
+        "pendingEventId": "0025e9131505072597adf6fff221f7bb1350b139eb67618bfac4e687764ae9b4",
         "appliedCopies": 1,
-        "retainedEventId": "cfe393457d43a3a511984ed508dbedf88181bd24ced2fc20abc5826b042e246d"
+        "retainedEventId": "0025e9131505072597adf6fff221f7bb1350b139eb67618bfac4e687764ae9b4",
+        "relayDirectCopies": 1,
+        "relayDirectSigMatchesRetryBytes": true,
+        "relayDirectCopiesAsB": 1
+      }
+    },
+    {
+      "id": "i",
+      "title": "Role downgrade to guest: relay denies B signed post immediately; read intact; restore re-allows",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "ef53d7b7-dc2c-4123-b8fc-dc4fab0533ed",
+        "downgradeEventId": "140b6d1da594cfc6b88ef56091646a624a43e5b732445f4d774901e8d858a5d3",
+        "guestWriteDenied": true,
+        "guestWriteDenialAnchored": true,
+        "guestWriteAcceptedByRelayUnderTest": false,
+        "guestWriteDenialMessage": "restricted: guest members are read-only",
+        "denialAfterDowngradeMs": 24,
+        "guestReadEventCount": 4,
+        "guestReadSeesEarlierMessage": true,
+        "restoreEventId": "35201974a1672bb9ea3c3acc7dbfd97776b7ae2338c4cb04a51b741b7d24cad2",
+        "restoreProbeAccepted": true,
+        "restoreProbeMs": 25
       }
     },
     {
       "id": "e",
-      "title": "Removal revokes discovery, reads, and posting; B session stays live",
+      "title": "Removal revokes discovery, reads, posting (UI+relay), and attachments; B session stays live",
       "status": "PASS",
       "evidence": {
-        "channelId": "a8753518-f75d-4141-b695-cf567f056907",
-        "removed": "9b50c80abf64df0136b5b56fbb7e57c881a5de9c6f681f38829b9f27fbce8dc1",
+        "channelId": "ef13d96f-b427-4d89-b4c0-87b3efcc6ecd",
+        "removed": "f1f99bbd17901213d2631c96e75f63ecc197ac7ae1457ecdb614efd11fd4573f",
+        "privAttachmentFileId": "659b4350-ad4e-4240-be7a-ba35ad8750ea",
+        "aOpenAttachmentAsOwner": 200,
+        "bOpenAttachmentAsMemberNoShare": 404,
+        "bOpenAttachmentWithFilesShare": 200,
+        "bOpenAttachmentAfterShareRevoke": 404,
+        "cOpenAttachmentBeforeRemoval": 404,
         "bDirectoryAfterRemoval": 200,
-        "bComposerDeniedWhileAddressed": 0,
         "bAddressedSamples": 0,
+        "bComposerDeniedWhileAddressed": 0,
+        "bComposerEnabledWhileAddressed": 0,
         "deepLinkHeldAfterRemoval": false,
         "bPrivateTimelineRows": 0,
+        "directRelayWriteAccepted": false,
+        "directRelayWriteDenialMessage": "restricted: not a channel member",
+        "directRelayReadOk": false,
+        "directRelayReadDetail": "closed: restricted: not a channel member",
+        "directRelayReadEvents": 0,
+        "bOpenAttachmentAfterRemoval": 404,
         "bReadAfterRemoval": "zero-rows",
         "bLivenessOpenChannelReads": 200
+      }
+    },
+    {
+      "id": "f2",
+      "title": "Private-channel leak checks: search/deep-link/history/relay reads closed for C and removed B",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "ef13d96f-b427-4d89-b4c0-87b3efcc6ecd",
+        "cSearch": [
+          {
+            "term": "canary",
+            "hits": 0
+          },
+          {
+            "term": "post-removal",
+            "hits": 0
+          },
+          {
+            "term": "priv-attached",
+            "hits": 0
+          }
+        ],
+        "bSearch": [
+          {
+            "term": "canary",
+            "hits": 0
+          },
+          {
+            "term": "post-removal",
+            "hits": 0
+          },
+          {
+            "term": "priv-attached",
+            "hits": 0
+          }
+        ],
+        "ownerSuffixSearchHits": 6,
+        "ownerAttachmentSearchHits": 1,
+        "ownerAttachmentSearchFoundFile": true,
+        "ownerPrivateMessageBodyHits": 0,
+        "cDeepLinkRows": 0,
+        "cRelayReadOk": false,
+        "cRelayReadDetail": "closed: restricted: not a channel member",
+        "cRelayReadEvents": 0,
+        "bRelayReadOk": false,
+        "bRelayReadDetail": "closed: restricted: not a channel member",
+        "bRelayReadEvents": 0,
+        "ownerPositiveControlRows": 3
       }
     },
     {
@@ -198,11 +282,35 @@
       "title": "Files attachment: authorized open succeeds; revoked and unrelated users fail",
       "status": "PASS",
       "evidence": {
-        "fileId": "92b320ce-4519-4b63-9189-ed2cd3d57789",
-        "shareId": "500e15af-3cd2-4120-be82-da005bd3f062",
+        "fileId": "4dea7dae-b9f6-4d9c-9053-7afe4f76e4bc",
+        "shareId": "25c475e5-fad7-4845-9f1c-c4ae0a766ec2",
         "bOpen": 200,
         "cOpen": 404,
         "bOpenAfterRevoke": 404
+      }
+    },
+    {
+      "id": "j",
+      "title": "Restart of relay+backend+observer: history retained, sessions reconnect, posting works",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "ef53d7b7-dc2c-4123-b8fc-dc4fab0533ed",
+        "restarted": {
+          "backend": "docker restart (in place)",
+          "nginx": "docker restart (upstream re-resolve)"
+        },
+        "recreated": [
+          "buzz-relay",
+          "chat-observer"
+        ],
+        "recreatedReason": "dogfood netns sharers must reattach to the restarted backend namespace",
+        "composeProject": "accharden",
+        "historyEventIdsRetained": {
+          "msgA": true,
+          "msgB": true,
+          "uncertain": true
+        },
+        "postRestartMessageObservedByB": true
       }
     },
     {
@@ -210,7 +318,7 @@
       "title": "Disabled account loses session and Chat access",
       "status": "PASS",
       "evidence": {
-        "user": "3191b800-378a-436b-a679-097adf4c9645",
+        "user": "a2ecb454-3322-43bd-88ff-8b7f2a034518",
         "usersMeAfterDisable": 401,
         "chatChannelsAfterDisable": 401
       }
