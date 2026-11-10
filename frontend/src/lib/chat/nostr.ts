@@ -76,53 +76,74 @@ export async function signEvent(
 }
 
 export type PublishResult =
-	| { ok: true; event_id: string }
-	| { ok: false; reason: 'transport' } // socket error/timeout before an OK frame
-	| { ok: false; reason: 'rejected'; detail?: string }; // relay answered OK false (NIP-20 message)
+	| { ok: true; event_id: string; detail?: string }
+	| { ok: false; reason: 'transport' }
+	| { ok: false; reason: 'uncertain'; event_id: string; event: NostrEvent }
+	| { ok: false; reason: 'rejected'; detail?: string };
 
-/** Sign and publish one event over a NIP-42 relay session. Never throws: a
- * transport failure (timeout, socket error) resolves `{ok:false,
- * reason:'transport'}` and an explicit relay rejection resolves
- * `{ok:false, reason:'rejected'}` so callers can tell "relay down" from
- * "not admitted / blocked". */
+/** An EVENT without a definitive ACK is uncertain, never safe to re-sign. */
 export async function publishEvent(
 	relayUrl: string,
 	unsigned: Omit<NostrEvent, 'id' | 'sig'>,
+	secretKey: string,
+	onSigned?: (event: NostrEvent) => void
+): Promise<PublishResult> {
+	const event = await signEvent(unsigned, secretKey);
+	onSigned?.(event);
+	return publishSignedEvent(relayUrl, event, secretKey);
+}
+
+/** Retry the original signed bytes; NIP-42 authentication uses a separate event. */
+export async function publishSignedEvent(
+	relayUrl: string,
+	signed: NostrEvent,
 	secretKey: string
 ): Promise<PublishResult> {
-	const signed = await signEvent(unsigned, secretKey);
-	return await new Promise<PublishResult>((resolve) => {
+	if (signed.pubkey !== publicKeyOf(secretKey) || !(await verifyEvent(signed))) {
+		return { ok: false, reason: 'rejected', detail: 'Invalid event or signing identity mismatch' };
+	}
+	return new Promise<PublishResult>((resolve) => {
 		let settled = false;
-		// The relay answers a pre-auth publish with an auth-flavored OK false
-		// (NIP-42 demand). Only the FIRST such rejection is that demand; after
-		// AUTH + re-send, a further auth-flavored rejection is genuine (e.g. the
-		// relay rejected our AUTH) and must surface instead of hanging to the
-		// transport timeout. A challenge itself also marks the re-send as
-		// post-auth, even if the relay does not send a pre-auth rejection.
-		let sawAuthRejection = false;
-		let authSent = false;
-		let authRejectionTimer: ReturnType<typeof setTimeout> | undefined;
+		let sent = false;
+		let authId: string | undefined;
+		let authStarted = false;
+		let preAuthRejection: string | undefined;
+		let socket: WebSocket;
 		const finish = (result: PublishResult) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
-			if (authRejectionTimer) clearTimeout(authRejectionTimer);
-			socket.close();
+			socket?.close();
 			resolve(result);
 		};
-		const timer = setTimeout(() => finish({ ok: false, reason: 'transport' }), 10_000);
-		const socket = new WebSocket(relayUrl);
-
-		// NIP-42 flow proven against the Buzz relay: publish the event first so
-		// the relay answers with an AUTH challenge when authentication is
-		// required; authenticate, then re-send the event. An initial REQ probe
-		// does NOT provoke a challenge on the Buzz relay, so publishing without
-		// auth first would always be rejected with "auth required".
-		socket.onopen = () => {
+		const unavailable = () =>
+			finish(
+				sent
+					? { ok: false, reason: 'uncertain', event_id: signed.id, event: signed }
+					: { ok: false, reason: 'transport' }
+			);
+		const send = () => {
+			if (settled) return;
 			socket.send(JSON.stringify(['EVENT', signed]));
+			sent = true;
+		};
+		const timer = setTimeout(unavailable, 10_000);
+		try {
+			socket = new WebSocket(relayUrl);
+		} catch {
+			unavailable();
+			return;
+		}
+		socket.onopen = () => {
+			try {
+				send();
+			} catch {
+				unavailable();
+			}
 		};
 		socket.onmessage = (raw) => {
 			void (async () => {
+				if (settled) return;
 				let message: unknown;
 				try {
 					message = JSON.parse(String(raw.data));
@@ -130,7 +151,8 @@ export async function publishEvent(
 					return;
 				}
 				if (!Array.isArray(message)) return;
-				if (message[0] === 'AUTH' && typeof message[1] === 'string') {
+				if (message[0] === 'AUTH' && typeof message[1] === 'string' && !authStarted) {
+					authStarted = true;
 					const auth = await signEvent(
 						await buildUnsignedEvent(
 							NOSTR_KIND_AUTH,
@@ -139,48 +161,216 @@ export async function publishEvent(
 								['relay', relayUrl],
 								['challenge', message[1]]
 							],
-							unsigned.pubkey
+							signed.pubkey
 						),
 						secretKey
 					);
-					authSent = true;
+					if (settled) return;
+					authId = auth.id;
 					socket.send(JSON.stringify(['AUTH', auth]));
-					socket.send(JSON.stringify(['EVENT', signed]));
+					return;
 				}
-				if (message[0] === 'OK' && message[1] === signed.id) {
-					if (
-						!sawAuthRejection &&
-						message[2] === false &&
-						typeof message[3] === 'string' &&
-						message[3].toLowerCase().includes('auth')
-					) {
-						sawAuthRejection = true;
-						// A relay may deliver the pre-auth rejection after AUTH and the
-						// resend. Give the resent publish a longer ACK window before surfacing it.
-						// shortcut: ACKs share an event ID, so a late rejection is ambiguous;
-						// replace this grace period if the relay exposes correlated ACKs.
-						if (authSent) {
-							const detail = message[3];
-							authRejectionTimer = setTimeout(
-								() => finish({ ok: false, reason: 'rejected', detail }),
-								1_000
-							);
-						}
+				if (message[0] !== 'OK' || typeof message[2] !== 'boolean') return;
+				const detail = typeof message[3] === 'string' ? message[3] : undefined;
+				// authId is unset until our AUTH is sent, so this matches only the
+				// relay's OK for that event — never an unrelated or id-less frame.
+				if (typeof authId === 'string' && message[1] === authId) {
+					if (message[2]) send();
+					else finish({ ok: false, reason: 'rejected', detail });
+					return;
+				}
+				if (message[1] !== signed.id) return;
+				if (message[2]) {
+					finish({ ok: true, event_id: signed.id, detail });
+				} else if (
+					detail &&
+					/auth[- ]required|authentication required|not authenticated/i.test(detail) &&
+					!preAuthRejection
+				) {
+					// ACKs have no attempt ID: a delayed pre-auth denial cannot deny a resend.
+					preAuthRejection = detail;
+				} else {
+					finish({ ok: false, reason: 'rejected', detail });
+				}
+			})().catch(unavailable);
+		};
+		socket.onerror = unavailable;
+		socket.onclose = unavailable;
+	});
+}
+
+/** Verify the canonical ID as well as the Schnorr signature at the read boundary. */
+export async function verifyEvent(value: unknown): Promise<boolean> {
+	try {
+		const e = value as NostrEvent;
+		return (
+			typeof e.id === 'string' &&
+			/^[0-9a-f]{64}$/.test(e.id) &&
+			typeof e.pubkey === 'string' &&
+			/^[0-9a-f]{64}$/.test(e.pubkey) &&
+			typeof e.sig === 'string' &&
+			/^[0-9a-f]{128}$/.test(e.sig) &&
+			Number.isSafeInteger(e.created_at) &&
+			e.created_at >= 0 &&
+			Number.isSafeInteger(e.kind) &&
+			e.kind >= 0 &&
+			typeof e.content === 'string' &&
+			Array.isArray(e.tags) &&
+			e.tags.every((t) => Array.isArray(t) && t.every((v) => typeof v === 'string')) &&
+			e.id === (await sha256Hex(serializeForId(e))) &&
+			schnorr.verify(hexToBytes(e.sig), hexToBytes(e.id), hexToBytes(e.pubkey))
+		);
+	} catch {
+		return false;
+	}
+}
+
+export interface RelayEventFilter {
+	kinds: number[];
+	'#d'?: string[];
+	'#h'?: string[];
+	'#e'?: string[];
+	search?: string;
+	ids?: string[];
+	limit?: number;
+	/** NIP-01 `until` (inclusive, seconds): window the history read for
+	 *  older-than-oldest pagination. */
+	until?: number;
+}
+
+export type RelayQueryResult =
+	| { ok: true; events: NostrEvent[] }
+	| { ok: false; reason: 'transport' | 'rejected' | 'invalid'; detail?: string };
+
+/** Subject-authenticated historical read. Snapshots require the trusted relay signer. */
+export async function queryRelayEvents(
+	relayUrl: string,
+	filter: RelayEventFilter,
+	secretKey: string,
+	expectedRelayPubkey: string
+): Promise<RelayQueryResult> {
+	if (
+		!/^[0-9a-f]{64}$/.test(expectedRelayPubkey) ||
+		!filter.kinds.length ||
+		filter.kinds.some((k) => !Number.isSafeInteger(k) || k < 0) ||
+		(filter.limit !== undefined && (!Number.isSafeInteger(filter.limit) || filter.limit < 1)) ||
+		(filter.until !== undefined && (!Number.isSafeInteger(filter.until) || filter.until < 0))
+	) {
+		return { ok: false, reason: 'invalid' };
+	}
+	const limit = Math.min(Math.max(filter.limit ?? 1000, 1), 1000);
+	const pubkey = publicKeyOf(secretKey);
+	return new Promise((resolve) => {
+		let socket: WebSocket;
+		let settled = false;
+		let authStarted = false;
+		let authId: string | undefined;
+		let authenticated = false;
+		let received = 0;
+		let frames = 0;
+		const subscription = crypto.randomUUID();
+		const events = new Map<string, NostrEvent>();
+		const finish = (result: RelayQueryResult) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			socket?.close();
+			resolve(result);
+		};
+		const unavailable = () => finish({ ok: false, reason: 'transport' });
+		const request = () => socket.send(JSON.stringify(['REQ', subscription, { ...filter, limit }]));
+		const timer = setTimeout(unavailable, 10_000);
+		try {
+			socket = new WebSocket(relayUrl);
+		} catch {
+			unavailable();
+			return;
+		}
+		// Buzz issues its challenge proactively; the initial REQ also supports other NIP-42 relays.
+		socket.onopen = () => {
+			try {
+				request();
+			} catch {
+				unavailable();
+			}
+		};
+		let processing = Promise.resolve();
+		socket.onmessage = (raw) => {
+			if (settled) return;
+			if (++frames > 1100 || String(raw.data).length > 1_048_576) {
+				finish({ ok: false, reason: 'invalid' });
+				return;
+			}
+			processing = processing
+				.then(async () => {
+					if (settled) return;
+					let frame: unknown;
+					try {
+						frame = JSON.parse(String(raw.data));
+					} catch {
 						return;
 					}
-					finish(
-						message[2] === true
-							? { ok: true, event_id: signed.id }
-							: {
-									ok: false,
-									reason: 'rejected',
-									detail: typeof message[3] === 'string' ? message[3] : undefined
-								}
-					);
-				}
-			})().catch(() => finish({ ok: false, reason: 'transport' }));
+					if (!Array.isArray(frame)) return;
+					if (frame[0] === 'AUTH' && typeof frame[1] === 'string' && !authStarted) {
+						authStarted = true;
+						const auth = await signEvent(
+							await buildUnsignedEvent(
+								NOSTR_KIND_AUTH,
+								'',
+								[
+									['relay', relayUrl],
+									['challenge', frame[1]]
+								],
+								pubkey
+							),
+							secretKey
+						);
+						if (settled) return;
+						authId = auth.id;
+						socket.send(JSON.stringify(['AUTH', auth]));
+					} else if (frame[0] === 'OK' && typeof authId === 'string' && frame[1] === authId) {
+						if (frame[2] !== true)
+							finish({
+								ok: false,
+								reason: 'rejected',
+								detail: typeof frame[3] === 'string' ? frame[3] : undefined
+							});
+						else {
+							authenticated = true;
+							request();
+						}
+					} else if (frame[0] === 'CLOSED' && frame[1] === subscription) {
+						const detail = typeof frame[2] === 'string' ? frame[2] : undefined;
+						if (!authenticated && detail?.toLowerCase().includes('auth')) return;
+						finish({ ok: false, reason: 'rejected', detail });
+					} else if (frame[0] === 'EVENT' && frame[1] === subscription && authenticated) {
+						const event = frame[2] as NostrEvent;
+						if (
+							++received > limit ||
+							!(await verifyEvent(event)) ||
+							!filter.kinds.includes(event.kind) ||
+							(event.kind >= 39000 &&
+								event.kind <= 39003 &&
+								event.pubkey !== expectedRelayPubkey) ||
+							(filter.ids && !filter.ids.includes(event.id)) ||
+							(filter['#d'] &&
+								!event.tags.some((t) => t[0] === 'd' && filter['#d']!.includes(t[1]))) ||
+							(filter['#h'] &&
+								!event.tags.some((t) => t[0] === 'h' && filter['#h']!.includes(t[1]))) ||
+							(filter['#e'] &&
+								!event.tags.some((t) => t[0] === 'e' && filter['#e']!.includes(t[1])))
+						) {
+							finish({ ok: false, reason: 'invalid' });
+							return;
+						}
+						events.set(event.id, event);
+					} else if (frame[0] === 'EOSE' && frame[1] === subscription && authenticated) {
+						finish({ ok: true, events: [...events.values()] });
+					}
+				})
+				.catch(unavailable);
 		};
-		socket.onerror = () => finish({ ok: false, reason: 'transport' });
-		socket.onclose = () => finish({ ok: false, reason: 'transport' });
+		socket.onerror = unavailable;
+		socket.onclose = unavailable;
 	});
 }

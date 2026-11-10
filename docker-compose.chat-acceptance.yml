@@ -1,0 +1,39 @@
+# Disposable local Chat product-acceptance override (PR #480 acceptance runs).
+# =============================================================================
+# Loaded AFTER docker-compose.dogfood.yml via ELEMBRA_COMPOSE_EXTRA_FILE so a
+# disposable acceptance stack can run beside other local stacks without port
+# collisions. Every host-published port is remapped to a unique loopback port:
+#
+#   nginx (:80 default)                 -> 127.0.0.1:18080
+#   buzz-relay ws (:7447 via backend)   -> 127.0.0.1:17447
+#   relay health (:8088 via backend)    -> 127.0.0.1:18088
+#   relay metrics (:9102 via backend)   -> 127.0.0.1:19102
+#   postgres  -> RUSTSHARE_POSTGRES_HOST_PORT (default 5432)  -> 45432 via .env
+#   rustfs    -> RUSTSHARE_RUSTFS_*_HOST_PORT (default 9000/9001) -> 49000/49001
+#
+# The relay listener itself is re-pinned to 0.0.0.0:17447 so the SAME
+# host:port (localhost:17447) is used by the in-container gateway (SSRF-guard
+# pinned loopback), the chat-observer, and the browsers under test. The relay
+# binds its seeded community to that Host, so all clients land in one
+# community (same ADR-0034 invariant as the dogfood layout's localhost:7447).
+#
+# Teardown: docker compose -p <project> -f docker-compose.yml \
+#   -f docker-compose.alpha.yml -f docker-compose.dogfood.yml \
+#   -f docker-compose.chat-acceptance.yml --profile chat down -v
+# =============================================================================
+
+services:
+  backend:
+    ports: !override
+      - "127.0.0.1:17447:17447"
+      - "127.0.0.1:18088:18088"
+      - "127.0.0.1:19102:19102"
+
+  buzz-relay:
+    environment:
+      BUZZ_BIND_ADDR: 0.0.0.0:17447
+      RELAY_URL: ws://localhost:17447
+
+  nginx:
+    ports: !override
+      - "127.0.0.1:18080:80"

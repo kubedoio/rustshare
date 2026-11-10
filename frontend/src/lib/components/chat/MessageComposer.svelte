@@ -1,17 +1,26 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import {
 		buildUnsignedEvent,
 		publishEvent,
+		publishSignedEvent,
 		publicKeyOf,
 		NOSTR_KIND_STREAM_MESSAGE,
 		NOSTR_KIND_TEXT,
 		isUuid,
-		type NostrTag
+		type NostrTag,
+		type NostrEvent
 	} from '$lib/chat/nostr';
+	import {
+		buildReplyTags,
+		draftStorageKey,
+		parseThreadRefs,
+		type ThreadParentRef
+	} from '$lib/chat/conversations';
 	import { getSigningKey } from '$lib/chat/session';
 	import AttachmentPicker from './AttachmentPicker.svelte';
 	import ChatIdentityMenu from './ChatIdentityMenu.svelte';
-	import { Send, Smile } from 'lucide-svelte';
+	import { Send, Smile, X } from 'lucide-svelte';
 
 	interface Props {
 		relayUrl: string;
@@ -21,6 +30,12 @@
 		// assumes the Chat identity session is already unlocked and only verifies
 		// that the in-memory key matches this pubkey before signing.
 		boundPubkey: string;
+		postingAllowed?: boolean;
+		observedEventIds?: string[];
+		// Active reply target: when set, sends carry the canonical NIP-10
+		// root/reply tags and the draft is scoped to the thread root.
+		replyTarget?: ThreadParentRef | null;
+		onCancelReply?: () => void;
 		onSendFailure: (message: string) => void;
 		onSent?: (eventId: string) => void;
 	}
@@ -30,18 +45,147 @@
 		channelId,
 		channelName,
 		boundPubkey,
+		postingAllowed = false,
+		observedEventIds = [],
+		replyTarget = null,
+		onCancelReply = () => {},
 		onSendFailure,
 		onSent = () => {}
 	}: Props = $props();
 
 	let draft = $state('');
 	let sending = $state(false);
+	let pendingEvent = $state<NostrEvent | null>(null);
+	let loadedScope = $state('');
+	let storageError = $state('');
 	let attachmentTag = $state<NostrTag | null>(null);
 	let textarea = $state<HTMLTextAreaElement | null>(null);
 
+	const threadRootId = $derived(replyTarget?.rootId ?? null);
+	const storageKey = $derived(draftStorageKey(relayUrl, boundPubkey, channelId, threadRootId));
+
+	function saveDraft(key = storageKey): void {
+		try {
+			if (!draft && !attachmentTag && !pendingEvent) sessionStorage.removeItem(key);
+			else sessionStorage.setItem(key, JSON.stringify({ draft, attachmentTag, pendingEvent }));
+			storageError = '';
+		} catch {
+			storageError = 'Browser storage unavailable. Keep this tab open to preserve your draft.';
+			throw new Error('Cannot preserve the signed message safely. Browser storage is unavailable.');
+		}
+	}
+
+	function pendingMatchesScope(event: NostrEvent): boolean {
+		if (isUuid(channelId)) {
+			if (event.kind !== 9 || !event.tags.some((t) => t[0] === 'h' && t[1] === channelId))
+				return false;
+		} else if (event.kind !== 1) return false;
+		if (threadRootId === null) return true;
+		return parseThreadRefs(event).rootId === threadRootId;
+	}
+
+	$effect(() => {
+		const scope = storageKey;
+		untrack(() => {
+			draft = '';
+			attachmentTag = null;
+			pendingEvent = null;
+			try {
+				// Upgrade path: drafts saved before thread scoping used the
+				// three-element key; read them as channel-level drafts and
+				// migrate: write the new key and drop the legacy one, otherwise
+				// clearing the new draft would resurrect the old channel draft.
+				const legacyScope = `elembra.chat.draft:${JSON.stringify([relayUrl, boundPubkey, channelId])}`;
+				const current = sessionStorage.getItem(scope);
+				const legacyRaw =
+					current === null && threadRootId === null ? sessionStorage.getItem(legacyScope) : null;
+				const raw = current ?? legacyRaw;
+				if (raw) {
+					const saved = JSON.parse(raw);
+					if (typeof saved.draft === 'string') draft = saved.draft;
+					if (
+						Array.isArray(saved.attachmentTag) &&
+						saved.attachmentTag.every((v: unknown) => typeof v === 'string' || v === null)
+					)
+						attachmentTag = saved.attachmentTag;
+					const event = saved.pendingEvent;
+					if (
+						event &&
+						event.pubkey === boundPubkey &&
+						typeof event.id === 'string' &&
+						Array.isArray(event.tags) &&
+						pendingMatchesScope(event)
+					)
+						pendingEvent = event;
+				}
+				if (legacyRaw !== null) {
+					sessionStorage.setItem(scope, raw as string);
+					sessionStorage.removeItem(legacyScope);
+				}
+			} catch {
+				storageError = 'Saved draft unavailable. Browser storage may be disabled.';
+			}
+			loadedScope = scope;
+		});
+	});
+
+	$effect(() => {
+		const scope = storageKey;
+		const ready = loadedScope === scope;
+		// Track the draft state without letting storage feedback rerun this effect.
+		void draft;
+		void attachmentTag;
+		void pendingEvent;
+		if (ready)
+			untrack(() => {
+				try {
+					saveDraft(scope);
+				} catch {
+					/* Displayed above. */
+				}
+			});
+	});
+
+	$effect(() => {
+		if (pendingEvent && observedEventIds.includes(pendingEvent.id)) {
+			pendingEvent = null;
+			draft = '';
+			attachmentTag = null;
+			untrack(() => {
+				try {
+					saveDraft();
+				} catch {
+					/* Displayed above. */
+				}
+			});
+		}
+	});
+
+	function discardPending(): void {
+		if (
+			!window.confirm(
+				'The message may already exist on the relay. Discarding this local copy does not delete it. Continue?'
+			)
+		)
+			return;
+		pendingEvent = null;
+		draft = '';
+		attachmentTag = null;
+		try {
+			saveDraft();
+		} catch {
+			/* Displayed above. */
+		}
+		onSendFailure('');
+	}
+
 	const signingKey = $derived(getSigningKey());
 	const canSend = $derived(
-		!sending && signingKey !== null && (draft.trim().length > 0 || attachmentTag !== null)
+		postingAllowed &&
+			!sending &&
+			pendingEvent === null &&
+			signingKey !== null &&
+			(draft.trim().length > 0 || attachmentTag !== null)
 	);
 
 	function adjustHeight(): void {
@@ -52,10 +196,13 @@
 		textarea.style.height = `${nextHeight}px`;
 	}
 
-	async function send(): Promise<void> {
-		if (sending) return;
+	async function send(retry = false): Promise<void> {
+		if (!postingAllowed || sending || (pendingEvent !== null && !retry)) return;
+		const scope = storageKey;
+		const author = boundPubkey;
+		const endpoint = relayUrl;
 		const content = draft.trim();
-		if (!content && !attachmentTag) return;
+		if (!content && !attachmentTag && !pendingEvent) return;
 
 		const secretKey = signingKey;
 		if (!secretKey) {
@@ -69,54 +216,117 @@
 		// so the stream publish is gated on the active channel id being a canonical
 		// UUID. Name-based channels (observation-derived ids like 'general') fall
 		// back to a legacy kind-1 note with no h tag, served by the observation
-		// path. Thread/reply e-tags are a later feature (issue #243), so no thread
-		// tags are emitted here.
+		// path. Replies add the canonical NIP-10 root/reply e-tags; a reply
+		// without a valid thread parent is never published.
 		const streamScoped = isUuid(channelId);
 		const tags: NostrTag[] = [];
 		if (streamScoped) tags.push(['h', channelId]);
+		if (replyTarget) {
+			const threadTags = buildReplyTags(replyTarget);
+			if (!threadTags) {
+				onSendFailure('Reply target is invalid. Cancel the reply and try again.');
+				return;
+			}
+			tags.push(...threadTags);
+		}
 		if (attachmentTag) tags.push(attachmentTag);
 
 		sending = true;
 		try {
-			if (publicKeyOf(secretKey) !== boundPubkey) {
+			if (publicKeyOf(secretKey) !== author) {
 				onSendFailure('Local Chat key does not match your bound Buzz identity.');
 				return;
 			}
 
-			const result = await publishEvent(
-				relayUrl,
-				await buildUnsignedEvent(
-					streamScoped ? NOSTR_KIND_STREAM_MESSAGE : NOSTR_KIND_TEXT,
-					content,
-					tags,
-					boundPubkey
-				),
-				secretKey
-			);
+			const result =
+				retry && pendingEvent
+					? await publishSignedEvent(endpoint, pendingEvent, secretKey)
+					: await publishEvent(
+							endpoint,
+							await buildUnsignedEvent(
+								streamScoped ? NOSTR_KIND_STREAM_MESSAGE : NOSTR_KIND_TEXT,
+								content,
+								tags,
+								boundPubkey
+							),
+							secretKey,
+							(event) => {
+								if (!postingAllowed || storageKey !== scope || getSigningKey() !== secretKey)
+									throw new Error('Chat session changed before sending.');
+								pendingEvent = event;
+								saveDraft(scope);
+							}
+						);
+
+			if (storageKey !== scope || getSigningKey() !== secretKey) return;
 
 			if (result.ok) {
+				pendingEvent = null;
 				draft = '';
 				attachmentTag = null;
 				requestAnimationFrame(adjustHeight);
 				onSendFailure('');
 				onSent(result.event_id);
+			} else if (result.reason === 'uncertain') {
+				pendingEvent = result.event;
+				saveDraft(scope);
+				onSendFailure(
+					'Relay acknowledgement missing. The message may have been accepted. Retry only the same signed message.'
+				);
 			} else if (result.reason === 'rejected') {
+				if (!retry) pendingEvent = null;
 				const detail = result.detail ? `: ${result.detail.slice(0, 200)}` : '';
-				onSendFailure(`Relay rejected the message${detail}`);
+				onSendFailure(
+					retry
+						? `Relay rejected this retry${detail}. The original submission is still uncertain.`
+						: `Relay rejected the message${detail}`
+				);
 			} else {
-				onSendFailure('Relay unreachable');
+				// A retry's previous submission is still uncertain even if reconnect fails.
+				if (!retry) pendingEvent = null;
+				onSendFailure(
+					retry
+						? 'Relay unreachable. Previous message acceptance is still uncertain.'
+						: 'Relay unreachable'
+				);
 			}
 		} catch (err) {
+			if (storageKey !== scope || getSigningKey() !== secretKey) return;
 			// Defensive: publicKeyOf or buildUnsignedEvent can throw on a malformed
 			// key; surface it instead of leaving the user with no feedback.
 			onSendFailure(err instanceof Error ? err.message : 'Send failed — try again');
 		} finally {
 			sending = false;
+			if (storageKey === scope) {
+				try {
+					saveDraft(scope);
+				} catch {
+					/* Displayed above. */
+				}
+			}
 		}
 	}
 </script>
 
 <div class="border-t border-base-300 bg-base-100 p-3">
+	{#if storageError}<p role="alert" class="mb-2 text-sm text-warning">{storageError}</p>{/if}
+	{#if pendingEvent && !sending}
+		<div role="status" class="mb-2 text-sm text-warning">
+			<p>Message acceptance is uncertain. Editing is paused to prevent duplicate messages.</p>
+			<button
+				type="button"
+				class="btn btn-sm"
+				disabled={!postingAllowed || signingKey === null}
+				onclick={() => send(true)}>Retry same message</button
+			>
+			<button type="button" class="btn btn-ghost btn-sm" onclick={discardPending}
+				>Discard local copy</button
+			>
+		</div>
+	{/if}
+	{#if !postingAllowed}<p role="status" class="mb-2 text-sm text-base-content/60">
+			Posting unavailable until your channel permissions are confirmed.
+		</p>{/if}
 	{#if attachmentTag}
 		<div
 			class="mb-2 inline-flex items-center gap-2 rounded-lg bg-base-200 px-2 py-1 text-xs text-base-content/80"
@@ -125,9 +335,30 @@
 			<button
 				type="button"
 				class="text-error hover:underline"
+				disabled={sending || pendingEvent !== null}
 				onclick={() => (attachmentTag = null)}
 			>
 				remove
+			</button>
+		</div>
+	{/if}
+	{#if replyTarget}
+		<div
+			class="mb-2 inline-flex items-center gap-2 rounded-lg border-l-2 border-primary bg-base-200 px-2 py-1 text-xs text-base-content/80"
+			role="status"
+		>
+			<span class="max-w-[24rem] truncate">
+				Replying in thread {threadRootId ? threadRootId.slice(0, 8) : ''}
+			</span>
+			<button
+				type="button"
+				class="inline-flex items-center gap-0.5 text-base-content/60 hover:underline"
+				aria-label="Cancel reply"
+				disabled={sending || pendingEvent !== null}
+				onclick={onCancelReply}
+			>
+				<X size={12} />
+				cancel
 			</button>
 		</div>
 	{/if}
@@ -141,6 +372,7 @@
 			placeholder="Message #{channelName}"
 			aria-label="Message text"
 			bind:value={draft}
+			disabled={sending || pendingEvent !== null}
 			oninput={adjustHeight}
 			onkeydown={(e) => {
 				if (e.key === 'Enter' && !e.shiftKey) {
@@ -152,7 +384,10 @@
 
 	<div class="mt-2 flex items-center justify-between px-1">
 		<div class="flex items-center gap-1">
-			<AttachmentPicker onSelect={(tag) => (attachmentTag = tag)} iconOnly />
+			{#if !sending && pendingEvent === null}<AttachmentPicker
+					onSelect={(tag) => (attachmentTag = tag)}
+					iconOnly
+				/>{/if}
 			<button
 				type="button"
 				class="btn h-8 w-8 rounded-lg btn-ghost p-0 btn-xs"
@@ -170,7 +405,7 @@
 			class="btn inline-flex items-center gap-1.5 rounded-xl px-4 btn-primary btn-sm"
 			disabled={!canSend}
 			aria-label="Send message"
-			onclick={send}
+			onclick={() => send()}
 		>
 			{#if sending}
 				<span class="loading loading-xs loading-spinner"></span>

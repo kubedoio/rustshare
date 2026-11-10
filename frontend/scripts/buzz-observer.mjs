@@ -219,12 +219,33 @@ function contextForEvent(event, channelId, override = {}) {
 		community_id: state.community,
 		channel_id: h?.[1] || tag('channel')?.[1] || channelId,
 		channel_kind: 'workspace',
-		thread_root_id: null,
+		// NIP-10 thread root per the pinned fork's ingest: the relay accepts a
+		// root marker, or a bare reply marker whose parent is the root of its
+		// own thread (bare replies onto threaded parents are rejected), so an
+		// accepted event's thread root always resolves from its own tags.
+		thread_root_id: threadRootFor(event),
 		message_id: event.id,
 		event_type: 'created',
 		supersedes_event_id: null,
 		...override
 	};
+}
+
+function threadRootFor(event) {
+	let root = null;
+	let reply = null;
+	for (const tag of event.tags ?? []) {
+		if (
+			!Array.isArray(tag) ||
+			tag[0] !== 'e' ||
+			typeof tag[1] !== 'string' ||
+			!hex64Re.test(tag[1])
+		)
+			continue;
+		if (tag[3] === 'root') root = tag[1];
+		else if (tag[3] === 'reply') reply = tag[1];
+	}
+	return root ?? reply;
 }
 
 function forwardEvent(event, context = contextForEvent(event)) {

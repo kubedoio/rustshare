@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import type { ChatChannelInfo } from '$lib/api/chat';
 	import { Hash, Lock } from 'lucide-svelte';
 
@@ -7,9 +8,10 @@
 		loading: boolean;
 		selectedChannelId: string | null;
 		onSelect: (channelId: string) => void;
+		header?: Snippet;
 	}
 
-	let { channels, loading, selectedChannelId, onSelect }: Props = $props();
+	let { channels, loading, selectedChannelId, onSelect, header }: Props = $props();
 
 	function displayName(channel: ChatChannelInfo): string {
 		return channel.name ?? channel.channel_id;
@@ -24,6 +26,7 @@
 	<div class="px-3 py-3">
 		<h2 class="text-xs font-bold tracking-wider text-base-content/50 uppercase">Channels</h2>
 	</div>
+	{@render header?.()}
 	<div class="flex-1 overflow-y-auto px-2 pb-2">
 		{#if loading}
 			<ul class="space-y-1" aria-busy="true" aria-label="Loading channels">
