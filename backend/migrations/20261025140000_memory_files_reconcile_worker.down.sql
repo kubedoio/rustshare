@@ -1,3 +1,0 @@
-DROP INDEX memory_files_reconcile_sources_idx;
-DROP TABLE memory_files_reconcile_discovery;
-DROP TABLE memory_files_reconcile_jobs;

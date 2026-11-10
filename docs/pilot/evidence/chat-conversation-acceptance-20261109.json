@@ -1,0 +1,127 @@
+{
+  "generatedAt": "2026-11-09T20:44:10.346Z",
+  "baseUrl": "http://127.0.0.1:18080",
+  "relayUrl": "ws://localhost:17447",
+  "provenance": {
+    "gitSha": "5513f5bd9500118e65905634a85e490a5c4430b4",
+    "stack": "accharden (conversation acceptance at 5513f5bd, relay ws://localhost:17447, candidate buzz-elembra-candidate:8ce0b7bd)",
+    "images": {
+      "backend": {
+        "image": "accharden-backend",
+        "repoDigest": "accharden-backend@sha256:225c19221a447343837cb54e898e71c43a1af7f116568898eb7bcfe1c07ab743",
+        "imageId": "sha256:225c19221a447343837cb54e898e71c43a1af7f116568898eb7bcfe1c07ab743"
+      },
+      "chat-observer": {
+        "image": "accharden-chat-observer",
+        "repoDigest": "accharden-chat-observer@sha256:50466d70fecc0a278bcabb5e0d94038125254b66b214ff00a865be1907d4fa28",
+        "imageId": "sha256:50466d70fecc0a278bcabb5e0d94038125254b66b214ff00a865be1907d4fa28"
+      },
+      "postgres": {
+        "image": "pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b",
+        "repoDigest": "pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b",
+        "imageId": "sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b"
+      },
+      "rustfs": {
+        "image": "rustfs/rustfs@sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a",
+        "repoDigest": "rustfs/rustfs@sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a",
+        "imageId": "sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a"
+      },
+      "nginx": {
+        "image": "nginx@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606",
+        "repoDigest": "nginx@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606",
+        "imageId": "sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606"
+      },
+      "buzz-relay": {
+        "image": "buzz-elembra-candidate:8ce0b7bd",
+        "repoDigest": "buzz-elembra-candidate@sha256:ac966d7723ae416d42045f149f06828a61aa1aae2c946b420bc2dfaacecf4c79",
+        "imageId": "sha256:ac966d7723ae416d42045f149f06828a61aa1aae2c946b420bc2dfaacecf4c79"
+      }
+    }
+  },
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+  "communityId": "cef44f5e-fc97-49f4-bec9-48ca1be3991e",
+  "relayPubkey": "41d7c7643e2cb99029010a2913ee45b3d7a7d43d5730b1120ca4ce3bda4e90db",
+  "users": {
+    "a": {
+      "username": "conv_a_mw9pxyby9701",
+      "email": "conv_a_mw9pxyby9701@acceptance.local",
+      "userId": "ab364329-c8c3-4af4-a0a1-56c5b85ac9ff",
+      "pubkey": "b1f8c9743f063f831602edf17e650f2c90c762017a89c5cd92f53a60bfa4fe50"
+    },
+    "b": {
+      "username": "conv_b_mw9pxyby9701",
+      "email": "conv_b_mw9pxyby9701@acceptance.local",
+      "userId": "914ce887-9213-4c6b-8a3d-d6fe2ce63d5f",
+      "pubkey": "9050f49292f900d992210d13c5d5fddfa5b4876e4213983ff6fd8c3718fd1e41"
+    },
+    "c": {
+      "username": "conv_c_mw9pxyby9701",
+      "email": "conv_c_mw9pxyby9701@acceptance.local",
+      "userId": "7f1e0dca-07bc-4619-91c6-1ffe96666b65",
+      "pubkey": "9eca7cfbf48fda6ded7026b93d9ebe78cde0d3b6a22dea7ed2dc6f04b9c4e60c"
+    }
+  },
+  "channels": {
+    "open": {
+      "id": "8ab47815-6eec-4869-bb5e-81feb6cd6c63",
+      "name": "conv-open-mw9pxyby9701"
+    }
+  },
+  "eventIds": {
+    "root": "24d3507d957984136a0ea841e1c7c6d64602c88da0d4f332b62dc2f42ae1fa9c",
+    "replyOne": "096630f7f02969fbc0a855f49664e718d02b238797fc0b6a0dea3f6d85f5a2aa",
+    "replyTwo": "7efa36c5eaa912f256c41e4ee508c2d809f06c777607f35963df2f5fe4275278"
+  },
+  "matrix": [
+    {
+      "id": "bind",
+      "title": "Bound A/B/C; decrypted key backups match bound pubkeys",
+      "status": "PASS",
+      "evidence": {
+        "pubkeys": {
+          "a": "b1f8c9743f063f831602edf17e650f2c90c762017a89c5cd92f53a60bfa4fe50",
+          "b": "9050f49292f900d992210d13c5d5fddfa5b4876e4213983ff6fd8c3718fd1e41",
+          "c": "9eca7cfbf48fda6ded7026b93d9ebe78cde0d3b6a22dea7ed2dc6f04b9c4e60c"
+        }
+      }
+    },
+    {
+      "id": "a",
+      "title": "Open channel created and discovered by both identities",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "8ab47815-6eec-4869-bb5e-81feb6cd6c63",
+        "channelName": "conv-open-mw9pxyby9701"
+      }
+    },
+    {
+      "id": "reply",
+      "title": "Reply published with exact NIP-10 root/reply tags and author",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "8ab47815-6eec-4869-bb5e-81feb6cd6c63",
+        "rootEventId": "24d3507d957984136a0ea841e1c7c6d64602c88da0d4f332b62dc2f42ae1fa9c",
+        "replyEventId": "096630f7f02969fbc0a855f49664e718d02b238797fc0b6a0dea3f6d85f5a2aa",
+        "replyAuthor": "9050f49292f900d992210d13c5d5fddfa5b4876e4213983ff6fd8c3718fd1e41",
+        "tags": {
+          "root": "24d3507d957984136a0ea841e1c7c6d64602c88da0d4f332b62dc2f42ae1fa9c",
+          "reply": "24d3507d957984136a0ea841e1c7c6d64602c88da0d4f332b62dc2f42ae1fa9c"
+        }
+      }
+    },
+    {
+      "id": "thread",
+      "title": "Thread view groups replies by root; nested reply ancestry exact",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "8ab47815-6eec-4869-bb5e-81feb6cd6c63",
+        "threadRootId": "24d3507d957984136a0ea841e1c7c6d64602c88da0d4f332b62dc2f42ae1fa9c",
+        "nestedEventId": "7efa36c5eaa912f256c41e4ee508c2d809f06c777607f35963df2f5fe4275278",
+        "tags": {
+          "root": "24d3507d957984136a0ea841e1c7c6d64602c88da0d4f332b62dc2f42ae1fa9c",
+          "reply": "096630f7f02969fbc0a855f49664e718d02b238797fc0b6a0dea3f6d85f5a2aa"
+        }
+      }
+    }
+  ]
+}

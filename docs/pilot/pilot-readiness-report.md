@@ -2,7 +2,102 @@
 
 ## Conclusion: NOT READY
 
-## Latest exact-candidate workflow update (2026-10-06)
+## Elembra WebUI deployment execution (2026-11-06)
+
+- **Decision: POC NOT READY.** The public app is reachable at
+  `https://app.rustshare.io`; HTTPS, WSS, NIP-11, `/health/ready`, and all nine
+  Elembra/Buzz service health checks passed. The Chat observer is connected,
+  authenticated, community-discovered, and ready.
+- PR #467 (public relay routing) merged as `a1c1934b035899a29b691e3a201ed5086646ab12`.
+  PR #468 fixes the deployed publish-ack ordering defect: relay-accepted
+  messages were displayed as rejected in the browser. It merged as
+  `645c19f14965c95b71697c71399e727be2b4c1b5` after fresh approval on head
+  `af332f10881cbc7bfabfdb1c787d5be2596b9254` and all required checks passed.
+  Its focused test passes (12/12), including a 300 ms delayed relay ACK. The fix
+  is merged but not yet deployed.
+- The active backend source checkout is `08173b3ad223b7bd41a9ba055a831ec60f240b03`
+  with an uncommitted migration overlay. Running backend image ID is
+  `sha256:afbeae6555191470f575f6e8da827575b6d3731e921a17719548ccf3dffaebbc`;
+  OCI source revision is `unknown`. No replacement backend was deployed.
+- Migration reconciliation is in PR #470, commit
+  `c827e0fffda2d09d506e29540aeceb2da7f9afbd`: it restores migration
+  `20261101100000` to the exact SHA-384 checksum stored in the backup database,
+  includes pending `20261103100000_managed_chat_identity_operations`, and moves
+  actor-attribution predicates to new forward migration `20261106183700`.
+  A clean disposable database applied all 130 migrations, including both
+  forward migrations. A restored-copy upgrade using the exact-SHA image
+  `rustshare-backend@sha256:bdf8673aca4fc99e71761800efe49f6bc1050c10f8d93ee4a8b09ca134a55592`
+  also applied all 130 migrations and reached healthy backend state. This is
+  isolated migration evidence only; PR #470 merged as
+  `44a98355c3ccdbc21fdffbfd1dfc1672428788ff` after approval and required CI
+  passed. The candidate image is not deployed.
+- Pinned Buzz relay image:
+  `ghcr.io/kubedoio/buzz-elembra@sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a`.
+  Server-managed signing and publishing remain disabled. The OCI image revision
+  and digest for the running backend remain unresolved.
+- Administrator recovery succeeded after the approved full cleanup: the
+  configured administrator logged in over the public HTTPS browser and its
+  admin authorization returned HTTP 200. No authentication or tenant security
+  controls were weakened. The test used the fresh deployment database; the
+  pre-cleanup backup contains a different administrator hash.
+- Chat was enabled through the administrator API and automatic workspace and
+  community mapping was present. Two separate public-origin browser profiles
+  bound distinct local identities and were admitted. C-to-D event
+  `2d95367ccdd543ea287a07c663bb3528b6f2ee213c43b8724fb89c3870180f44` and
+  D-to-C event `ba7b3bd64cd91e9c9a10d42a441ad175519e51257a17160afe126237ef7de3ca`
+  had matching author keys and verified signatures; the observer recorded both.
+  Both browser histories survived reload and backend/relay/observer restart.
+  The browser's send UI incorrectly showed “Relay rejected” for successful
+  publishes, so the current deployed end-user delivery-state assertion remains
+  **FAIL** pending release of #468 and a live rerun.
+- Private channel: hidden from the non-member channel list, but there was no
+  authorized member message to probe and the unauthorized message query
+  returned HTTP 200 with an empty result. Private-channel denial is therefore
+  **UNVERIFIED**, not PASS.
+- Files reference: the owner opened the referenced upload (HTTP 200, exact bytes
+  matched); another user received HTTP 404 `resource unavailable`. **PASS**.
+  User D's Chat principal was revoked and account disabled: its existing session
+  and Chat status returned HTTP 401, and new login returned HTTP 403 while
+  user C remained active. After the two-user run, C was also revoked and
+  disabled, E was disabled, and C's existing browser session returned HTTP 401;
+  the administrator still logs in. **PASS**.
+- Notes/Files: a public-browser note was edited to H1 “Elembra H1 Independence
+  Check”. Its Files name remained `note.md` at
+  `/Workspace/Notes/Untitled Note/note.md`. The disposable test note was deleted.
+  **PASS**.
+- A fresh full `--with-chat` backup at
+  `/tmp/elembra-poc-backups-current/20261106T191748Z` passed checksum and
+  structural verification. Its manifest records `CHAT_BACKUP=true`, and the
+  bundle includes application PostgreSQL/RustFS plus Buzz PostgreSQL/RustFS.
+  It remains same-host storage; the deployment secrets are intentionally
+  separate and no off-host copy of data or encrypted identities is evidenced.
+- An isolated core restore of that fresh snapshot passed using the exact-SHA
+  backend candidate: authenticated admin login and root Files smoke checks
+  passed; all 130 migrations were applied and backend health was green. Image
+  ID/digest was
+  `sha256:bdf8673aca4fc99e71761800efe49f6bc1050c10f8d93ee4a8b09ca134a55592`
+  from source `c827e0fffda2d09d506e29540aeceb2da7f9afbd`. A separate isolated
+  browser check created and saved a Note, edited its Markdown H1 while keeping
+  the Files path `/Workspace/Notes/Untitled Note/note.md`, opened it in Files,
+  and removed the disposable Note: Notes/Files after core restore **PASS**.
+  The repository restore drill does not restore Buzz services, so Buzz history,
+  browser identity, and full Elembra/Buzz recovery remain **UNVERIFIED**.
+  The isolated stack was removed and production volumes were not changed.
+  Off-host storage and rollback validation also remain incomplete. An earlier
+  attempt using the pre-cleanup backup failed admin login (401); that result is
+  superseded for core restore by the verified current snapshot.
+- The approved cleanup reset the active database/storage and generated a fresh
+  Chat identity; the pre-cleanup backup is retained. Current post-reset
+  operational evidence does not substitute for an off-host backup or rollback
+  drill. Current deployment uses `./scripts/elembra.sh up`.
+- Deferred issues stay open with recorded statuses: #442 desktop
+  interoperability **UNVERIFIED**; #458 execution/artifact **PASS**, independent
+  acceptance **PENDING**; #460 upstream remediation **UNKNOWN/BLOCKED**. These
+  are not represented as passed prerequisites. External audit, native Desktop,
+  server-managed signing/publishing, and unverified migrations remain deferred.
+
+
+## Historical exact-candidate workflow update (2026-10-06; superseded for current acceptance)
 
 - Candidate source SHA: `1b4aeb18c9578f225e732ff44225ea6df54a874a`.
 - [Pilot Release run 37461268485](https://github.com/kubedoio/rustshare/actions/runs/37461268485)

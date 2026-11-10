@@ -1,0 +1,12 @@
+{
+  "Rules": [
+    {
+      "ID": "elembra-backup-retention-90-days",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "elembra/" },
+      "Expiration": { "Days": 90 },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 90 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 }
+    }
+  ]
+}

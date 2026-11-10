@@ -1,4 +1,4 @@
-# Upgrading RustShare
+# Upgrading Elembra
 
 This guide helps operators upgrade a running RustShare deployment.
 
@@ -79,29 +79,22 @@ RustShare is currently pre-1.0. While we adhere to SemVer:
 
 ## Database Migrations
 
-RustShare uses `sqlx` migrations stored in `backend/migrations/`.
+The first supported release establishes a clean-install baseline. Start it
+with an empty Elembra database and empty application object storage. Existing
+pre-release POC databases are incompatible and are not upgraded automatically.
+Do not point the first-release image at one; create a clean deployment as
+described in [`scripts/elembra.sh`](../scripts/elembra.sh).
 
-### Automatic migrations
+From this baseline onward, applied release migrations are immutable and
+forward-only. The backend applies pending migrations at startup. SQLx checksum
+errors and databases with unknown migration versions stop startup; do not edit
+`_sqlx_migrations` or delete migration records to force an upgrade. Restore a
+pre-upgrade backup to roll back.
 
-The Docker entrypoint runs `sqlx migrate run` on startup by default. No operator action is required unless the migration fails.
-
-### Manual migrations
-
-If you prefer to run migrations explicitly (e.g., during a maintenance window):
-
-```bash
-docker compose exec backend sqlx migrate run
-```
-
-### Troubleshooting
-
-If a migration fails with a checksum mismatch:
-
-```
-error: migration 20260404000002 was previously applied but has been modified
-```
-
-See [`docs/DEPLOYMENT.md`](DEPLOYMENT.md#migration-checksum-fix) for the resolution procedure.
+CI installs the baseline into an empty PostgreSQL database, checks that a
+second run is a no-op, rejects checksum drift, and tests upgrades from the
+previous supported migration set. There is no supported alpha.5 or alpha.6 to
+first-baseline upgrade path.
 
 ---
 

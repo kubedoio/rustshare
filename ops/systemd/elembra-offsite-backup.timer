@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily encrypted Elembra and Buzz off-host backup
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=true
+RandomizedDelaySec=30m
+Unit=elembra-offsite-backup.service
+
+[Install]
+WantedBy=timers.target

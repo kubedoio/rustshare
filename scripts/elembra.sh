@@ -56,6 +56,9 @@ compose() {
 		files+=(-f docker-compose.pilot.yml)
 	fi
 	files+=(-f docker-compose.alpha.yml -f docker-compose.dogfood.yml)
+	if [[ -n "${ELEMBRA_COMPOSE_EXTRA_FILE:-}" ]]; then
+		files+=(-f "${ELEMBRA_COMPOSE_EXTRA_FILE}")
+	fi
 	docker compose "${files[@]}" "$@"
 }
 

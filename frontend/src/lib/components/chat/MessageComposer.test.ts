@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => {
 	return {
 		getSigningKey: vi.fn((): string | null => 'sk-1'),
 		publishEvent: vi.fn(),
+		publishSignedEvent: vi.fn(),
 		publicKeyOf: vi.fn(() => 'pk-1'),
 		buildUnsignedEvent: vi.fn(
 			async (_kind: number, content: string, _tags: unknown[], _pubkey: string) => ({
@@ -34,6 +35,7 @@ vi.mock('$lib/chat/session', () => ({
 
 vi.mock('$lib/chat/nostr', () => ({
 	publishEvent: mocks.publishEvent,
+	publishSignedEvent: mocks.publishSignedEvent,
 	publicKeyOf: mocks.publicKeyOf,
 	buildUnsignedEvent: mocks.buildUnsignedEvent,
 	isUuid: (value: string) =>
@@ -61,6 +63,9 @@ function renderComposer(
 		channelName?: string;
 		boundPubkey?: string;
 		signingKey?: string | null;
+		postingAllowed?: boolean;
+		replyTarget?: { eventId: string; rootId?: string | null } | null;
+		onCancelReply?: () => void;
 	} = {}
 ) {
 	const {
@@ -68,16 +73,23 @@ function renderComposer(
 		channelId = 'general',
 		channelName = 'general',
 		boundPubkey = 'pk-1',
-		signingKey = 'sk-1'
+		signingKey = 'sk-1',
+		postingAllowed = true,
+		replyTarget = null,
+		onCancelReply = vi.fn()
 	} = props;
 	mocks.getSigningKey.mockReturnValue(signingKey);
 	return {
 		onSendFailure,
+		onCancelReply,
 		...render(MessageComposer, {
 			relayUrl: 'wss://relay.example',
 			channelId,
 			channelName,
 			boundPubkey,
+			postingAllowed,
+			replyTarget,
+			onCancelReply,
 			onSendFailure
 		})
 	};
@@ -85,6 +97,10 @@ function renderComposer(
 
 describe('MessageComposer', () => {
 	beforeEach(() => {
+		sessionStorage.clear();
+		vi.mocked(mocks.publishSignedEvent)
+			.mockReset()
+			.mockResolvedValue({ ok: true, event_id: 'same-event' });
 		vi.mocked(mocks.getSigningKey).mockReset().mockReturnValue('sk-1');
 		vi.mocked(mocks.publishEvent).mockReset().mockResolvedValue({ ok: true });
 		vi.mocked(mocks.publicKeyOf).mockReset().mockReturnValue('pk-1');
@@ -273,5 +289,202 @@ describe('MessageComposer', () => {
 			)
 		);
 		expect(onSendFailure).toHaveBeenCalledWith('');
+	});
+	it('denies posting without an explicit channel permission', async () => {
+		renderComposer({ postingAllowed: false });
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'not authorized' }
+		});
+		expect(
+			(screen.getByRole('button', { name: 'Send message' }) as HTMLButtonElement).disabled
+		).toBe(true);
+		await fireEvent.keyDown(screen.getByLabelText('Message text'), { key: 'Enter' });
+		expect(mocks.publishEvent).not.toHaveBeenCalled();
+	});
+
+	it('preserves channel-scoped drafts across remount without sharing them to another channel', async () => {
+		const first = renderComposer({ channelId: 'first' });
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'first draft' }
+		});
+		first.unmount();
+		const second = renderComposer({ channelId: 'second' });
+		expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe('');
+		second.unmount();
+		renderComposer({ channelId: 'first' });
+		await waitFor(() =>
+			expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe(
+				'first draft'
+			)
+		);
+	});
+
+	it('retains an uncertain signed message across reload and retries the exact event', async () => {
+		const event = {
+			id: 'same-event',
+			pubkey: 'pk-1',
+			kind: 1,
+			created_at: 123,
+			content: 'maybe sent',
+			tags: [],
+			sig: 'signature'
+		};
+		mocks.publishEvent.mockResolvedValue({
+			ok: false,
+			reason: 'uncertain',
+			event_id: event.id,
+			event
+		});
+		const first = renderComposer();
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'maybe sent' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+		await screen.findByRole('button', { name: 'Retry same message' });
+		expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).disabled).toBe(true);
+		first.unmount();
+		renderComposer();
+		await fireEvent.click(await screen.findByRole('button', { name: 'Retry same message' }));
+		await waitFor(() =>
+			expect(mocks.publishSignedEvent).toHaveBeenCalledWith('wss://relay.example', event, 'sk-1')
+		);
+		expect(mocks.publishEvent).toHaveBeenCalledTimes(1);
+		await waitFor(() =>
+			expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe('')
+		);
+	});
+
+	it('persists the signed event before the first send and refuses to send when storage fails', async () => {
+		mocks.publishEvent.mockImplementation(async (_url, _event, _sk, onSigned) => {
+			onSigned({ id: 'pending', pubkey: 'pk-1', kind: 1, tags: [] });
+			throw new Error('should not reach network after persistence error');
+		});
+		const { onSendFailure } = renderComposer();
+		await fireEvent.input(screen.getByLabelText('Message text'), { target: { value: 'draft' } });
+		const storage = vi.spyOn(sessionStorage, 'setItem').mockImplementation(() => {
+			throw new Error('quota exceeded');
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+		await waitFor(() =>
+			expect(onSendFailure).toHaveBeenCalledWith(
+				'Cannot preserve the signed message safely. Browser storage is unavailable.'
+			)
+		);
+		storage.mockRestore();
+	});
+
+	it('publishes a reply with canonical NIP-10 root/reply tags', async () => {
+		const channelUuid = '11111111-2222-4333-8444-555555555555';
+		const rootId = 'a1'.repeat(32);
+		const parentId = 'b2'.repeat(32);
+		const { onSendFailure } = renderComposer({
+			channelId: channelUuid,
+			replyTarget: { eventId: parentId, rootId }
+		});
+
+		expect(screen.getByText(/Replying in thread/)).toBeTruthy();
+		await fireEvent.input(screen.getByLabelText('Message text'), { target: { value: 'a reply' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+		await waitFor(() =>
+			expect(mocks.buildUnsignedEvent).toHaveBeenCalledWith(
+				9,
+				'a reply',
+				[
+					['h', channelUuid],
+					['e', rootId, '', 'root'],
+					['e', parentId, '', 'reply']
+				],
+				'pk-1'
+			)
+		);
+		expect(onSendFailure).toHaveBeenCalledWith('');
+	});
+
+	it('never publishes a reply whose thread parent is malformed', async () => {
+		const { onSendFailure } = renderComposer({
+			channelId: '11111111-2222-4333-8444-555555555555',
+			replyTarget: { eventId: 'not-hex' }
+		});
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'bad reply' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+		await waitFor(() =>
+			expect(onSendFailure).toHaveBeenCalledWith(
+				'Reply target is invalid. Cancel the reply and try again.'
+			)
+		);
+		expect(mocks.publishEvent).not.toHaveBeenCalled();
+	});
+
+	it('scopes drafts per thread and keeps them apart from the channel draft', async () => {
+		const channelUuid = '11111111-2222-4333-8444-555555555555';
+		const rootId = 'a1'.repeat(32);
+		const otherRootId = 'c3'.repeat(32);
+
+		const channelLevel = renderComposer({ channelId: channelUuid });
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'channel draft' }
+		});
+		channelLevel.unmount();
+
+		const inThread = renderComposer({
+			channelId: channelUuid,
+			replyTarget: { eventId: rootId, rootId }
+		});
+		await fireEvent.input(screen.getByLabelText('Message text'), {
+			target: { value: 'thread draft' }
+		});
+		inThread.unmount();
+
+		renderComposer({
+			channelId: channelUuid,
+			replyTarget: { eventId: otherRootId, rootId: otherRootId }
+		});
+		expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe('');
+		cleanup();
+		renderComposer({ channelId: channelUuid, replyTarget: { eventId: rootId, rootId } });
+		await waitFor(() =>
+			expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe(
+				'thread draft'
+			)
+		);
+		cleanup();
+		renderComposer({ channelId: channelUuid });
+		await waitFor(() =>
+			expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe(
+				'channel draft'
+			)
+		);
+	});
+
+	it('reads legacy three-element draft keys as channel-level drafts', async () => {
+		const channelUuid = '11111111-2222-4333-8444-555555555555';
+		const legacyKey = `elembra.chat.draft:${JSON.stringify(['wss://relay.example', 'pk-1', channelUuid])}`;
+		sessionStorage.setItem(
+			legacyKey,
+			JSON.stringify({ draft: 'legacy draft', attachmentTag: null, pendingEvent: null })
+		);
+		renderComposer({ channelId: channelUuid });
+		await waitFor(() =>
+			expect((screen.getByLabelText('Message text') as HTMLTextAreaElement).value).toBe(
+				'legacy draft'
+			)
+		);
+		// Migration: the legacy key is folded into the new four-element key and
+		// deleted, so clearing the new draft cannot resurrect the old one.
+		const newKey = `elembra.chat.draft:${JSON.stringify(['wss://relay.example', 'pk-1', channelUuid, null])}`;
+		expect(sessionStorage.getItem(legacyKey)).toBeNull();
+		expect(JSON.parse(sessionStorage.getItem(newKey) ?? '{}').draft).toBe('legacy draft');
+	});
+
+	it('invokes onCancelReply from the reply banner', async () => {
+		const { onCancelReply } = renderComposer({
+			channelId: '11111111-2222-4333-8444-555555555555',
+			replyTarget: { eventId: 'a1'.repeat(32) }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Cancel reply' }));
+		expect(onCancelReply).toHaveBeenCalled();
 	});
 });

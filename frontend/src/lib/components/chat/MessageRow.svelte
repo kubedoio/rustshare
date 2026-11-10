@@ -3,7 +3,17 @@
 	import { openChatAttachment } from '$lib/api/chat';
 	import { apiClient } from '$lib/api/client';
 	import { copyToClipboard } from '$lib/utils/clipboard';
-	import { MoreHorizontal, Sparkles, Link, FileText } from 'lucide-svelte';
+	import { REACTION_EMOJIS, type DeletionInfo, type ReactionGroup } from '$lib/chat/conversations';
+	import {
+		MoreHorizontal,
+		Sparkles,
+		Link,
+		FileText,
+		Reply,
+		MessageSquare,
+		Smile,
+		Trash2
+	} from 'lucide-svelte';
 
 	interface Props {
 		message: ChatMessageDto;
@@ -11,11 +21,40 @@
 		askAvailable: boolean;
 		communityId?: string;
 		isFocused?: boolean;
+		reactionsAvailable?: boolean;
+		reactions?: ReactionGroup[];
+		deletedInfo?: DeletionInfo | null;
+		deleteMode?: 'self' | 'admin' | null;
+		threadAvailable?: boolean;
+		replyCount?: number;
+		busy?: boolean;
+		onReply?: () => void;
+		onOpenThread?: () => void;
+		onReact?: (emoji: string) => void;
+		onDelete?: () => void;
 	}
 
-	let { message, showHeader, askAvailable, communityId = '', isFocused = false }: Props = $props();
+	let {
+		message,
+		showHeader,
+		askAvailable,
+		communityId = '',
+		isFocused = false,
+		reactionsAvailable = false,
+		reactions = [],
+		deletedInfo = null,
+		deleteMode = null,
+		threadAvailable = false,
+		replyCount = 0,
+		busy = false,
+		onReply = () => {},
+		onOpenThread = () => {},
+		onReact = () => {},
+		onDelete = () => {}
+	}: Props = $props();
 
 	let menuOpen = $state(false);
+	let reactionPickerOpen = $state(false);
 
 	const displayName = $derived(message.author?.display_name ?? 'Unknown Buzz user');
 	const avatarUrl = $derived(
@@ -25,6 +64,7 @@
 	);
 	const pubkeyShort = $derived(message.author_pubkey.slice(0, 8));
 	const initials = $derived(getInitials(displayName));
+	const deleted = $derived(deletedInfo !== null);
 
 	function getInitials(name: string): string {
 		const trimmed = name.trim();
@@ -80,9 +120,19 @@
 	function closeMenu(): void {
 		menuOpen = false;
 	}
+
+	function toggleReactionPicker(event: Event): void {
+		event.stopPropagation();
+		reactionPickerOpen = !reactionPickerOpen;
+	}
 </script>
 
-<svelte:window onclick={() => menuOpen && closeMenu()} />
+<svelte:window
+	onclick={() => {
+		if (menuOpen) closeMenu();
+		if (reactionPickerOpen) reactionPickerOpen = false;
+	}}
+/>
 
 <div
 	class="group relative px-4 py-1 focus-within:bg-base-200/40 hover:bg-base-200/40 {isFocused
@@ -125,13 +175,15 @@
 				</div>
 			{/if}
 
-			{#if message.body != null}
+			{#if deleted}
+				<div class="text-sm text-base-content/50 italic">Message deleted.</div>
+			{:else if message.body != null}
 				<div class="text-sm whitespace-pre-wrap text-base-content">{message.body}</div>
 			{:else}
 				<div class="text-sm text-base-content/50 italic">Content unavailable in Elembra.</div>
 			{/if}
 
-			{#if message.attachments.length > 0}
+			{#if !deleted && message.attachments.length > 0}
 				<div class="mt-1 flex flex-wrap gap-2">
 					{#each message.attachments as attachment (attachment.application + attachment.resourceType + attachment.resourceId + (attachment.version ?? ''))}
 						<button
@@ -147,63 +199,156 @@
 					{/each}
 				</div>
 			{/if}
-		</div>
-	</div>
 
-	<!-- Message actions -->
-	<div
-		class="absolute top-1 right-3 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"
-	>
-		<div class="relative">
-			<button
-				type="button"
-				class="btn h-7 w-7 rounded-lg btn-ghost p-0 btn-xs"
-				aria-label="Message actions"
-				aria-expanded={menuOpen}
-				onclick={toggleMenu}
-			>
-				<MoreHorizontal size={14} />
-			</button>
-
-			{#if menuOpen}
-				<div
-					class="absolute top-full right-0 z-20 mt-1 w-52 rounded-lg border border-base-300 bg-base-100 py-1 shadow-xl shadow-black/10"
-					role="menu"
-				>
-					{#if askAvailable}
-						<a
-							href={askHref()}
-							role="menuitem"
-							class="flex items-center gap-2 px-3 py-2 text-sm hover:bg-base-200"
-							onclick={closeMenu}
+			{#if !deleted && (reactions.length > 0 || reactionsAvailable)}
+				<div class="mt-1 flex flex-wrap items-center gap-1">
+					{#each reactions as group (group.emoji)}
+						<button
+							type="button"
+							class="badge gap-1 badge-sm {group.myEventId ? 'badge-primary' : 'badge-outline'}"
+							aria-pressed={group.myEventId !== null}
+							aria-label="Reaction {group.emoji}, {group.count}"
+							title={group.authors.map((a) => a.slice(0, 8)).join(', ')}
+							disabled={busy}
+							onclick={() => onReact(group.emoji)}
 						>
-							<Sparkles size={14} class="text-base-content/60" />
-							Ask Elembra about this
-						</a>
-					{:else}
-						<span
-							role="menuitem"
-							class="tooltip flex cursor-not-allowed items-center gap-2 px-3 py-2 text-sm text-base-content/40"
-							data-tip="Ask Elembra is unavailable"
-						>
-							<Sparkles size={14} />
-							Ask Elembra about this
+							{group.emoji}
+							{group.count}
+						</button>
+					{/each}
+					{#if reactionsAvailable}
+						<span class="relative">
+							<button
+								type="button"
+								class="badge inline-flex items-center gap-1 badge-ghost badge-sm"
+								aria-label="Add reaction"
+								aria-expanded={reactionPickerOpen}
+								disabled={busy}
+								onclick={toggleReactionPicker}
+							>
+								<Smile size={12} />
+							</button>
+							{#if reactionPickerOpen}
+								<span
+									class="absolute top-full left-0 z-20 mt-1 flex gap-1 rounded-lg border border-base-300 bg-base-100 p-1 shadow-xl shadow-black/10"
+									role="menu"
+								>
+									{#each REACTION_EMOJIS as emoji (emoji)}
+										<button
+											type="button"
+											role="menuitem"
+											class="btn h-7 w-7 btn-ghost p-0 btn-xs"
+											aria-label="React {emoji}"
+											disabled={busy}
+											onclick={() => {
+												reactionPickerOpen = false;
+												onReact(emoji);
+											}}>{emoji}</button
+										>
+									{/each}
+								</span>
+							{/if}
 						</span>
 					{/if}
-					<button
-						type="button"
-						role="menuitem"
-						class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-base-200"
-						onclick={() => {
-							copyLink();
-							closeMenu();
-						}}
-					>
-						<Link size={14} class="text-base-content/60" />
-						Copy message link
-					</button>
 				</div>
 			{/if}
 		</div>
 	</div>
+
+	<!-- Message actions -->
+	{#if !deleted}
+		<div
+			class="absolute top-1 right-3 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"
+		>
+			{#if threadAvailable}
+				<button
+					type="button"
+					class="btn h-7 w-7 rounded-lg btn-ghost p-0 btn-xs"
+					aria-label="Reply to message"
+					title="Reply"
+					disabled={busy}
+					onclick={onReply}
+				>
+					<Reply size={14} />
+				</button>
+				{#if replyCount > 0}
+					<button
+						type="button"
+						class="btn h-7 rounded-lg btn-ghost p-0 px-1.5 btn-xs"
+						aria-label="View thread, {replyCount} {replyCount === 1 ? 'reply' : 'replies'}"
+						title="View thread"
+						onclick={onOpenThread}
+					>
+						<MessageSquare size={14} />
+						{replyCount}
+					</button>
+				{/if}
+			{/if}
+			<div class="relative">
+				<button
+					type="button"
+					class="btn h-7 w-7 rounded-lg btn-ghost p-0 btn-xs"
+					aria-label="Message actions"
+					aria-expanded={menuOpen}
+					onclick={toggleMenu}
+				>
+					<MoreHorizontal size={14} />
+				</button>
+
+				{#if menuOpen}
+					<div
+						class="absolute top-full right-0 z-20 mt-1 w-52 rounded-lg border border-base-300 bg-base-100 py-1 shadow-xl shadow-black/10"
+						role="menu"
+					>
+						{#if askAvailable}
+							<a
+								href={askHref()}
+								role="menuitem"
+								class="flex items-center gap-2 px-3 py-2 text-sm hover:bg-base-200"
+								onclick={closeMenu}
+							>
+								<Sparkles size={14} class="text-base-content/60" />
+								Ask Elembra about this
+							</a>
+						{:else}
+							<span
+								role="menuitem"
+								class="tooltip flex cursor-not-allowed items-center gap-2 px-3 py-2 text-sm text-base-content/40"
+								data-tip="Ask Elembra is unavailable"
+							>
+								<Sparkles size={14} />
+								Ask Elembra about this
+							</span>
+						{/if}
+						<button
+							type="button"
+							role="menuitem"
+							class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-base-200"
+							onclick={() => {
+								copyLink();
+								closeMenu();
+							}}
+						>
+							<Link size={14} class="text-base-content/60" />
+							Copy message link
+						</button>
+						{#if deleteMode}
+							<button
+								type="button"
+								role="menuitem"
+								class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-error hover:bg-base-200"
+								onclick={() => {
+									closeMenu();
+									onDelete();
+								}}
+							>
+								<Trash2 size={14} />
+								{deleteMode === 'self' ? 'Delete message' : 'Delete message (admin)'}
+							</button>
+						{/if}
+					</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
 </div>

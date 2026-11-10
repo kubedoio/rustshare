@@ -1,0 +1,130 @@
+# Disposable DIRECT-RELAY negative-test harness (mission-E hardening runs).
+# =============================================================================
+# A standalone two-community Buzz relay running the LOCALLY QUALIFIED candidate
+# image (buzz-elembra-candidate:8ce0b7bd = supported baseline c9a373b +
+# guest-write-denial hotfix), used for the direct-relay scenarios the Elembra
+# acceptance stack cannot provision:
+#
+#   * guest-role write denial — Elembra's UI deliberately cannot assign the
+#     guest role, so the harness provisions it relay-direct (owner-signed
+#     kind 9000 with a ['role','guest'] tag) and asserts the guest's signed
+#     kind-9 is rejected by the candidate relay while reads still work.
+#   * two-tenant isolation — tenant A is the relay's auto-provisioned
+#     deployment community (its RELAY_URL host); tenant B is seeded directly
+#     into the communities table. Both are keyed by Host header (a.localhost /
+#     b.localhost, the buzz nip42_host_binding_live pattern): tenant B must
+#     not discover, read, or write tenant A's channels, and cross-host NIP-42
+#     AUTH must be rejected.
+#
+# The harness runs with BUZZ_REQUIRE_RELAY_MEMBERSHIP=false so any NIP-42
+# authenticated key is a relay member: the tests then isolate channel-role
+# and community boundaries precisely (the acceptance stack separately covers
+# the community-membership gate).
+#
+# Topology (all loopback, disposable project):
+#   relay ws    -> 127.0.0.1:17547  (communities bound to a.localhost:17547 /
+#                                    b.localhost:17547 by Host header)
+#   relay health-> 127.0.0.1:18188
+#   postgres/redis/rustfs -> internal only (no host ports)
+#
+# Teardown: docker compose -p <project> -f docker-compose.chat-direct-negative.yml down -v
+# =============================================================================
+
+services:
+  relay:
+    image: buzz-elembra-candidate:8ce0b7bd
+    environment:
+      DATABASE_URL: postgres://buzz:buzz_dev@pg:5432/buzz
+      REDIS_URL: redis://redis:6379
+      RELAY_URL: ws://a.localhost:17547
+      BUZZ_BIND_ADDR: 0.0.0.0:17547
+      BUZZ_HEALTH_PORT: "8088"
+      BUZZ_METRICS_PORT: "9102"
+      BUZZ_AUTO_MIGRATE: "true"
+      BUZZ_REQUIRE_RELAY_MEMBERSHIP: "false"
+      BUZZ_REQUIRE_AUTH_TOKEN: "false"
+      # Chat-only runtime posture, same as the acceptance stack.
+      BUZZ_GIT_ENABLED: "false"
+      BUZZ_S3_ENDPOINT: http://rustfs:9000
+      BUZZ_S3_ACCESS_KEY: buzz_dev
+      BUZZ_S3_SECRET_KEY: buzz_dev_secret
+      BUZZ_S3_BUCKET: buzz-media
+    ports:
+      - "127.0.0.1:17547:17547"
+      - "127.0.0.1:18188:8088"
+    depends_on:
+      pg:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/buzz-relay", "--healthcheck"]
+      interval: 5s
+      timeout: 5s
+      start_period: 15s
+      retries: 30
+
+  pg:
+    image: postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    environment:
+      POSTGRES_USER: buzz
+      POSTGRES_PASSWORD: buzz_dev
+      POSTGRES_DB: buzz
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - directneg_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U buzz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rustfs:
+    image: rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
+    environment:
+      RUSTFS_ROOT_USER: buzz_dev
+      RUSTFS_ROOT_PASSWORD: buzz_dev_secret
+      RUSTFS_DATA_DIR: /data
+      RUSTFS_LOGS_DIR: /logs
+    volumes:
+      - directneg_rustfs_data:/data
+      - directneg_rustfs_logs:/logs
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z localhost 9000 && nc -z localhost 9001"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rustfs-init:
+    image: rustfs/rc@sha256:ab024bfebee49a750ce886b4c70963ccd9ddaa03f491704a90710641d7a26699
+    restart: "no"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      BUZZ_RUSTFS_ACCESS_KEY: buzz_dev
+      BUZZ_RUSTFS_SECRET_KEY: buzz_dev_secret
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >-
+        rc alias set local http://rustfs:9000
+        $${BUZZ_RUSTFS_ACCESS_KEY} $${BUZZ_RUSTFS_SECRET_KEY}
+        && rc bucket create local/buzz-media --ignore-existing --quiet
+
+volumes:
+  directneg_pg:
+  directneg_rustfs_data:
+  directneg_rustfs_logs:

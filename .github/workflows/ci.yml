@@ -24,6 +24,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  release-digest-contract:
+    name: Release Digest Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve approved qualified image digests without rebuilding
+        run: bash scripts/test-release-qualified-image-digests.sh
+
   generate-secrets:
     name: Generate Secrets
     runs-on: ubuntu-latest
@@ -202,6 +210,61 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features --lib --test openapi_export_test
 
+  migration-baseline:
+    name: Migration Baseline
+    runs-on: ubuntu-latest
+    needs: [generate-secrets]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      POSTGRES_PASSWORD: ${{ needs.generate-secrets.outputs.pg_password }}
+      DATABASE_URL: postgres://postgres:${{ needs.generate-secrets.outputs.pg_password }}@localhost:5432/postgres
+      BASE_MIGRATION_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --features postgres
+      - name: Apply the baseline to an empty database
+        run: sqlx migrate run --source backend/migrations
+      - name: Confirm a second migration run is a no-op
+        run: sqlx migrate run --source backend/migrations
+      - name: Reject migration checksum drift
+        run: |
+          cp -R backend/migrations /tmp/migration-drift
+          printf '\n-- checksum drift self-check\n' >> /tmp/migration-drift/20261107150002_initial_configuration.sql
+          if sqlx migrate run --source /tmp/migration-drift > /tmp/migration-drift.log 2>&1; then
+            echo 'SQLx accepted an applied migration with a changed checksum' >&2
+            exit 1
+          fi
+          grep -q 'has been modified' /tmp/migration-drift.log
+      - name: Test upgrades from the previous supported migration set
+        run: |
+          if [[ -z "$BASE_MIGRATION_SHA" ]] || \
+             ! git cat-file -e "$BASE_MIGRATION_SHA:backend/migrations/20261107150000_elembra_schema.sql" 2>/dev/null; then
+            echo 'No previous supported baseline exists; the first release has no pre-release upgrade path.'
+            exit 0
+          fi
+          mkdir -p /tmp/base-source
+          git archive "$BASE_MIGRATION_SHA" backend/migrations | tar -x -C /tmp/base-source
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE rustshare_upgrade'
+          export DATABASE_URL="${DATABASE_URL%/postgres}/rustshare_upgrade"
+          sqlx migrate run --source /tmp/base-source/backend/migrations
+          sqlx migrate run --source backend/migrations
+
   # Validates that the project compiles in release mode (expensive but required by audit).
   build-release:
     name: Build Release
@@ -249,7 +312,7 @@ jobs:
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
       - name: Check sqlx prepare
-        run: cargo sqlx prepare --workspace --check
+        run: cargo sqlx prepare --workspace --check -- --all-targets --all-features
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
 
