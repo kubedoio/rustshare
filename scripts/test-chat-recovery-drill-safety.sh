@@ -31,6 +31,18 @@ GIT
 chmod +x "${TEMP_DIR}/bin/docker" "${TEMP_DIR}/bin/git"
 export PATH="${TEMP_DIR}/bin:${PATH}" FAKE_CALLS="${TEMP_DIR}/calls"
 
+# Backup/restore must ignore inherited Compose files, separators, project and
+# service names, even when a caller has a different Compose environment.
+export COMPOSE_FILE=/attacker/compose.yml COMPOSE_PATH_SEPARATOR=';'
+export COMPOSE_PROJECT_NAME=attacker POSTGRES_SERVICE=attacker-postgres
+export RUSTFS_SERVICE=attacker-rustfs BUZZ_POSTGRES_SERVICE=attacker-buzz-postgres
+pin_recovery_compose_environment fixture-project
+[[ "${COMPOSE_FILE}" == docker-compose.yml && "${COMPOSE_PATH_SEPARATOR}" == : ]]
+[[ "${COMPOSE_PROJECT_NAME}" == fixture-project ]]
+[[ "${POSTGRES_SERVICE}" == postgres && "${RUSTFS_SERVICE}" == rustfs ]]
+[[ "${BUZZ_POSTGRES_SERVICE}" == buzz-postgres && "${BUZZ_RUSTFS_SERVICE}" == buzz-rustfs ]]
+[[ "$(grep -c 'pin_recovery_compose_environment "${PROJECT}"' "${ROOT}/scripts/run-chat-recovery-drill.sh")" == 2 ]]
+
 # Never chmod or reuse a caller-owned evidence directory.
 mkdir -m 755 "${TEMP_DIR}/existing"
 printf 'keep\n' >"${TEMP_DIR}/existing/marker"
