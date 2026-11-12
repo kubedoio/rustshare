@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
+import { mailBodyText } from '$lib/mail/compose';
 import MailBodyEditor from './MailBodyEditor.svelte';
 
 describe('MailBodyEditor', () => {
@@ -35,5 +36,18 @@ describe('MailBodyEditor', () => {
 		await rerender({ content: 'Second draft', onChange: () => {} });
 		expect(await screen.findByText('Second draft')).toBeTruthy();
 		expect(screen.queryByText('First')).toBeNull();
+	});
+
+	it('renders decoded mail markup as text rather than loading a remote image', () => {
+		const body = mailBodyText({
+			type: 'html',
+			content: '&lt;img src="https://tracker.example/pixel" alt="tracker"&gt;'
+		});
+		const { container } = render(MailBodyEditor, { content: body, onChange: () => {} });
+
+		expect(container.querySelector('img')).toBeNull();
+		expect(container.querySelector('.tiptap')?.textContent).toBe(
+			'<img src="https://tracker.example/pixel" alt="tracker">'
+		);
 	});
 });

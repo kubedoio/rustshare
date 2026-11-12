@@ -167,7 +167,7 @@ export class WebSocketClient {
 		const eventType = (event as any).event_type || event.type;
 
 		if (!eventType) {
-			console.error('[WebSocket] Event missing event_type field:', event);
+			console.error('[WebSocket] Event missing event_type field');
 			return;
 		}
 
@@ -178,11 +178,11 @@ export class WebSocketClient {
 				try {
 					handler(event);
 				} catch (error) {
-					console.error(`[WebSocket] Handler error for ${eventType}:`, error);
+					console.error('[WebSocket] Handler failed');
 				}
 			});
 		} else {
-			console.warn(`[WebSocket] No handlers registered for event type: ${eventType}`);
+			console.warn('[WebSocket] No handler registered for event');
 		}
 	}
 

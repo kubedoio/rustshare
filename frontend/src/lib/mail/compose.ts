@@ -1,16 +1,20 @@
 export type MailBody = { type: 'empty' | 'html' | 'text'; content: string };
 
 export function mailBodyText(body: MailBody): string {
-	if (body.type !== 'html') return body.content;
-	return body.content
-		.replace(/<br\s*\/?>/gi, '\n')
-		.replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
-		.replace(/<[^>]+>/g, '')
-		.replace(/&nbsp;/g, ' ')
-		.replace(/&amp;/g, '&')
-		.replace(/&lt;/g, '<')
-		.replace(/&gt;/g, '>')
-		.trim();
+	let text = body.content;
+	if (body.type === 'html') {
+		text = text
+			.replace(/<br\s*\/?>/gi, '\n')
+			.replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
+			.replace(/<[^>]+>/g, '')
+			.replace(/&nbsp;/g, ' ')
+			.replace(/&amp;/g, '&')
+			.replace(/&lt;/g, '<')
+			.replace(/&gt;/g, '>')
+			.trim();
+	}
+	// The result is passed to Tiptap as HTML; keep mail markup as text.
+	return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 export function quoteMailBody(text: string): string {
