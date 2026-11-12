@@ -6,6 +6,7 @@
 create_recovery_evidence_dir() {
 	local requested="$1" parent="$2" prefix="$3"
 	if [[ -n "${requested}" ]]; then
+		if [[ "${requested}" != /* ]]; then requested="$(pwd)/${requested}"; fi
 		if [[ -e "${requested}" || -L "${requested}" ]]; then
 			echo "Refusing to reuse evidence destination: ${requested}" >&2
 			return 1
@@ -15,6 +16,19 @@ create_recovery_evidence_dir() {
 		return 0
 	fi
 	mktemp -d "${parent%/}/${prefix}.XXXXXX"
+}
+
+record_recovery_cleanup_failure() {
+	local evidence_dir="$1" project="$2" worktree="$3" temp_dir="$4"
+	[[ -d "${evidence_dir}" ]] || return 1
+	rm -f -- "${evidence_dir}/result.env"
+	cat >"${evidence_dir}/CLEANUP_FAILED.txt" <<EOF
+Recovery drill cleanup was not verified for project ${project}.
+Worktree retained for inspection: ${worktree}
+Private run data retained: ${temp_dir}
+Any prior PASS marker was removed. Do not treat this run as qualified.
+EOF
+	chmod 600 "${evidence_dir}/CLEANUP_FAILED.txt"
 }
 
 publish_recovery_evidence() {
