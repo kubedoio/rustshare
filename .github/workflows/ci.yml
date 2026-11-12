@@ -32,6 +32,14 @@ jobs:
       - name: Resolve approved qualified image digests without rebuilding
         run: bash scripts/test-release-qualified-image-digests.sh
 
+  restore-compose-contract:
+    name: Restore Compose Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Preserve the Chat Compose overlay during restore
+        run: scripts/test-restore-stack-compose.sh
+
   generate-secrets:
     name: Generate Secrets
     runs-on: ubuntu-latest
