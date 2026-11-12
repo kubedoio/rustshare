@@ -40,6 +40,9 @@ if create_recovery_evidence_dir "${TEMP_DIR}/existing" "${TEMP_DIR}" unused >/de
 fi
 [[ "$(stat -c '%a' "${TEMP_DIR}/existing")" == 755 ]]
 [[ "$(cat "${TEMP_DIR}/existing/marker")" == keep ]]
+relative_dir="$(cd "${TEMP_DIR}" && create_recovery_evidence_dir relative-evidence "${TEMP_DIR}" unused)"
+[[ "${relative_dir}" == "${TEMP_DIR}/relative-evidence" ]]
+[[ -d "${relative_dir}" && "$(stat -c '%a' "${relative_dir}")" == 700 ]]
 
 # New destinations are private; evidence publication refuses overwrite.
 new_dir="$(create_recovery_evidence_dir "${TEMP_DIR}/fresh-evidence" "${TEMP_DIR}" unused)"
@@ -53,6 +56,15 @@ if publish_recovery_evidence "${TEMP_DIR}/source" "${new_dir}" result.env >/dev/
 	exit 1
 fi
 [[ "$(cat "${new_dir}/result.env")" == summary ]]
+
+# A teardown failure removes any private PASS marker before retaining evidence.
+mkdir -m 700 "${TEMP_DIR}/cleanup-failure-evidence"
+printf 'RECOVERY_DRILL_STATUS=PASS\n' >"${TEMP_DIR}/cleanup-failure-evidence/result.env"
+record_recovery_cleanup_failure "${TEMP_DIR}/cleanup-failure-evidence" fixture-project \
+	"${TEMP_DIR}/retained-worktree" "${TEMP_DIR}/private-run"
+[[ ! -e "${TEMP_DIR}/cleanup-failure-evidence/result.env" ]]
+grep -F 'Do not treat this run as qualified.' "${TEMP_DIR}/cleanup-failure-evidence/CLEANUP_FAILED.txt" >/dev/null
+! grep -F 'RECOVERY_DRILL_STATUS=PASS' "${TEMP_DIR}/cleanup-failure-evidence/CLEANUP_FAILED.txt"
 
 # Successful cleanup removes only the exact Compose project, verifies all
 # resource classes, then removes that drill's temporary worktree.

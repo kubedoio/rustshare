@@ -74,6 +74,10 @@ cleanup() {
 		fi
 	fi
 	if [[ "${cleanup_failed}" == true ]]; then
+		if ! record_recovery_cleanup_failure "${EVIDENCE_DIR}" "${PROJECT}" "${TEST_ROOT}" "${TEMP_DIR}"; then
+			rm -f -- "${EVIDENCE_DIR}/result.env"
+			echo "Could not write cleanup-failure record; removed any private PASS marker." >&2
+		fi
 		echo "Cleanup did not verify; retained isolated project/worktree at ${TEST_ROOT} and private run data at ${TEMP_DIR}." >&2
 		exit 1
 	fi
