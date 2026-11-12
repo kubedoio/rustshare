@@ -35,10 +35,10 @@ describe('WebSocketClient diagnostics', () => {
 	it('does not log WebSocket payloads, error objects, close reasons, or credential URLs', async () => {
 		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
-		let socket: {
-			onmessage: ((event: { data: string }) => void) | null;
-			onerror: ((event: unknown) => void) | null;
-			onclose: ((event: { code: number; reason: string }) => void) | null;
+		const callbacks = {
+			onMessage: null as ((event: { data: string }) => void) | null,
+			onError: null as ((event: unknown) => void) | null,
+			onClose: null as ((event: { code: number; reason: string }) => void) | null
 		};
 		class FakeWebSocket {
 			static CONNECTING = 0;
@@ -47,21 +47,34 @@ describe('WebSocketClient diagnostics', () => {
 			static CLOSED = 3;
 			readyState = FakeWebSocket.CONNECTING;
 			onopen: (() => void) | null = null;
-			onmessage: ((event: { data: string }) => void) | null = null;
-			onerror: ((event: unknown) => void) | null = null;
-			onclose: ((event: { code: number; reason: string }) => void) | null = null;
-			constructor(_url: string) {
-				socket = this;
+			get onmessage() {
+				return callbacks.onMessage;
 			}
+			set onmessage(handler: typeof callbacks.onMessage) {
+				callbacks.onMessage = handler;
+			}
+			get onerror() {
+				return callbacks.onError;
+			}
+			set onerror(handler: typeof callbacks.onError) {
+				callbacks.onError = handler;
+			}
+			get onclose() {
+				return callbacks.onClose;
+			}
+			set onclose(handler: typeof callbacks.onClose) {
+				callbacks.onClose = handler;
+			}
+			constructor(_url: string) {}
 		}
 		vi.stubGlobal('WebSocket', FakeWebSocket);
 
 		const secret = 'sensitive-token-and-message';
 		const client = new WebSocketClient('https://chat.example/ws');
 		const connection = client.connect(secret).catch(() => {});
-		socket!.onmessage?.({ data: `not-json ${secret}` });
-		socket!.onerror?.({ message: secret });
-		socket!.onclose?.({ code: 1008, reason: secret });
+		callbacks.onMessage?.({ data: `not-json ${secret}` });
+		callbacks.onError?.({ message: secret });
+		callbacks.onClose?.({ code: 1008, reason: secret });
 		await connection;
 
 		const calls = JSON.stringify([...error.mock.calls, ...debug.mock.calls]);
