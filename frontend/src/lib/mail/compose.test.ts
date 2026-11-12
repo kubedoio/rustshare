@@ -21,6 +21,7 @@ describe('mail compose helpers', () => {
 			})
 		).toBe('&amp;lt;img src="https://tracker.example/pixel"&amp;gt;');
 		expect(mailBodyText({ type: 'html', content: '<p>&amp;amp;</p>' })).toBe('&amp;amp;');
+		expect(mailBodyText({ type: 'html', content: '<p>&amp;nbsp;</p>' })).toBe('&amp;nbsp;');
 		expect(
 			mailBodyText({ type: 'text', content: '<img src="https://tracker.example/pixel">' })
 		).toBe('&lt;img src="https://tracker.example/pixel"&gt;');
