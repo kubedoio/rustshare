@@ -128,6 +128,16 @@ def container_stop(name: str) -> None:
 
 
 def test_blackbox_failure_injection() -> None:
+    dogfood = (ROOT / "docker-compose.dogfood.yml").read_text()
+    if not re.search(r"(?m)^\s+buzz-relay:\s*\n\s+network_mode: service:backend", dogfood):
+        raise AssertionError("expected Buzz relay to share the backend network namespace")
+    if not re.search(r"(?m)^\s+chat-observer:\s*\n\s+network_mode: service:backend", dogfood):
+        raise AssertionError("expected Chat observer to share the backend network namespace")
+    if "http://backend:8091/ready" not in (MONITORING / "chat-observer-targets.yml").read_text():
+        raise AssertionError("observer probe must target its backend namespace alias")
+    if "backend:7447" not in (MONITORING / "chat-relay-targets.yml").read_text():
+        raise AssertionError("relay probe must target its backend namespace alias")
+
     http_server = http.server.ThreadingHTTPServer(("0.0.0.0", 0), FixtureHandler)
     http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
     http_thread.start()

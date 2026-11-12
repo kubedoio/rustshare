@@ -1,4 +1,4 @@
 - targets:
-    - http://chat-observer:8091/ready
+    - http://backend:8091/ready
   labels:
     service: chat-observer
