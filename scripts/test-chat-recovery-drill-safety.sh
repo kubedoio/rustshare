@@ -44,6 +44,8 @@ pin_recovery_compose_environment fixture-project
 [[ "$(grep -c 'pin_recovery_compose_environment "${PROJECT}"' "${ROOT}/scripts/run-chat-recovery-drill.sh")" == 2 ]]
 grep -F 'ELEMBRA_ORIGIN="${ELEMBRA_ORIGIN:-${ELEMBRA_API%/api/v1}}"' "${ROOT}/scripts/run-alpha-dogfood.sh" >/dev/null
 grep -F 'url="${ELEMBRA_ORIGIN}${path}"' "${ROOT}/scripts/run-alpha-dogfood.sh" >/dev/null
+grep -F 'ELEMBRA_ORIGIN="${BASE_URL}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'BUZZ_RELAY_HEALTH_URL="${RELAY_URL/ws:/http:}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F 'ACCEPTANCE_EVIDENCE="${CHANNEL_EVIDENCE_RELATIVE}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 hash_recovery_output_fixture() { printf 'fixture fingerprint'; }
 expected_hash="$(printf 'fixture fingerprint' | sha256sum | awk '{print $1}')"
