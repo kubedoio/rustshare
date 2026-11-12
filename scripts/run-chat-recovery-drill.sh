@@ -7,6 +7,7 @@ set -Eeuo pipefail
 umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT}/scripts/chat-recovery-drill-safety.sh"
 SOURCE_SHA="$(git -C "${ROOT}" rev-parse HEAD)"
 OLD_IMAGE="${ELEMBRA_RECOVERY_OLD_RELAY_IMAGE:-ghcr.io/kubedoio/buzz-elembra@sha256:2b6c4b2a1800984283f1893a407997b2d5101b01fd0195669ee5deb84814906a}"
 NEW_IMAGE="${ELEMBRA_RECOVERY_NEW_RELAY_IMAGE:-ghcr.io/kubedoio/buzz-elembra@sha256:38c362bb37d15ea879634b0f56a867401df4e4e0074a84382dff6b07bb578b4e}"
@@ -24,15 +25,13 @@ for command in docker git curl npm node python3 sha256sum openssl; do require "$
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-${RANDOM}"
 PROJECT="elembra-g0-recovery-${RUN_ID,,}"
+PUBLISHED_EVIDENCE_DIR="$(create_recovery_evidence_dir "${ELEMBRA_RECOVERY_EVIDENCE_DIR:-}" "${TMPDIR:-/tmp}" "elembra-g0-recovery-evidence-${RUN_ID,,}")"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/${PROJECT}.XXXXXX")"
 chmod 700 "${TEMP_DIR}"
 TEST_ROOT="${TEMP_DIR}/project"
 BACKUP_ROOT="${TEMP_DIR}/backups"
 EVIDENCE_DIR="${TEMP_DIR}/evidence"
-PUBLISHED_EVIDENCE_DIR="${ELEMBRA_RECOVERY_EVIDENCE_DIR:-${TMPDIR:-/tmp}/elembra-g0-recovery-evidence-${RUN_ID,,}}"
 mkdir -m 700 "${BACKUP_ROOT}" "${EVIDENCE_DIR}"
-mkdir -m 700 -p "${PUBLISHED_EVIDENCE_DIR}"
-chmod 700 "${PUBLISHED_EVIDENCE_DIR}"
 WORKTREE_ADDED=false
 STACK_CREATED=false
 PHASE=setup
@@ -54,25 +53,46 @@ compose() {
 
 cleanup() {
 	local status=$?
+	local cleanup_failed=false
 	trap - EXIT
-	if [[ "${STACK_CREATED}" == true && -d "${TEST_ROOT}" ]]; then
-		(
-			cd "${TEST_ROOT}"
-			COMPOSE_PROJECT_NAME="${PROJECT}" RECOVERY_RELAY_IMAGE="${OLD_IMAGE}" compose down --volumes --remove-orphans
-		) >/dev/null 2>&1 || echo "Cleanup failed; inspect only project ${PROJECT}." >&2
+	cd "${ROOT}"
+	if [[ "${STACK_CREATED}" == true ]]; then
+		if [[ ! -d "${TEST_ROOT}" ]]; then
+			echo "Expected recovery project worktree is missing; cannot verify cleanup for ${PROJECT}." >&2
+			cleanup_failed=true
+		elif ! cleanup_recovery_project "${ROOT}" "${PROJECT}" "${TEST_ROOT}" "${OLD_IMAGE}"; then
+			cleanup_failed=true
+		fi
+		if [[ "${cleanup_failed}" == false ]]; then WORKTREE_ADDED=false; fi
 	fi
-	if [[ "${WORKTREE_ADDED}" == true ]]; then
-		git -C "${ROOT}" worktree remove --force "${TEST_ROOT}" >/dev/null 2>&1 || true
+	if [[ "${STACK_CREATED}" != true && "${WORKTREE_ADDED}" == true ]]; then
+		if git -C "${ROOT}" worktree remove --force "${TEST_ROOT}"; then
+			WORKTREE_ADDED=false
+		else
+			echo "Could not remove isolated worktree ${TEST_ROOT}; preserving it for cleanup." >&2
+			cleanup_failed=true
+		fi
 	fi
-	if [[ -d "${EVIDENCE_DIR}" ]]; then
-		# Publish only secret-free summaries and machine-readable acceptance
-		# evidence. Logs, credentials, cookies, database dumps and keys stay in
-		# the 0700 temporary directory and are removed below.
-		for evidence in result.env api-before.sha256 api-after-restore.sha256 chat-channel.json chat-conversation.json history-before.json history-after-restore.json history-new.json history-old.json; do
-			if [[ -f "${EVIDENCE_DIR}/${evidence}" ]]; then
-				install -m 600 "${EVIDENCE_DIR}/${evidence}" "${PUBLISHED_EVIDENCE_DIR}/${evidence}"
-			fi
-		done
+	if [[ "${cleanup_failed}" == true ]]; then
+		echo "Cleanup did not verify; retained isolated project/worktree at ${TEST_ROOT} and private run data at ${TEMP_DIR}." >&2
+		exit 1
+	fi
+	if (( status == 0 )); then
+		if ! publish_recovery_evidence "${EVIDENCE_DIR}" "${PUBLISHED_EVIDENCE_DIR}" \
+			result.env api-before.sha256 api-after-restore.sha256 chat-channel.json chat-conversation.json \
+			history-before.json history-after-restore.json history-new.json history-old.json; then
+			echo "Could not publish without overwriting; retained private evidence at ${TEMP_DIR}." >&2
+			exit 1
+		fi
+	else
+		cat >"${EVIDENCE_DIR}/RUN_FAILURE.txt" <<EOF
+Run did not qualify: phase=${PHASE}, exit=${status}, source=${SOURCE_SHA}.
+No PASS is asserted. Disposable project cleanup was verified before this report was published.
+EOF
+		if ! publish_recovery_evidence "${EVIDENCE_DIR}" "${PUBLISHED_EVIDENCE_DIR}" RUN_FAILURE.txt; then
+			echo "Could not publish failure summary; retained private evidence at ${TEMP_DIR}." >&2
+			exit 1
+		fi
 	fi
 	rm -rf -- "${TEMP_DIR}"
 	echo "Secret-free recovery evidence: ${PUBLISHED_EVIDENCE_DIR}"
