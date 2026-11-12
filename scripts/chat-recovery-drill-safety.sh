@@ -3,6 +3,14 @@
 # Safety helpers shared by the disposable recovery drill and its regression
 # tests. These functions never use Docker prune operations.
 
+pin_recovery_compose_environment() {
+	local project="$1"
+	export COMPOSE_FILE=docker-compose.yml COMPOSE_PATH_SEPARATOR=: COMPOSE_PROJECT_NAME="${project}"
+	export POSTGRES_SERVICE=postgres POSTGRES_DB=rustshare POSTGRES_USER=rustshare
+	export RUSTFS_SERVICE=rustfs BACKEND_SERVICE=backend EDGE_SERVICE=nginx
+	export BUZZ_POSTGRES_SERVICE=buzz-postgres BUZZ_RUSTFS_SERVICE=buzz-rustfs
+}
+
 create_recovery_evidence_dir() {
 	local requested="$1" parent="$2" prefix="$3"
 	if [[ -n "${requested}" ]]; then

@@ -340,6 +340,7 @@ snapshot before
 capture_api_projection "${FILE_OWNER_EMAIL}" "${EVIDENCE_DIR}/api-before.sha256"
 
 PHASE=backup
+pin_recovery_compose_environment "${PROJECT}"
 ./scripts/backup-stack.sh --with-chat "${BACKUP_ROOT}" >"${EVIDENCE_DIR}/backup.log" 2>&1
 BACKUP_DIR="$(sed -n 's/^Backup created at //p' "${EVIDENCE_DIR}/backup.log" | tail -n 1)"
 [[ -n "${BACKUP_DIR}" && -d "${BACKUP_DIR}" ]] || { echo 'Backup command did not produce a bundle directory.' >&2; exit 1; }
@@ -349,6 +350,7 @@ PHASE=simulated-state-loss
 compose_call down --volumes --remove-orphans >/dev/null
 PHASE=restore
 STACK_CREATED=true
+pin_recovery_compose_environment "${PROJECT}"
 RECOVERY_RELAY_IMAGE="${OLD_IMAGE}" ./scripts/restore-stack.sh --with-chat "${BACKUP_DIR}" >"${EVIDENCE_DIR}/restore.log" 2>&1
 
 PHASE=post-restore-fingerprint
