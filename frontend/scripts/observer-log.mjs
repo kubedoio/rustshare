@@ -1,3 +1,3 @@
-export function formatObserverError(_message, _error) {
+export function formatObserverError() {
 	return 'buzz-observer: operation failed';
 }

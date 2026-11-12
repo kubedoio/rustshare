@@ -5,7 +5,7 @@ describe('observer error logs', () => {
 	it('does not include hostile remote message or error text in the log record', () => {
 		const message = 'relay\nforged log entry';
 		const error = new Error('private payload and token');
-		const log = formatObserverError(message, error);
+		const log = (formatObserverError as (...args: unknown[]) => string)(message, error);
 
 		expect(log).toBe('buzz-observer: operation failed');
 		expect(log).not.toContain(message);

@@ -38,7 +38,7 @@ describe('MailBodyEditor', () => {
 		expect(screen.queryByText('First')).toBeNull();
 	});
 
-	it('renders decoded mail markup as text rather than loading a remote image', () => {
+	it('renders mail markup as text rather than loading a remote image', () => {
 		const body = mailBodyText({
 			type: 'html',
 			content: '&lt;img src="https://tracker.example/pixel" alt="tracker"&gt;'
@@ -48,6 +48,16 @@ describe('MailBodyEditor', () => {
 		expect(container.querySelector('img')).toBeNull();
 		expect(container.querySelector('.tiptap')?.textContent).toBe(
 			'<img src="https://tracker.example/pixel" alt="tracker">'
+		);
+
+		const plainText = mailBodyText({
+			type: 'text',
+			content: '<img src="https://tracker.example/plain-pixel" alt="literal">'
+		});
+		const plainTextEditor = render(MailBodyEditor, { content: plainText, onChange: () => {} });
+		expect(plainTextEditor.container.querySelector('img')).toBeNull();
+		expect(plainTextEditor.container.querySelector('.tiptap')?.textContent).toBe(
+			'<img src="https://tracker.example/plain-pixel" alt="literal">'
 		);
 	});
 });
