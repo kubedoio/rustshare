@@ -98,7 +98,7 @@ services:
   nginx:
     ports: !override ["127.0.0.1:${NGINX_PORT}:80"]
   buzz-relay:
-    image: ${RECOVERY_RELAY_IMAGE:?set an immutable recovery relay image}
+    image: \${RECOVERY_RELAY_IMAGE:?set an immutable recovery relay image}
     environment:
       BUZZ_BIND_ADDR: 0.0.0.0:${RELAY_PORT}
 YAML
@@ -117,6 +117,7 @@ EOF
 chmod 600 "${TEST_ROOT}/.env"
 
 export RECOVERY_RELAY_IMAGE="${OLD_IMAGE}"
+cd "${TEST_ROOT}"
 compose config --format json >"${TEMP_DIR}/compose-config.json"
 python3 - "${TEMP_DIR}/compose-config.json" "${OLD_IMAGE}" "${RELAY_PORT}" <<'PY'
 import json,sys
