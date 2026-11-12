@@ -357,7 +357,7 @@
       "sourceCommit": "b3aaabf635d992b08b57773071686a92196884e1",
       "workflow": "kubedoio/buzz/.github/workflows/docker.yml@refs/tags/relay-v0.2.1-elembra.5-rc.1",
       "workflowRun": "43104676847",
-      "verifiedRecord": "Phase F Sigstore verification; local record /srv/data02/projects/elembra-phase-f-evidence/provenance.json"
+      "verifiedRecord": "docs/pilot/evidence/buzz-candidate-provenance.json (portable verified bundle/result)"
     }
   },
   "testRun": {

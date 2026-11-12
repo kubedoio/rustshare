@@ -12,7 +12,7 @@
 
 - Multi-arch build: [Buzz Docker workflow run 43104676847](https://github.com/kubedoio/buzz/actions/runs/43104676847), both linux/amd64 and linux/arm64 build and scan jobs passed.
 - The workflow-pinned Trivy image (`aquasec/trivy@sha256:e2b22eac59c02003d8749f5b8d9bd073b62e30fefaef5b7c8371204e0a4b0c08`) reported zero Critical/High findings for both platforms. Independent scans of the exact multi-arch digest with the same scanner/policy also reported zero: `trivy-amd64.log`, `trivy-arm64.log` in the execution evidence directory.
-- Sigstore build provenance verified with `gh attestation verify` (GitHub CLI 2.103.3). Verified identity is `kubedoio/buzz/.github/workflows/docker.yml@refs/tags/relay-v0.2.1-elembra.5-rc.1`, source and workflow SHA `b3aaabf635d992b08b57773071686a92196884e1`, subject digest as above. Verification result is retained as `provenance.json` in the execution evidence directory.
+- Sigstore build provenance verified with `gh attestation verify` (GitHub CLI 2.103.3). Verified identity is `kubedoio/buzz/.github/workflows/docker.yml@refs/tags/relay-v0.2.1-elembra.5-rc.1`, source and workflow SHA `b3aaabf635d992b08b57773071686a92196884e1`, subject digest as above. The full Sigstore bundle and verification result are committed as [buzz-candidate-provenance.json](buzz-candidate-provenance.json).
 - SPDX SBOM generation and attestation: [workflow run 43110050027](https://github.com/kubedoio/buzz/actions/runs/43110050027). Its SBOM attestation verified against the exact candidate digest and the Buzz main SBOM workflow at `fe513d015e9885f53118a48519ef1928fb63d5f5`. The downloadable artifact is `sbom-43110050027`.
 
 ## Integrated acceptance
