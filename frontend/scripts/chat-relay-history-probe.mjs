@@ -6,7 +6,9 @@ const relayUrl = process.env.BUZZ_RELAY_WS;
 const channelId = process.env.BUZZ_RECOVERY_CHANNEL_ID;
 const secretKey = process.env.BUZZ_SERVICE_SK;
 if (!relayUrl || !channelId || !secretKey) {
-	throw new Error('BUZZ_RELAY_WS, BUZZ_RECOVERY_CHANNEL_ID and BUZZ_SERVICE_SK are required');
+	throw new Error(
+		'BUZZ_RELAY_WS, BUZZ_RECOVERY_CHANNEL_ID and BUZZ_SERVICE_SK are required',
+	);
 }
 
 const pubkey = bytesToHex(schnorr.getPublicKey(hexToBytes(secretKey)));
@@ -61,7 +63,9 @@ const result = await new Promise((resolve, reject) => {
 					{
 						...unsigned,
 						id,
-						sig: bytesToHex(schnorr.sign(hexToBytes(id), hexToBytes(secretKey))),
+						sig: bytesToHex(
+							schnorr.sign(hexToBytes(id), hexToBytes(secretKey)),
+						),
 					},
 				]),
 			);
@@ -91,7 +95,8 @@ const result = await new Promise((resolve, reject) => {
 });
 ws.close();
 
-if (result.length === 0) throw new Error(`no events returned for recovery channel ${channelId}`);
+if (result.length === 0)
+	throw new Error(`no events returned for recovery channel ${channelId}`);
 const canonical = result
 	.map((event) => [
 		event.id,
@@ -106,12 +111,23 @@ const canonical = result
 for (const event of result) {
 	const calculatedId = createHash('sha256')
 		.update(
-			JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content]),
+			JSON.stringify([
+				0,
+				event.pubkey,
+				event.created_at,
+				event.kind,
+				event.tags,
+				event.content,
+			]),
 		)
 		.digest('hex');
 	if (
 		calculatedId !== event.id ||
-		!schnorr.verify(hexToBytes(event.sig), hexToBytes(event.id), hexToBytes(event.pubkey))
+		!schnorr.verify(
+			hexToBytes(event.sig),
+			hexToBytes(event.id),
+			hexToBytes(event.pubkey),
+		)
 	) {
 		throw new Error(`relay returned an invalid signed event ${event.id}`);
 	}
@@ -122,6 +138,8 @@ console.log(
 		eventCount: canonical.length,
 		eventIds: canonical.map(([id]) => id),
 		eventAuthors: canonical.map(([id, author]) => [id, author]),
-		eventSetSha256: createHash('sha256').update(JSON.stringify(canonical)).digest('hex'),
+		eventSetSha256: createHash('sha256')
+			.update(JSON.stringify(canonical))
+			.digest('hex'),
 	}),
 );
