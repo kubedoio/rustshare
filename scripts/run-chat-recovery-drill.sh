@@ -122,7 +122,7 @@ set -a
 . ./.env
 . ./config/buzz-compatibility.env
 set +a
-compose config --format json >"${TEMP_DIR}/compose-config.json"
+compose --profile chat config --format json >"${TEMP_DIR}/compose-config.json"
 python3 - "${TEMP_DIR}/compose-config.json" "${OLD_IMAGE}" "${RELAY_PORT}" <<'PY'
 import json,sys
 config=json.load(open(sys.argv[1])); image=sys.argv[2]; port=int(sys.argv[3])
