@@ -1,0 +1,379 @@
+{
+  "generatedAt": "2026-11-12T21:29:45.872Z",
+  "baseUrl": "http://127.0.0.1:28080",
+  "relayUrl": "ws://localhost:17447",
+  "provenance": {
+    "gitSha": "2078abae9f96dcfc4f62e74c72baba99a63c2c5e",
+    "stack": "elembra-phaseg0-channel-20261112 (source build at 2078abae9f96dcfc4f62e74c72baba99a63c2c5e, relay ws://localhost:17447)",
+    "images": {
+      "backend": {
+        "image": "elembra-phasef-browser-acceptance-backend:latest",
+        "repoDigest": "elembra-phasef-browser-acceptance-backend@sha256:134d28d4f28e324c9a9e4a5b2218c477dd36893b75c39d52d38e2dc4192188d3",
+        "imageId": "sha256:134d28d4f28e324c9a9e4a5b2218c477dd36893b75c39d52d38e2dc4192188d3"
+      },
+      "chat-observer": {
+        "image": "elembra-phasef-browser-acceptance-chat-observer:latest",
+        "repoDigest": "elembra-phasef-browser-acceptance-chat-observer@sha256:0a17791909e58e72cdc0db37d9b59b90f2625b60b648a83ce6520a4237e55eb2",
+        "imageId": "sha256:0a17791909e58e72cdc0db37d9b59b90f2625b60b648a83ce6520a4237e55eb2"
+      },
+      "postgres": {
+        "image": "pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b",
+        "repoDigest": "pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b",
+        "imageId": "sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b"
+      },
+      "rustfs": {
+        "image": "rustfs/rustfs@sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a",
+        "repoDigest": "rustfs/rustfs@sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a",
+        "imageId": "sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a"
+      },
+      "nginx": {
+        "image": "nginx@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606",
+        "repoDigest": "nginx@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606",
+        "imageId": "sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606"
+      },
+      "buzz-relay": {
+        "image": "ghcr.io/kubedoio/buzz-elembra@sha256:38c362bb37d15ea879634b0f56a867401df4e4e0074a84382dff6b07bb578b4e",
+        "repoDigest": "ghcr.io/kubedoio/buzz-elembra@sha256:38c362bb37d15ea879634b0f56a867401df4e4e0074a84382dff6b07bb578b4e",
+        "imageId": "sha256:38c362bb37d15ea879634b0f56a867401df4e4e0074a84382dff6b07bb578b4e"
+      }
+    }
+  },
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+  "communityId": "a3aa5c3b-a8f0-40a9-b498-f28add687737",
+  "relayPubkey": "1b1bae2de4fca2068eb74c62afcef33b1d2d617a046467c41b527f6d8412f0d3",
+  "users": {
+    "a": {
+      "username": "accept_a_mwe229b16l0h5e6b210g",
+      "email": "accept_a_mwe229b16l0h5e6b210g@acceptance.local",
+      "userId": "968db67c-6fc9-4f88-a529-a75e234e36ff",
+      "pubkey": "07d3ae9a3e2fb8b6346cea08f2edac5a271cc50c31d058b697a2fd98379cf205"
+    },
+    "b": {
+      "username": "accept_b_mwe229b16l0h5e6b210g",
+      "email": "accept_b_mwe229b16l0h5e6b210g@acceptance.local",
+      "userId": "d0d56fbd-e84c-44bd-a85f-0b8e9e1e8c65",
+      "pubkey": "2e943b84f70e98ea88af20efc036f0f3f3744100233c61216e35df30b0dd2dd3"
+    },
+    "c": {
+      "username": "accept_c_mwe229b16l0h5e6b210g",
+      "email": "accept_c_mwe229b16l0h5e6b210g@acceptance.local",
+      "userId": "bad74c79-909a-4800-87b3-540c739caf1a",
+      "pubkey": "98302c4c3dc8c1949c53dc859f45e61b595d7942b705e5fd946ccc8b45d0dad4"
+    }
+  },
+  "channels": {
+    "open": {
+      "id": "660da805-f508-4aef-93cc-a3aad8b447fb",
+      "name": "accept-open-mwe229b16l0h5e6b210g renamed"
+    },
+    "private": {
+      "id": "439d95ee-b4fe-471d-ac84-b912583f624d",
+      "name": "accept-private-mwe229b16l0h5e6b210g"
+    }
+  },
+  "eventIds": {
+    "canary": "ef3afbd1fd2595361ff5b85e9bf6ac9974ea01e0326587e839bae6081f5889f6",
+    "msgA": "966f978c0e53a663ed2332bb6bc158664475b3a191811f8cbb7b56a0b8dc47eb",
+    "msgB": "e1646588f85c2a38f9f318b346280b7f542733dab85f8a8de59abd14bb5cde03",
+    "uncertain": "d66c5b67c95b02f5aad75d6f9cc2f353cb4b82d7b32ce179c9d540cb590f6fac"
+  },
+  "matrix": [
+    {
+      "id": "bind",
+      "title": "Real login + binding + relay admission (A/B/C)",
+      "status": "PASS",
+      "evidence": {
+        "runtimeProfile": "fork_client_held",
+        "pubkeys": {
+          "a": "07d3ae9a3e2fb8b6346cea08f2edac5a271cc50c31d058b697a2fd98379cf205",
+          "b": "2e943b84f70e98ea88af20efc036f0f3f3744100233c61216e35df30b0dd2dd3",
+          "c": "98302c4c3dc8c1949c53dc859f45e61b595d7942b705e5fd946ccc8b45d0dad4"
+        },
+        "keyBackupDecryptMatchesBindingPubkey": true
+      }
+    },
+    {
+      "id": "a",
+      "title": "Empty open channel created by A and discovered by B",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "660da805-f508-4aef-93cc-a3aad8b447fb",
+        "channelName": "accept-open-mwe229b16l0h5e6b210g",
+        "bDiscovery": {
+          "status": 200,
+          "channel": {
+            "channel_id": "660da805-f508-4aef-93cc-a3aad8b447fb",
+            "name": "accept-open-mwe229b16l0h5e6b210g",
+            "channel_kind": "workspace",
+            "channel_type": "stream",
+            "visibility": "open",
+            "member": false,
+            "latest_event_at": "2026-11-12T21:25:33.564697239Z"
+          }
+        }
+      }
+    },
+    {
+      "id": "h",
+      "title": "Lifecycle UI: edit name/description, roster roles, join/leave, deep link + reload",
+      "status": "PASS",
+      "evidence": {
+        "renamedTo": "accept-open-mwe229b16l0h5e6b210g renamed",
+        "rosterOwner": "07d3ae9a3e2fb8b6346cea08f2edac5a271cc50c31d058b697a2fd98379cf205",
+        "joinLeaveUser": "2e943b84f70e98ea88af20efc036f0f3f3744100233c61216e35df30b0dd2dd3",
+        "memberEditDenied": true,
+        "deepLink": "/apps/chat?channel=660da805-f508-4aef-93cc-a3aad8b447fb"
+      }
+    },
+    {
+      "id": "b",
+      "title": "Private channel: B added and discovers; owner reads the canary, C cannot discover or read it",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "439d95ee-b4fe-471d-ac84-b912583f624d",
+        "canaryEventId": "ef3afbd1fd2595361ff5b85e9bf6ac9974ea01e0326587e839bae6081f5889f6",
+        "ownerPositiveControl": true,
+        "bDirectoryVisibility": true,
+        "cDirectoryExclusion": true,
+        "cApiReadDenied": true,
+        "cDeepLinkRows": 0
+      }
+    },
+    {
+      "id": "c",
+      "title": "Message exchange with matching event ids and authors on both sides",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "660da805-f508-4aef-93cc-a3aad8b447fb",
+        "aAuthor": "07d3ae9a3e2fb8b6346cea08f2edac5a271cc50c31d058b697a2fd98379cf205",
+        "bAuthor": "2e943b84f70e98ea88af20efc036f0f3f3744100233c61216e35df30b0dd2dd3",
+        "eventIds": {
+          "a": "966f978c0e53a663ed2332bb6bc158664475b3a191811f8cbb7b56a0b8dc47eb",
+          "b": "e1646588f85c2a38f9f318b346280b7f542733dab85f8a8de59abd14bb5cde03"
+        },
+        "timelineCountA": 3,
+        "timelineCountB": 3
+      }
+    },
+    {
+      "id": "d",
+      "title": "Reload keeps the authorized history for A and B",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "660da805-f508-4aef-93cc-a3aad8b447fb",
+        "reloaded": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    {
+      "id": "g",
+      "title": "Uncertain ACK path retried byte-identically; single application",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "660da805-f508-4aef-93cc-a3aad8b447fb",
+        "pendingEventId": "d66c5b67c95b02f5aad75d6f9cc2f353cb4b82d7b32ce179c9d540cb590f6fac",
+        "appliedCopies": 1,
+        "retainedEventId": "d66c5b67c95b02f5aad75d6f9cc2f353cb4b82d7b32ce179c9d540cb590f6fac",
+        "relayDirectCopies": 1,
+        "relayDirectSigMatchesRetryBytes": true,
+        "relayDirectCopiesAsB": 1
+      }
+    },
+    {
+      "id": "i",
+      "title": "Role downgrade to guest: relay denies B signed post immediately; read intact; restore re-allows",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "660da805-f508-4aef-93cc-a3aad8b447fb",
+        "downgradeEventId": "f0e45e709fbc1de5a41ff6c2afdc987c78bd9e0a4ed50b2a25ae9d2ea2a765a9",
+        "guestWriteDenied": true,
+        "guestWriteDenialAnchored": true,
+        "guestWriteAcceptedByRelayUnderTest": false,
+        "guestWriteDenialMessage": "restricted: guest members are read-only",
+        "denialAfterDowngradeMs": 24,
+        "guestReadEventCount": 4,
+        "guestReadSeesEarlierMessage": true,
+        "restoreEventId": "894d2f9a93c3eb2737f98921e0c5a2710a330d8aa12960fd13fdb8d0c9c2b287",
+        "restoreProbeAccepted": true,
+        "restoreProbeMs": 24
+      }
+    },
+    {
+      "id": "e",
+      "title": "Removal revokes discovery, reads, posting (UI+relay), and attachments; B session stays live",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "439d95ee-b4fe-471d-ac84-b912583f624d",
+        "removed": "2e943b84f70e98ea88af20efc036f0f3f3744100233c61216e35df30b0dd2dd3",
+        "privAttachmentFileId": "0169cef0-3108-44e3-8d96-3f2c85573f81",
+        "aOpenAttachmentAsOwner": 200,
+        "bOpenAttachmentAsMemberNoShare": 404,
+        "bOpenAttachmentWithFilesShare": 200,
+        "bOpenAttachmentAfterShareRevoke": 404,
+        "cOpenAttachmentBeforeRemoval": 404,
+        "bDirectoryAfterRemoval": 200,
+        "bAddressedSamples": 0,
+        "bComposerDeniedWhileAddressed": 0,
+        "bComposerEnabledWhileAddressed": 0,
+        "deepLinkHeldAfterRemoval": false,
+        "bPrivateTimelineRows": 0,
+        "directRelayWriteAccepted": false,
+        "directRelayWriteDenialMessage": "restricted: not a channel member",
+        "directRelayReadOk": false,
+        "directRelayReadDetail": "closed: restricted: not a channel member",
+        "directRelayReadEvents": 0,
+        "bOpenAttachmentAfterRemoval": 404,
+        "bReadAfterRemoval": "zero-rows",
+        "bLivenessOpenChannelReads": 200
+      }
+    },
+    {
+      "id": "f2",
+      "title": "Private-channel leak checks: search/deep-link/history/relay reads closed for C and removed B",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "439d95ee-b4fe-471d-ac84-b912583f624d",
+        "cSearch": [
+          {
+            "term": "canary",
+            "hits": 0
+          },
+          {
+            "term": "post-removal",
+            "hits": 0
+          },
+          {
+            "term": "priv-attached",
+            "hits": 0
+          }
+        ],
+        "bSearch": [
+          {
+            "term": "canary",
+            "hits": 0
+          },
+          {
+            "term": "post-removal",
+            "hits": 0
+          },
+          {
+            "term": "priv-attached",
+            "hits": 0
+          }
+        ],
+        "ownerSuffixSearchHits": 6,
+        "ownerAttachmentSearchHits": 1,
+        "ownerAttachmentSearchFoundFile": true,
+        "ownerPrivateMessageBodyHits": 0,
+        "cDeepLinkRows": 0,
+        "cRelayReadOk": false,
+        "cRelayReadDetail": "closed: restricted: not a channel member",
+        "cRelayReadEvents": 0,
+        "bRelayReadOk": false,
+        "bRelayReadDetail": "closed: restricted: not a channel member",
+        "bRelayReadEvents": 0,
+        "ownerPositiveControlRows": 3
+      }
+    },
+    {
+      "id": "f",
+      "title": "Files attachment: authorized open succeeds; revoked and unrelated users fail",
+      "status": "PASS",
+      "evidence": {
+        "fileId": "aff7278c-38c6-4178-877f-b33bed7c79c0",
+        "shareId": "18ec7ccc-cdd8-4a15-af37-dde98864f123",
+        "bOpen": 200,
+        "cOpen": 404,
+        "bOpenAfterRevoke": 404
+      }
+    },
+    {
+      "id": "j",
+      "title": "Restart of relay+backend+observer: history retained, sessions reconnect, posting works",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "660da805-f508-4aef-93cc-a3aad8b447fb",
+        "restarted": {
+          "backend": "docker restart (in place)",
+          "nginx": "docker restart (upstream re-resolve)"
+        },
+        "recreated": [
+          "buzz-relay",
+          "chat-observer"
+        ],
+        "recreatedReason": "dogfood netns sharers must reattach to the restarted backend namespace",
+        "composeProject": "elembra-phaseg0-channel-20261112",
+        "historyEventIdsRetained": {
+          "msgA": true,
+          "msgB": true,
+          "uncertain": true
+        },
+        "postRestartMessageObservedByB": true
+      }
+    },
+    {
+      "id": "e2",
+      "title": "Disabled account loses session and Chat access",
+      "status": "PASS",
+      "evidence": {
+        "user": "bad74c79-909a-4800-87b3-540c739caf1a",
+        "usersMeAfterDisable": 401,
+        "chatChannelsAfterDisable": 401
+      }
+    }
+  ],
+  "summary": {
+    "total": 13,
+    "passed": 13,
+    "failed": 0
+  },
+  "runtimeInspection": {
+    "composeProject": "elembra-phaseg0-channel-20261112",
+    "container": {
+      "Config.Image": "ghcr.io/kubedoio/buzz-elembra@sha256:38c362bb37d15ea879634b0f56a867401df4e4e0074a84382dff6b07bb578b4e",
+      "Image": "sha256:38c362bb37d15ea879634b0f56a867401df4e4e0074a84382dff6b07bb578b4e"
+    },
+    "imageInspect": {
+      "Id": "sha256:38c362bb37d15ea879634b0f56a867401df4e4e0074a84382dff6b07bb578b4e",
+      "Os": "linux",
+      "Architecture": "amd64",
+      "RepoDigests": [
+        "ghcr.io/kubedoio/buzz-elembra@sha256:38c362bb37d15ea879634b0f56a867401df4e4e0074a84382dff6b07bb578b4e"
+      ],
+      "org.opencontainers.image.revision": "b3aaabf635d992b08b57773071686a92196884e1",
+      "org.opencontainers.image.version": "0.2.1-elembra.5-rc.1"
+    },
+    "oci": {
+      "indexDigest": "sha256:38c362bb37d15ea879634b0f56a867401df4e4e0074a84382dff6b07bb578b4e",
+      "selectedPlatform": "linux/amd64",
+      "platformManifestDigest": "sha256:4bbe7e5a1594f02681607575a71b7c31aa12248c8991d71fd328741a47d0284c",
+      "imageConfigDigest": "sha256:fecbdf834b2272fe0ed781568867b9616c583664f25e8293acb67ccee97d8ff5",
+      "runtimeBaseDigest": "sha256:cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab"
+    },
+    "provenance": {
+      "subjectDigest": "sha256:38c362bb37d15ea879634b0f56a867401df4e4e0074a84382dff6b07bb578b4e",
+      "sourceCommit": "b3aaabf635d992b08b57773071686a92196884e1",
+      "workflow": "kubedoio/buzz/.github/workflows/docker.yml@refs/tags/relay-v0.2.1-elembra.5-rc.1",
+      "workflowRun": "43104676847",
+      "verifiedRecord": "Phase F Sigstore verification; local record /srv/data02/projects/elembra-phase-f-evidence/provenance.json"
+    }
+  },
+  "testRun": {
+    "suite": "frontend/tests/chat-channel-acceptance.e2e.ts",
+    "command": "scripts/run-chat-channel-acceptance.sh",
+    "result": "13/13 PASS",
+    "logSha256": "df39ae46ebe2eaf50516572f1d11d61b8b55b229c9e2ff695d1e2e66606fe614",
+    "generatedJsonSha256": "03829e4d96830c62a157d6725ff822b57e22033a2d0664d1103286bf054def2d",
+    "sanitizedLog": "chat-channel-acceptance-20261112-exact-pin.txt",
+    "rawLogSha256": "df39ae46ebe2eaf50516572f1d11d61b8b55b229c9e2ff695d1e2e66606fe614"
+  },
+  "previousRunDigestReconciliation": {
+    "previousChannelEvidenceIndex": "sha256:d846651cdad7e78189b9b8c3baaec541841129b932544c6a5b270c5ca9628d4e",
+    "previousPlatformManifest": "sha256:4bbe7e5a1594f02681607575a71b7c31aa12248c8991d71fd328741a47d0284c",
+    "pinnedCandidatePlatformManifest": "sha256:4bbe7e5a1594f02681607575a71b7c31aa12248c8991d71fd328741a47d0284c",
+    "sameAmd64ManifestAndConfig": true,
+    "exactPinnedIndexRerun": true
+  }
+}

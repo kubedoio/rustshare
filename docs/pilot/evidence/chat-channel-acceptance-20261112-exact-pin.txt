@@ -1,0 +1,18 @@
+Exact candidate: ghcr.io/kubedoio/buzz-elembra@sha256:38c362bb37d15ea879634b0f56a867401df4e4e0074a84382dff6b07bb578b4e
+RustShare source: 2078abae9f96dcfc4f62e74c72baba99a63c2c5e
+Buzz source: b3aaabf635d992b08b57773071686a92196884e1
+Suite: frontend/tests/chat-channel-acceptance.e2e.ts
+  ✓   1 tests/chat-channel-acceptance.e2e.ts:701:2 › Chat channel management product acceptance (PR #480) › login + browser-held identity binding for A/B/C (6.6s)
+  ✓   2 tests/chat-channel-acceptance.e2e.ts:725:2 › Chat channel management product acceptance (PR #480) › a: A creates an empty open channel; B discovers it (1.5m)
+  ✓   3 tests/chat-channel-acceptance.e2e.ts:744:2 › Chat channel management product acceptance (PR #480) › h: channel lifecycle UI — edit, roster roles, join/leave, deep links (13.3s)
+  ✓   4 tests/chat-channel-acceptance.e2e.ts:801:2 › Chat channel management product acceptance (PR #480) › b: A creates a private channel with B; C is isolated from a live canary (2.4m)
+  ✓   5 tests/chat-channel-acceptance.e2e.ts:885:2 › Chat channel management product acceptance (PR #480) › c: A and B exchange messages; event ids + authors verified both sides (3.1s)
+  ✓   6 tests/chat-channel-acceptance.e2e.ts:940:2 › Chat channel management product acceptance (PR #480) › d: reload retains authorized history (1.5s)
+  ✓   7 tests/chat-channel-acceptance.e2e.ts:961:2 › Chat channel management product acceptance (PR #480) › g: lost ACK does not duplicate the message (retry same signed event) (8.8s)
+  ✓   8 tests/chat-channel-acceptance.e2e.ts:1140:2 › Chat channel management product acceptance (PR #480) › i: role downgrade to guest denies posting immediately (relay-direct) (200ms)
+  ✓   9 tests/chat-channel-acceptance.e2e.ts:1247:2 › Chat channel management product acceptance (PR #480) › e: member removal revokes discovery, reads, posting, and attachments; B’s session stays live (53.3s)
+  ✓  10 tests/chat-channel-acceptance.e2e.ts:1517:2 › Chat channel management product acceptance (PR #480) › f2: private-channel leaks closed — search, deep links, history, relay reads for C and removed B (9.1s)
+  ✓  11 tests/chat-channel-acceptance.e2e.ts:1640:2 › Chat channel management product acceptance (PR #480) › f: Files attachment authorization — grant succeeds, revocation fails (113ms)
+  ✓  12 tests/chat-channel-acceptance.e2e.ts:1701:2 › Chat channel management product acceptance (PR #480) › j: relay + backend + observer restart retains authorized history and posting (18.3s)
+  ✓  13 tests/chat-channel-acceptance.e2e.ts:1876:2 › Chat channel management product acceptance (PR #480) › e2: account revocation denies access (50ms)
+  13 passed (5.9m)
