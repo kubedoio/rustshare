@@ -13,7 +13,6 @@ export function mailBodyText(body: MailBody): string {
 		text = extractMailText(parsed.body)
 			.replace(/\u00a0/g, ' ')
 			.replace(/&nbsp;/g, ' ')
-			.replace(/&amp;/g, '&')
 			.trim();
 	}
 	// Tiptap parses initial content as HTML; serialize through a text node so literal

@@ -59,5 +59,12 @@ describe('MailBodyEditor', () => {
 		expect(plainTextEditor.container.querySelector('.tiptap')?.textContent).toBe(
 			'<img src="https://tracker.example/plain-pixel" alt="literal">'
 		);
+
+		const encodedLiteral = mailBodyText({ type: 'html', content: '<p>&amp;amp;</p>' });
+		const encodedLiteralEditor = render(MailBodyEditor, {
+			content: encodedLiteral,
+			onChange: () => {}
+		});
+		expect(encodedLiteralEditor.container.querySelector('.tiptap')?.textContent).toBe('&amp;');
 	});
 });
