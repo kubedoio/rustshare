@@ -258,4 +258,4 @@ if (cd "${test_project}" && ELEMBRA_TEST_AWS_FAIL=true ./scripts/elembra-offsite
 fi
 grep -qx '/' "${TEST_ROOT}/heartbeat.log"
 grep -qx '/fail' "${TEST_ROOT}/heartbeat.log"
-echo 'Disposable S3 encryption, checksum, retention, failure alert, and full Elembra/Buzz restore passed; this is not a production recovery drill.'
+echo 'Disposable S3 encryption, checksum, retention, failure alert, and synthetic Elembra/Buzz database/object restore mechanics passed; relay continuity and production recovery were not tested.'
