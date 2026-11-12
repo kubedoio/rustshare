@@ -39,6 +39,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Preserve the Chat Compose overlay during restore
         run: scripts/test-restore-stack-compose.sh
+      - name: Verify recovery drill evidence ownership and cleanup failures
+        run: scripts/test-chat-recovery-drill-safety.sh
 
   generate-secrets:
     name: Generate Secrets

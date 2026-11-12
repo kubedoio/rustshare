@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT}/scripts/chat-recovery-drill-safety.sh"
+TEMP_DIR="$(mktemp -d)"
+trap 'rm -rf "${TEMP_DIR}"' EXIT
+
+mkdir -m 700 "${TEMP_DIR}/bin"
+cat >"${TEMP_DIR}/bin/docker" <<'DOCKER'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'docker %s\n' "$*" >>"${FAKE_CALLS}"
+case "$*" in
+	"compose "*)
+		if [[ "${FAKE_DOWN_FAIL:-0}" == 1 ]]; then exit 1; fi
+		;;
+	"ps -aq "*) if [[ "${FAKE_RESOURCES:-0}" == 1 ]]; then echo leftover-container; fi ;;
+	"volume ls -q "*) if [[ "${FAKE_RESOURCES:-0}" == 1 ]]; then echo leftover-volume; fi ;;
+	"network ls -q "*) if [[ "${FAKE_RESOURCES:-0}" == 1 ]]; then echo leftover-network; fi ;;
+esac
+DOCKER
+cat >"${TEMP_DIR}/bin/git" <<'GIT'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'git %s\n' "$*" >>"${FAKE_CALLS}"
+if [[ "${FAKE_GIT_REMOVE_FAIL:-0}" == 1 ]]; then exit 1; fi
+if [[ "$*" == *"worktree remove --force"* ]]; then rm -rf -- "${@: -1}"; fi
+GIT
+chmod +x "${TEMP_DIR}/bin/docker" "${TEMP_DIR}/bin/git"
+export PATH="${TEMP_DIR}/bin:${PATH}" FAKE_CALLS="${TEMP_DIR}/calls"
+
+# Never chmod or reuse a caller-owned evidence directory.
+mkdir -m 755 "${TEMP_DIR}/existing"
+printf 'keep\n' >"${TEMP_DIR}/existing/marker"
+if create_recovery_evidence_dir "${TEMP_DIR}/existing" "${TEMP_DIR}" unused >/dev/null 2>&1; then
+	echo "Expected existing evidence directory to be refused." >&2
+	exit 1
+fi
+[[ "$(stat -c '%a' "${TEMP_DIR}/existing")" == 755 ]]
+[[ "$(cat "${TEMP_DIR}/existing/marker")" == keep ]]
+
+# New destinations are private; evidence publication refuses overwrite.
+new_dir="$(create_recovery_evidence_dir "${TEMP_DIR}/fresh-evidence" "${TEMP_DIR}" unused)"
+[[ "$(stat -c '%a' "${new_dir}")" == 700 ]]
+mkdir -m 700 "${TEMP_DIR}/source"
+printf 'summary\n' >"${TEMP_DIR}/source/result.env"
+publish_recovery_evidence "${TEMP_DIR}/source" "${new_dir}" result.env
+[[ "$(stat -c '%a' "${new_dir}/result.env")" == 600 ]]
+if publish_recovery_evidence "${TEMP_DIR}/source" "${new_dir}" result.env >/dev/null 2>&1; then
+	echo "Expected existing evidence file to be protected from overwrite." >&2
+	exit 1
+fi
+[[ "$(cat "${new_dir}/result.env")" == summary ]]
+
+# Successful cleanup removes only the exact Compose project, verifies all
+# resource classes, then removes that drill's temporary worktree.
+mkdir -m 700 "${TEMP_DIR}/repo" "${TEMP_DIR}/success-worktree"
+cleanup_recovery_project "${TEMP_DIR}/repo" fixture-project "${TEMP_DIR}/success-worktree" \
+	"ghcr.io/example/relay@sha256:$(printf 'a%.0s' {1..64})"
+[[ ! -e "${TEMP_DIR}/success-worktree" ]]
+grep -F 'docker compose --project-name fixture-project --profile chat' "${FAKE_CALLS}" >/dev/null
+grep -F -- '--volumes --remove-orphans' "${FAKE_CALLS}" >/dev/null
+grep -F 'docker ps -aq --filter label=com.docker.compose.project=fixture-project' "${FAKE_CALLS}" >/dev/null
+if grep -E 'system prune|volume prune|image prune' "${FAKE_CALLS}"; then
+	echo "Unexpected global prune in cleanup." >&2
+	exit 1
+fi
+
+# A failed down with leftover project resources is a hard cleanup failure; the
+# worktree stays available and no evidence publisher can mark it PASS.
+mkdir -m 700 "${TEMP_DIR}/failed-worktree"
+if FAKE_DOWN_FAIL=1 FAKE_RESOURCES=1 cleanup_recovery_project \
+	"${TEMP_DIR}/repo" fixture-project "${TEMP_DIR}/failed-worktree" \
+	"ghcr.io/example/relay@sha256:$(printf 'b%.0s' {1..64})" >/dev/null 2>&1; then
+	echo "Expected failed Compose cleanup to propagate." >&2
+	exit 1
+fi
+[[ -d "${TEMP_DIR}/failed-worktree" ]]
+if grep -F 'failed-worktree' "${FAKE_CALLS}" | grep -E 'worktree remove'; then
+	echo "Failed cleanup unexpectedly removed its worktree." >&2
+	exit 1
+fi
+
+# Worktree deletion failures also propagate instead of being swallowed.
+mkdir -m 700 "${TEMP_DIR}/git-failed-worktree"
+if FAKE_GIT_REMOVE_FAIL=1 cleanup_recovery_project \
+	"${TEMP_DIR}/repo" fixture-project "${TEMP_DIR}/git-failed-worktree" \
+	"ghcr.io/example/relay@sha256:$(printf 'c%.0s' {1..64})" >/dev/null 2>&1; then
+	echo "Expected worktree cleanup failure to propagate." >&2
+	exit 1
+fi
+[[ -d "${TEMP_DIR}/git-failed-worktree" ]]
+
+echo "Recovery drill evidence ownership and cleanup failure tests passed."
