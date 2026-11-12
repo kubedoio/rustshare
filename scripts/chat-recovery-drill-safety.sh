@@ -11,6 +11,12 @@ pin_recovery_compose_environment() {
 	export BUZZ_POSTGRES_SERVICE=buzz-postgres BUZZ_RUSTFS_SERVICE=buzz-rustfs
 }
 
+hash_recovery_command_output() {
+	local output
+	output="$("$@")" || return 1
+	printf '%s' "${output}" | sha256sum | awk '{print $1}'
+}
+
 create_recovery_evidence_dir() {
 	local requested="$1" parent="$2" prefix="$3"
 	if [[ -n "${requested}" ]]; then

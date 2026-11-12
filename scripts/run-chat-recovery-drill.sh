@@ -208,9 +208,14 @@ ELEMBRA_API="${BASE_URL}/api/v1" BUZZ_RELAY_WS="${RELAY_URL}" \
 PHASE=browser-channel-acceptance
 npm ci --prefix frontend --no-audit --no-fund >"${EVIDENCE_DIR}/npm-ci.log" 2>&1
 npx --prefix frontend playwright install chromium >"${EVIDENCE_DIR}/playwright-install.log" 2>&1
+CHANNEL_EVIDENCE_RELATIVE="$(python3 - "${TEST_ROOT}" "${EVIDENCE_DIR}/chat-channel.json" <<'PY'
+import os,sys
+print(os.path.relpath(sys.argv[2], sys.argv[1]))
+PY
+)"
 ACCEPTANCE_BASE_URL="${BASE_URL}" ACCEPTANCE_RELAY_URL="${RELAY_URL}" \
 	ACCEPTANCE_ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
-	ACCEPTANCE_EVIDENCE="${EVIDENCE_DIR}/chat-channel.json" \
+	ACCEPTANCE_EVIDENCE="${CHANNEL_EVIDENCE_RELATIVE}" \
 	./scripts/run-chat-channel-acceptance.sh >"${EVIDENCE_DIR}/channel.log" 2>&1
 CHANNEL_CASES="$(python3 - "${EVIDENCE_DIR}/chat-channel.json" 13 <<'PY'
 import json,sys
@@ -297,21 +302,24 @@ compose_call() { docker compose "${compose_args[@]}" "$@"; }
 
 query_hash() {
 	local service="$1" user="$2" database="$3" query="$4"
-	compose_call exec -T "${service}" psql -U "${user}" -d "${database}" -Atc "${query}" | sha256sum | awk '{print $1}'
+	hash_recovery_command_output compose_call exec -T "${service}" psql -U "${user}" -d "${database}" -Atc "${query}"
 }
 
 volume_hash() {
 	local service="$1" container volume
-	container="$(compose_call ps -q "${service}")"
-	volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${container}")"
+	container="$(compose_call ps -q "${service}")" || return 1
+	[[ -n "${container}" ]] || { echo "No container for ${service}." >&2; return 1; }
+	volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${container}")" || return 1
 	[[ -n "${volume}" ]] || { echo "No named data volume on ${service}." >&2; return 1; }
-	docker run --rm -v "${volume}:/data:ro" alpine@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507 \
-		sh -c 'cd /data && find . -type f -print0 | sort -z | xargs -0 -r sha256sum' | sha256sum | awk '{print $1}'
+	hash_recovery_command_output docker run --rm -v "${volume}:/data:ro" alpine@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507 \
+		sh -c 'cd /data && find . -type f -print0 | sort -z | xargs -0 -r sha256sum'
 }
 
 snapshot() {
 	local name="$1"
 	local buzz_events buzz_channels buzz_members identity_bindings workspace_communities users observed_events files
+	local buzz_events_hash buzz_channels_hash buzz_members_hash identity_bindings_hash workspace_communities_hash
+	local users_hash observed_events_hash files_hash rustfs_objects_hash buzz_rustfs_objects_hash
 	buzz_events="SELECT COALESCE(jsonb_agg(jsonb_build_array(community_id,encode(id,'hex'),encode(pubkey,'hex'),created_at,kind,tags,content,encode(sig,'hex'),channel_id,deleted_at) ORDER BY community_id,created_at,encode(id,'hex')),'[]'::jsonb)::text FROM events"
 	buzz_channels="SELECT COALESCE(jsonb_agg(jsonb_build_array(community_id,id,name,channel_type::text,visibility::text,encode(created_by,'hex'),archived_at,deleted_at) ORDER BY community_id,id),'[]'::jsonb)::text FROM channels"
 	buzz_members="SELECT COALESCE(jsonb_agg(jsonb_build_array(community_id,channel_id,encode(pubkey,'hex'),role::text,joined_at,removed_at) ORDER BY community_id,channel_id,pubkey),'[]'::jsonb)::text FROM channel_members"
@@ -320,17 +328,27 @@ snapshot() {
 	users="SELECT COALESCE(jsonb_agg(jsonb_build_array(id,username,email,password_hash,display_name,is_admin,tenant_id,disabled_at,credentials_revoked_at,credential_version) ORDER BY tenant_id,id),'[]'::jsonb)::text FROM users"
 	observed_events="SELECT COALESCE(jsonb_agg(jsonb_build_array(tenant_id,workspace_id,event_id,message_id,event_type,supersedes_event_id,community_id,channel_id,channel_kind,thread_root_id,author_pubkey,author_principal_id,event_created_at,checksum,signature,signature_verified,body,active,attachment_refs) ORDER BY tenant_id,event_id),'[]'::jsonb)::text FROM chat_observed_events"
 	files="SELECT COALESCE(jsonb_agg(jsonb_build_array(id,name,size,content_hash,storage_key,owner_id,tenant_id,deleted_at) ORDER BY tenant_id,id),'[]'::jsonb)::text FROM files"
+	buzz_events_hash="$(query_hash buzz-postgres buzz buzz "${buzz_events}")" || return 1
+	buzz_channels_hash="$(query_hash buzz-postgres buzz buzz "${buzz_channels}")" || return 1
+	buzz_members_hash="$(query_hash buzz-postgres buzz buzz "${buzz_members}")" || return 1
+	identity_bindings_hash="$(query_hash postgres rustshare rustshare "${identity_bindings}")" || return 1
+	workspace_communities_hash="$(query_hash postgres rustshare rustshare "${workspace_communities}")" || return 1
+	users_hash="$(query_hash postgres rustshare rustshare "${users}")" || return 1
+	observed_events_hash="$(query_hash postgres rustshare rustshare "${observed_events}")" || return 1
+	files_hash="$(query_hash postgres rustshare rustshare "${files}")" || return 1
+	rustfs_objects_hash="$(volume_hash rustfs)" || return 1
+	buzz_rustfs_objects_hash="$(volume_hash buzz-rustfs)" || return 1
 	{
-		printf 'buzz_events=%s\n' "$(query_hash buzz-postgres buzz buzz "${buzz_events}")"
-		printf 'buzz_channels=%s\n' "$(query_hash buzz-postgres buzz buzz "${buzz_channels}")"
-		printf 'buzz_members=%s\n' "$(query_hash buzz-postgres buzz buzz "${buzz_members}")"
-		printf 'elembra_identity_bindings=%s\n' "$(query_hash postgres rustshare rustshare "${identity_bindings}")"
-		printf 'elembra_workspace_communities=%s\n' "$(query_hash postgres rustshare rustshare "${workspace_communities}")"
-		printf 'elembra_users_and_credentials=%s\n' "$(query_hash postgres rustshare rustshare "${users}")"
-		printf 'elembra_observed_events=%s\n' "$(query_hash postgres rustshare rustshare "${observed_events}")"
-		printf 'elembra_files=%s\n' "$(query_hash postgres rustshare rustshare "${files}")"
-		printf 'rustfs_objects=%s\n' "$(volume_hash rustfs)"
-		printf 'buzz_rustfs_objects=%s\n' "$(volume_hash buzz-rustfs)"
+		printf 'buzz_events=%s\n' "${buzz_events_hash}"
+		printf 'buzz_channels=%s\n' "${buzz_channels_hash}"
+		printf 'buzz_members=%s\n' "${buzz_members_hash}"
+		printf 'elembra_identity_bindings=%s\n' "${identity_bindings_hash}"
+		printf 'elembra_workspace_communities=%s\n' "${workspace_communities_hash}"
+		printf 'elembra_users_and_credentials=%s\n' "${users_hash}"
+		printf 'elembra_observed_events=%s\n' "${observed_events_hash}"
+		printf 'elembra_files=%s\n' "${files_hash}"
+		printf 'rustfs_objects=%s\n' "${rustfs_objects_hash}"
+		printf 'buzz_rustfs_objects=%s\n' "${buzz_rustfs_objects_hash}"
 	} >"${EVIDENCE_DIR}/${name}.env"
 }
 
