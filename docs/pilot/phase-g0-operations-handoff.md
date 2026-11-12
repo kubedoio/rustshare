@@ -11,9 +11,17 @@ deployment or claim production recovery qualification.
 and blackbox exporter (Grafana is optional). The existing rules alert on
 backend scrape/readiness failure, nginx, outbox backlog/stall, DB pool
 saturation, object-GC failures, Chat observation lag, and elevated Chat
-authorization denials. The readiness probe includes configured dependencies,
-including database and object storage. The observer and relay are covered by
-that aggregate readiness signal when the Chat profile is enabled.
+authorization denials. `/health/ready` checks backend database, object
+storage, event delivery, and auth-session dependencies. It does **not** check
+Buzz relay or observer availability. The Chat overlay added by this PR gives
+Prometheus independent observer `/ready` and relay TCP probes when the Chat
+profile is enabled.
+
+For a Chat deployment, include `-f docker-compose.monitoring-chat.yml` in
+the monitoring Compose command. It replaces the empty file-SD target lists
+with internal observer and relay targets. The relay probe tests TCP listener
+availability only; public NIP-11, Host-derived community identity, NIP-42,
+and browser WebSocket reachability remain external-origin gates.
 
 Metrics omit Chat message content and carry no author labels for observation
 lag or authorization-denial counts. Keep that property when extending
@@ -24,17 +32,21 @@ keys, or browser-held user keys to alert labels or logs.
 
 | Signal | Current mechanism | Qualification still required |
 | --- | --- | --- |
-| Backend, observer, relay, DB and object storage unavailable | Backend scrape plus `/health/ready`; readiness checks configured dependencies | Deploy the monitor beside the exact pilot Compose network and prove each intended dependency failure raises/clears the alert. |
+| Backend, DB and object storage unavailable | Backend scrape plus `/health/ready`; readiness checks DB, object storage, event delivery and auth sessions | Inject each dependency failure in a disposable stack and verify alert fire/clear. |
+| Observer unavailable or disconnected from authenticated relay | Chat monitoring overlay probes observer `/ready`, which requires authenticated connection and initialized observation | Enable `docker-compose.monitoring-chat.yml`; verify down, auth failure, reconnect and alert recovery in an isolated stack. |
+| Buzz relay listener unavailable | Chat monitoring overlay TCP-connect probe to `buzz-relay:7447` | Verify failure injection and recovery. TCP probe is liveness only; it does not qualify NIP-11 identity or NIP-42. |
 | Chat observation lag / stuck processing | `chat_observation_lag_seconds`; backend/webhook outcome metrics | Set the pilot threshold from observed baseline; inject a disposable delayed-observation case and verify alert delivery. |
 | Backup failure or stale last-success heartbeat | Backup script and runbook; no committed successful-backup heartbeat alert | Schedule the approved off-host backup and monitor its exit plus last-success timestamp from an independent scheduler. Do not count a local file as off-host evidence. |
 | Abnormal authorization denials | `chat_authorization_denials_total` alert (>5 in 15 minutes) | Validate alert delivery and tune only with pilot traffic evidence. Review safe categories; do not log event content or credentials. |
-| TLS / browser WebSocket connectivity | External browser journey and operator-side HTTPS checks; no in-stack public-origin probe | Run the canonical journey from outside the host through the actual DNS/TLS edge, including WebSocket upgrade and NIP-11/NIP-42 behavior. |
+| TLS / browser WebSocket connectivity and public NIP-11 identity | Not covered by the internal probes; the internal relay TCP check does not validate Host-derived community identity | Run the canonical journey from outside the host through actual DNS/TLS, WebSocket upgrade, NIP-11, NIP-42 and the configured community mapping. This remains a pilot-host gate. |
 | Host CPU, memory, disk, inode or filesystem pressure | Not covered by the repository monitoring stack | Use the host operator's existing monitored platform or add an approved host exporter before cohort onboarding; alert on disk/inode exhaustion and sustained memory/CPU pressure. |
 
-The Alertmanager configuration currently routes to an empty placeholder. This
-is a known gate: configure a real restricted alert destination on the pilot
-host, fire a test alert, and have the named operator acknowledge it. Prometheus
-being healthy is not proof of notification delivery.
+The Alertmanager configuration currently routes to an empty placeholder. CI
+starts Alertmanager with an isolated local webhook receiver and verifies
+synthetic alert delivery. Monitoring alerts if Alertmanager is down or reports
+notification failures. This does not prove delivery to the real pilot
+destination: configure that restricted route on the pilot host, fire a test
+alert, and have the named operator acknowledge it.
 
 ## Protected pilot workflow boundary
 

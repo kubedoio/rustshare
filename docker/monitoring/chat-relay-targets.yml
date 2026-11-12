@@ -1,0 +1,4 @@
+- targets:
+    - buzz-relay:7447
+  labels:
+    service: buzz-relay

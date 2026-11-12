@@ -40,6 +40,12 @@ scrape_configs:
         labels:
           service: elembra-nginx
 
+  - job_name: elembra-alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+        labels:
+          service: elembra-alertmanager
+
   # Readiness is probed (not scraped): /health/ready returns JSON, which
   # Prometheus cannot scrape as metrics. The blackbox exporter performs an
   # HTTP 2xx probe against it and exports probe_success, which the
@@ -62,9 +68,33 @@ scrape_configs:
       - target_label: __address__
         replacement: blackbox-exporter:9115
 
-  # Chat-runtime health is observed through the Elembra backend's own
-  # exported metrics (chat_observation_lag_seconds,
-  # chat_authorization_denials_total, chat_webhook_outcomes_total) rather
-  # than by scraping the Buzz relay directly, whose endpoints are not
-  # Prometheus-formatted. The observer and relay are additionally covered by
-  # the readiness probe above while the chat profile is running.
+  # These file-SD targets stay empty in the base monitoring stack. When Chat
+  # is enabled, add docker-compose.monitoring-chat.yml to probe observer
+  # readiness and relay TCP availability independently of backend readiness.
+  - job_name: elembra-chat-observer
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    file_sd_configs:
+      - files: [/etc/prometheus/chat-observer-targets.yml]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: elembra-chat-relay
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    file_sd_configs:
+      - files: [/etc/prometheus/chat-relay-targets.yml]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
