@@ -3,7 +3,10 @@ import { WebSocketClient } from './client';
 import type { WebSocketEvent, WebSocketEventType } from './events';
 
 describe('WebSocketClient diagnostics', () => {
-	afterEach(() => vi.restoreAllMocks());
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
 
 	it('does not log malformed event payloads or interpret attacker text as a format string', () => {
 		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -27,5 +30,65 @@ describe('WebSocketClient diagnostics', () => {
 		const calls = JSON.stringify([...error.mock.calls, ...warn.mock.calls]);
 		expect(calls).not.toContain('private message');
 		expect(calls).not.toContain(untrustedEventType);
+	});
+
+	it('does not log WebSocket payloads, error objects, close reasons, or credential URLs', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+		let socket: {
+			onmessage: ((event: { data: string }) => void) | null;
+			onerror: ((event: unknown) => void) | null;
+			onclose: ((event: { code: number; reason: string }) => void) | null;
+		};
+		class FakeWebSocket {
+			static CONNECTING = 0;
+			static OPEN = 1;
+			static CLOSING = 2;
+			static CLOSED = 3;
+			readyState = FakeWebSocket.CONNECTING;
+			onopen: (() => void) | null = null;
+			onmessage: ((event: { data: string }) => void) | null = null;
+			onerror: ((event: unknown) => void) | null = null;
+			onclose: ((event: { code: number; reason: string }) => void) | null = null;
+			constructor(_url: string) {
+				socket = this;
+			}
+		}
+		vi.stubGlobal('WebSocket', FakeWebSocket);
+
+		const secret = 'sensitive-token-and-message';
+		const client = new WebSocketClient('https://chat.example/ws');
+		const connection = client.connect(secret).catch(() => {});
+		socket!.onmessage?.({ data: `not-json ${secret}` });
+		socket!.onerror?.({ message: secret });
+		socket!.onclose?.({ code: 1008, reason: secret });
+		await connection;
+
+		const calls = JSON.stringify([...error.mock.calls, ...debug.mock.calls]);
+		expect(calls).not.toContain(secret);
+		expect(error.mock.calls).toContainEqual(['[WebSocket] Failed to parse message']);
+		expect(error.mock.calls).toContainEqual(['[WebSocket] Connection error']);
+		expect(debug.mock.calls).toContainEqual(['[WebSocket] Disconnected']);
+	});
+
+	it('does not log credentials when WebSocket construction fails', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const secret = 'sensitive-token';
+		class ThrowingWebSocket {
+			static CONNECTING = 0;
+			static OPEN = 1;
+			static CLOSING = 2;
+			static CLOSED = 3;
+			constructor(_url: string) {
+				throw new Error(secret);
+			}
+		}
+		vi.stubGlobal('WebSocket', ThrowingWebSocket);
+
+		await expect(new WebSocketClient('https://chat.example/ws').connect(secret)).rejects.toThrow(
+			'Failed to create WebSocket connection'
+		);
+		expect(JSON.stringify(error.mock.calls)).not.toContain(secret);
+		expect(error.mock.calls).toContainEqual(['[WebSocket] Failed to create connection']);
 	});
 });

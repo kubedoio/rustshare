@@ -1,3 +1,5 @@
+import DOMPurify from 'isomorphic-dompurify';
+
 export type MailBody = { type: 'empty' | 'html' | 'text'; content: string };
 
 export function mailBodyText(body: MailBody): string {
@@ -9,12 +11,10 @@ export function mailBodyText(body: MailBody): string {
 			.replace(/<[^>]+>/g, '')
 			.replace(/&nbsp;/g, ' ')
 			.replace(/&amp;/g, '&')
-			.replace(/&lt;/g, '<')
-			.replace(/&gt;/g, '>')
 			.trim();
 	}
-	// The result is passed to Tiptap as HTML; keep mail markup as text.
-	return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	// Tiptap parses initial content as HTML; strip markup again at this boundary.
+	return DOMPurify.sanitize(text, { ALLOWED_TAGS: [], ALLOWED_ATTR: [], KEEP_CONTENT: true });
 }
 
 export function quoteMailBody(text: string): string {

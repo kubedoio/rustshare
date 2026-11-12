@@ -13,7 +13,7 @@ describe('mail compose helpers', () => {
 		).toBe('Hello & bye\n\nNext');
 	});
 
-	it('keeps decoded HTML and plain-text markup inert in the rich-text reply body', () => {
+	it('keeps encoded HTML and plain-text markup inert in the rich-text reply body', () => {
 		expect(
 			mailBodyText({
 				type: 'html',
@@ -22,7 +22,7 @@ describe('mail compose helpers', () => {
 		).toBe('&lt;img src="https://tracker.example/pixel"&gt;');
 		expect(
 			mailBodyText({ type: 'text', content: '<img src="https://tracker.example/pixel">' })
-		).toBe('&lt;img src="https://tracker.example/pixel"&gt;');
+		).toBe('');
 	});
 
 	it('deduplicates reply-all recipients and excludes the current identity', () => {
