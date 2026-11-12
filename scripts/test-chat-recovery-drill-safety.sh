@@ -42,6 +42,16 @@ pin_recovery_compose_environment fixture-project
 [[ "${POSTGRES_SERVICE}" == postgres && "${RUSTFS_SERVICE}" == rustfs ]]
 [[ "${BUZZ_POSTGRES_SERVICE}" == buzz-postgres && "${BUZZ_RUSTFS_SERVICE}" == buzz-rustfs ]]
 [[ "$(grep -c 'pin_recovery_compose_environment "${PROJECT}"' "${ROOT}/scripts/run-chat-recovery-drill.sh")" == 2 ]]
+grep -F 'ELEMBRA_ORIGIN="${ELEMBRA_ORIGIN:-${ELEMBRA_API%/api/v1}}"' "${ROOT}/scripts/run-alpha-dogfood.sh" >/dev/null
+grep -F 'url="${ELEMBRA_ORIGIN}${path}"' "${ROOT}/scripts/run-alpha-dogfood.sh" >/dev/null
+grep -F 'ACCEPTANCE_EVIDENCE="${CHANNEL_EVIDENCE_RELATIVE}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+hash_recovery_output_fixture() { printf 'fixture fingerprint'; }
+expected_hash="$(printf 'fixture fingerprint' | sha256sum | awk '{print $1}')"
+[[ "$(hash_recovery_command_output hash_recovery_output_fixture)" == "${expected_hash}" ]]
+if hash_recovery_command_output false >/dev/null 2>&1; then
+	echo "Expected failed fingerprint command to propagate." >&2
+	exit 1
+fi
 
 # Never chmod or reuse a caller-owned evidence directory.
 mkdir -m 755 "${TEMP_DIR}/existing"
