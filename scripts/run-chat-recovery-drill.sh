@@ -202,7 +202,8 @@ export BASE_URL RELAY_URL ADMIN_PASSWORD
 export BUZZ_CHANNEL_ID BUZZ_CHANNEL2_ID
 
 PHASE=alpha-dogfood
-ELEMBRA_API="${BASE_URL}/api/v1" BUZZ_RELAY_WS="${RELAY_URL}" \
+ELEMBRA_API="${BASE_URL}/api/v1" ELEMBRA_ORIGIN="${BASE_URL}" \
+	BUZZ_RELAY_WS="${RELAY_URL}" BUZZ_RELAY_HEALTH_URL="${RELAY_URL/ws:/http:}" \
 	./scripts/run-alpha-dogfood.sh >"${EVIDENCE_DIR}/alpha-dogfood.log" 2>&1
 
 PHASE=browser-channel-acceptance
