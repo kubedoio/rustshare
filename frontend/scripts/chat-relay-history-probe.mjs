@@ -38,12 +38,21 @@ const result = await new Promise((resolve, reject) => {
 				kind: 22242,
 				tags: [
 					['relay', relayUrl],
-					['challenge', message[1]]
+					['challenge', message[1]],
 				],
-				content: ''
+				content: '',
 			};
 			const id = createHash('sha256')
-				.update(JSON.stringify([0, unsigned.pubkey, unsigned.created_at, unsigned.kind, unsigned.tags, '']))
+				.update(
+					JSON.stringify([
+						0,
+						unsigned.pubkey,
+						unsigned.created_at,
+						unsigned.kind,
+						unsigned.tags,
+						'',
+					]),
+				)
 				.digest('hex');
 			authId = id;
 			ws.send(
@@ -52,9 +61,9 @@ const result = await new Promise((resolve, reject) => {
 					{
 						...unsigned,
 						id,
-						sig: bytesToHex(schnorr.sign(hexToBytes(id), hexToBytes(secretKey)))
-					}
-				])
+						sig: bytesToHex(schnorr.sign(hexToBytes(id), hexToBytes(secretKey))),
+					},
+				]),
 			);
 			return;
 		}
@@ -84,13 +93,26 @@ ws.close();
 
 if (result.length === 0) throw new Error(`no events returned for recovery channel ${channelId}`);
 const canonical = result
-	.map((event) => [event.id, event.pubkey, event.sig, event.created_at, event.kind, event.tags, event.content])
+	.map((event) => [
+		event.id,
+		event.pubkey,
+		event.sig,
+		event.created_at,
+		event.kind,
+		event.tags,
+		event.content,
+	])
 	.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
 for (const event of result) {
 	const calculatedId = createHash('sha256')
-		.update(JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content]))
+		.update(
+			JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content]),
+		)
 		.digest('hex');
-	if (calculatedId !== event.id || !schnorr.verify(hexToBytes(event.sig), hexToBytes(event.id), hexToBytes(event.pubkey))) {
+	if (
+		calculatedId !== event.id ||
+		!schnorr.verify(hexToBytes(event.sig), hexToBytes(event.id), hexToBytes(event.pubkey))
+	) {
 		throw new Error(`relay returned an invalid signed event ${event.id}`);
 	}
 }
@@ -100,6 +122,6 @@ console.log(
 		eventCount: canonical.length,
 		eventIds: canonical.map(([id]) => id),
 		eventAuthors: canonical.map(([id, author]) => [id, author]),
-		eventSetSha256: createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
-	})
+		eventSetSha256: createHash('sha256').update(JSON.stringify(canonical)).digest('hex'),
+	}),
 );
