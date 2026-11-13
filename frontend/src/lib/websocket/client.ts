@@ -81,13 +81,13 @@ export class WebSocketClient {
 					try {
 						const data: WebSocketEvent = JSON.parse(event.data);
 						this.handleEvent(data);
-					} catch (error) {
-						console.error('[WebSocket] Failed to parse message:', error);
+					} catch {
+						console.error('[WebSocket] Failed to parse message');
 					}
 				};
 
-				this.ws.onerror = (error) => {
-					console.error('[WebSocket] Error:', error);
+				this.ws.onerror = () => {
+					console.error('[WebSocket] Connection error');
 					websocketStore.setError('WebSocket connection error');
 					if (!settled) {
 						settled = true;
@@ -97,7 +97,7 @@ export class WebSocketClient {
 				};
 
 				this.ws.onclose = (event) => {
-					console.debug('[WebSocket] Disconnected', event.code, event.reason);
+					console.debug('[WebSocket] Disconnected');
 					if (!settled) {
 						settled = true;
 						this.connectPromise = null;
@@ -124,11 +124,11 @@ export class WebSocketClient {
 						websocketStore.setState('disconnected');
 					}
 				};
-			} catch (error) {
-				console.error('[WebSocket] Failed to create connection:', error);
+			} catch {
+				console.error('[WebSocket] Failed to create connection');
 				websocketStore.setError('Failed to create WebSocket connection');
 				this.connectPromise = null;
-				reject(error);
+				reject(new Error('Failed to create WebSocket connection'));
 			}
 		});
 
@@ -156,8 +156,8 @@ export class WebSocketClient {
 		websocketStore.setState('reconnecting');
 
 		this.reconnectTimer = setTimeout(() => {
-			this.connect(this.token).catch((error) => {
-				console.error('[WebSocket] Reconnection failed:', error);
+			this.connect(this.token).catch(() => {
+				console.error('[WebSocket] Reconnection failed');
 			});
 		}, delay);
 	}
@@ -167,7 +167,7 @@ export class WebSocketClient {
 		const eventType = (event as any).event_type || event.type;
 
 		if (!eventType) {
-			console.error('[WebSocket] Event missing event_type field:', event);
+			console.error('[WebSocket] Event missing event_type field');
 			return;
 		}
 
@@ -178,11 +178,11 @@ export class WebSocketClient {
 				try {
 					handler(event);
 				} catch (error) {
-					console.error(`[WebSocket] Handler error for ${eventType}:`, error);
+					console.error('[WebSocket] Handler failed');
 				}
 			});
 		} else {
-			console.warn(`[WebSocket] No handlers registered for event type: ${eventType}`);
+			console.warn('[WebSocket] No handler registered for event');
 		}
 	}
 
@@ -272,8 +272,8 @@ function resolveCanonicalWebSocketUrl(rawWsUrl?: string, rawApiUrl?: string): st
 				url.pathname = `${url.pathname}/ws`;
 				return url.toString();
 			}
-		} catch (error) {
-			console.warn('[WebSocket] Ignoring invalid URL candidate:', candidate, error);
+		} catch {
+			console.warn('[WebSocket] Ignoring invalid URL candidate');
 		}
 	}
 
