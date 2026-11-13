@@ -963,6 +963,11 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		const b = state.users.b;
 		const open = state.channels.open;
 		const body = `uncertain-path ${RUN_SUFFIX}`;
+		const stateRead = await relayQuery(a.secretKey!, { kinds: [39000, 39002], '#d': [open.id] });
+		console.log(
+			`[lost-ack] direct permission query ok=${stateRead.ok} events=${stateRead.events.length}`
+		);
+		expect(stateRead.ok, `direct channel permission query failed: ${stateRead.detail}`).toBe(true);
 		// Delay the relay's acceptance ACK past the client's 10 s ACK timeout so
 		// the composer takes its real "uncertain" path. Done in the page (a
 		// WebSocket constructor wrapper) — Playwright's routeWebSocket does not
