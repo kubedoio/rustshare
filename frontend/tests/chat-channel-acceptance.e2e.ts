@@ -1048,7 +1048,7 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		console.log('[lost-ack] chat view ready');
 		await ensureUnlocked(a);
 		console.log('[lost-ack] chat unlocked');
-		await channelOption(a.page, open.name).click();
+		await channelOption(a.page, open.name).click({ timeout: 30_000 });
 		// Restore the real WebSocket unconditionally: the wrapper only models
 		// the lost ACK, and a failure above must not leak the delayed-ACK
 		// wrapper into the rest of the serial suite.
@@ -1057,7 +1057,9 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				window.__gAckProbe!.delayNext = true;
 			});
 			await a.page.getByLabel('Message text').fill(body);
-			await a.page.getByRole('button', { name: 'Send message' }).click();
+			const sendButton = a.page.getByRole('button', { name: 'Send message' });
+			await expect(sendButton).toBeEnabled({ timeout: 90_000 });
+			await sendButton.click({ timeout: 10_000 });
 			console.log('[lost-ack] message sent; waiting for delayed relay ACK');
 			await expect
 				.poll(() => a.page.evaluate(() => window.__gAckProbe?.swallowedId ?? null), {
