@@ -110,6 +110,9 @@ trap cleanup EXIT
 PHASE=source-checkout
 git -C "${ROOT}" worktree add --detach "${TEST_ROOT}" "${SOURCE_SHA}" >/dev/null
 WORKTREE_ADDED=true
+# The drill's private umask protects generated credentials; container builds
+# still need the committed source readable by their non-root runtime users.
+chmod -R a+rX "${TEST_ROOT}"
 
 cat >"${TEST_ROOT}/docker-compose.g0-recovery.yml" <<YAML
 services:

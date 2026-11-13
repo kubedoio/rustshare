@@ -81,6 +81,15 @@ if publish_recovery_evidence "${TEMP_DIR}/source" "${new_dir}" result.env >/dev/
 fi
 [[ "$(cat "${new_dir}/result.env")" == summary ]]
 
+# The drill keeps umask 077 for secrets, but its child worktree must be
+# readable by non-root container runtime users after Docker copies source.
+mkdir -m 700 "${TEMP_DIR}/private-worktree"
+printf 'source\n' >"${TEMP_DIR}/private-worktree/observer.mjs"
+chmod -R a+rX "${TEMP_DIR}/private-worktree"
+[[ -r "${TEMP_DIR}/private-worktree/observer.mjs" ]]
+[[ "$(stat -c '%a' "${TEMP_DIR}/private-worktree/observer.mjs")" == 644 ]]
+[[ "$(stat -c '%a' "${TEMP_DIR}/private-worktree")" == 755 ]]
+
 # A teardown failure removes any private PASS marker before retaining evidence.
 mkdir -m 700 "${TEMP_DIR}/cleanup-failure-evidence"
 printf 'RECOVERY_DRILL_STATUS=PASS\n' >"${TEMP_DIR}/cleanup-failure-evidence/result.env"
