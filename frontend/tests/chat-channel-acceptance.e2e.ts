@@ -1058,7 +1058,15 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			});
 			await a.page.getByLabel('Message text').fill(body);
 			const sendButton = a.page.getByRole('button', { name: 'Send message' });
-			await expect(sendButton).toBeEnabled({ timeout: 90_000 });
+			try {
+				await expect(sendButton).toBeEnabled({ timeout: 25_000 });
+			} catch (error) {
+				const statuses = await a.page.getByRole('status').allTextContents();
+				const alerts = await a.page.getByRole('alert').allTextContents();
+				throw new Error(
+					`posting stayed disabled; statuses=${JSON.stringify(statuses)} alerts=${JSON.stringify(alerts)}; ${String(error)}`
+				);
+			}
 			await sendButton.click({ timeout: 10_000 });
 			console.log('[lost-ack] message sent; waiting for delayed relay ACK');
 			await expect
