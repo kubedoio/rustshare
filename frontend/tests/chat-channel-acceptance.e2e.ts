@@ -1065,11 +1065,31 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				.not.toBeNull();
 			console.log('[lost-ack] relay ACK interception confirmed');
 			// The UI must land on the uncertain path and offer the byte-identical retry.
-			await expect(
-				a.page.getByText(
-					'Message acceptance is uncertain. Editing is paused to prevent duplicate messages.'
-				)
-			).toBeVisible({ timeout: 45_000 });
+			try {
+				await expect(
+					a.page.getByText(
+						'Message acceptance is uncertain. Editing is paused to prevent duplicate messages.'
+					)
+				).toBeVisible({ timeout: 20_000 });
+			} catch (error) {
+				const statuses = await a.page.getByRole('status').allTextContents();
+				const alerts = await a.page.getByRole('alert').allTextContents();
+				const retryVisible = await a.page
+					.getByRole('button', { name: 'Retry same message' })
+					.isVisible()
+					.catch(() => false);
+				const pending = await a.page.evaluate(() => {
+					const key = Object.keys(sessionStorage).find((k) => k.startsWith('elembra.chat.draft:'));
+					const saved = key ? JSON.parse(sessionStorage.getItem(key) ?? '{}') : {};
+					return {
+						id: saved.pendingEvent?.id ?? null,
+						signature: Boolean(saved.pendingEvent?.sig)
+					};
+				});
+				throw new Error(
+					`uncertain UI missing; statuses=${JSON.stringify(statuses)} alerts=${JSON.stringify(alerts)} retry=${retryVisible} pending=${JSON.stringify(pending)}; ${String(error)}`
+				);
+			}
 			console.log('[lost-ack] uncertain UI state confirmed');
 			// The composer persists the exact signed pending event; that id is what
 			// the byte-identical retry resubmits and what must appear exactly once.
