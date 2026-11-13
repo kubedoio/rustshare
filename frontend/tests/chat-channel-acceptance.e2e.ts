@@ -968,6 +968,7 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		// WebSocket constructor wrapper) — Playwright's routeWebSocket does not
 		// see the app's relay connections in this Chromium build.
 		const relayPort = new URL(RELAY_URL).port;
+		console.log(`[lost-ack] installing relay probe for port ${relayPort}`);
 		await a.page.addInitScript((relayPort) => {
 			const Original = window.WebSocket;
 			window.__gOriginalWS = Original;
@@ -1040,10 +1041,13 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			} as typeof WebSocket;
 		}, relayPort);
 		await a.page.reload();
+		console.log('[lost-ack] page reloaded');
 		await expect(a.page.getByRole('heading', { name: 'Channels' })).toBeVisible({
 			timeout: 120_000
 		});
+		console.log('[lost-ack] chat view ready');
 		await ensureUnlocked(a);
+		console.log('[lost-ack] chat unlocked');
 		await channelOption(a.page, open.name).click();
 		// Restore the real WebSocket unconditionally: the wrapper only models
 		// the lost ACK, and a failure above must not leak the delayed-ACK
@@ -1054,17 +1058,20 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			});
 			await a.page.getByLabel('Message text').fill(body);
 			await a.page.getByRole('button', { name: 'Send message' }).click();
+			console.log('[lost-ack] message sent; waiting for delayed relay ACK');
 			await expect
 				.poll(() => a.page.evaluate(() => window.__gAckProbe?.swallowedId ?? null), {
 					timeout: 45_000
 				})
 				.not.toBeNull();
+			console.log('[lost-ack] relay ACK interception confirmed');
 			// The UI must land on the uncertain path and offer the byte-identical retry.
 			await expect(
 				a.page.getByText(
 					'Message acceptance is uncertain. Editing is paused to prevent duplicate messages.'
 				)
 			).toBeVisible({ timeout: 45_000 });
+			console.log('[lost-ack] uncertain UI state confirmed');
 			// The composer persists the exact signed pending event; that id is what
 			// the byte-identical retry resubmits and what must appear exactly once.
 			const capturedId = await a.page.evaluate(() => {
@@ -1087,6 +1094,7 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				if (original) window.WebSocket = original;
 			});
 			await a.page.getByRole('button', { name: 'Retry same message' }).click();
+			console.log('[lost-ack] exact-event retry clicked');
 			// The success banner is transient; assert the authoritative outcome via
 			// the API: exactly one applied message carrying the original event id.
 			await expect
@@ -1140,10 +1148,12 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			});
 		} finally {
 			// Unconditionally restore the real WebSocket even on failure.
-			await a.page.evaluate(() => {
-				const original = window.__gOriginalWS;
-				if (original) window.WebSocket = original;
-			});
+			await a.page
+				.evaluate(() => {
+					const original = window.__gOriginalWS;
+					if (original) window.WebSocket = original;
+				})
+				.catch(() => {});
 		}
 	});
 
