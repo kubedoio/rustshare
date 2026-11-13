@@ -49,6 +49,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Verify pilot image publication is manually gated
+        run: python3 scripts/test_redact_pilot_logs.py
       - name: Verify production deployment safeguards
         env:
           POSTGRES_PASSWORD: compose-validation-only
