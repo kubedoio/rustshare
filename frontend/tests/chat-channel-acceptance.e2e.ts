@@ -986,29 +986,6 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				constructor(url: string | URL, ...rest: unknown[]) {
 					super(url, ...(rest as []));
 					if (new URL(String(url), window.location.href).port !== relayPort) return;
-					// Arrow handlers capture the constructor's `this` lexically,
-					// so the relay-URL filter can invoke client handlers with the
-					// socket as `this` without an explicit this-alias.
-					const wrap = (handler: (ev: MessageEvent) => void) => (ev: MessageEvent) => {
-						try {
-							const msg = JSON.parse(String(ev.data));
-							if (msg[0] === 'EVENT' && msg[1]?.id) probe.lastEventId = msg[1].id;
-							if (
-								probe.delayNext &&
-								msg[0] === 'OK' &&
-								msg[2] === true &&
-								msg[1] === probe.lastEventId
-							) {
-								probe.delayNext = false;
-								probe.swallowedId = msg[1];
-								setTimeout(() => handler.call(this, ev), 12_000);
-								return;
-							}
-						} catch {
-							/* non-JSON frame */
-						}
-						handler.call(this, ev);
-					};
 					const originalSend = this.send.bind(this);
 					Object.defineProperty(this, 'send', {
 						value: (data: string | Blob | ArrayBuffer) => {
@@ -1021,27 +998,24 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 							originalSend(data);
 						}
 					});
-					let clientHandler: ((ev: MessageEvent) => void) | null = null;
-					Object.defineProperty(this, 'onmessage', {
-						get: () => clientHandler,
-						set: (h: (ev: MessageEvent) => void) => {
-							clientHandler = wrap(h);
-						}
-					});
-					const originalAdd = this.addEventListener.bind(this);
-					Object.defineProperty(this, 'addEventListener', {
-						value: (
-							type: string,
-							listener: EventListenerOrEventListenerObject,
-							...opts: unknown[]
-						) => {
-							if (type === 'message' && typeof listener === 'function') {
-								originalAdd(type, wrap(listener as (ev: MessageEvent) => void), ...(opts as []));
-								return;
+					this.addEventListener(
+						'message',
+						(ev) => {
+							if (!probe.delayNext) return;
+							try {
+								const msg = JSON.parse(String(ev.data));
+								if (msg[0] !== 'OK' || msg[2] !== true || msg[1] !== probe.lastEventId) return;
+								probe.delayNext = false;
+								probe.swallowedId = msg[1];
+								const data = ev.data;
+								ev.stopImmediatePropagation();
+								setTimeout(() => this.dispatchEvent(new MessageEvent('message', { data })), 12_000);
+							} catch {
+								/* non-JSON frame */
 							}
-							originalAdd(type, listener, ...(opts as []));
-						}
-					});
+						},
+						{ capture: true }
+					);
 				}
 			} as typeof WebSocket;
 		}, relayPort);
