@@ -963,13 +963,12 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		const b = state.users.b;
 		const open = state.channels.open;
 		const body = `uncertain-path ${RUN_SUFFIX}`;
-		await ensureUnlocked(a);
 		// Delay the relay's acceptance ACK past the client's 10 s ACK timeout so
 		// the composer takes its real "uncertain" path. Done in the page (a
 		// WebSocket constructor wrapper) — Playwright's routeWebSocket does not
 		// see the app's relay connections in this Chromium build.
 		const relayPort = new URL(RELAY_URL).port;
-		await a.page.evaluate((relayPort) => {
+		await a.page.addInitScript((relayPort) => {
 			const Original = window.WebSocket;
 			window.__gOriginalWS = Original;
 			const probe = (window.__gAckProbe = {
@@ -1040,6 +1039,11 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				}
 			} as typeof WebSocket;
 		}, relayPort);
+		await a.page.reload();
+		await expect(a.page.getByRole('heading', { name: 'Channels' })).toBeVisible({
+			timeout: 120_000
+		});
+		await ensureUnlocked(a);
 		await channelOption(a.page, open.name).click();
 		// Restore the real WebSocket unconditionally: the wrapper only models
 		// the lost ACK, and a failure above must not leak the delayed-ACK
