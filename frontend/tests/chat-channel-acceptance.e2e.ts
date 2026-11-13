@@ -987,35 +987,45 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 					super(url, ...(rest as []));
 					if (new URL(String(url), window.location.href).port !== relayPort) return;
 					const originalSend = this.send.bind(this);
+					let ackHandlerWrapped = false;
 					Object.defineProperty(this, 'send', {
 						value: (data: string | Blob | ArrayBuffer) => {
 							try {
 								const msg = JSON.parse(String(data));
-								if (msg[0] === 'EVENT' && msg[1]?.id) probe.lastEventId = msg[1].id;
+								if (msg[0] === 'EVENT' && msg[1]?.id) {
+									probe.lastEventId = msg[1].id;
+									if (probe.delayNext && !ackHandlerWrapped) {
+										const handler = this.onmessage;
+										if (handler) {
+											ackHandlerWrapped = true;
+											this.onmessage = (ev) => {
+												try {
+													const reply = JSON.parse(String(ev.data));
+													if (
+														probe.delayNext &&
+														reply[0] === 'OK' &&
+														reply[2] === true &&
+														reply[1] === probe.lastEventId
+													) {
+														probe.delayNext = false;
+														probe.swallowedId = reply[1];
+														setTimeout(() => handler.call(this, ev), 12_000);
+														return;
+													}
+												} catch {
+													/* non-JSON frame */
+												}
+												handler.call(this, ev);
+											};
+										}
+									}
+								}
 							} catch {
 								/* non-JSON frame */
 							}
 							originalSend(data);
 						}
 					});
-					this.addEventListener(
-						'message',
-						(ev) => {
-							if (!probe.delayNext) return;
-							try {
-								const msg = JSON.parse(String(ev.data));
-								if (msg[0] !== 'OK' || msg[2] !== true || msg[1] !== probe.lastEventId) return;
-								probe.delayNext = false;
-								probe.swallowedId = msg[1];
-								const data = ev.data;
-								ev.stopImmediatePropagation();
-								setTimeout(() => this.dispatchEvent(new MessageEvent('message', { data })), 12_000);
-							} catch {
-								/* non-JSON frame */
-							}
-						},
-						{ capture: true }
-					);
 				}
 			} as typeof WebSocket;
 		}, relayPort);
