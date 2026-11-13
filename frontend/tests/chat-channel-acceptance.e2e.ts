@@ -968,7 +968,8 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		// the composer takes its real "uncertain" path. Done in the page (a
 		// WebSocket constructor wrapper) — Playwright's routeWebSocket does not
 		// see the app's relay connections in this Chromium build.
-		await a.page.evaluate(() => {
+		const relayPort = new URL(RELAY_URL).port;
+		await a.page.evaluate((relayPort) => {
 			const Original = window.WebSocket;
 			window.__gOriginalWS = Original;
 			const probe = (window.__gAckProbe = {
@@ -979,7 +980,7 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			window.WebSocket = class extends Original {
 				constructor(url: string | URL, ...rest: unknown[]) {
 					super(url, ...(rest as []));
-					if (!String(url).includes('17447')) return;
+					if (new URL(String(url), window.location.href).port !== relayPort) return;
 					// Arrow handlers capture the constructor's `this` lexically,
 					// so the relay-URL filter can invoke client handlers with the
 					// socket as `this` without an explicit this-alias.
@@ -1038,7 +1039,7 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 					});
 				}
 			} as typeof WebSocket;
-		});
+		}, relayPort);
 		await channelOption(a.page, open.name).click();
 		// Restore the real WebSocket unconditionally: the wrapper only models
 		// the lost ACK, and a failure above must not leak the delayed-ACK
@@ -1049,6 +1050,11 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			});
 			await a.page.getByLabel('Message text').fill(body);
 			await a.page.getByRole('button', { name: 'Send message' }).click();
+			await expect
+				.poll(() => a.page.evaluate(() => window.__gAckProbe?.swallowedId ?? null), {
+					timeout: 45_000
+				})
+				.not.toBeNull();
 			// The UI must land on the uncertain path and offer the byte-identical retry.
 			await expect(
 				a.page.getByText(
