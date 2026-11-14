@@ -30,6 +30,85 @@ mod support;
 /// chat-observation suites).
 static SERIAL: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
+#[sqlx::test(migrations = "../migrations")]
+#[ignore = "requires PostgreSQL"]
+async fn files_reconcile_worker_discovery_recovers_after_canceled_insert(db: PgPool) {
+    use rustshare_server::memory_files_reconcile_worker::discover_tenant_page;
+    use std::time::Duration;
+    use support::calendar_harness::create_test_tenant;
+
+    let _guard = SERIAL.lock().await;
+    let tenant = create_test_tenant(&db).await;
+    let owner = Uuid::new_v4();
+    sqlx::query("INSERT INTO users (id, username, email, password_hash, display_name, storage_quota, tenant_id) VALUES ($1, $2, $3, 'test', 'Reconcile owner', 1024, $4)")
+        .bind(owner)
+        .bind(format!("reconcile-{}", Uuid::new_v4()))
+        .bind(format!("reconcile-{}@test.local", Uuid::new_v4()))
+        .bind(tenant)
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO files (id, name, path, size, mime_type, content_hash, storage_key, owner_id, tenant_id) VALUES ($1, 'source.md', $2, 1, 'text/markdown', 'hash', $3, $4, $5)")
+        .bind(Uuid::new_v4())
+        .bind(format!("/reconcile-{}.md", Uuid::new_v4()))
+        .bind(format!("reconcile/{}", Uuid::new_v4()))
+        .bind(owner)
+        .bind(tenant)
+        .execute(&db)
+        .await
+        .unwrap();
+
+    // Hold the unique job key so discovery blocks in INSERT after it has
+    // acquired the singleton cursor lock. Cancel that future before PostgreSQL's
+    // five-second lock timeout, then release the key and prove a fresh discovery
+    // can complete instead of inheriting an open transaction or stale row lock.
+    let mut conflicting_insert = db.begin().await.unwrap();
+    sqlx::query("INSERT INTO memory_files_reconcile_jobs (tenant_id) VALUES ($1)")
+        .bind(tenant)
+        .execute(&mut *conflicting_insert)
+        .await
+        .unwrap();
+
+    let metadata = MetadataStore::new(db.clone());
+    let discovery_metadata = metadata.clone();
+    let discovery = tokio::spawn(async move { discover_tenant_page(&discovery_metadata).await });
+    let blocked_in_insert = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND state='active' AND wait_event_type='Lock' AND query LIKE 'INSERT INTO memory_files_reconcile_jobs%')",
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap();
+            if waiting {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .is_ok();
+    discovery.abort();
+    let _ = discovery.await;
+    assert!(
+        blocked_in_insert,
+        "discovery did not reach the blocked job insert"
+    );
+    conflicting_insert.rollback().await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(3), discover_tenant_page(&metadata))
+        .await
+        .expect("discovery did not recover after cancellation")
+        .unwrap();
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM memory_files_reconcile_jobs WHERE tenant_id=$1)"
+    )
+    .bind(tenant)
+    .fetch_one(&db)
+    .await
+    .unwrap());
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn files_memory_reconciliation_pages_authoritative_rows_and_tombstones() {
@@ -752,9 +831,9 @@ async fn files_reconcile_worker_automates_recovery_and_bounds_failures(db: PgPoo
     let config = MemoryFilesReconcileConfig {
         interval: Duration::from_secs(60),
         poll_interval: Duration::from_millis(20),
-        lease: Duration::from_secs(3),
+        lease: Duration::from_secs(9),
         max_concurrent: 1,
-        page_timeout: Duration::from_secs(2),
+        page_timeout: Duration::from_secs(6),
     };
     let (shutdown, _) = tokio::sync::broadcast::channel(1);
     let worker = spawn_memory_files_reconcile_worker(
