@@ -1,8 +1,8 @@
-# RustShare Dependabot alert disposition — 2026-11-12
+# RustShare Dependabot alert disposition — refreshed 2026-11-14
 
-**Baseline:** `main` at `2078abae9f96dcfc4f62e74c72baba99a63c2c5e`. **Source:** live GitHub Dependabot alert API fetched 2026-11-12; current lock/manifest read from that exact tree. This report is a triage snapshot, not a dismissal or a claim that every finding is fixed.
+**Baseline:** `main` at `2078abae9f96dcfc4f62e74c72baba99a63c2c5e`. **Source:** live GitHub Dependabot alert API refreshed 2026-11-14; current lock/manifest read from that exact tree. This report is a triage snapshot, not a dismissal or a claim that every finding is fixed.
 
-**Current records:** 74 total: 60 open and 14 auto-dismissed. Severity: CRITICAL 2, HIGH 28, LOW 9, MEDIUM 35.
+**Current records:** 76 total: 61 open and 15 auto-dismissed. Across all records: CRITICAL 2, HIGH 28, MEDIUM 37, LOW 9. Open alerts are CRITICAL 2, HIGH 18, MEDIUM 32, LOW 9.
 
 ## Critical and High summary
 
@@ -81,10 +81,11 @@
 | #70 | [GHSA-27mw-82g8-phjj](https://github.com/advisories/GHSA-27mw-82g8-phjj): SvelteKit : XSS via untrusted cache-control header in prerendered page | @sveltejs/kit | devDependencies: @sveltejs/kit | < 3.0.0 (alert-reported version 2.55.0) | 2.70.3 @ node_modules/@sveltejs/kit | 3.0.0 | GitHub scope=development / direct; root devDependency; build/test tooling only | Conditionally affected by version (<3.0.0); source scan found no `setHeaders` calls. Package is dev/build-time; no exploit condition located. Keep open pending reviewer confirmation and documented disposition or tested SvelteKit 3 migration. | Human reviewer to verify code/config scan and decide an explicit condition-based exception; do not auto-dismiss. |
 | #71 | [GHSA-pfhg-q3qv-9q6r](https://github.com/advisories/GHSA-pfhg-q3qv-9q6r): SvelteKit: URL redirection to untrusted site via enhanced form submission | @sveltejs/kit | devDependencies: @sveltejs/kit | < 3.0.0 (alert-reported version 2.55.0) | 2.70.3 @ node_modules/@sveltejs/kit | 3.0.0 | GitHub scope=development / direct; root devDependency; build/test tooling only | Conditionally affected by version (<3.0.0); source scan found no `use:enhance` use. Package is dev/build-time; no exploit condition located. Keep open pending reviewer confirmation and documented disposition or tested SvelteKit 3 migration. | Human reviewer to verify code scan and decide an explicit condition-based exception; do not auto-dismiss. |
 | #80 | [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4): deepmerge mergeObject() allows prototype poisoning of returned objects | deepmerge | devDependencies: @sveltejs/vite-plugin-svelte → deepmerge | >= 4.2.0, <= 4.3.1 (alert-reported version 4.3.1) | 4.3.1 @ node_modules/deepmerge | not reported | GitHub scope=development / transitive; root devDependency; build/test tooling only | Affected locked version 4.3.1; development-only transitive dependency; no patched version reported. Not shown in production frontend dependency set, but build/test-tool reachability needs owner review. | Identify consumer and whether attacker-controlled merge input is reachable; upgrade/remove in a separate PR or record reviewed exception. |
+| #81 | [GHSA-jf9x-2fg2-hx4w](https://github.com/advisories/GHSA-jf9x-2fg2-hx4w): prerendered paths can be interpreted as regexes in Vercel route config | @sveltejs/adapter-static | frontend/package.json devDependencies → @sveltejs/adapter-static | < 3.0.11 (alert-reported version 3.0.10) | 3.0.10 @ node_modules/@sveltejs/adapter-static | 3.0.11 | GitHub scope=development / direct; static adapter build tooling | Version is affected. Advisory requires an attacker-influenced link crawled during prerender and generated Vercel route configuration; this repository builds a static fallback for nginx and has no recorded Vercel deployment. Update to 3.0.11 is isolated in [PR #497](https://github.com/kubedoio/rustshare/pull/497), head `a1c0332ea585978b94e3ff2710e6d79a2987f95b`; alert remains open pending independent review, merge, and dependency graph refresh. | Review and merge the isolated patched-version PR through normal review; do not dismiss manually. |
 
 ## Auto-dismissed records (not counted as resolved by this audit)
 
-These 14 are already `auto_dismissed` in GitHub; no action was taken. Most relate to old lock versions superseded by the exact current lock. #60 is a withdrawn advisory. Review the API status if any record reopens.
+These 15 are already `auto_dismissed` in GitHub; no action was taken. Most relate to old lock versions superseded by the exact current lock. #60 is a withdrawn advisory. Review the API status if any record reopens.
 
 | Alert | Severity | Advisory | Package | Alert-reported version | Current lock | Current disposition |
 |---|---|---|---|---|---|---|
@@ -102,6 +103,7 @@ These 14 are already `auto_dismissed` in GitHub; no action was taken. Most relat
 | #49 | HIGH | GHSA-qhr7-859c-m2p7 | brace-expansion | 5.0.4 | 5.0.12 @ node_modules/brace-expansion | GitHub automatic state; reason not exposed by API |
 | #50 | HIGH | GHSA-6j4f-fj2g-mc7p | brace-expansion | 5.0.4 | 5.0.12 @ node_modules/brace-expansion | GitHub automatic state; reason not exposed by API |
 | #60 | HIGH | GHSA-vfj7-8cjw-p6xm | braces | 3.0.3 | absent | GitHub automatic state; reason not exposed by API |
+| #82 | MEDIUM | GHSA-mw6w-2fmv-pvw3 | @sveltejs/kit | 2.55.0 | 2.70.3 @ node_modules/@sveltejs/kit | GitHub auto-dismissed the adapter-node `reroute` crash advisory; this application uses `adapter-static` and no `reroute` path was found. No manual dismissal was made. |
 
 ## SvelteKit conditional low-severity scan
 
@@ -115,9 +117,11 @@ At the exact baseline SHA, `git grep` over `frontend/src`, `frontend/svelte.conf
 
 Alert #80 is **GHSA-gcqx-w48m-w2h4**, vulnerable range `>=4.2.0, <=4.3.1`, current `deepmerge` `4.3.1`; GitHub reports no first patched version. Exact-lock `npm explain deepmerge` shows the only root path is dev-only: `@sveltejs/vite-plugin-svelte@7.3.1` → `deepmerge@4.3.1`. In that package, `src/utils/options.js` imports `deepmerge` and uses it to combine default options, options loaded from the local `svelte.config.*`, and inline Vite plugin options. Its `load-svelte-config.js` loads that configuration from a filesystem path. This is a real affected dependency in the frontend build toolchain, but the reviewed input is repository-local build configuration; it is not reachable from browser requests or the deployed static bundle. No upstream patched version is advertised, so there is no safe version bump to make here. Keep #80 open as a development/build supply-chain risk; re-evaluate when upstream publishes a fix or if untrusted configuration is introduced. No dependency replacement or alert exception was made.
 
+Alert #81 is **GHSA-jf9x-2fg2-hx4w** / CVE-2026-128121, vulnerable below `3.0.11`; exact main locks `@sveltejs/adapter-static` `3.0.10`. The official advisory requires an attacker-controlled link to be crawled during prerender, then interpreted as a regex in Vercel routing configuration. The repository uses the static adapter with a `200.html` fallback and deploys via nginx in the documented stack; no Vercel deployment or attacker-controlled prerender link was established in this review. The package is still in the affected range; a narrow patch update to `3.0.11` is open in [PR #497](https://github.com/kubedoio/rustshare/pull/497) at `a1c0332ea585978b94e3ff2710e6d79a2987f95b`. Keep alert #81 open until that change is independently reviewed/merged and GitHub refreshes the dependency graph. Alert #82 is GitHub-auto-dismissed; its `adapter-node`/`reroute` condition is not present in this `adapter-static` deployment, and no manual dismissal was performed.
+
 ### PR #491 review/check snapshot
 
-At reassessment, PR #491 remained open on head `839429854fc9b6858a2ac2b7d09c847af715ce55`; it had one human approval, no inline review comments, and all required non-skipped checks succeeded. A new evidence commit will cause GitHub to re-run checks and require fresh approval. No review or issue thread was closed.
+At the pre-refresh reassessment, PR #491 was open on head `839429854fc9b6858a2ac2b7d09c847af715ce55` with one approval and passing checks. This report refresh changes its head; checks and independent approval must be refreshed before merge. No alert was manually dismissed or review thread closed.
 
 ## Evidence and limits
 
