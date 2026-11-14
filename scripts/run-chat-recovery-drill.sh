@@ -104,6 +104,19 @@ cleanup() {
 			fi
 		done
 		if [[ -s "${EVIDENCE_DIR}/volume-manifest-diff.txt" ]]; then failure_artifacts+=(volume-manifest-diff.txt); fi
+		if [[ -f "${TEMP_DIR}/before-observed-events.json" && -f "${TEMP_DIR}/after-restore-observed-events.json" ]]; then
+			python3 - "${TEMP_DIR}/before-observed-events.json" "${TEMP_DIR}/after-restore-observed-events.json" \
+				>"${EVIDENCE_DIR}/observer-projection-diff.txt" <<'PY'
+import json,sys
+before={row["event_id"]:row for row in json.load(open(sys.argv[1]))}
+after={row["event_id"]:row for row in json.load(open(sys.argv[2]))}
+print(f"rows before={len(before)} after={len(after)} added={len(after.keys()-before.keys())} removed={len(before.keys()-after.keys())}")
+for field in sorted(set().union(*(row.keys() for row in before.values()), *(row.keys() for row in after.values()))-{"event_id"}):
+    changed=sum(before[event_id].get(field)!=after[event_id].get(field) for event_id in before.keys()&after.keys())
+    if changed: print(f"{field}: {changed} changed rows")
+PY
+			failure_artifacts+=(observer-projection-diff.txt)
+		fi
 		python3 - "${EVIDENCE_DIR}" >"${EVIDENCE_DIR}/matrix-status.txt" <<'PY' || true
 import json,pathlib,sys
 root=pathlib.Path(sys.argv[1])
@@ -343,8 +356,9 @@ volume_hash() {
 	volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${container}")" || return 1
 	[[ -n "${volume}" ]] || { echo "No named data volume on ${service}." >&2; return 1; }
 	manifest="${TEMP_DIR}/${SNAPSHOT_NAME}-${service}.manifest"
+	# RustFS control metadata (trash and unclean-shutdown markers) is regenerated on startup.
 	docker run --rm -v "${volume}:/data:ro" alpine@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507 \
-		sh -c 'cd /data && find . -type f -print0 | sort -z | xargs -0 -r sha256sum' >"${manifest}" || return 1
+		sh -c "cd /data && find . -type f ! -path './.rustfs.sys/*' -print0 | sort -z | xargs -0 -r sha256sum" >"${manifest}" || return 1
 	hash_recovery_command_output cat "${manifest}"
 }
 
@@ -361,6 +375,7 @@ snapshot() {
 	workspace_communities="SELECT COALESCE(jsonb_agg(jsonb_build_array(mapping_id,tenant_id,workspace_id,community_id,relay_url,active,relay_pubkey,membership_protocol_version) ORDER BY tenant_id,workspace_id,mapping_id),'[]'::jsonb)::text FROM chat_workspace_communities"
 	users="SELECT COALESCE(jsonb_agg(jsonb_build_array(id,username,email,password_hash,display_name,is_admin,tenant_id,disabled_at,credentials_revoked_at,credential_version) ORDER BY tenant_id,id),'[]'::jsonb)::text FROM users"
 	observed_events="SELECT COALESCE(jsonb_agg(jsonb_build_array(tenant_id,workspace_id,event_id,message_id,event_type,supersedes_event_id,community_id,channel_id,channel_kind,thread_root_id,author_pubkey,author_principal_id,event_created_at,checksum,signature,signature_verified,body,active,attachment_refs) ORDER BY tenant_id,event_id),'[]'::jsonb)::text FROM chat_observed_events"
+	observed_rows="SELECT COALESCE(jsonb_agg(to_jsonb(chat_observed_events) ORDER BY event_id),'[]'::jsonb)::text FROM chat_observed_events"
 	files="SELECT COALESCE(jsonb_agg(jsonb_build_array(id,name,size,content_hash,storage_key,owner_id,tenant_id,deleted_at) ORDER BY tenant_id,id),'[]'::jsonb)::text FROM files"
 	buzz_events_hash="$(query_hash buzz-postgres buzz buzz "${buzz_events}")" || return 1
 	buzz_channels_hash="$(query_hash buzz-postgres buzz buzz "${buzz_channels}")" || return 1
@@ -369,6 +384,7 @@ snapshot() {
 	workspace_communities_hash="$(query_hash postgres rustshare rustshare "${workspace_communities}")" || return 1
 	users_hash="$(query_hash postgres rustshare rustshare "${users}")" || return 1
 	observed_events_hash="$(query_hash postgres rustshare rustshare "${observed_events}")" || return 1
+	compose_call exec -T postgres psql -U rustshare -d rustshare -Atc "${observed_rows}" >"${TEMP_DIR}/${name}-observed-events.json" || return 1
 	observed_event_count="$(compose_call exec -T postgres psql -U rustshare -d rustshare -Atc 'SELECT count(*) FROM chat_observed_events')" || return 1
 	observed_event_ids_hash="$(query_hash postgres rustshare rustshare "SELECT COALESCE(string_agg(event_id,E'\\n' ORDER BY event_id),'') FROM chat_observed_events")" || return 1
 	files_hash="$(query_hash postgres rustshare rustshare "${files}")" || return 1
