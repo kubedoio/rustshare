@@ -513,14 +513,12 @@ PHASE=observer-replay
 projection_count="$(compose_call exec -T postgres psql -U rustshare -d rustshare -Atc 'SELECT count(*) FROM chat_observed_events')"
 (( projection_count > 0 )) || { echo 'No observed Chat events exist for replay.' >&2; exit 1; }
 projection_hash="$(query_hash postgres rustshare rustshare "SELECT COALESCE(jsonb_agg(jsonb_build_array(tenant_id,workspace_id,event_id,message_id,event_type,supersedes_event_id,community_id,channel_id,channel_kind,thread_root_id,author_pubkey,author_principal_id,event_created_at,checksum,signature,signature_verified,body,active,attachment_refs) ORDER BY tenant_id,event_id),'[]'::jsonb)::text FROM chat_observed_events")"
-compose_call exec -T postgres psql -U rustshare -d rustshare -v ON_ERROR_STOP=1 -c 'DELETE FROM chat_observed_events' >/dev/null
 compose_call restart chat-observer >/dev/null
-for _ in $(seq 1 90); do
-	current_count="$(compose_call exec -T postgres psql -U rustshare -d rustshare -Atc 'SELECT count(*) FROM chat_observed_events')"
-	if (( current_count >= projection_count )); then break; fi
-	sleep 2
-done
-(( current_count >= projection_count )) || { echo "Observer replay stopped at ${current_count}/${projection_count} rows." >&2; exit 1; }
+wait_relay_and_observer "${OLD_IMAGE}"
+current_count="$(compose_call exec -T postgres psql -U rustshare -d rustshare -Atc 'SELECT count(*) FROM chat_observed_events')"
+[[ "${current_count}" == "${projection_count}" ]] || {
+	echo "Observer replay changed row count from ${projection_count} to ${current_count}." >&2; exit 1;
+}
 replayed_projection_hash="$(query_hash postgres rustshare rustshare "SELECT COALESCE(jsonb_agg(jsonb_build_array(tenant_id,workspace_id,event_id,message_id,event_type,supersedes_event_id,community_id,channel_id,channel_kind,thread_root_id,author_pubkey,author_principal_id,event_created_at,checksum,signature,signature_verified,body,active,attachment_refs) ORDER BY tenant_id,event_id),'[]'::jsonb)::text FROM chat_observed_events")"
 [[ "${replayed_projection_hash}" == "${projection_hash}" ]] || { echo 'Observer replayed row set differs from the pre-loss projection.' >&2; exit 1; }
 
