@@ -47,11 +47,48 @@ grep -F 'url="${ELEMBRA_ORIGIN}${path}"' "${ROOT}/scripts/run-alpha-dogfood.sh" 
 grep -F 'ELEMBRA_ORIGIN="${BASE_URL}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F 'BUZZ_RELAY_HEALTH_URL="${RELAY_URL/ws:/http:}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F 'ACCEPTANCE_EVIDENCE="${CHANNEL_EVIDENCE_RELATIVE}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'ACCEPTANCE_RECOVERY_STATE_FILE="${TEMP_DIR}/recovery-state.json"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F "flag: 'wx', mode: 0o600" "${ROOT}/frontend/tests/chat-channel-acceptance.e2e.ts" >/dev/null
+grep -F "const skHex = suppliedSkHex || process.env.BUZZ_PUBLISH_SK" "${ROOT}/frontend/scripts/alpha-buzz-ops.mjs" >/dev/null
 grep -F 'RECOVERY_RELAY_IMAGE="${NEW_IMAGE}" ./scripts/elembra.sh up' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F 'RECOVERY_RELAY_IMAGE="${OLD_IMAGE}" ./scripts/restore-stack.sh --with-chat' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F "row.get('status')" "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F 'compare-chat-recovery-observer.py' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F 'wait_relay_and_observer "${OLD_IMAGE}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'compose_call stop chat-observer' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'projectionAbsentWhileStopped' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'signature_verified IS TRUE' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'POST_RESTORE_PRIVATE_RELAY_READ=PASS' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'POST_RESTORE_PRIVATE_RELAY_WRITE=PASS' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'resolve({ events, denied: false, authenticated })' "${ROOT}/frontend/scripts/chat-relay-history-probe.mjs" >/dev/null
+grep -F 'authenticated && expectRestricted && /restricted: not a channel member/i.test(detail)' "${ROOT}/frontend/scripts/chat-relay-history-probe.mjs" >/dev/null
+grep -F 'if (removed.eventCount !== 0 || !removed.accessDenied || !removed.relayAuthenticated)' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'removedMemberNip42Authenticated: removed.relayAuthenticated' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'if (!expectRestricted && (!relayAuthenticated || denied || foundEvents.length === 0))' "${ROOT}/frontend/scripts/chat-relay-history-probe.mjs" >/dev/null
+[[ "$(grep -c '^  backend:$' "${ROOT}/scripts/run-chat-recovery-drill.sh")" == 1 ]]
+grep -F 'BUZZ_RELAY_REQUESTED_OCI_INDEX_DIGEST=' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'BUZZ_RELAY_PLATFORM_MANIFEST_DIGEST=' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'BUZZ_RELAY_CONFIG_DIGEST=' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'BUZZ_RELAY_INITIAL_RUNTIME_IMAGE_ID=' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'REVISION: \${ELEMBRA_RECOVERY_SOURCE_SHA:?set exact drill source SHA}' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+[[ "$(grep -F -c 'REVISION: \${ELEMBRA_RECOVERY_SOURCE_SHA:?set exact drill source SHA}' "${ROOT}/scripts/run-chat-recovery-drill.sh")" == 2 ]]
+grep -F 'ELEMBRA_RECOVERY_SOURCE_SHA=${SOURCE_SHA}' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F '"${BACKEND_OCI_REVISION}" == "${SOURCE_SHA}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F '"${OBSERVER_OCI_REVISION}" == "${SOURCE_SHA}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'org.opencontainers.image.revision="${REVISION}"' "${ROOT}/docker/chat-observer.Dockerfile" >/dev/null
+grep -F 'org.opencontainers.image.version="${VERSION}"' "${ROOT}/docker/chat-observer.Dockerfile" >/dev/null
+grep -F 'args.get("REVISION") == revision' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'BACKEND_OCI_REVISION=${BACKEND_OCI_REVISION}' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'OBSERVER_OCI_REVISION=${OBSERVER_OCI_REVISION}' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'unauthorized Files response body contains attachment bytes or hash' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'attachment in body' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'base64.b64encode(attachment) in body' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'digest in body' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'Generated test credentials and signing-key material remain only inside this private directory tree.' "${ROOT}/scripts/chat-recovery-drill-safety.sh" >/dev/null
+grep -F 'They are never included in published evidence.' "${ROOT}/scripts/chat-recovery-drill-safety.sh" >/dev/null
+grep -F 'After manually cleaning up any remaining project resources, remove the retained worktree and private run directory.' "${ROOT}/scripts/chat-recovery-drill-safety.sh" >/dev/null
+! grep -F 'CLEANUP_FAILED.txt' "${ROOT}/scripts/run-chat-recovery-drill.sh" | grep -F 'failure_artifacts'
+! grep -F '"buzzRelayImageId"' "${ROOT}/scripts/run-chat-recovery-drill.sh"
 ! grep -F "DELETE FROM chat_observed_events" "${ROOT}/scripts/run-chat-recovery-drill.sh"
 printf '[{"event_id":"e","event_type":"created","active":true,"observed_at":"1","author":"a"}]\n' >"${TEMP_DIR}/observer-before.json"
 printf '[{"event_id":"e","event_type":"deleted","active":false,"observed_at":"2","author":"a"}]\n' >"${TEMP_DIR}/observer-after.json"
@@ -111,12 +148,22 @@ fi
 
 # A teardown failure removes any private PASS marker before retaining evidence.
 mkdir -m 700 "${TEMP_DIR}/cleanup-failure-evidence"
+mkdir -m 755 "${TEMP_DIR}/retained-worktree" "${TEMP_DIR}/private-run"
+printf 'test key material\n' >"${TEMP_DIR}/retained-worktree/key-material"
+chmod 644 "${TEMP_DIR}/retained-worktree/key-material"
 printf 'RECOVERY_DRILL_STATUS=PASS\n' >"${TEMP_DIR}/cleanup-failure-evidence/result.env"
 record_recovery_cleanup_failure "${TEMP_DIR}/cleanup-failure-evidence" fixture-project \
 	"${TEMP_DIR}/retained-worktree" "${TEMP_DIR}/private-run"
 [[ ! -e "${TEMP_DIR}/cleanup-failure-evidence/result.env" ]]
+[[ "$(stat -c '%a' "${TEMP_DIR}/retained-worktree")" == 700 ]]
+[[ "$(stat -c '%a' "${TEMP_DIR}/private-run")" == 700 ]]
+[[ "$(stat -c '%a' "${TEMP_DIR}/cleanup-failure-evidence")" == 700 ]]
+[[ "$(stat -c '%a' "${TEMP_DIR}/retained-worktree/key-material")" == 600 ]]
 grep -F 'Do not treat this run as qualified.' "${TEMP_DIR}/cleanup-failure-evidence/CLEANUP_FAILED.txt" >/dev/null
+grep -F 'Generated test credentials and signing-key material remain only inside this private directory tree.' "${TEMP_DIR}/cleanup-failure-evidence/CLEANUP_FAILED.txt" >/dev/null
+grep -F 'They are never included in published evidence.' "${TEMP_DIR}/cleanup-failure-evidence/CLEANUP_FAILED.txt" >/dev/null
 ! grep -F 'RECOVERY_DRILL_STATUS=PASS' "${TEMP_DIR}/cleanup-failure-evidence/CLEANUP_FAILED.txt"
+[[ "$(stat -c '%a' "${TEMP_DIR}/cleanup-failure-evidence/CLEANUP_FAILED.txt")" == 600 ]]
 
 # Successful cleanup removes only the exact Compose project, verifies all
 # resource classes, then removes that drill's temporary worktree.

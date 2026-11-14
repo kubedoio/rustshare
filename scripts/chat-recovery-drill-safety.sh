@@ -34,12 +34,19 @@ create_recovery_evidence_dir() {
 
 record_recovery_cleanup_failure() {
 	local evidence_dir="$1" project="$2" worktree="$3" temp_dir="$4"
-	[[ -d "${evidence_dir}" ]] || return 1
+	[[ -d "${evidence_dir}" && -d "${worktree}" && -d "${temp_dir}" ]] || return 1
+	# Compose cleanup has already failed at this point. Restrict the complete
+	# retained tree before writing operator instructions; it may contain the
+	# generated test passwords, browser-held test keys, and service credentials.
+	chmod -R go-rwx -- "${temp_dir}" "${worktree}" "${evidence_dir}" || return 1
+	chmod 700 -- "${temp_dir}" "${worktree}" "${evidence_dir}" || return 1
 	rm -f -- "${evidence_dir}/result.env"
 	cat >"${evidence_dir}/CLEANUP_FAILED.txt" <<EOF
 Recovery drill cleanup was not verified for project ${project}.
 Worktree retained for inspection: ${worktree}
 Private run data retained: ${temp_dir}
+Generated test credentials and signing-key material remain only inside this private directory tree.
+They are never included in published evidence. After manually cleaning up any remaining project resources, remove the retained worktree and private run directory.
 Any prior PASS marker was removed. Do not treat this run as qualified.
 EOF
 	chmod 600 "${evidence_dir}/CLEANUP_FAILED.txt"

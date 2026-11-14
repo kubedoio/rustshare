@@ -201,10 +201,11 @@ if (command === 'create-channel') {
 }
 
 if (command === 'publish') {
-	const [relayUrl, skHex, content, channel, ref] = args;
+	const [relayUrl, suppliedSkHex, content, channel, ref] = args;
+	const skHex = suppliedSkHex || process.env.BUZZ_PUBLISH_SK;
 	if (!relayUrl || !skHex || content === undefined) {
 		console.error(
-			'usage: alpha-buzz-ops.mjs publish <relay-url> <sk> <content> [channel] [elembra-ref]'
+			'usage: alpha-buzz-ops.mjs publish <relay-url> <sk|$BUZZ_PUBLISH_SK> <content> [channel] [elembra-ref]'
 		);
 		process.exit(2);
 	}

@@ -5,6 +5,9 @@ import { bytesToHex, hexToBytes } from '@noble/curves/utils.js';
 const relayUrl = process.env.BUZZ_RELAY_WS;
 const channelId = process.env.BUZZ_RECOVERY_CHANNEL_ID;
 const secretKey = process.env.BUZZ_SERVICE_SK;
+const expectRestricted = process.env.BUZZ_EXPECT_RESTRICTED === '1';
+const expectedEventId = process.env.BUZZ_RECOVERY_EXPECT_EVENT_ID;
+const expectedAuthor = process.env.BUZZ_RECOVERY_EXPECT_AUTHOR_PUBKEY;
 if (!relayUrl || !channelId || !secretKey) {
 	throw new Error('BUZZ_RELAY_WS, BUZZ_RECOVERY_CHANNEL_ID and BUZZ_SERVICE_SK are required');
 }
@@ -79,11 +82,16 @@ const result = await new Promise((resolve, reject) => {
 		if (message[0] === 'EVENT' && message[1] === sub) events.push(message[2]);
 		if (message[0] === 'EOSE' && message[1] === sub) {
 			clearTimeout(timer);
-			resolve(events);
+			resolve({ events, denied: false, authenticated });
 		}
 		if (message[0] === 'CLOSED' && message[1] === sub) {
 			const detail = String(message[2] ?? '');
 			if (!authenticated && /auth/i.test(detail)) return;
+			if (authenticated && expectRestricted && /restricted: not a channel member/i.test(detail)) {
+				clearTimeout(timer);
+				resolve({ events, denied: true, authenticated: true });
+				return;
+			}
 			clearTimeout(timer);
 			reject(new Error(`relay closed history query: ${detail}`));
 		}
@@ -91,8 +99,14 @@ const result = await new Promise((resolve, reject) => {
 });
 ws.close();
 
-if (result.length === 0) throw new Error(`no events returned for recovery channel ${channelId}`);
-const canonical = result
+const { events: foundEvents, denied, authenticated: relayAuthenticated } = result;
+if (expectRestricted && (!relayAuthenticated || !denied || foundEvents.length !== 0)) {
+	throw new Error(`expected a restricted history denial for channel ${channelId}`);
+}
+if (!expectRestricted && (!relayAuthenticated || denied || foundEvents.length === 0)) {
+	throw new Error(`authenticated relay history missing for recovery channel ${channelId}`);
+}
+const canonical = foundEvents
 	.map((event) => [
 		event.id,
 		event.pubkey,
@@ -103,7 +117,7 @@ const canonical = result
 		event.content
 	])
 	.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-for (const event of result) {
+for (const event of foundEvents) {
 	const calculatedId = createHash('sha256')
 		.update(
 			JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content])
@@ -116,9 +130,20 @@ for (const event of result) {
 		throw new Error(`relay returned an invalid signed event ${event.id}`);
 	}
 }
+if (expectedEventId && !foundEvents.some((event) => event.id === expectedEventId)) {
+	throw new Error(`relay history did not include expected recovery event ${expectedEventId}`);
+}
+if (
+	expectedEventId &&
+	foundEvents.find((event) => event.id === expectedEventId).pubkey !== expectedAuthor
+) {
+	throw new Error(`recovery event ${expectedEventId} has an unexpected author`);
+}
 console.log(
 	JSON.stringify({
 		channelId,
+		accessDenied: denied,
+		relayAuthenticated,
 		eventCount: canonical.length,
 		eventIds: canonical.map(([id]) => id),
 		eventAuthors: canonical.map(([id, author]) => [id, author]),
