@@ -12,6 +12,15 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
 COPY frontend/scripts/buzz-observer.mjs frontend/scripts/buzz-observer-policy.mjs frontend/scripts/chat-bootstrap.mjs \
      frontend/scripts/alpha-buzz-ops.mjs ./scripts/
 
+ARG VERSION=dev
+ARG REVISION=unknown
+
+LABEL org.opencontainers.image.title="RustShare Chat Observer" \
+      org.opencontainers.image.description="Elembra Chat event observer" \
+      org.opencontainers.image.source="https://github.com/kubedoio/rustshare" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
+
 USER node
 EXPOSE 8091
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=4 \

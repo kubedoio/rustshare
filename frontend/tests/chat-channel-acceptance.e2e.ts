@@ -29,7 +29,6 @@ declare global {
 		__gAckProbe?: {
 			delayNext: boolean;
 			swallowedId: string | null;
-			lastEventId: string | null;
 		};
 		__gOriginalWS?: typeof WebSocket;
 	}
@@ -695,6 +694,44 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		};
 		mkdirSync(dirname(EVIDENCE_PATH), { recursive: true });
 		writeFileSync(EVIDENCE_PATH, `${JSON.stringify(evidence, null, 2)}\n`);
+		const recoveryStatePath = process.env.ACCEPTANCE_RECOVERY_STATE_FILE;
+		if (recoveryStatePath) {
+			const alice = state.users.a;
+			const bob = state.users.b;
+			const privateChannel = state.channels.private;
+			const openChannel = state.channels.open;
+			if (
+				!alice?.email ||
+				!alice.secretKey ||
+				!bob?.email ||
+				!bob.secretKey ||
+				!privateChannel?.id ||
+				!openChannel?.id
+			) {
+				throw new Error(
+					'recovery fixture requires both users, their channels, and both bound keys'
+				);
+			}
+			writeFileSync(
+				recoveryStatePath,
+				`${JSON.stringify({
+					alice: {
+						email: alice.email,
+						password: alice.password,
+						pubkey: alice.pubkey,
+						secretKey: alice.secretKey
+					},
+					bob: {
+						email: bob.email,
+						password: bob.password,
+						pubkey: bob.pubkey,
+						secretKey: bob.secretKey
+					},
+					channels: { private: privateChannel.id, open: openChannel.id }
+				})}\n`,
+				{ flag: 'wx', mode: 0o600 }
+			);
+		}
 		console.log(`evidence written to ${EVIDENCE_PATH}`);
 	});
 
@@ -963,98 +1000,143 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		const b = state.users.b;
 		const open = state.channels.open;
 		const body = `uncertain-path ${RUN_SUFFIX}`;
-		await ensureUnlocked(a);
+		const stateRead = await relayQuery(a.secretKey!, { kinds: [39000, 39002], '#d': [open.id] });
+		console.log(
+			`[lost-ack] direct permission query ok=${stateRead.ok} events=${stateRead.events.length}`
+		);
+		expect(stateRead.ok, `direct channel permission query failed: ${stateRead.detail}`).toBe(true);
 		// Delay the relay's acceptance ACK past the client's 10 s ACK timeout so
 		// the composer takes its real "uncertain" path. Done in the page (a
 		// WebSocket constructor wrapper) — Playwright's routeWebSocket does not
 		// see the app's relay connections in this Chromium build.
-		await a.page.evaluate(() => {
+		const relayPort = new URL(RELAY_URL).port;
+		console.log(`[lost-ack] installing relay probe for port ${relayPort}`);
+		await a.page.addInitScript((relayPort) => {
 			const Original = window.WebSocket;
 			window.__gOriginalWS = Original;
 			const probe = (window.__gAckProbe = {
 				delayNext: false,
-				swallowedId: null as string | null,
-				lastEventId: null as string | null
+				swallowedId: null as string | null
 			});
 			window.WebSocket = class extends Original {
 				constructor(url: string | URL, ...rest: unknown[]) {
 					super(url, ...(rest as []));
-					if (!String(url).includes('17447')) return;
-					// Arrow handlers capture the constructor's `this` lexically,
-					// so the relay-URL filter can invoke client handlers with the
-					// socket as `this` without an explicit this-alias.
-					const wrap = (handler: (ev: MessageEvent) => void) => (ev: MessageEvent) => {
-						try {
-							const msg = JSON.parse(String(ev.data));
-							if (msg[0] === 'EVENT' && msg[1]?.id) probe.lastEventId = msg[1].id;
-							if (
-								probe.delayNext &&
-								msg[0] === 'OK' &&
-								msg[2] === true &&
-								msg[1] === probe.lastEventId
-							) {
-								probe.delayNext = false;
-								probe.swallowedId = msg[1];
-								setTimeout(() => handler.call(this, ev), 12_000);
-								return;
-							}
-						} catch {
-							/* non-JSON frame */
-						}
-						handler.call(this, ev);
-					};
+					if (new URL(String(url), window.location.href).port !== relayPort) return;
 					const originalSend = this.send.bind(this);
+					let lastEventId: string | null = null;
+					let ackHandlerWrapped = false;
 					Object.defineProperty(this, 'send', {
 						value: (data: string | Blob | ArrayBuffer) => {
 							try {
 								const msg = JSON.parse(String(data));
-								if (msg[0] === 'EVENT' && msg[1]?.id) probe.lastEventId = msg[1].id;
+								if (msg[0] === 'EVENT' && msg[1]?.id) {
+									lastEventId = msg[1].id;
+									if (probe.delayNext && !ackHandlerWrapped) {
+										const handler = this.onmessage;
+										if (handler) {
+											ackHandlerWrapped = true;
+											this.onmessage = (ev) => {
+												try {
+													const reply = JSON.parse(String(ev.data));
+													if (
+														probe.delayNext &&
+														reply[0] === 'OK' &&
+														reply[2] === true &&
+														reply[1] === lastEventId
+													) {
+														probe.delayNext = false;
+														probe.swallowedId = reply[1];
+														return;
+													}
+												} catch {
+													/* non-JSON frame */
+												}
+												handler.call(this, ev);
+											};
+										}
+									}
+								}
 							} catch {
 								/* non-JSON frame */
 							}
 							originalSend(data);
 						}
 					});
-					let clientHandler: ((ev: MessageEvent) => void) | null = null;
-					Object.defineProperty(this, 'onmessage', {
-						get: () => clientHandler,
-						set: (h: (ev: MessageEvent) => void) => {
-							clientHandler = wrap(h);
-						}
-					});
-					const originalAdd = this.addEventListener.bind(this);
-					Object.defineProperty(this, 'addEventListener', {
-						value: (
-							type: string,
-							listener: EventListenerOrEventListenerObject,
-							...opts: unknown[]
-						) => {
-							if (type === 'message' && typeof listener === 'function') {
-								originalAdd(type, wrap(listener as (ev: MessageEvent) => void), ...(opts as []));
-								return;
-							}
-							originalAdd(type, listener, ...(opts as []));
-						}
-					});
 				}
 			} as typeof WebSocket;
+		}, relayPort);
+		await a.page.reload();
+		console.log('[lost-ack] page reloaded');
+		await expect(a.page.getByRole('heading', { name: 'Channels' })).toBeVisible({
+			timeout: 120_000
 		});
-		await channelOption(a.page, open.name).click();
-		// Restore the real WebSocket unconditionally: the wrapper only models
-		// the lost ACK, and a failure above must not leak the delayed-ACK
-		// wrapper into the rest of the serial suite.
+		console.log('[lost-ack] chat view ready');
+		await ensureUnlocked(a);
+		console.log('[lost-ack] chat unlocked');
+		await channelOption(a.page, open.name).click({ timeout: 30_000 });
+		const observerName = `${COMPOSE_PROJECT}-chat-observer-1`;
+		let observerStopped = false;
+		// The relay has stored the event, but keep the observer from independently
+		// confirming it until after the byte-identical retry is exercised.
 		try {
+			execFileSync('docker', ['stop', observerName], { stdio: 'pipe', timeout: 30_000 });
+			observerStopped = true;
 			await a.page.evaluate(() => {
 				window.__gAckProbe!.delayNext = true;
 			});
 			await a.page.getByLabel('Message text').fill(body);
-			await a.page.getByRole('button', { name: 'Send message' }).click();
+			const sendButton = a.page.getByRole('button', { name: 'Send message' });
+			try {
+				await expect(sendButton).toBeEnabled({ timeout: 25_000 });
+			} catch (error) {
+				const statuses = await a.page.getByRole('status').allTextContents();
+				const alerts = await a.page.getByRole('alert').allTextContents();
+				throw new Error(
+					`posting stayed disabled; statuses=${JSON.stringify(statuses)} alerts=${JSON.stringify(alerts)}`,
+					{ cause: error }
+				);
+			}
+			await sendButton.click({ timeout: 10_000 });
+			console.log('[lost-ack] message sent; waiting for delayed relay ACK');
+			await expect
+				.poll(() => a.page.evaluate(() => window.__gAckProbe?.swallowedId ?? null), {
+					timeout: 45_000
+				})
+				.not.toBeNull();
+			console.log('[lost-ack] relay ACK interception confirmed');
 			// The UI must land on the uncertain path and offer the byte-identical retry.
-			await expect(
-				a.page.getByText(
-					'Message acceptance is uncertain. Editing is paused to prevent duplicate messages.'
-				)
-			).toBeVisible({ timeout: 45_000 });
+			try {
+				await expect(
+					a.page.getByText(
+						'Message acceptance is uncertain. Editing is paused to prevent duplicate messages.'
+					)
+				).toBeVisible({ timeout: 20_000 });
+			} catch (error) {
+				const statuses = await a.page.getByRole('status').allTextContents();
+				const alerts = await a.page.getByRole('alert').allTextContents();
+				const retryVisible = await a.page
+					.getByRole('button', { name: 'Retry same message' })
+					.isVisible()
+					.catch(() => false);
+				const pending = await a.page.evaluate(() => {
+					const key = Object.keys(sessionStorage).find((k) => k.startsWith('elembra.chat.draft:'));
+					const saved = key ? JSON.parse(sessionStorage.getItem(key) ?? '{}') : {};
+					return {
+						id: saved.pendingEvent?.id ?? null,
+						signature: Boolean(saved.pendingEvent?.sig)
+					};
+				});
+				const probeId = await a.page.evaluate(() => window.__gAckProbe?.swallowedId ?? null);
+				const history = await messagesOf(a, open.id);
+				const observed = (history.body?.messages ?? [])
+					.filter((message: any) => message.body === body)
+					.map((message: any) => ({ id: message.event_id, author: message.author_pubkey }));
+				throw new Error(
+					`uncertain UI missing; statuses=${JSON.stringify(statuses)} alerts=${JSON.stringify(alerts)} retry=${retryVisible} pending=${JSON.stringify(pending)} probe=${probeId} observed=${JSON.stringify(observed)}`,
+					{ cause: error }
+				);
+			}
+			console.log('[lost-ack] uncertain UI state confirmed');
 			// The composer persists the exact signed pending event; that id is what
 			// the byte-identical retry resubmits and what must appear exactly once.
 			const capturedId = await a.page.evaluate(() => {
@@ -1077,6 +1159,9 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				if (original) window.WebSocket = original;
 			});
 			await a.page.getByRole('button', { name: 'Retry same message' }).click();
+			console.log('[lost-ack] exact-event retry clicked');
+			execFileSync('docker', ['start', observerName], { stdio: 'pipe', timeout: 30_000 });
+			observerStopped = false;
 			// The success banner is transient; assert the authoritative outcome via
 			// the API: exactly one applied message carrying the original event id.
 			await expect
@@ -1130,10 +1215,22 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			});
 		} finally {
 			// Unconditionally restore the real WebSocket even on failure.
-			await a.page.evaluate(() => {
-				const original = window.__gOriginalWS;
-				if (original) window.WebSocket = original;
-			});
+			await a.page
+				.evaluate(() => {
+					const original = window.__gOriginalWS;
+					if (original) window.WebSocket = original;
+				})
+				.catch(() => {});
+			if (observerStopped) {
+				try {
+					execFileSync('docker', ['start', observerName], {
+						stdio: 'pipe',
+						timeout: 30_000
+					});
+				} catch {
+					/* preserve the assertion; the isolated harness will remove its stack */
+				}
+			}
 		}
 	});
 
@@ -1727,12 +1824,8 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		}
 		const backendName = `${COMPOSE_PROJECT}-backend-1`;
 		execFileSync('docker', ['restart', backendName], { stdio: 'pipe', timeout: 120_000 });
-		// nginx caches the upstream `backend` IP at startup; a restarted
-		// backend can come back with a DIFFERENT address on the compose
-		// network (observed: permanent 502s through nginx while the
-		// container was healthy). Restarting nginx re-resolves the upstream.
-		const nginxName = `${COMPOSE_PROJECT}-nginx-1`;
-		execFileSync('docker', ['restart', nginxName], { stdio: 'pipe', timeout: 120_000 });
+		// Recreate nginx as well: its configured backend address must resolve
+		// against the backend's fresh network namespace.
 		const composeArgs = [
 			'compose',
 			'-p',
@@ -1748,6 +1841,7 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			'up',
 			'-d',
 			'--force-recreate',
+			'nginx',
 			'buzz-relay',
 			'chat-observer'
 		];
@@ -1772,13 +1866,14 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			)
 			.toBe(200);
 		// Relay healthy again. NOTE: the relay serves GET /health on its MAIN
-		// listener (published via the backend namespace as 17447), not on the
-		// dedicated health port (which only answers /_liveness etc.).
+		// listener, not on the dedicated health port (which only answers
+		// /_liveness etc.). The recovery drill assigns this port dynamically.
+		const relayHealthUrl = new URL(RELAY_URL);
 		await expect
 			.poll(
 				async () => {
 					try {
-						const res = await fetch('http://127.0.0.1:17447/health');
+						const res = await fetch(`http://127.0.0.1:${relayHealthUrl.port}/health`);
 						return res.status;
 					} catch {
 						return 0;
@@ -1858,10 +1953,11 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				channelId: open.id,
 				restarted: {
 					backend: 'docker restart (in place)',
-					nginx: 'docker restart (upstream re-resolve)'
+					nginx: 'Compose force-recreate (upstream re-resolve)'
 				},
-				recreated: ['buzz-relay', 'chat-observer'],
-				recreatedReason: 'dogfood netns sharers must reattach to the restarted backend namespace',
+				recreated: ['nginx', 'buzz-relay', 'chat-observer'],
+				recreatedReason:
+					'nginx must resolve the backend address again; dogfood netns sharers must reattach',
 				composeProject: COMPOSE_PROJECT,
 				historyEventIdsRetained: {
 					msgA: postRestartIds.includes(state.eventIds.msgA),

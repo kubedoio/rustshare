@@ -55,6 +55,9 @@ BUZZ_RELAY_PUBKEY="${BUZZ_RELAY_PUBKEY:-}"
 BUZZ_CHANNEL_ID="${BUZZ_CHANNEL_ID:-}"
 BUZZ_CHANNEL2_ID="${BUZZ_CHANNEL2_ID:-}"
 ELEMBRA_API="${ELEMBRA_API:-http://localhost/api/v1}"
+ELEMBRA_ORIGIN="${ELEMBRA_ORIGIN:-${ELEMBRA_API%/api/v1}}"
+BUZZ_RELAY_HEALTH_URL="${BUZZ_RELAY_HEALTH_URL:-${BUZZ_RELAY_WS/ws:/http:}}"
+BUZZ_RELAY_HEALTH_URL="${BUZZ_RELAY_HEALTH_URL/wss:/https:}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-${RUSTSHARE_ADMIN_EMAIL:-admin@localhost}}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-${RUSTSHARE_ADMIN_PASSWORD:-}}"
 TMP="$(mktemp -d)"
@@ -112,7 +115,7 @@ sess() { # name -> jar path (login once, reuse; verifies and retries on failure)
 			attempt=$((attempt + 1))
 			local login_code
 			login_code=$(curl -s -o "$TMP/login.$name.json" -w '%{http_code}' -c "${SESSION[$name]}" \
-				-X POST "http://localhost/api/v1/auth/login" -H 'content-type: application/json' \
+				-X POST "${ELEMBRA_API}/auth/login" -H 'content-type: application/json' \
 				-d "{\"email\":\"${email}\",\"password\":\"${password}\"}")
 			if grep -q "rustshare_session" "${SESSION[$name]}" 2>/dev/null; then
 				break
@@ -137,7 +140,7 @@ http_call_csrf() { # method path data-file cookie-file
 	local csrf
 	csrf="$(awk '$6 == "rustshare_csrf_token" { print $7 }' "$cookie")"
 	local url="$path"
-	[[ "$path" != http* ]] && url="http://localhost${path}"
+	[[ "$path" != http* ]] && url="${ELEMBRA_ORIGIN}${path}"
 	local args=(-s -o "$TMP/body" -w '%{http_code}' -b "$cookie" -c "$cookie" \
 		-X "$method" "$url" -H "X-Rustshare-Csrf: $csrf")
 	if [[ -n "$data" ]]; then
@@ -164,7 +167,7 @@ echo "== Elembra Alpha dogfood run =="
 echo "  api=$ELEMBRA_API relay=$BUZZ_RELAY_WS community=$BUZZ_COMMUNITY_ID channels=$BUZZ_CHANNEL_ID,$BUZZ_CHANNEL2_ID"
 
 # --- P01 health --------------------------------------------------------------
-code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost/health/ready")
+code=$(curl -s -o /dev/null -w '%{http_code}' "${ELEMBRA_ORIGIN}/health/ready")
 check "P01 backend healthy" "$([[ "$code" == "200" ]] && echo true || echo false)" "GET /health/ready -> $code"
 
 # --- P02 admin login + chat enabled + mapping --------------------------------
@@ -558,7 +561,7 @@ check "P16b reads fail closed during outage" \
 # the recovery budget follows that envelope: wait for relay health first,
 # then for publish acceptance.
 for i in $(seq 1 150); do
-	if curl -sf --max-time 2 "http://127.0.0.1:7447/health" >/dev/null 2>&1; then
+	if curl -sf --max-time 2 "${BUZZ_RELAY_HEALTH_URL}/health" >/dev/null 2>&1; then
 		break
 	fi
 	sleep 2
@@ -597,7 +600,7 @@ compose restart backend buzz-relay nginx
 # relay — its health sits on the shared backend namespace's loopback
 # (docker-compose.dogfood.yml), same envelope as P16's recovery wait.
 for i in $(seq 1 90); do
-	code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost/health/ready")
+	code=$(curl -s -o /dev/null -w '%{http_code}' "${ELEMBRA_ORIGIN}/health/ready")
 	[[ "$code" == "200" ]] && break
 	sleep 2
 done
@@ -611,7 +614,7 @@ done
 relay_healthy=""
 for attempt in 1 2; do
 	for i in $(seq 1 150); do
-		if curl -sf --max-time 2 "http://127.0.0.1:7447/health" >/dev/null 2>&1; then
+		if curl -sf --max-time 2 "${BUZZ_RELAY_HEALTH_URL}/health" >/dev/null 2>&1; then
 			relay_healthy="yes"
 			break
 		fi

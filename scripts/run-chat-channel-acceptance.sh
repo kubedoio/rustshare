@@ -46,7 +46,7 @@ GIT_SHA="${ACCEPTANCE_GIT_SHA:-$(git rev-parse HEAD)}"
 
 echo "== chat channel acceptance: waiting for the stack =="
 backend_container="$(compose ps -q backend)"
-ADMIN_PASSWORD="$(scripts/read-bootstrap-password.sh "${backend_container}")"
+ADMIN_PASSWORD="${ACCEPTANCE_ADMIN_PASSWORD:-$(scripts/read-bootstrap-password.sh "${backend_container}")}"
 
 for i in $(seq 1 90); do
 	code="$(curl -s -o /dev/null -w '%{http_code}' "${BASE_URL}/health/ready" || true)"
