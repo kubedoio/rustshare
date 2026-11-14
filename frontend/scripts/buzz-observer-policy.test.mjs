@@ -38,19 +38,27 @@ test('observer reconciliation only clears failures it observed and replayed', ()
 		community: 'community-id',
 		observation: 'starting',
 		failureGeneration: 0,
+		lastReconcileSince: 100,
+		lastRecoveryAt: 'previous-recovery',
 		changedCommunity: false
 	};
 	assert.equal(observerIsReady(state), false);
-	assert.equal(completeObserverReconciliation(state, 0), true);
+	assert.equal(completeObserverReconciliation(state, 0, 100, 'first-recovery'), true);
 	assert.equal(observerIsReady(state), true);
+	assert.equal(state.lastReconcileSince, 100);
+	assert.equal(state.lastRecoveryAt, 'first-recovery');
 
 	const staleReplay = state.failureGeneration;
 	markObserverFailure(state);
 	assert.equal(observerIsReady(state), false);
-	assert.equal(completeObserverReconciliation(state, staleReplay), false);
+	assert.equal(completeObserverReconciliation(state, staleReplay, 200, 'stale-recovery'), false);
 	assert.equal(observerIsReady(state), false);
+	assert.equal(state.lastReconcileSince, 100);
+	assert.equal(state.lastRecoveryAt, 'first-recovery');
 
 	const recoveryReplay = state.failureGeneration;
-	assert.equal(completeObserverReconciliation(state, recoveryReplay), true);
+	assert.equal(completeObserverReconciliation(state, recoveryReplay, 200, 'recovered'), true);
 	assert.equal(observerIsReady(state), true);
+	assert.equal(state.lastReconcileSince, 200);
+	assert.equal(state.lastRecoveryAt, 'recovered');
 });

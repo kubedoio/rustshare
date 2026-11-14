@@ -18,8 +18,10 @@ export function markObserverFailure(state) {
 	state.observation = 'degraded';
 }
 
-export function completeObserverReconciliation(state, failureGeneration) {
+export function completeObserverReconciliation(state, failureGeneration, since, recoveredAt) {
 	if (state.failureGeneration !== failureGeneration) return false;
 	state.observation = 'ready';
+	state.lastReconcileSince = since;
+	state.lastRecoveryAt = recoveredAt;
 	return true;
 }

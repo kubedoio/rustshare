@@ -82,6 +82,7 @@ const state = {
 	lastError: null,
 	observation: 'starting',
 	failureGeneration: 0,
+	lastReconcileSince: since,
 	changedCommunity: false
 };
 let shuttingDown = false;
@@ -93,7 +94,6 @@ let reconcileRunning = false;
 let reconnectAttempt = 0;
 let forwardChain = Promise.resolve();
 let discoveredChannels = new Set();
-let lastReconcileSince = since;
 const deliveredEventKeys = new Set();
 const pendingEventKeys = new Set();
 const pendingDeliveries = new Map();
@@ -345,12 +345,12 @@ async function reconcile() {
 	try {
 		let cursor;
 		let pages = 0;
-		let newest = lastReconcileSince;
+		let newest = state.lastReconcileSince;
 		const deliveries = [];
 		do {
 			const query = new URL('/api/v1/relay/state/events', relayHttp);
-			if (lastReconcileSince !== undefined)
-				query.searchParams.set('since', String(lastReconcileSince));
+			if (state.lastReconcileSince !== undefined)
+				query.searchParams.set('since', String(state.lastReconcileSince));
 			query.searchParams.set('limit', '500');
 			if (cursor) query.searchParams.set('cursor', cursor);
 			const page = await relayGet(`${query.pathname}${query.search}`, {
@@ -375,9 +375,9 @@ async function reconcile() {
 		if (delivered.some((ok) => !ok)) {
 			throw new Error('one or more reconciled events were not delivered');
 		}
-		lastReconcileSince = newest;
-		state.lastRecoveryAt = new Date().toISOString();
-		if (completeObserverReconciliation(state, failureGeneration)) {
+		if (
+			completeObserverReconciliation(state, failureGeneration, newest, new Date().toISOString())
+		) {
 			state.lastError = null;
 		}
 	} catch (error) {
