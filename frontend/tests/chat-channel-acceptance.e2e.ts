@@ -1036,10 +1036,13 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		await ensureUnlocked(a);
 		console.log('[lost-ack] chat unlocked');
 		await channelOption(a.page, open.name).click({ timeout: 30_000 });
-		// Restore the real WebSocket unconditionally: the wrapper only models
-		// the lost ACK, and a failure above must not leak the delayed-ACK
-		// wrapper into the rest of the serial suite.
+		const observerName = `${COMPOSE_PROJECT}-chat-observer-1`;
+		let observerStopped = false;
+		// The relay has stored the event, but keep the observer from independently
+		// confirming it until after the byte-identical retry is exercised.
 		try {
+			execFileSync('docker', ['stop', observerName], { stdio: 'pipe', timeout: 30_000 });
+			observerStopped = true;
 			await a.page.evaluate(() => {
 				window.__gAckProbe!.delayNext = true;
 			});
@@ -1117,6 +1120,8 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			});
 			await a.page.getByRole('button', { name: 'Retry same message' }).click();
 			console.log('[lost-ack] exact-event retry clicked');
+			execFileSync('docker', ['start', observerName], { stdio: 'pipe', timeout: 30_000 });
+			observerStopped = false;
 			// The success banner is transient; assert the authoritative outcome via
 			// the API: exactly one applied message carrying the original event id.
 			await expect
@@ -1176,6 +1181,16 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 					if (original) window.WebSocket = original;
 				})
 				.catch(() => {});
+			if (observerStopped) {
+				try {
+					execFileSync('docker', ['start', observerName], {
+						stdio: 'pipe',
+						timeout: 30_000
+					});
+				} catch {
+					/* preserve the assertion; the isolated harness will remove its stack */
+				}
+			}
 		}
 	});
 
