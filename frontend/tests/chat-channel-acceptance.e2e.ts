@@ -29,7 +29,6 @@ declare global {
 		__gAckProbe?: {
 			delayNext: boolean;
 			swallowedId: string | null;
-			lastEventId: string | null;
 		};
 		__gOriginalWS?: typeof WebSocket;
 	}
@@ -979,21 +978,21 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			window.__gOriginalWS = Original;
 			const probe = (window.__gAckProbe = {
 				delayNext: false,
-				swallowedId: null as string | null,
-				lastEventId: null as string | null
+				swallowedId: null as string | null
 			});
 			window.WebSocket = class extends Original {
 				constructor(url: string | URL, ...rest: unknown[]) {
 					super(url, ...(rest as []));
 					if (new URL(String(url), window.location.href).port !== relayPort) return;
 					const originalSend = this.send.bind(this);
+					let lastEventId: string | null = null;
 					let ackHandlerWrapped = false;
 					Object.defineProperty(this, 'send', {
 						value: (data: string | Blob | ArrayBuffer) => {
 							try {
 								const msg = JSON.parse(String(data));
 								if (msg[0] === 'EVENT' && msg[1]?.id) {
-									probe.lastEventId = msg[1].id;
+									lastEventId = msg[1].id;
 									if (probe.delayNext && !ackHandlerWrapped) {
 										const handler = this.onmessage;
 										if (handler) {
@@ -1005,11 +1004,10 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 														probe.delayNext &&
 														reply[0] === 'OK' &&
 														reply[2] === true &&
-														reply[1] === probe.lastEventId
+														reply[1] === lastEventId
 													) {
 														probe.delayNext = false;
 														probe.swallowedId = reply[1];
-														setTimeout(() => handler.call(this, ev), 12_000);
 														return;
 													}
 												} catch {
