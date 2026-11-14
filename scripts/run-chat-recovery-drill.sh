@@ -105,16 +105,10 @@ cleanup() {
 		done
 		if [[ -s "${EVIDENCE_DIR}/volume-manifest-diff.txt" ]]; then failure_artifacts+=(volume-manifest-diff.txt); fi
 		if [[ -f "${TEMP_DIR}/before-observed-events.json" && -f "${TEMP_DIR}/after-restore-observed-events.json" ]]; then
-			python3 - "${TEMP_DIR}/before-observed-events.json" "${TEMP_DIR}/after-restore-observed-events.json" \
-				>"${EVIDENCE_DIR}/observer-projection-diff.txt" <<'PY'
-import json,sys
-before={row["event_id"]:row for row in json.load(open(sys.argv[1]))}
-after={row["event_id"]:row for row in json.load(open(sys.argv[2]))}
-print(f"rows before={len(before)} after={len(after)} added={len(after.keys()-before.keys())} removed={len(before.keys()-after.keys())}")
-for field in sorted(set().union(*(row.keys() for row in before.values()), *(row.keys() for row in after.values()))-{"event_id"}):
-    changed=sum(before[event_id].get(field)!=after[event_id].get(field) for event_id in before.keys()&after.keys())
-    if changed: print(f"{field}: {changed} changed rows")
-PY
+			python3 "${ROOT}/scripts/compare-chat-recovery-observer.py" \
+				"${TEMP_DIR}/before-observed-events.json" \
+				"${TEMP_DIR}/after-restore-observed-events.json" \
+				>"${EVIDENCE_DIR}/observer-projection-diff.txt" 2>&1 || true
 			failure_artifacts+=(observer-projection-diff.txt)
 		fi
 		python3 - "${EVIDENCE_DIR}" >"${EVIDENCE_DIR}/matrix-status.txt" <<'PY' || true
@@ -374,7 +368,7 @@ snapshot() {
 	identity_bindings="SELECT COALESCE(jsonb_agg(jsonb_build_array(binding_id,tenant_id,principal_id,buzz_pubkey,status,verified_at,revoked_at) ORDER BY tenant_id,principal_id,binding_id),'[]'::jsonb)::text FROM chat_identity_bindings"
 	workspace_communities="SELECT COALESCE(jsonb_agg(jsonb_build_array(mapping_id,tenant_id,workspace_id,community_id,relay_url,active,relay_pubkey,membership_protocol_version) ORDER BY tenant_id,workspace_id,mapping_id),'[]'::jsonb)::text FROM chat_workspace_communities"
 	users="SELECT COALESCE(jsonb_agg(jsonb_build_array(id,username,email,password_hash,display_name,is_admin,tenant_id,disabled_at,credentials_revoked_at,credential_version) ORDER BY tenant_id,id),'[]'::jsonb)::text FROM users"
-	observed_events="SELECT COALESCE(jsonb_agg(jsonb_build_array(tenant_id,workspace_id,event_id,message_id,event_type,supersedes_event_id,community_id,channel_id,channel_kind,thread_root_id,author_pubkey,author_principal_id,event_created_at,checksum,signature,signature_verified,body,active,attachment_refs) ORDER BY tenant_id,event_id),'[]'::jsonb)::text FROM chat_observed_events"
+	observed_events="SELECT COALESCE(jsonb_agg(jsonb_build_array(tenant_id,workspace_id,event_id,message_id,supersedes_event_id,community_id,channel_id,channel_kind,thread_root_id,author_pubkey,author_principal_id,event_created_at,checksum,signature,signature_verified,body,attachment_refs) ORDER BY tenant_id,event_id),'[]'::jsonb)::text FROM chat_observed_events"
 	observed_rows="SELECT COALESCE(jsonb_agg(to_jsonb(chat_observed_events) ORDER BY event_id),'[]'::jsonb)::text FROM chat_observed_events"
 	files="SELECT COALESCE(jsonb_agg(jsonb_build_array(id,name,size,content_hash,storage_key,owner_id,tenant_id,deleted_at) ORDER BY tenant_id,id),'[]'::jsonb)::text FROM files"
 	buzz_events_hash="$(query_hash buzz-postgres buzz buzz "${buzz_events}")" || return 1
@@ -432,6 +426,10 @@ cmp -s "${EVIDENCE_DIR}/before.env" "${EVIDENCE_DIR}/after-restore.env" || {
 	echo "Restored application/relay state fingerprint differs from pre-backup state." >&2
 	exit 1
 }
+python3 "${ROOT}/scripts/compare-chat-recovery-observer.py" \
+	"${TEMP_DIR}/before-observed-events.json" \
+	"${TEMP_DIR}/after-restore-observed-events.json" \
+	| tee "${EVIDENCE_DIR}/observer-restore-check.txt"
 
 verify_file_authorization_and_bytes() {
 	local email="$1" output="$2" expected_status="$3" cookie login_json csrf status
