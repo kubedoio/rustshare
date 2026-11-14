@@ -8,7 +8,12 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js';
-import { isUnboundAuthorRejection } from './buzz-observer-policy.mjs';
+import {
+	completeObserverReconciliation,
+	isUnboundAuthorRejection,
+	markObserverFailure,
+	observerIsReady
+} from './buzz-observer-policy.mjs';
 
 const relayWs = process.env.BUZZ_RELAY_WS;
 const webhookSecret = process.env.RUSTSHARE_CHAT_WEBHOOK_SECRET;
@@ -76,6 +81,7 @@ const state = {
 	lastEventAt: null,
 	lastError: null,
 	observation: 'starting',
+	failureGeneration: 0,
 	changedCommunity: false
 };
 let shuttingDown = false;
@@ -268,7 +274,7 @@ function forwardEvent(event, context = contextForEvent(event)) {
 		})
 		.catch((error) => {
 			pendingEventKeys.delete(eventKey);
-			state.observation = 'degraded';
+			markObserverFailure(state);
 			logError('forward chain failed', error);
 			return false;
 		});
@@ -300,8 +306,6 @@ async function deliver(event, context) {
 				signal: controller.signal
 			});
 			if (response.ok) {
-				state.observation = 'ready';
-				state.lastError = null;
 				state.lastEventAt = new Date().toISOString();
 				return true;
 			}
@@ -313,17 +317,17 @@ async function deliver(event, context) {
 				}
 			}
 			if (response.status < 500) {
-				state.observation = 'degraded';
+				markObserverFailure(state);
 				logError(`Elembra rejected event ${event.id.slice(0, 12)} with HTTP ${response.status}`);
 				return false;
 			}
 			if (attempt === 10) {
-				state.observation = 'degraded';
+				markObserverFailure(state);
 				logError(`Elembra stayed unavailable for event ${event.id.slice(0, 12)}`);
 			}
 		} catch (error) {
 			if (attempt === 10) {
-				state.observation = 'degraded';
+				markObserverFailure(state);
 				logError(`Elembra stayed unavailable for event ${event.id.slice(0, 12)}`, error);
 			}
 		} finally {
@@ -337,6 +341,7 @@ async function deliver(event, context) {
 async function reconcile() {
 	if (reconcileRunning || !state.community || state.changedCommunity) return;
 	reconcileRunning = true;
+	const failureGeneration = state.failureGeneration;
 	try {
 		let cursor;
 		let pages = 0;
@@ -372,11 +377,11 @@ async function reconcile() {
 		}
 		lastReconcileSince = newest;
 		state.lastRecoveryAt = new Date().toISOString();
-		if (state.observation !== 'degraded') {
-			state.observation = 'ready';
+		if (completeObserverReconciliation(state, failureGeneration)) {
 			state.lastError = null;
 		}
 	} catch (error) {
+		markObserverFailure(state);
 		logError('Buzz state reconciliation failed', error);
 	} finally {
 		reconcileRunning = false;
@@ -531,13 +536,7 @@ function startHealthServer() {
 			response.writeHead(404).end();
 			return;
 		}
-		const ready =
-			state.connection === 'connected' &&
-			state.auth === 'authenticated' &&
-			state.registry === 'ready' &&
-			!!state.community &&
-			state.observation !== 'degraded' &&
-			!state.changedCommunity;
+		const ready = observerIsReady(state);
 		const body = JSON.stringify({
 			status: ready ? 'ready' : 'degraded',
 			connection: state.connection,
