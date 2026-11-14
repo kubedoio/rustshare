@@ -1086,8 +1086,13 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 						signature: Boolean(saved.pendingEvent?.sig)
 					};
 				});
+				const probeId = await a.page.evaluate(() => window.__gAckProbe?.swallowedId ?? null);
+				const history = await messagesOf(a, open.id);
+				const observed = (history.body?.messages ?? [])
+					.filter((message: any) => message.body === body)
+					.map((message: any) => ({ id: message.event_id, author: message.author_pubkey }));
 				throw new Error(
-					`uncertain UI missing; statuses=${JSON.stringify(statuses)} alerts=${JSON.stringify(alerts)} retry=${retryVisible} pending=${JSON.stringify(pending)}; ${String(error)}`
+					`uncertain UI missing; statuses=${JSON.stringify(statuses)} alerts=${JSON.stringify(alerts)} retry=${retryVisible} pending=${JSON.stringify(pending)} probe=${probeId} observed=${JSON.stringify(observed)}; ${String(error)}`
 				);
 			}
 			console.log('[lost-ack] uncertain UI state confirmed');
