@@ -1054,7 +1054,8 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				const statuses = await a.page.getByRole('status').allTextContents();
 				const alerts = await a.page.getByRole('alert').allTextContents();
 				throw new Error(
-					`posting stayed disabled; statuses=${JSON.stringify(statuses)} alerts=${JSON.stringify(alerts)}; ${String(error)}`
+					`posting stayed disabled; statuses=${JSON.stringify(statuses)} alerts=${JSON.stringify(alerts)}`,
+					{ cause: error }
 				);
 			}
 			await sendButton.click({ timeout: 10_000 });
@@ -1093,7 +1094,8 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 					.filter((message: any) => message.body === body)
 					.map((message: any) => ({ id: message.event_id, author: message.author_pubkey }));
 				throw new Error(
-					`uncertain UI missing; statuses=${JSON.stringify(statuses)} alerts=${JSON.stringify(alerts)} retry=${retryVisible} pending=${JSON.stringify(pending)} probe=${probeId} observed=${JSON.stringify(observed)}; ${String(error)}`
+					`uncertain UI missing; statuses=${JSON.stringify(statuses)} alerts=${JSON.stringify(alerts)} retry=${retryVisible} pending=${JSON.stringify(pending)} probe=${probeId} observed=${JSON.stringify(observed)}`,
+					{ cause: error }
 				);
 			}
 			console.log('[lost-ack] uncertain UI state confirmed');
