@@ -51,6 +51,8 @@ grep -F 'RECOVERY_RELAY_IMAGE="${NEW_IMAGE}" ./scripts/elembra.sh up' "${ROOT}/s
 grep -F 'RECOVERY_RELAY_IMAGE="${OLD_IMAGE}" ./scripts/restore-stack.sh --with-chat' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F "row.get('status')" "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F 'compare-chat-recovery-observer.py' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'wait_relay_and_observer "${OLD_IMAGE}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+! grep -F "DELETE FROM chat_observed_events" "${ROOT}/scripts/run-chat-recovery-drill.sh"
 printf '[{"event_id":"e","event_type":"created","active":true,"observed_at":"1","author":"a"}]\n' >"${TEMP_DIR}/observer-before.json"
 printf '[{"event_id":"e","event_type":"deleted","active":false,"observed_at":"2","author":"a"}]\n' >"${TEMP_DIR}/observer-after.json"
 python3 "${ROOT}/scripts/compare-chat-recovery-observer.py" "${TEMP_DIR}/observer-before.json" "${TEMP_DIR}/observer-after.json" | grep -F 'tombstone promotions=1' >/dev/null
