@@ -96,6 +96,14 @@ cleanup() {
 			diff -u "${EVIDENCE_DIR}/before.env" "${EVIDENCE_DIR}/after-restore.env" >"${EVIDENCE_DIR}/fingerprint-diff.txt" || true
 			failure_artifacts+=(fingerprint-diff.txt)
 		fi
+		for service in rustfs buzz-rustfs; do
+			before_manifest="${TEMP_DIR}/before-${service}.manifest"
+			after_manifest="${TEMP_DIR}/after-restore-${service}.manifest"
+			if [[ -f "${before_manifest}" && -f "${after_manifest}" ]]; then
+				diff -u "${before_manifest}" "${after_manifest}" >>"${EVIDENCE_DIR}/volume-manifest-diff.txt" || true
+			fi
+		done
+		if [[ -s "${EVIDENCE_DIR}/volume-manifest-diff.txt" ]]; then failure_artifacts+=(volume-manifest-diff.txt); fi
 		python3 - "${EVIDENCE_DIR}" >"${EVIDENCE_DIR}/matrix-status.txt" <<'PY' || true
 import json,pathlib,sys
 root=pathlib.Path(sys.argv[1])
@@ -329,20 +337,23 @@ query_hash() {
 }
 
 volume_hash() {
-	local service="$1" container volume
+	local service="$1" container volume manifest
 	container="$(compose_call ps -q "${service}")" || return 1
 	[[ -n "${container}" ]] || { echo "No container for ${service}." >&2; return 1; }
 	volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${container}")" || return 1
 	[[ -n "${volume}" ]] || { echo "No named data volume on ${service}." >&2; return 1; }
-	hash_recovery_command_output docker run --rm -v "${volume}:/data:ro" alpine@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507 \
-		sh -c 'cd /data && find . -type f -print0 | sort -z | xargs -0 -r sha256sum'
+	manifest="${TEMP_DIR}/${SNAPSHOT_NAME}-${service}.manifest"
+	docker run --rm -v "${volume}:/data:ro" alpine@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507 \
+		sh -c 'cd /data && find . -type f -print0 | sort -z | xargs -0 -r sha256sum' >"${manifest}" || return 1
+	hash_recovery_command_output cat "${manifest}"
 }
 
 snapshot() {
 	local name="$1"
+	SNAPSHOT_NAME="${name}"
 	local buzz_events buzz_channels buzz_members identity_bindings workspace_communities users observed_events files
 	local buzz_events_hash buzz_channels_hash buzz_members_hash identity_bindings_hash workspace_communities_hash
-	local users_hash observed_events_hash files_hash rustfs_objects_hash buzz_rustfs_objects_hash
+	local users_hash observed_events_hash observed_event_count observed_event_ids_hash files_hash rustfs_objects_hash buzz_rustfs_objects_hash
 	buzz_events="SELECT COALESCE(jsonb_agg(jsonb_build_array(community_id,encode(id,'hex'),encode(pubkey,'hex'),created_at,kind,tags,content,encode(sig,'hex'),channel_id,deleted_at) ORDER BY community_id,created_at,encode(id,'hex')),'[]'::jsonb)::text FROM events"
 	buzz_channels="SELECT COALESCE(jsonb_agg(jsonb_build_array(community_id,id,name,channel_type::text,visibility::text,encode(created_by,'hex'),archived_at,deleted_at) ORDER BY community_id,id),'[]'::jsonb)::text FROM channels"
 	buzz_members="SELECT COALESCE(jsonb_agg(jsonb_build_array(community_id,channel_id,encode(pubkey,'hex'),role::text,joined_at,removed_at) ORDER BY community_id,channel_id,pubkey),'[]'::jsonb)::text FROM channel_members"
@@ -358,6 +369,8 @@ snapshot() {
 	workspace_communities_hash="$(query_hash postgres rustshare rustshare "${workspace_communities}")" || return 1
 	users_hash="$(query_hash postgres rustshare rustshare "${users}")" || return 1
 	observed_events_hash="$(query_hash postgres rustshare rustshare "${observed_events}")" || return 1
+	observed_event_count="$(compose_call exec -T postgres psql -U rustshare -d rustshare -Atc 'SELECT count(*) FROM chat_observed_events')" || return 1
+	observed_event_ids_hash="$(query_hash postgres rustshare rustshare "SELECT COALESCE(string_agg(event_id,E'\\n' ORDER BY event_id),'') FROM chat_observed_events")" || return 1
 	files_hash="$(query_hash postgres rustshare rustshare "${files}")" || return 1
 	rustfs_objects_hash="$(volume_hash rustfs)" || return 1
 	buzz_rustfs_objects_hash="$(volume_hash buzz-rustfs)" || return 1
@@ -369,6 +382,8 @@ snapshot() {
 		printf 'elembra_workspace_communities=%s\n' "${workspace_communities_hash}"
 		printf 'elembra_users_and_credentials=%s\n' "${users_hash}"
 		printf 'elembra_observed_events=%s\n' "${observed_events_hash}"
+		printf 'elembra_observed_event_count=%s\n' "${observed_event_count}"
+		printf 'elembra_observed_event_ids=%s\n' "${observed_event_ids_hash}"
 		printf 'elembra_files=%s\n' "${files_hash}"
 		printf 'rustfs_objects=%s\n' "${rustfs_objects_hash}"
 		printf 'buzz_rustfs_objects=%s\n' "${buzz_rustfs_objects_hash}"
