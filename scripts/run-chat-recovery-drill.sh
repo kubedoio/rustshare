@@ -83,13 +83,19 @@ cleanup() {
 	fi
 	if (( status == 0 )); then
 		if ! publish_recovery_evidence "${EVIDENCE_DIR}" "${PUBLISHED_EVIDENCE_DIR}" \
-			result.env api-before.sha256 api-after-restore.sha256 chat-channel.json chat-conversation.json \
+			result.env before.env after-restore.env image-new.env image-old.env \
+			api-before.sha256 api-after-restore.sha256 chat-channel.json chat-conversation.json \
 			history-before.json history-after-restore.json history-new.json history-old.json; then
 			echo "Could not publish without overwriting; retained private evidence at ${TEMP_DIR}." >&2
 			exit 1
 		fi
 	else
 		compose --profile chat ps --all >"${EVIDENCE_DIR}/compose-status.txt" 2>&1 || true
+		failure_artifacts=(RUN_FAILURE.txt compose-status.txt matrix-status.txt)
+		if [[ -f "${EVIDENCE_DIR}/before.env" && -f "${EVIDENCE_DIR}/after-restore.env" ]]; then
+			diff -u "${EVIDENCE_DIR}/before.env" "${EVIDENCE_DIR}/after-restore.env" >"${EVIDENCE_DIR}/fingerprint-diff.txt" || true
+			failure_artifacts+=(fingerprint-diff.txt)
+		fi
 		python3 - "${EVIDENCE_DIR}" >"${EVIDENCE_DIR}/matrix-status.txt" <<'PY' || true
 import json,pathlib,sys
 root=pathlib.Path(sys.argv[1])
@@ -104,7 +110,7 @@ PY
 Run did not qualify: phase=${PHASE}, exit=${status}, source=${SOURCE_SHA}.
 No PASS is asserted. Disposable project cleanup was verified before this report was published.
 EOF
-		if ! publish_recovery_evidence "${EVIDENCE_DIR}" "${PUBLISHED_EVIDENCE_DIR}" RUN_FAILURE.txt compose-status.txt matrix-status.txt; then
+		if ! publish_recovery_evidence "${EVIDENCE_DIR}" "${PUBLISHED_EVIDENCE_DIR}" "${failure_artifacts[@]}"; then
 			echo "Could not publish failure summary; retained private evidence at ${TEMP_DIR}." >&2
 			exit 1
 		fi
