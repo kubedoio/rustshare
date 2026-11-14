@@ -1784,12 +1784,8 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		}
 		const backendName = `${COMPOSE_PROJECT}-backend-1`;
 		execFileSync('docker', ['restart', backendName], { stdio: 'pipe', timeout: 120_000 });
-		// nginx caches the upstream `backend` IP at startup; a restarted
-		// backend can come back with a DIFFERENT address on the compose
-		// network (observed: permanent 502s through nginx while the
-		// container was healthy). Restarting nginx re-resolves the upstream.
-		const nginxName = `${COMPOSE_PROJECT}-nginx-1`;
-		execFileSync('docker', ['restart', nginxName], { stdio: 'pipe', timeout: 120_000 });
+		// Recreate nginx as well: its configured backend address must resolve
+		// against the backend's fresh network namespace.
 		const composeArgs = [
 			'compose',
 			'-p',
@@ -1805,6 +1801,7 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			'up',
 			'-d',
 			'--force-recreate',
+			'nginx',
 			'buzz-relay',
 			'chat-observer'
 		];
@@ -1915,10 +1912,11 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				channelId: open.id,
 				restarted: {
 					backend: 'docker restart (in place)',
-					nginx: 'docker restart (upstream re-resolve)'
+					nginx: 'Compose force-recreate (upstream re-resolve)'
 				},
-				recreated: ['buzz-relay', 'chat-observer'],
-				recreatedReason: 'dogfood netns sharers must reattach to the restarted backend namespace',
+				recreated: ['nginx', 'buzz-relay', 'chat-observer'],
+				recreatedReason:
+					'nginx must resolve the backend address again; dogfood netns sharers must reattach',
 				composeProject: COMPOSE_PROJECT,
 				historyEventIdsRetained: {
 					msgA: postRestartIds.includes(state.eventIds.msgA),
