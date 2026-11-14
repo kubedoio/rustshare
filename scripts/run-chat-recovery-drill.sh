@@ -90,11 +90,21 @@ cleanup() {
 		fi
 	else
 		compose --profile chat ps --all >"${EVIDENCE_DIR}/compose-status.txt" 2>&1 || true
+		python3 - "${EVIDENCE_DIR}" >"${EVIDENCE_DIR}/matrix-status.txt" <<'PY' || true
+import json,pathlib,sys
+root=pathlib.Path(sys.argv[1])
+for name in ("chat-channel", "chat-conversation"):
+    path=root/f"{name}.json"
+    if path.exists():
+        for row in json.loads(path.read_text()).get("matrix", []):
+            print(f"{name}\t{row.get('id')}\t{row.get('status')}\t{row.get('title')}")
+PY
+		[[ -s "${EVIDENCE_DIR}/matrix-status.txt" ]] || printf 'No browser matrix evidence was written.\n' >"${EVIDENCE_DIR}/matrix-status.txt"
 		cat >"${EVIDENCE_DIR}/RUN_FAILURE.txt" <<EOF
 Run did not qualify: phase=${PHASE}, exit=${status}, source=${SOURCE_SHA}.
 No PASS is asserted. Disposable project cleanup was verified before this report was published.
 EOF
-		if ! publish_recovery_evidence "${EVIDENCE_DIR}" "${PUBLISHED_EVIDENCE_DIR}" RUN_FAILURE.txt compose-status.txt; then
+		if ! publish_recovery_evidence "${EVIDENCE_DIR}" "${PUBLISHED_EVIDENCE_DIR}" RUN_FAILURE.txt compose-status.txt matrix-status.txt; then
 			echo "Could not publish failure summary; retained private evidence at ${TEMP_DIR}." >&2
 			exit 1
 		fi
@@ -144,14 +154,14 @@ RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL=ws://localhost:${RELAY_PORT}
 EOF
 chmod 600 "${TEST_ROOT}/.env"
 
-export RECOVERY_RELAY_IMAGE="${OLD_IMAGE}"
+export RECOVERY_RELAY_IMAGE="${NEW_IMAGE}"
 cd "${TEST_ROOT}"
 set -a
 . ./.env
 . ./config/buzz-compatibility.env
 set +a
 compose --profile chat config --format json >"${TEMP_DIR}/compose-config.json"
-python3 - "${TEMP_DIR}/compose-config.json" "${OLD_IMAGE}" "${RELAY_PORT}" <<'PY'
+python3 - "${TEMP_DIR}/compose-config.json" "${NEW_IMAGE}" "${RELAY_PORT}" <<'PY'
 import json,sys
 config=json.load(open(sys.argv[1])); image=sys.argv[2]; port=int(sys.argv[3])
 services=config["services"]
@@ -182,15 +192,15 @@ done
 cd "${TEST_ROOT}"
 PHASE=initialization
 STACK_CREATED=true
-RECOVERY_RELAY_IMAGE="${OLD_IMAGE}" ./scripts/elembra.sh init --with-chat >"${EVIDENCE_DIR}/init.log" 2>&1
+RECOVERY_RELAY_IMAGE="${NEW_IMAGE}" ./scripts/elembra.sh init --with-chat >"${EVIDENCE_DIR}/init.log" 2>&1
 PHASE=source-build-startup
-RECOVERY_RELAY_IMAGE="${OLD_IMAGE}" ./scripts/elembra.sh up >"${EVIDENCE_DIR}/up.log" 2>&1
+RECOVERY_RELAY_IMAGE="${NEW_IMAGE}" ./scripts/elembra.sh up >"${EVIDENCE_DIR}/up.log" 2>&1
 
 container_id() { docker compose --project-name "${PROJECT}" -f docker-compose.yml -f docker-compose.alpha.yml -f docker-compose.dogfood.yml -f docker-compose.g0-recovery.yml --profile chat ps -q "$1"; }
 BACKEND_IMAGE_ID="$(docker inspect --format '{{.Image}}' "$(container_id backend)")"
 OBSERVER_IMAGE_ID="$(docker inspect --format '{{.Image}}' "$(container_id chat-observer)")"
 RELAY_IMAGE_ID="$(docker inspect --format '{{.Image}}' "$(container_id buzz-relay)")"
-ACCEPTANCE_IMAGE_DIGESTS="$(python3 - "${BACKEND_IMAGE_ID}" "${OBSERVER_IMAGE_ID}" "${OLD_IMAGE}" <<'PY'
+ACCEPTANCE_IMAGE_DIGESTS="$(python3 - "${BACKEND_IMAGE_ID}" "${OBSERVER_IMAGE_ID}" "${NEW_IMAGE}" <<'PY'
 import json,sys
 print(json.dumps({"backendImageId":sys.argv[1],"observerImageId":sys.argv[2],"buzzRelayImage":sys.argv[3]},separators=(",",":")))
 PY
@@ -254,7 +264,7 @@ set -a
 . ./.elembra/chat.env
 set +a
 export ELEMBRA_COMPOSE_EXTRA_FILE=docker-compose.g0-recovery.yml
-export RECOVERY_RELAY_IMAGE="${OLD_IMAGE}"
+export RECOVERY_RELAY_IMAGE="${NEW_IMAGE}"
 
 BUZZ_RECOVERY_CHANNEL_ID="${BUZZ_CHANNEL_ID}"
 export BUZZ_RECOVERY_CHANNEL_ID

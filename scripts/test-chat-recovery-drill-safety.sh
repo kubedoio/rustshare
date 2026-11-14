@@ -47,6 +47,9 @@ grep -F 'url="${ELEMBRA_ORIGIN}${path}"' "${ROOT}/scripts/run-alpha-dogfood.sh" 
 grep -F 'ELEMBRA_ORIGIN="${BASE_URL}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F 'BUZZ_RELAY_HEALTH_URL="${RELAY_URL/ws:/http:}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F 'ACCEPTANCE_EVIDENCE="${CHANNEL_EVIDENCE_RELATIVE}"' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'RECOVERY_RELAY_IMAGE="${NEW_IMAGE}" ./scripts/elembra.sh up' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'RECOVERY_RELAY_IMAGE="${OLD_IMAGE}" ./scripts/restore-stack.sh --with-chat' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F "row.get('status')" "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F 'ADMIN_PASSWORD="${ACCEPTANCE_ADMIN_PASSWORD:-$(scripts/read-bootstrap-password.sh "${backend_container}")}"' "${ROOT}/scripts/run-chat-channel-acceptance.sh" >/dev/null
 hash_recovery_output_fixture() { printf 'fixture fingerprint'; }
 expected_hash="$(printf 'fixture fingerprint' | sha256sum | awk '{print $1}')"
