@@ -1,0 +1,4 @@
+- targets:
+    - http://backend:8091/ready
+  labels:
+    service: chat-observer

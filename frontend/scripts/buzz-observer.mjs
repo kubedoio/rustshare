@@ -8,7 +8,13 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bytesToHex, hexToBytes } from '@noble/curves/utils.js';
-import { isUnboundAuthorRejection } from './buzz-observer-policy.mjs';
+import {
+	completeObserverReconciliation,
+	isUnboundAuthorRejection,
+	markObserverFailure,
+	observerCanReconcile,
+	observerIsReady
+} from './buzz-observer-policy.mjs';
 
 const relayWs = process.env.BUZZ_RELAY_WS;
 const webhookSecret = process.env.RUSTSHARE_CHAT_WEBHOOK_SECRET;
@@ -76,6 +82,8 @@ const state = {
 	lastEventAt: null,
 	lastError: null,
 	observation: 'starting',
+	failureGeneration: 0,
+	lastReconcileSince: since,
 	changedCommunity: false
 };
 let shuttingDown = false;
@@ -87,7 +95,6 @@ let reconcileRunning = false;
 let reconnectAttempt = 0;
 let forwardChain = Promise.resolve();
 let discoveredChannels = new Set();
-let lastReconcileSince = since;
 const deliveredEventKeys = new Set();
 const pendingEventKeys = new Set();
 const pendingDeliveries = new Map();
@@ -268,7 +275,7 @@ function forwardEvent(event, context = contextForEvent(event)) {
 		})
 		.catch((error) => {
 			pendingEventKeys.delete(eventKey);
-			state.observation = 'degraded';
+			markObserverFailure(state);
 			logError('forward chain failed', error);
 			return false;
 		});
@@ -300,8 +307,6 @@ async function deliver(event, context) {
 				signal: controller.signal
 			});
 			if (response.ok) {
-				state.observation = 'ready';
-				state.lastError = null;
 				state.lastEventAt = new Date().toISOString();
 				return true;
 			}
@@ -313,17 +318,17 @@ async function deliver(event, context) {
 				}
 			}
 			if (response.status < 500) {
-				state.observation = 'degraded';
+				markObserverFailure(state);
 				logError(`Elembra rejected event ${event.id.slice(0, 12)} with HTTP ${response.status}`);
 				return false;
 			}
 			if (attempt === 10) {
-				state.observation = 'degraded';
+				markObserverFailure(state);
 				logError(`Elembra stayed unavailable for event ${event.id.slice(0, 12)}`);
 			}
 		} catch (error) {
 			if (attempt === 10) {
-				state.observation = 'degraded';
+				markObserverFailure(state);
 				logError(`Elembra stayed unavailable for event ${event.id.slice(0, 12)}`, error);
 			}
 		} finally {
@@ -335,17 +340,18 @@ async function deliver(event, context) {
 }
 
 async function reconcile() {
-	if (reconcileRunning || !state.community || state.changedCommunity) return;
+	if (reconcileRunning || !observerCanReconcile(state)) return;
 	reconcileRunning = true;
+	const failureGeneration = state.failureGeneration;
 	try {
 		let cursor;
 		let pages = 0;
-		let newest = lastReconcileSince;
+		let newest = state.lastReconcileSince;
 		const deliveries = [];
 		do {
 			const query = new URL('/api/v1/relay/state/events', relayHttp);
-			if (lastReconcileSince !== undefined)
-				query.searchParams.set('since', String(lastReconcileSince));
+			if (state.lastReconcileSince !== undefined)
+				query.searchParams.set('since', String(state.lastReconcileSince));
 			query.searchParams.set('limit', '500');
 			if (cursor) query.searchParams.set('cursor', cursor);
 			const page = await relayGet(`${query.pathname}${query.search}`, {
@@ -370,13 +376,13 @@ async function reconcile() {
 		if (delivered.some((ok) => !ok)) {
 			throw new Error('one or more reconciled events were not delivered');
 		}
-		lastReconcileSince = newest;
-		state.lastRecoveryAt = new Date().toISOString();
-		if (state.observation !== 'degraded') {
-			state.observation = 'ready';
+		if (
+			completeObserverReconciliation(state, failureGeneration, newest, new Date().toISOString())
+		) {
 			state.lastError = null;
 		}
 	} catch (error) {
+		markObserverFailure(state);
 		logError('Buzz state reconciliation failed', error);
 	} finally {
 		reconcileRunning = false;
@@ -458,7 +464,6 @@ function connect() {
 			logError('relay authentication request failed', error);
 		}
 		applySubscriptions();
-		void reconcile();
 	};
 	ws.onmessage = async (raw) => {
 		try {
@@ -531,13 +536,7 @@ function startHealthServer() {
 			response.writeHead(404).end();
 			return;
 		}
-		const ready =
-			state.connection === 'connected' &&
-			state.auth === 'authenticated' &&
-			state.registry === 'ready' &&
-			!!state.community &&
-			state.observation !== 'degraded' &&
-			!state.changedCommunity;
+		const ready = observerIsReady(state);
 		const body = JSON.stringify({
 			status: ready ? 'ready' : 'degraded',
 			connection: state.connection,
