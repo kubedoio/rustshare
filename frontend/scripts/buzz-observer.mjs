@@ -12,6 +12,7 @@ import {
 	completeObserverReconciliation,
 	isUnboundAuthorRejection,
 	markObserverFailure,
+	observerCanReconcile,
 	observerIsReady
 } from './buzz-observer-policy.mjs';
 
@@ -339,7 +340,7 @@ async function deliver(event, context) {
 }
 
 async function reconcile() {
-	if (reconcileRunning || !state.community || state.changedCommunity) return;
+	if (reconcileRunning || !observerCanReconcile(state)) return;
 	reconcileRunning = true;
 	const failureGeneration = state.failureGeneration;
 	try {
@@ -463,7 +464,6 @@ function connect() {
 			logError('relay authentication request failed', error);
 		}
 		applySubscriptions();
-		void reconcile();
 	};
 	ws.onmessage = async (raw) => {
 		try {

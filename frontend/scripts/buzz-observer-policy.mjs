@@ -13,6 +13,15 @@ export function observerIsReady(state) {
 	);
 }
 
+export function observerCanReconcile(state) {
+	return (
+		state.connection === 'connected' &&
+		state.auth === 'authenticated' &&
+		!!state.community &&
+		!state.changedCommunity
+	);
+}
+
 export function markObserverFailure(state) {
 	state.failureGeneration += 1;
 	state.observation = 'degraded';

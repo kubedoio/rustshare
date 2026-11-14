@@ -4,6 +4,7 @@ import {
 	completeObserverReconciliation,
 	isUnboundAuthorRejection,
 	markObserverFailure,
+	observerCanReconcile,
 	observerIsReady
 } from './buzz-observer-policy.mjs';
 
@@ -28,6 +29,23 @@ test('observer readiness requires successful history reconciliation', () => {
 	assert.equal(observerIsReady(state), true);
 	state.observation = 'degraded';
 	assert.equal(observerIsReady(state), false);
+});
+
+test('history reconciliation waits for the connected authenticated community', () => {
+	const state = {
+		connection: 'connected',
+		auth: 'starting',
+		community: 'community-id',
+		changedCommunity: false
+	};
+	assert.equal(observerCanReconcile(state), false);
+	state.auth = 'authenticated';
+	assert.equal(observerCanReconcile(state), true);
+	state.connection = 'reconnecting';
+	assert.equal(observerCanReconcile(state), false);
+	state.connection = 'connected';
+	state.changedCommunity = true;
+	assert.equal(observerCanReconcile(state), false);
 });
 
 test('observer reconciliation only clears failures it observed and replayed', () => {
