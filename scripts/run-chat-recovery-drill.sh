@@ -282,7 +282,9 @@ EVE_EMAIL="$(docker compose --project-name "${PROJECT}" -f docker-compose.yml -f
 [[ -n "${EVE_EMAIL}" ]] || { echo 'Could not resolve disposable unauthorized user.' >&2; exit 1; }
 
 capture_api_projection() {
-	local email="$1" result_path="$2" cookie="${TEMP_DIR}/api-cookie-${email}" login_body="${TEMP_DIR}/api-login-${email}.json" status
+	local email="$1" result_path="$2" cookie login_body status
+	cookie="${TEMP_DIR}/api-cookie-${email}"
+	login_body="${TEMP_DIR}/api-login-${email}.json"
 	python3 - "${email}" <<'PY' >"${login_body}"
 import json,sys
 print(json.dumps({"email": sys.argv[1], "password": "alpha-user-pass-2026"}))
@@ -395,7 +397,9 @@ cmp -s "${EVIDENCE_DIR}/before.env" "${EVIDENCE_DIR}/after-restore.env" || {
 }
 
 verify_file_authorization_and_bytes() {
-	local email="$1" output="$2" expected_status="$3" cookie="${TEMP_DIR}/cookies-$1" login_json="${TEMP_DIR}/login-$1.json" csrf status
+	local email="$1" output="$2" expected_status="$3" cookie login_json csrf status
+	cookie="${TEMP_DIR}/cookies-${email}"
+	login_json="${TEMP_DIR}/login-${email}.json"
 	python3 - "${email}" <<'PY' >"${login_json}"
 import json,sys
 print(json.dumps({"email": sys.argv[1], "password": "alpha-user-pass-2026"}))
