@@ -694,6 +694,44 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		};
 		mkdirSync(dirname(EVIDENCE_PATH), { recursive: true });
 		writeFileSync(EVIDENCE_PATH, `${JSON.stringify(evidence, null, 2)}\n`);
+		const recoveryStatePath = process.env.ACCEPTANCE_RECOVERY_STATE_FILE;
+		if (recoveryStatePath) {
+			const alice = state.users.a;
+			const bob = state.users.b;
+			const privateChannel = state.channels.private;
+			const openChannel = state.channels.open;
+			if (
+				!alice?.email ||
+				!alice.secretKey ||
+				!bob?.email ||
+				!bob.secretKey ||
+				!privateChannel?.id ||
+				!openChannel?.id
+			) {
+				throw new Error(
+					'recovery fixture requires both users, their channels, and both bound keys'
+				);
+			}
+			writeFileSync(
+				recoveryStatePath,
+				`${JSON.stringify({
+					alice: {
+						email: alice.email,
+						password: alice.password,
+						pubkey: alice.pubkey,
+						secretKey: alice.secretKey
+					},
+					bob: {
+						email: bob.email,
+						password: bob.password,
+						pubkey: bob.pubkey,
+						secretKey: bob.secretKey
+					},
+					channels: { private: privateChannel.id, open: openChannel.id }
+				})}\n`,
+				{ flag: 'wx', mode: 0o600 }
+			);
+		}
 		console.log(`evidence written to ${EVIDENCE_PATH}`);
 	});
 
