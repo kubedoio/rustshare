@@ -1826,13 +1826,14 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			)
 			.toBe(200);
 		// Relay healthy again. NOTE: the relay serves GET /health on its MAIN
-		// listener (published via the backend namespace as 17447), not on the
-		// dedicated health port (which only answers /_liveness etc.).
+		// listener, not on the dedicated health port (which only answers
+		// /_liveness etc.). The recovery drill assigns this port dynamically.
+		const relayHealthUrl = new URL(RELAY_URL);
 		await expect
 			.poll(
 				async () => {
 					try {
-						const res = await fetch('http://127.0.0.1:17447/health');
+						const res = await fetch(`http://127.0.0.1:${relayHealthUrl.port}/health`);
 						return res.status;
 					} catch {
 						return 0;
