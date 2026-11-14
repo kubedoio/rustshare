@@ -50,6 +50,15 @@ grep -F 'ACCEPTANCE_EVIDENCE="${CHANNEL_EVIDENCE_RELATIVE}"' "${ROOT}/scripts/ru
 grep -F 'RECOVERY_RELAY_IMAGE="${NEW_IMAGE}" ./scripts/elembra.sh up' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F 'RECOVERY_RELAY_IMAGE="${OLD_IMAGE}" ./scripts/restore-stack.sh --with-chat' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
 grep -F "row.get('status')" "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+grep -F 'compare-chat-recovery-observer.py' "${ROOT}/scripts/run-chat-recovery-drill.sh" >/dev/null
+printf '[{"event_id":"e","event_type":"created","active":true,"observed_at":"1","author":"a"}]\n' >"${TEMP_DIR}/observer-before.json"
+printf '[{"event_id":"e","event_type":"deleted","active":false,"observed_at":"2","author":"a"}]\n' >"${TEMP_DIR}/observer-after.json"
+python3 "${ROOT}/scripts/compare-chat-recovery-observer.py" "${TEMP_DIR}/observer-before.json" "${TEMP_DIR}/observer-after.json" | grep -F 'tombstone promotions=1' >/dev/null
+printf '[{"event_id":"e","event_type":"created","active":true,"observed_at":"2","author":"b"}]\n' >"${TEMP_DIR}/observer-after.json"
+if python3 "${ROOT}/scripts/compare-chat-recovery-observer.py" "${TEMP_DIR}/observer-before.json" "${TEMP_DIR}/observer-after.json" >/dev/null 2>&1; then
+	echo "Expected immutable observer author changes to fail." >&2
+	exit 1
+fi
 grep -F 'ADMIN_PASSWORD="${ACCEPTANCE_ADMIN_PASSWORD:-$(scripts/read-bootstrap-password.sh "${backend_container}")}"' "${ROOT}/scripts/run-chat-channel-acceptance.sh" >/dev/null
 hash_recovery_output_fixture() { printf 'fixture fingerprint'; }
 expected_hash="$(printf 'fixture fingerprint' | sha256sum | awk '{print $1}')"
