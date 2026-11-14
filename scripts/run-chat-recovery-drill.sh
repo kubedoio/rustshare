@@ -89,11 +89,12 @@ cleanup() {
 			exit 1
 		fi
 	else
+		compose --profile chat ps --all >"${EVIDENCE_DIR}/compose-status.txt" 2>&1 || true
 		cat >"${EVIDENCE_DIR}/RUN_FAILURE.txt" <<EOF
 Run did not qualify: phase=${PHASE}, exit=${status}, source=${SOURCE_SHA}.
 No PASS is asserted. Disposable project cleanup was verified before this report was published.
 EOF
-		if ! publish_recovery_evidence "${EVIDENCE_DIR}" "${PUBLISHED_EVIDENCE_DIR}" RUN_FAILURE.txt; then
+		if ! publish_recovery_evidence "${EVIDENCE_DIR}" "${PUBLISHED_EVIDENCE_DIR}" RUN_FAILURE.txt compose-status.txt; then
 			echo "Could not publish failure summary; retained private evidence at ${TEMP_DIR}." >&2
 			exit 1
 		fi
