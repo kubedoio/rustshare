@@ -276,13 +276,16 @@ async function api(base, session, method, path, body, expected = 200) {
 const fault = {
 	read: null,
 	holdRelease: false,
+	holdCommand: null,
 	dropAckFor: null,
 	afterAck: null,
 	dropped: [],
+	rejected: [],
 	commands: [],
 	observations: [],
 	held: [],
-	heldReleases: []
+	heldReleases: [],
+	heldCommands: []
 };
 async function proxy(targetPort) {
 	const server = createServer((req, res) => {
@@ -341,6 +344,22 @@ async function proxy(targetPort) {
 			if (frame[0] === 'EVENT' && [9030, 9031].includes(frame[1].kind))
 				fault.commands.push(frame[1]);
 			if (
+				fault.holdCommand &&
+				frame[0] === 'EVENT' &&
+				[9030, 9031].includes(frame[1].kind) &&
+				frame[1].tags.some((tag) => tag[0] === 'p' && tag[1] === fault.holdCommand.pubkey) &&
+				(!fault.holdCommand.kind || frame[1].kind === fault.holdCommand.kind)
+			) {
+				fault.heldCommands.push({
+					command: frame[1],
+					release: () => {
+						if (upstream.readyState === ProxySocket.OPEN) upstream.send(data);
+						else queued.push(data);
+					}
+				});
+				return;
+			}
+			if (
 				fault.holdRelease &&
 				frame[0] === 'EVENT' &&
 				frame[1].tags.some((tag) => tag[0] === 'elembra-release-of')
@@ -357,9 +376,18 @@ async function proxy(targetPort) {
 		upstream.on('message', (bytes) => {
 			const m = JSON.parse(String(bytes)),
 				command = fault.commands.find((c) => c.id === m[1]);
+			if (m[0] === 'OK' && m[2] === false && command)
+				fault.rejected.push({ event_id: command.id, reason: m[3] });
 			if (m[0] === 'OK' && m[2] === true && command) {
 				fault.afterAck?.(command);
-				if (command.tags.some((t) => t[0] === 'p' && t[1] === fault.dropAckFor)) {
+				const drop = fault.dropAckFor,
+					dropPubkey = typeof drop === 'string' ? drop : drop?.pubkey,
+					isRelease = command.tags.some((tag) => tag[0] === 'elembra-release-of');
+				if (
+					dropPubkey &&
+					command.tags.some((tag) => tag[0] === 'p' && tag[1] === dropPubkey) &&
+					(typeof drop === 'string' || !drop.release || isRelease)
+				) {
 					fault.dropAckFor = null;
 					fault.dropped.push(command);
 					client.terminate();
@@ -383,15 +411,26 @@ const backendBinary = resolve(process.env.REPLACEMENT_E2E_BACKEND),
 let backend, backendEnv, relayProcess, relayEnv, db, buzz;
 const manifest = {
 	elembra: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+	elembra_tree: execFileSync('git', ['rev-parse', 'HEAD^{tree}'], {
+		cwd: root,
+		encoding: 'utf8'
+	}).trim(),
+	elembra_executable_sha256: hash(readFileSync(backendBinary)),
 	buzz_source: execFileSync(
 		'git',
 		['-C', process.env.RUSTSHARE_TEST_BUZZ_SOURCE_DIR, 'rev-parse', 'HEAD'],
 		{ encoding: 'utf8' }
 	).trim(),
+	buzz_tree: execFileSync(
+		'git',
+		['-C', process.env.RUSTSHARE_TEST_BUZZ_SOURCE_DIR, 'rev-parse', 'HEAD^{tree}'],
+		{ encoding: 'utf8' }
+	).trim(),
 	buzz_executable_sha256: hash(readFileSync(buzzBinary)),
 	results
 };
-assert.equal(manifest.buzz_source, 'e22ba1ed44822fd47a6c31362eea5087a8730d74');
+assert.equal(manifest.buzz_source, 'dc09fc2602a7cc64ea15caa865bd773d8be61eed');
+assert.equal(manifest.buzz_tree, '8feb9d59c14b53999dfa16148b2cef62ba28de30');
 assert.equal(manifest.buzz_executable_sha256, process.env.RUSTSHARE_TEST_BUZZ_BINARY_SHA256);
 async function validate(name, args, cwd = root, extra = {}) {
 	const fd = openSync(`${artifacts}/${name}.log`, 'w', 0o600);
@@ -548,6 +587,7 @@ try {
 		RUSTSHARE_CHAT_PROVISIONING: 'manual',
 		RUSTSHARE_CHAT_REPLACEMENT_INITIATION_ENABLED: '1',
 		RUSTSHARE_CHAT_REPLACEMENT_WORKER_ENABLED: '1',
+		RUSTSHARE_CHAT_REPLACEMENT_RECOVERY_ENABLED: '1',
 		RUSTSHARE_OUTBOX_WORKER_ENABLED: 'true',
 		RUSTSHARE_OUTBOX_POLL_INTERVAL_MS: '100',
 		RUSTSHARE_RATE_LIMIT_AUTH_LOGIN_PER_MINUTE: '200',
@@ -694,6 +734,116 @@ try {
 			'active'
 		);
 		assert.equal(status(op), 'active');
+	}
+	async function assertGated(person, op, { relayOldRevoked = true } = {}) {
+		assert.equal(status(person.binding.binding_id), 'revoked');
+		if (relayOldRevoked)
+			assert.equal((await membership(relayBase, community, person.old.pk)).membership, 'revoked');
+		const candidateMembership = await membership(relayBase, community, person.candidate.pk);
+		assert(
+			candidateMembership.membership !== 'active' || !candidateMembership.send_enabled,
+			'candidate must remain absent or staged with its send gate closed'
+		);
+		assert.equal(
+			(
+				await wire(
+					relayUrl,
+					person.candidate,
+					event(9, [['h', channel]], `must remain gated ${op}`, person.candidate)
+				)
+			)[2],
+			false
+		);
+		await assert.rejects(subscribe(relayUrl, person.candidate, { '#h': [channel] }));
+	}
+	function assertFreshEvidence(op) {
+		const owner = rows(
+			db.container,
+			`SELECT tenant_id,replacement_binding_id FROM chat_identity_replacements WHERE operation_id=${quote(op)}`
+		);
+		assert.equal(owner.length, 1);
+		assert.equal(owner[0].tenant_id, tenant);
+		assert.equal(
+			sql(
+				db.container,
+				`SELECT count(*) FROM chat_identity_bindings WHERE binding_id=${quote(owner[0].replacement_binding_id)} AND tenant_id=${quote(tenant)}`
+			),
+			'1',
+			'replacement binding must remain in the operation tenant'
+		);
+		const evidence = rows(
+			db.container,
+			`SELECT request_id,tenant_id,community_id,pubkey,expected_state,minimum_revision,accepted_event_id,accepted_evaluated_at,accepted_state,accepted_revision,extract(epoch FROM requested_at)::bigint AS requested_at_epoch FROM chat_buzz_membership_verifications WHERE operation_id=${quote(op)} AND accepted_at IS NOT NULL ORDER BY requested_at`
+		);
+		assert(evidence.length > 0);
+		assert(evidence.every((item) => item.tenant_id === tenant));
+		assert.equal(new Set(evidence.map((item) => item.request_id)).size, evidence.length);
+		assert(evidence.every((item) => /^[a-f0-9]{64}$/.test(item.accepted_event_id)));
+		for (const item of evidence) {
+			assert(Math.abs(Number(item.accepted_evaluated_at) - Number(item.requested_at_epoch)) < 30);
+			const signed = fault.observations.find(
+				(observation) => observation.id === item.accepted_event_id
+			);
+			assert(signed, `accepted response ${item.accepted_event_id} was observed on the relay proxy`);
+			assert.equal(signed.kind, 19030);
+			assert.equal(signed.pubkey, relay.pk);
+			assert.equal(signed.id, item.accepted_event_id);
+			assert.equal(
+				signed.id,
+				hash(
+					JSON.stringify([
+						0,
+						signed.pubkey,
+						signed.created_at,
+						signed.kind,
+						signed.tags,
+						signed.content
+					])
+				)
+			);
+			const response = JSON.parse(signed.content);
+			assert.equal(response.request_id, item.request_id, 'response must bind the exact request');
+			assert.equal(response.community_id, community);
+			assert.equal(response.pubkey, item.pubkey);
+			assert.equal(response.membership, item.accepted_state);
+			assert.equal(Number(response.membership_revision), Number(item.accepted_revision));
+			assert.equal(Number(response.evaluated_at), Number(item.accepted_evaluated_at));
+			assert(Number(item.accepted_revision) >= Number(item.minimum_revision));
+			if (item.expected_state) assert.equal(item.accepted_state, item.expected_state);
+			assert(
+				schnorr.verify(
+					Buffer.from(signed.sig, 'hex'),
+					Buffer.from(signed.id, 'hex'),
+					Buffer.from(relay.pk, 'hex')
+				)
+			);
+		}
+		assert(
+			Number(
+				sql(
+					db.container,
+					`SELECT count(*) FROM chat_identity_replacement_audit WHERE operation_id=${quote(op)} AND tenant_id=${quote(tenant)}`
+				)
+			) > 0
+		);
+		return evidence;
+	}
+	async function revokeAtCurrentRevision(pubkey, operationId = randomUUID()) {
+		const state = await membership(relayBase, community, pubkey);
+		return wire(
+			relayUrl,
+			service,
+			event(
+				9031,
+				[
+					['p', pubkey],
+					['elembra-op', operationId],
+					['elembra-expected-revision', String(state.membership_revision)]
+				],
+				'',
+				service
+			)
+		);
 	}
 	const legacy = await user('legacy'),
 		legacyKey = key(),
@@ -1217,6 +1367,452 @@ try {
 		'candidate must not send while final signed evidence is withheld and local binding is pending'
 	);
 	pass('candidate cannot send before verified completion');
+	const concurrent = await onboard('concurrent-initiation'),
+		concurrentRequest = await replacement(concurrent),
+		concurrentResults = await Promise.all([
+			initiate(concurrent, concurrentRequest),
+			initiate(concurrent, concurrentRequest)
+		]);
+	assert(
+		concurrentResults.every((result) => result.operation_id === concurrentRequest.operation_id)
+	);
+	await completed(concurrent, concurrentRequest.operation_id);
+	assert.equal(
+		sql(
+			db.container,
+			`SELECT count(*) FROM chat_identity_replacement_commands WHERE operation_id=${quote(concurrentRequest.operation_id)} AND phase='revoke'`
+		),
+		'1'
+	);
+	assertFreshEvidence(concurrentRequest.operation_id);
+	pass('concurrent identical initiation preserves one operation and one revoke command');
+	const competing = await onboard('concurrent-competing-starts'),
+		competingRequests = await Promise.all([replacement(competing), replacement(competing)]),
+		competingResponses = await Promise.all(
+			competingRequests.map((input) =>
+				api(
+					base,
+					competing.session,
+					'POST',
+					'/applications/chat/identity-replacements',
+					input,
+					[202, 409]
+				)
+			)
+		);
+	assert.equal(
+		competingResponses.filter((result) => result.operation_id).length,
+		1,
+		'only one competing operation may own the Principal'
+	);
+	const winningRequest = competingRequests.find((input) =>
+		competingResponses.some((result) => result.operation_id === input.operation_id)
+	);
+	await completed(competing, winningRequest.operation_id);
+	assert.equal(status(competing.binding.binding_id), 'revoked');
+	assertFreshEvidence(winningRequest.operation_id);
+	pass('concurrent distinct replacement starts serialize to one authorized operation');
+	const crashes = await onboard('worker-crashes'),
+		crashRequest = await replacement(crashes);
+	fault.holdCommand = { pubkey: crashes.old.pk, kind: 9031 };
+	await initiate(crashes, crashRequest);
+	await until('pre-ACK revoke held', async () => fault.heldCommands.length > 0);
+	const revokeEventId = fault.heldCommands[0].command.id,
+		crashGeneration = Number(
+			sql(
+				db.container,
+				`SELECT generation FROM chat_identity_replacements WHERE operation_id=${quote(crashRequest.operation_id)}`
+			)
+		);
+	await stop(backend);
+	assert.notEqual(
+		sql(
+			db.container,
+			`SELECT state FROM chat_identity_replacements WHERE operation_id=${quote(crashRequest.operation_id)}`
+		),
+		'completed'
+	);
+	await assertGated(crashes, crashRequest.operation_id, { relayOldRevoked: false });
+	fault.holdCommand = null;
+	backend = start(backendBinary, backendEnv, 'elembra');
+	await backendReady();
+	fault.afterAck = (command) => {
+		if (
+			command.kind === 9030 &&
+			command.tags.some((tag) => tag[0] === 'p' && tag[1] === crashes.candidate.pk)
+		) {
+			fault.afterAck = null;
+			backend.kill('SIGKILL');
+		}
+	};
+	await until('post-ACK worker crash', async () => backend.exitCode !== null);
+	assert.equal((await membership(relayBase, community, crashes.old.pk)).membership, 'revoked');
+	backend = start(backendBinary, backendEnv, 'elembra');
+	await backendReady();
+	await completed(crashes, crashRequest.operation_id);
+	assertFreshEvidence(crashRequest.operation_id);
+	const crashCommands = rows(
+		db.container,
+		`SELECT command_id,phase FROM chat_identity_replacement_commands WHERE operation_id=${quote(crashRequest.operation_id)} ORDER BY phase`
+	);
+	assert.equal(new Set(crashCommands.map((command) => command.command_id)).size, 2);
+	assert(fault.commands.filter((command) => command.id === revokeEventId).length >= 2);
+	assert(
+		Number(
+			sql(
+				db.container,
+				`SELECT generation FROM chat_identity_replacements WHERE operation_id=${quote(crashRequest.operation_id)}`
+			)
+		) > crashGeneration
+	);
+	pass('worker crashes before and after relay ACK recover with fenced leases and stable commands');
+	const leaseRecovery = await onboard('lease-expiry'),
+		leaseRequest = await replacement(leaseRecovery);
+	fault.read = 'hold';
+	await initiate(leaseRecovery, leaseRequest);
+	await until('membership read held under lease', async () => fault.held.length > 0);
+	const beforeLeaseRecovery = Number(
+		sql(
+			db.container,
+			`SELECT generation FROM chat_identity_replacements WHERE operation_id=${quote(leaseRequest.operation_id)}`
+		)
+	);
+	sql(
+		db.container,
+		`UPDATE chat_identity_replacements SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=${quote(leaseRequest.operation_id)}`
+	);
+	await stop(backend);
+	fault.read = null;
+	fault.held.length = 0;
+	backend = start(backendBinary, backendEnv, 'elembra');
+	await backendReady();
+	await completed(leaseRecovery, leaseRequest.operation_id);
+	assert(
+		Number(
+			sql(
+				db.container,
+				`SELECT generation FROM chat_identity_replacements WHERE operation_id=${quote(leaseRequest.operation_id)}`
+			)
+		) > beforeLeaseRecovery
+	);
+	assert.equal(
+		(await membership(relayBase, community, leaseRecovery.old.pk)).membership,
+		'revoked'
+	);
+	assertFreshEvidence(leaseRequest.operation_id);
+	pass('expired replacement lease is reclaimed and stale worker state cannot overwrite recovery');
+	const disabled = await onboard('disabled-during-replacement'),
+		disabledRequest = await replacement(disabled);
+	fault.afterAck = (command) => {
+		if (
+			command.kind === 9030 &&
+			command.tags.some((tag) => tag[0] === 'p' && tag[1] === disabled.candidate.pk)
+		) {
+			fault.read = 'hold';
+			fault.afterAck = null;
+		}
+	};
+	await initiate(disabled, disabledRequest);
+	await until('disabled candidate verification held', async () => fault.held.length > 0);
+	assert.equal((await membership(relayBase, community, disabled.candidate.pk)).send_enabled, false);
+	await api(
+		base,
+		admin,
+		'POST',
+		`/admin/users/${disabled.session.user.id}/disable`,
+		undefined,
+		204
+	);
+	fault.read = null;
+	fault.held.length = 0;
+	await until(
+		'disabled staged candidate revoked',
+		async () =>
+			(await membership(relayBase, community, disabled.candidate.pk)).membership === 'revoked'
+	);
+	assert.notEqual(
+		sql(
+			db.container,
+			`SELECT state FROM chat_identity_replacements WHERE operation_id=${quote(disabledRequest.operation_id)}`
+		),
+		'completed'
+	);
+	assert.equal(
+		(
+			await wire(
+				relayUrl,
+				disabled.candidate,
+				event(9, [['h', channel]], 'disabled', disabled.candidate)
+			)
+		)[2],
+		false
+	);
+	pass('Principal disable during staged replacement revokes candidate and prevents completion');
+	const staleRevision = await onboard('stale-revision'),
+		staleRequest = await replacement(staleRevision);
+	fault.holdCommand = { pubkey: staleRevision.old.pk, kind: 9031 };
+	await initiate(staleRevision, staleRequest);
+	await until(
+		'initial revoke command held for stale revision',
+		async () => fault.heldCommands.length > 0
+	);
+	const staleCommand = fault.heldCommands[0].command,
+		oldMembership = await membership(relayBase, community, staleRevision.old.pk),
+		competingRevoke = event(
+			9031,
+			[
+				['p', staleRevision.old.pk],
+				['elembra-op', randomUUID()],
+				['elembra-expected-revision', String(oldMembership.membership_revision)]
+			],
+			'',
+			service
+		);
+	assert.equal((await wire(relayUrl, service, competingRevoke))[2], true);
+	await assertGated(staleRevision, staleRequest.operation_id);
+	fault.holdCommand = null;
+	fault.heldCommands.splice(0).forEach((held) => held.release());
+	await until(
+		'fresh revision revoke attempt persisted',
+		async () =>
+			rows(
+				db.container,
+				`SELECT attempt FROM chat_identity_replacement_commands WHERE operation_id=${quote(staleRequest.operation_id)} AND phase='revoke'`
+			).length >= 2
+	);
+	await until(
+		'stale command outcome persisted',
+		async () =>
+			rows(
+				db.container,
+				`SELECT outcome FROM chat_identity_replacement_commands WHERE command_id=${quote(staleCommand.tags.find((tag) => tag[0] === 'elembra-op')[1])}`
+			)[0]?.outcome === 'stale'
+	);
+	const staleAttempts = rows(
+		db.container,
+		`SELECT command_id,expected_revision,outcome FROM chat_identity_replacement_commands WHERE operation_id=${quote(staleRequest.operation_id)} AND phase='revoke' ORDER BY attempt`
+	);
+	assert.equal(staleAttempts[0].outcome, 'stale');
+	await until('delayed conditional command rejected as stale', async () =>
+		fault.rejected.some((rejection) => rejection.event_id === staleCommand.id)
+	);
+	assert.equal(
+		fault.rejected.find((rejection) => rejection.event_id === staleCommand.id).reason,
+		'stale_revision'
+	);
+	assert.equal(
+		staleAttempts[0].command_id,
+		staleCommand.tags.find((tag) => tag[0] === 'elembra-op')?.[1]
+	);
+	assert.notEqual(staleAttempts[0].command_id, staleAttempts[1].command_id);
+	assert(Number(staleAttempts[1].expected_revision) > Number(staleAttempts[0].expected_revision));
+	await completed(staleRevision, staleRequest.operation_id);
+	assertFreshEvidence(staleRequest.operation_id);
+	pass(
+		'definitive stale revision is rejected, then retried with fresh request evidence and command ID'
+	);
+	const rotated = await onboard('mapping-rotation'),
+		rotatedRequest = await replacement(rotated),
+		rotatedPin = key();
+	fault.holdCommand = { pubkey: rotated.candidate.pk, kind: 9030 };
+	await initiate(rotated, rotatedRequest);
+	await until('admission held before relay delivery', async () => fault.heldCommands.length > 0);
+	await api(base, admin, 'PATCH', `/admin/applications/chat/workspaces/${tenant}/community`, {
+		relay_url: relayUrl,
+		relay_pubkey: rotatedPin.pk,
+		membership_protocol_version: 'v1alpha2'
+	});
+	fault.holdCommand = null;
+	fault.heldCommands.splice(0).forEach((held) => held.release());
+	await delay(1_000);
+	await assertGated(rotated, rotatedRequest.operation_id);
+	assert.notEqual((await operationStatus(rotated, rotatedRequest.operation_id)).state, 'completed');
+	await api(base, admin, 'PATCH', `/admin/applications/chat/workspaces/${tenant}/community`, {
+		relay_url: relayUrl,
+		relay_pubkey: relay.pk,
+		membership_protocol_version: 'v1alpha2'
+	});
+	assert.notEqual((await operationStatus(rotated, rotatedRequest.operation_id)).state, 'completed');
+	pass('mapping and relay-pin rotation cannot release or complete the in-flight operation');
+	const dbFailure = await onboard('completion-commit-failure'),
+		dbFailureRequest = await replacement(dbFailure);
+	sql(
+		db.container,
+		`CREATE FUNCTION replacement_e2e_fail_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.to_state='completed' THEN RAISE EXCEPTION 'acceptance injected completion commit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER replacement_e2e_fail_completion BEFORE INSERT ON chat_identity_replacement_audit FOR EACH ROW EXECUTE FUNCTION replacement_e2e_fail_completion()`
+	);
+	try {
+		await initiate(dbFailure, dbFailureRequest);
+		await until('completion transaction fault reached', async () => {
+			const candidate = await membership(relayBase, community, dbFailure.candidate.pk);
+			return candidate.membership === 'active' && !candidate.send_enabled;
+		});
+		assert.notEqual(
+			(await operationStatus(dbFailure, dbFailureRequest.operation_id)).state,
+			'completed'
+		);
+		await assertGated(dbFailure, dbFailureRequest.operation_id);
+	} finally {
+		sql(
+			db.container,
+			'DROP TRIGGER replacement_e2e_fail_completion ON chat_identity_replacement_audit; DROP FUNCTION replacement_e2e_fail_completion()'
+		);
+	}
+	assert(
+		rows(
+			db.container,
+			`SELECT audit_id FROM chat_identity_replacement_audit WHERE operation_id=${quote(dbFailureRequest.operation_id)} AND reason_code='replacement_transport_retry'`
+		).length > 0,
+		'failed completion transaction must leave a recoverable audited failure'
+	);
+	await completed(dbFailure, dbFailureRequest.operation_id);
+	assertFreshEvidence(dbFailureRequest.operation_id);
+	pass(
+		'completion commit failure rolls back local release and retries only after audit can commit'
+	);
+	const recovery = await onboard('operator-recovery'),
+		recoveryRequest = await replacement(recovery);
+	fault.afterAck = (command) => {
+		if (
+			command.kind === 9031 &&
+			command.tags.some((tag) => tag[0] === 'p' && tag[1] === recovery.old.pk)
+		) {
+			fault.afterAck = null;
+			fault.read = 'invalid';
+		}
+	};
+	await initiate(recovery, recoveryRequest);
+	await until(
+		'blocked signed evidence for operator recovery',
+		async () => (await operationStatus(recovery, recoveryRequest.operation_id)).state === 'blocked'
+	);
+	fault.read = null;
+	await assertGated(recovery, recoveryRequest.operation_id);
+	await api(
+		base,
+		admin,
+		'POST',
+		`/admin/applications/chat/replacements/${recoveryRequest.operation_id}/recover`,
+		undefined,
+		204
+	);
+	await completed(recovery, recoveryRequest.operation_id);
+	assertFreshEvidence(recoveryRequest.operation_id);
+	assert(
+		rows(
+			db.container,
+			`SELECT audit_id FROM chat_identity_replacement_audit WHERE operation_id=${quote(recoveryRequest.operation_id)} AND actor_id=${quote(admin.user.id)} AND reason_code='operator_recovery_fresh_verification'`
+		).length > 0
+	);
+	pass('orphaned blocked operation is recoverable only through audited admin fresh verification');
+	const oldReactivation = await onboard('old-key-tombstone');
+	await completed(
+		oldReactivation,
+		(await initiate(oldReactivation, await replacement(oldReactivation))).operation_id
+	);
+	const reactivation = await wire(
+		relayUrl,
+		service,
+		event(
+			9030,
+			[
+				['p', oldReactivation.old.pk],
+				['elembra-op', randomUUID()],
+				[
+					'elembra-expected-revision',
+					String(
+						(await membership(relayBase, community, oldReactivation.old.pk)).membership_revision
+					)
+				]
+			],
+			'',
+			service
+		)
+	);
+	assert.equal(reactivation[2], false);
+	assert.equal(
+		(await membership(relayBase, community, oldReactivation.old.pk)).membership,
+		'revoked'
+	);
+	assert(
+		Number(
+			sql(
+				buzz.container,
+				`SELECT revision FROM relay_membership_state WHERE community_id=${quote(community)} AND pubkey=${quote(oldReactivation.old.pk)} AND revoked`
+			)
+		) > 0,
+		'reactivation must leave the relay tombstone intact'
+	);
+	assertFreshEvidence(
+		sql(
+			db.container,
+			`SELECT operation_id FROM chat_identity_replacements WHERE principal_id=${quote(oldReactivation.session.user.id)}`
+		)
+	);
+	pass('newer signed admission cannot reactivate a tombstoned old key');
+	const revokeWins = await onboard('release-revoke-race'),
+		revokeWinsRequest = await replacement(revokeWins);
+	fault.holdRelease = true;
+	await initiate(revokeWins, revokeWinsRequest);
+	await completed(revokeWins, revokeWinsRequest.operation_id);
+	await until(
+		'candidate release held for concurrent revocation',
+		async () => fault.heldReleases.length > 0
+	);
+	assert.equal(
+		(await membership(relayBase, community, revokeWins.candidate.pk)).send_enabled,
+		false
+	);
+	assert.equal((await revokeAtCurrentRevision(revokeWins.candidate.pk))[2], true);
+	fault.holdRelease = false;
+	fault.heldReleases.splice(0).forEach((release) => release());
+	await until(
+		'staged revocation remains authoritative',
+		async () =>
+			(await membership(relayBase, community, revokeWins.candidate.pk)).membership === 'revoked'
+	);
+	assert.equal(
+		(
+			await wire(
+				relayUrl,
+				revokeWins.candidate,
+				event(9, [['h', channel]], 'revoked stage', revokeWins.candidate)
+			)
+		)[2],
+		false
+	);
+	assertFreshEvidence(revokeWinsRequest.operation_id);
+	pass('concurrent staged release and revocation preserve the revocation tombstone');
+	const releaseReplay = await onboard('lost-release-ack'),
+		releaseReplayRequest = await replacement(releaseReplay);
+	fault.dropAckFor = { pubkey: releaseReplay.candidate.pk, release: true };
+	await initiate(releaseReplay, releaseReplayRequest);
+	await completed(releaseReplay, releaseReplayRequest.operation_id);
+	await until(
+		'released membership after lost ACK',
+		async () => (await membership(relayBase, community, releaseReplay.candidate.pk)).send_enabled
+	);
+	await until(
+		'release ACK replay observed',
+		async () =>
+			fault.commands.filter(
+				(command) =>
+					command.tags.some((tag) => tag[0] === 'elembra-release-of') &&
+					command.tags.some((tag) => tag[0] === 'p' && tag[1] === releaseReplay.candidate.pk)
+			).length >= 2
+	);
+	fault.dropAckFor = null;
+	const releaseEvents = fault.commands.filter(
+		(command) =>
+			command.tags.some((tag) => tag[0] === 'elembra-release-of') &&
+			command.tags.some((tag) => tag[0] === 'p' && tag[1] === releaseReplay.candidate.pk)
+	);
+	assert.equal(new Set(releaseEvents.map((command) => command.id)).size, 1);
+	assert.equal(
+		(await membership(relayBase, community, releaseReplay.old.pk)).membership,
+		'revoked'
+	);
+	assertFreshEvidence(releaseReplayRequest.operation_id);
+	pass('lost release ACK retries the exact signed release event and remains idempotent');
 } catch (error) {
 	manifest.error = redact(error.stack);
 	results.push({ name: 'acceptance', status: 'failed', error: manifest.error });
