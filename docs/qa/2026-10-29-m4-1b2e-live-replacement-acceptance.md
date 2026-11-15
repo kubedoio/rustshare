@@ -433,7 +433,7 @@ worker, and allows the signed membership assertion to bypass only the test
 proxy's held read. Backend membership reads remain held until the disable test
 releases them; relay signatures, request binding and freshness are still checked.
 
-Five dependency-free harness regressions pass (`node --test
+Seven dependency-free harness regressions pass (`node --test
 scripts/test-buzz-replacement-harness.mjs`). The four originally reported defects
 were reproduced against the previous source before fixing. Bash/Node syntax,
 Prettier, workspace formatting and diff checks pass. The existing Rust fixture
@@ -445,3 +445,9 @@ The full replacement matrix and downstream Buzz membership integration must run
 on this new source pair in CI before merge. No prior acceptance result qualifies
 this revision. No deployment, signing-key rotation or production pin change was
 performed.
+
+Fresh review also replaced the mapping-rotation sleep with a wait for the durable
+blocked operation and keeps the injected completion trigger installed until its
+failed transaction has a retry audit. Two executable lifecycle regressions fail
+on the prior harness and pass with these changes. They are test-driver
+regressions with controlled dependencies, not additional live acceptance evidence.

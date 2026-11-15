@@ -1641,7 +1641,10 @@ try {
 	});
 	fault.holdCommand = null;
 	fault.heldCommands.splice(0).forEach((held) => held.release());
-	await delay(1_000);
+	await until(
+		'mapping rotation durably blocks the operation',
+		async () => (await operationStatus(rotated, rotatedRequest.operation_id)).state === 'blocked'
+	);
 	await assertGated(rotated, rotatedRequest.operation_id);
 	assert.notEqual((await operationStatus(rotated, rotatedRequest.operation_id)).state, 'completed');
 	await api(base, admin, 'PATCH', `/admin/applications/chat/workspaces/${tenant}/community`, {
@@ -1663,6 +1666,14 @@ try {
 			const candidate = await membership(relayBase, community, dbFailure.candidate.pk);
 			return candidate.membership === 'active' && !candidate.send_enabled;
 		});
+		await until(
+			'completion transaction failure audited',
+			async () =>
+				rows(
+					db.container,
+					`SELECT audit_id FROM chat_identity_replacement_audit WHERE operation_id=${quote(dbFailureRequest.operation_id)} AND reason_code='replacement_transport_retry'`
+				).length > 0
+		);
 		assert.notEqual(
 			(await operationStatus(dbFailure, dbFailureRequest.operation_id)).state,
 			'completed'

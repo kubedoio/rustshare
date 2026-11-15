@@ -121,3 +121,86 @@ test('debug qualification and its regression fixture match the runner source pin
 	assert.equal(rust.match(/const SOURCE_TREE: &str = "([0-9a-f]+)"/)[1], tree);
 	assert.equal(rust.match(/let source_tree = "([0-9a-f]+)"/)[1], tree);
 });
+
+test('completion fault remains installed until the failed transaction is audited', async () => {
+	const scenario = source.slice(
+		source.indexOf('\tconst dbFailure ='),
+		source.indexOf('\tconst recovery =')
+	);
+	let auditObserved = false;
+	let triggerInstalled = false;
+	await runInNewContext(`(async () => {${scenario}})()`, {
+		assert,
+		db: { container: 'fixture' },
+		onboard: async () => ({ candidate: { pk: 'candidate' } }),
+		replacement: async () => ({ operation_id: 'operation' }),
+		quote: (value) => `'${value}'`,
+		sql(_container, query) {
+			if (query.startsWith('CREATE FUNCTION')) triggerInstalled = true;
+			if (query.startsWith('DROP TRIGGER')) {
+				assert.equal(
+					auditObserved,
+					true,
+					'fault removed before the failed transaction was observed'
+				);
+				triggerInstalled = false;
+			}
+		},
+		rows() {
+			if (triggerInstalled) auditObserved = true;
+			return auditObserved ? [{ audit_id: 'retry' }] : [];
+		},
+		until: async (_name, check) => assert.equal(await check(), true),
+		initiate: async () => {},
+		membership: async () => ({ membership: 'active', send_enabled: false }),
+		operationStatus: async () => ({ state: 'pending' }),
+		assertGated: async () => {},
+		completed: async () => {},
+		assertFreshEvidence() {},
+		pass() {},
+		relayBase: 'unused',
+		community: 'unused'
+	});
+	assert.equal(auditObserved, true);
+	assert.equal(triggerInstalled, false);
+});
+
+test('mapping rotation is durably rejected before its original pin is restored', async () => {
+	const scenario = source.slice(
+		source.indexOf('\tconst rotated ='),
+		source.indexOf('\tconst dbFailure =')
+	);
+	let workerObserved = false;
+	let patches = 0;
+	await runInNewContext(`(async () => {${scenario}})()`, {
+		assert,
+		onboard: async () => ({ candidate: { pk: 'candidate' } }),
+		replacement: async () => ({ operation_id: 'operation' }),
+		key: () => ({ pk: 'rotated' }),
+		fault: { heldCommands: [{ release() {} }] },
+		initiate: async () => {},
+		until: async (name, check) => {
+			if (name === 'mapping rotation durably blocks the operation') workerObserved = true;
+			assert.equal(await check(), true);
+		},
+		delay: async () => {},
+		api: async () => {
+			if (++patches === 2)
+				assert.equal(
+					workerObserved,
+					true,
+					'original pin restored before worker rejected the change'
+				);
+		},
+		operationStatus: async () => ({ state: workerObserved ? 'blocked' : 'pending' }),
+		assertGated: async () => {},
+		pass() {},
+		base: 'unused',
+		admin: {},
+		tenant: 'tenant',
+		relayUrl: 'unused',
+		relay: { pk: 'original' }
+	});
+	assert.equal(workerObserved, true);
+	assert.equal(patches, 2);
+});
