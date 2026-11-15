@@ -21,3 +21,32 @@ Therefore the run verifies encryption, upload, bundle integrity, failure signali
 The repository's channel and conversation browser suites do exercise real signed messages, thread events, and Files attachments against the relay. Specifically, `frontend/tests/chat-conversation-acceptance.e2e.ts` decrypts the browser key into in-memory `user.secretKey`, runs NIP-42 relay queries, and writes channel/event IDs to evidence JSON. `frontend/tests/chat-channel-acceptance.e2e.ts` uploads Files objects and verifies authorization, but does not retain attachment content hashes for a later restore comparison. Neither suite exports browser-held test signing keys to an independently controlled recovery input or invokes the encrypted backup/restore flow. The existing `scripts/test-elembra-offsite-backup.sh` Compose file starts only PostgreSQL and RustFS for Elembra/Buzz, with no RustShare app, Buzz relay, Redis, or observer.
 
 The old/new relay rollback also remains untested. `scripts/run-buzz-conformance.sh` uses the compatibility manifest to start one image in a fresh project, runs its fixed conformance test, then always tears the volumes down. It does not preserve and compare state across image replacement. A real recovery gate needs a separate orchestration path that: (1) provisions the full app/relay/observer stack in a unique project; (2) captures signed event snapshots and attachment hashes in a durable non-secret manifest while placing test signing keys in separately supplied, private recovery material; (3) backs up and restores all stores; (4) checks the same events (including authors/signatures), channel permissions/history and attachment bytes; and (5) recreates only the relay with each exact immutable image while retaining Buzz PostgreSQL/object volumes, verifying observer replay after each switch. This involves browser-key custody and coordinated stateful service transitions, so it is not a safe small extension to the existing S3 test. Do not treat the passing synthetic fixture values as Chat/relay continuity evidence.
+
+
+## Follow-up: 2026-11-15 cross-stack disposable drill
+
+The limitations above describe the November 12 synthetic test. A later isolated
+`scripts/run-chat-recovery-drill.sh` run passed at source
+`eb65492f6c59fc693f20c6b72983b148ef673c81`. Its evidence is retained on the
+qualification host at `/srv/data01/elembra-g0-recovery-evidence-20261115-final`.
+Independent evidence review confirmed:
+
+- Channel browser scenarios: 13/13; conversation scenarios: 9/9.
+- Exact database/object fingerprints and API event IDs, authors, threads and
+  attachments match before and after restore. API projection SHA-256:
+  `7a6fc6f3dc1285133e5a96e05dce93c544d27eb3b5445e8cc311672b42c523dd`.
+- Private history and removed-member write denial, attachment bytes and Files
+  authorization, signed-event verification and observer catch-up passed.
+- Candidate/old-relay rollback retained history; replay retained 27/27 events.
+- Cleanup left zero drill-project containers, volumes or networks.
+- `result.env` SHA-256:
+  `f0d6713288c43aff533ab4f4bda7e02543a27f5a2f4ad84435266ad947415e1b`.
+
+All recovery harness, history-probe and acceptance files are byte-identical to
+merged PR #493 head `c44afdca83594a2d98369e3f7dd5d2ff6785051d`. That head also
+incorporates seven PR #499 frontend capability/UI changes, so this run qualifies
+the tested application artifacts and recovery harness, not the exact final
+application artifacts. It does not qualify off-host encrypted recovery,
+independently held recovery credentials, browser-held signing-key recovery or a
+real pilot host. Those release gates remain open; the production relay pin is
+unchanged.
