@@ -567,8 +567,7 @@ const evidence = {
 	relay: {
 		image: process.env.CHAT_DIRECT_NEG_IMAGE ?? 'buzz-elembra-candidate:8ce0b7bd',
 		imageId: process.env.CHAT_DIRECT_NEG_IMAGE_ID ?? null,
-		builtFrom:
-			'8ce0b7bd8da474f6b858810b349549377714c33a (final qualified candidate; supported baseline c9a373b + guest-write-denial hotfix + audio mid-session backport)',
+		builtFrom: process.env.CHAT_DIRECT_NEG_SOURCE_COMMIT ?? null,
 		wsCommunityA: URL_A,
 		wsCommunityB: URL_B
 	},
