@@ -77,7 +77,10 @@ test('membership assertion can observe relay state while worker reads remain hel
 		const port = await proxy(upstream.address().port);
 		const url = `http://127.0.0.1:${port}/api/v1/relay/membership/check`;
 		const heldRead = fetch(url);
-		while (!fault.held.length) await new Promise((resolve) => setTimeout(resolve, 5));
+		const heldDeadline = Date.now() + 2000;
+		while (!fault.held.length && Date.now() < heldDeadline)
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		assert.equal(fault.held.length, 1, 'proxy did not hold the worker read before the deadline');
 		const observation = await fetch(url, {
 			headers: { 'x-elembra-test-observation': '1' },
 			signal: AbortSignal.timeout(1000)
