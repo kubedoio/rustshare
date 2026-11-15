@@ -554,7 +554,8 @@ cmp -s "${EVIDENCE_DIR}/api-before.sha256" "${EVIDENCE_DIR}/api-after-restore.sh
 
 PHASE=post-restore-private-channel-authorization
 login_private_test_user() {
-	local email="$1" password="$2" cookie="$3" body="${cookie}.json" status
+	local email="$1" password="$2" cookie="$3" body status
+	body="${cookie}.json"
 	python3 - "${email}" "${password}" <<'PY' >"${body}"
 import json,sys
 print(json.dumps({'email':sys.argv[1],'password':sys.argv[2]}))
