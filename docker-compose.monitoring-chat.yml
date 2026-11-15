@@ -1,0 +1,7 @@
+# Add direct Chat availability checks to an existing monitoring deployment.
+# Use with docker-compose.monitoring.yml only when the Chat profile is enabled.
+services:
+  prometheus:
+    volumes:
+      - ./docker/monitoring/chat-observer-targets.yml:/etc/prometheus/chat-observer-targets.yml:ro
+      - ./docker/monitoring/chat-relay-targets.yml:/etc/prometheus/chat-relay-targets.yml:ro
