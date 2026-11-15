@@ -15,13 +15,13 @@
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:e2e": "playwright test",
-		"test:buzz-config": "node --test scripts/alpha-validate-buzz-config.test.mjs"
+		"test:buzz-config": "node --test scripts/alpha-validate-buzz-config.test.mjs scripts/buzz-observer-policy.test.mjs"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.1.1",
 		"@eslint/js": "^10.0.1",
 		"@playwright/test": "^1.63.0",
-		"@sveltejs/adapter-static": "^3.0.10",
+		"@sveltejs/adapter-static": "^3.0.11",
 		"@sveltejs/kit": "^2.70.3",
 		"@sveltejs/vite-plugin-svelte": "^7.3.0",
 		"@tailwindcss/vite": "^4.3.3",

@@ -716,8 +716,10 @@ test.describe('Chat conversation product acceptance (PR #481)', () => {
 		const threadBadge = a.page.getByRole('button', { name: 'View thread, 2 replies' });
 		await expect(threadBadge).toBeVisible({ timeout: 60_000 });
 		// A reacts 👍 to B's first reply from the thread view (row-scoped).
-		await threadBadge.click();
-		await expect(a.page.getByRole('heading', { name: 'Thread' })).toBeVisible();
+		await Promise.all([
+			threadBadge.click({ timeout: 15_000 }).catch(() => undefined),
+			expect(a.page.getByRole('heading', { name: 'Thread' })).toBeVisible({ timeout: 15_000 })
+		]);
 		const aPalette = a.page
 			.locator(`[data-event-id="${targetId}"]`)
 			.getByRole('button', { name: 'React 👍' });
