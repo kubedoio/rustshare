@@ -122,13 +122,16 @@ test('debug qualification and its regression fixture match the runner source pin
 	assert.equal(rust.match(/let source_tree = "([0-9a-f]+)"/)[1], tree);
 });
 
-test('completion fault remains installed until the failed transaction is audited', async () => {
+test('completion fault requires its exact attempt marker as well as a retry audit', async () => {
 	const scenario = source.slice(
 		source.indexOf('\tconst dbFailure ='),
 		source.indexOf('\tconst recovery =')
 	);
 	let auditObserved = false;
 	let triggerInstalled = false;
+	let injectionAttempted = false;
+	let sequenceDropped = false;
+	let createSql = '';
 	await runInNewContext(`(async () => {${scenario}})()`, {
 		assert,
 		db: { container: 'fixture' },
@@ -136,21 +139,28 @@ test('completion fault remains installed until the failed transaction is audited
 		replacement: async () => ({ operation_id: 'operation' }),
 		quote: (value) => `'${value}'`,
 		sql(_container, query) {
-			if (query.startsWith('CREATE FUNCTION')) triggerInstalled = true;
+			if (query.includes('CREATE FUNCTION')) {
+				triggerInstalled = true;
+				createSql = query;
+			}
+			if (query === 'SELECT is_called FROM replacement_e2e_completion_attempt')
+				return injectionAttempted ? 't' : 'f';
 			if (query.startsWith('DROP TRIGGER')) {
-				assert.equal(
-					auditObserved,
-					true,
-					'fault removed before the failed transaction was observed'
-				);
 				triggerInstalled = false;
+				sequenceDropped = query.includes('DROP SEQUENCE replacement_e2e_completion_attempt');
 			}
 		},
 		rows() {
-			if (triggerInstalled) auditObserved = true;
-			return auditObserved ? [{ audit_id: 'retry' }] : [];
+			if (injectionAttempted && triggerInstalled) auditObserved = true;
+			return [{ audit_id: injectionAttempted ? 'injected-failure-retry' : 'unrelated-retry' }];
 		},
-		until: async (_name, check) => assert.equal(await check(), true),
+		until: async (name, check) => {
+			if (name === 'completion transaction failure audited') {
+				assert.equal(await check(), false, 'staged membership and unrelated retry cannot qualify');
+				injectionAttempted = true;
+			}
+			assert.equal(await check(), true);
+		},
 		initiate: async () => {},
 		membership: async () => ({ membership: 'active', send_enabled: false }),
 		operationStatus: async () => ({ state: 'pending' }),
@@ -161,8 +171,12 @@ test('completion fault remains installed until the failed transaction is audited
 		relayBase: 'unused',
 		community: 'unused'
 	});
+	assert.equal(injectionAttempted, true);
 	assert.equal(auditObserved, true);
 	assert.equal(triggerInstalled, false);
+	assert.equal(sequenceDropped, true);
+	assert.match(createSql, /NEW.operation_id='operation'::uuid/);
+	assert.match(createSql, /PERFORM nextval\('replacement_e2e_completion_attempt'\)/);
 });
 
 test('mapping rotation is durably rejected before its original pin is restored', async () => {

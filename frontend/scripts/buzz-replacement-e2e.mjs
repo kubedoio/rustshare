@@ -1658,7 +1658,7 @@ try {
 		dbFailureRequest = await replacement(dbFailure);
 	sql(
 		db.container,
-		`CREATE FUNCTION replacement_e2e_fail_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.to_state='completed' THEN RAISE EXCEPTION 'acceptance injected completion commit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER replacement_e2e_fail_completion BEFORE INSERT ON chat_identity_replacement_audit FOR EACH ROW EXECUTE FUNCTION replacement_e2e_fail_completion()`
+		`CREATE SEQUENCE replacement_e2e_completion_attempt; CREATE FUNCTION replacement_e2e_fail_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation_id=${quote(dbFailureRequest.operation_id)}::uuid AND NEW.to_state='completed' THEN PERFORM nextval('replacement_e2e_completion_attempt'); RAISE EXCEPTION 'acceptance injected completion commit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER replacement_e2e_fail_completion BEFORE INSERT ON chat_identity_replacement_audit FOR EACH ROW EXECUTE FUNCTION replacement_e2e_fail_completion()`
 	);
 	try {
 		await initiate(dbFailure, dbFailureRequest);
@@ -1669,6 +1669,7 @@ try {
 		await until(
 			'completion transaction failure audited',
 			async () =>
+				sql(db.container, 'SELECT is_called FROM replacement_e2e_completion_attempt') === 't' &&
 				rows(
 					db.container,
 					`SELECT audit_id FROM chat_identity_replacement_audit WHERE operation_id=${quote(dbFailureRequest.operation_id)} AND reason_code='replacement_transport_retry'`
@@ -1682,7 +1683,7 @@ try {
 	} finally {
 		sql(
 			db.container,
-			'DROP TRIGGER replacement_e2e_fail_completion ON chat_identity_replacement_audit; DROP FUNCTION replacement_e2e_fail_completion()'
+			'DROP TRIGGER replacement_e2e_fail_completion ON chat_identity_replacement_audit; DROP FUNCTION replacement_e2e_fail_completion(); DROP SEQUENCE replacement_e2e_completion_attempt'
 		);
 	}
 	assert(

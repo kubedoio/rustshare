@@ -451,3 +451,10 @@ blocked operation and keeps the injected completion trigger installed until its
 failed transaction has a retry audit. Two executable lifecycle regressions fail
 on the prior harness and pass with these changes. They are test-driver
 regressions with controlled dependencies, not additional live acceptance evidence.
+
+The completion-failure check additionally requires a nontransactional sequence
+marker set only by the target operation's injected trigger before it raises.
+This marker survives rollback; a staged candidate and an unrelated transport
+retry cannot satisfy the check. The sequence is dropped with the fault trigger
+in `finally`. The focused lifecycle regression reproduces that false-positive
+case against the previous harness and passes with the marker requirement.
