@@ -41,6 +41,24 @@ pin_recovery_compose_environment fixture-project
 [[ "${COMPOSE_PROJECT_NAME}" == fixture-project ]]
 [[ "${POSTGRES_SERVICE}" == postgres && "${RUSTFS_SERVICE}" == rustfs ]]
 [[ "${BUZZ_POSTGRES_SERVICE}" == buzz-postgres && "${BUZZ_RUSTFS_SERVICE}" == buzz-rustfs ]]
+
+# Execute the real login helper without global cookie state or a live backend.
+(
+	unset cookie
+	BASE_URL=http://127.0.0.1:65535
+	eval "$(sed -n '/^login_private_test_user() {$/,/^}$/p' "${ROOT}/scripts/run-chat-recovery-drill.sh")"
+	curl() {
+		[[ "$*" == *"-c ${TEMP_DIR}/login-cookie"* ]] || return 1
+		[[ "$*" == *"--data-binary @${TEMP_DIR}/login-cookie.json"* ]] || return 1
+		printf 200
+	}
+	login_private_test_user fixture@example.test fixture-password "${TEMP_DIR}/login-cookie"
+	python3 - "${TEMP_DIR}/login-cookie.json" <<'PY'
+import json,sys
+assert json.load(open(sys.argv[1])) == {'email':'fixture@example.test','password':'fixture-password'}
+PY
+)
+
 [[ "$(grep -c 'pin_recovery_compose_environment "${PROJECT}"' "${ROOT}/scripts/run-chat-recovery-drill.sh")" == 2 ]]
 grep -F 'ELEMBRA_ORIGIN="${ELEMBRA_ORIGIN:-${ELEMBRA_API%/api/v1}}"' "${ROOT}/scripts/run-alpha-dogfood.sh" >/dev/null
 grep -F 'url="${ELEMBRA_ORIGIN}${path}"' "${ROOT}/scripts/run-alpha-dogfood.sh" >/dev/null
