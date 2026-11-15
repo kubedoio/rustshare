@@ -865,7 +865,7 @@ describe('ChatApplicationView relay directory (fork_client_held)', () => {
 
 		function permissionSnapshot(member: boolean) {
 			const roster = [
-				directoryEvent(THREAD_CHANNEL, 'Thread channel'),
+				directoryEvent(THREAD_CHANNEL, 'Thread channel', [['private']]),
 				{
 					id: 'r-thread',
 					kind: 39002,
@@ -939,7 +939,7 @@ describe('ChatApplicationView relay directory (fork_client_held)', () => {
 					name: 'Thread channel',
 					channel_kind: 'stream',
 					channel_type: 'stream',
-					visibility: 'open',
+					visibility: 'private',
 					member: true,
 					latest_event_at: '2026-08-12T10:00:00Z'
 				}
@@ -961,7 +961,7 @@ describe('ChatApplicationView relay directory (fork_client_held)', () => {
 			expect(screen.getByText('root body')).toBeTruthy();
 		});
 
-		it('clears the open thread when the refresh CONFIRMS revocation', async () => {
+		it('clears the open thread when the refresh confirms private membership revocation', async () => {
 			setup();
 			await screen.findByRole('button', { name: 'View thread, 1 reply' });
 			await openThread();
