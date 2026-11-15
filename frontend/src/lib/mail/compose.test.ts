@@ -10,7 +10,21 @@ describe('mail compose helpers', () => {
 	it('converts sanitized html bodies to text for replies and forwards', () => {
 		expect(
 			mailBodyText({ type: 'html', content: '<p>Hello&nbsp;&amp;&nbsp;bye</p><br>Next' })
-		).toBe('Hello & bye\n\nNext');
+		).toBe('Hello &amp; bye\n\nNext');
+	});
+
+	it('keeps encoded HTML and plain-text markup inert in the rich-text reply body', () => {
+		expect(
+			mailBodyText({
+				type: 'html',
+				content: '&amp;lt;img src="https://tracker.example/pixel"&amp;gt;'
+			})
+		).toBe('&amp;lt;img src="https://tracker.example/pixel"&amp;gt;');
+		expect(mailBodyText({ type: 'html', content: '<p>&amp;amp;</p>' })).toBe('&amp;amp;');
+		expect(mailBodyText({ type: 'html', content: '<p>&amp;nbsp;</p>' })).toBe('&amp;nbsp;');
+		expect(
+			mailBodyText({ type: 'text', content: '<img src="https://tracker.example/pixel">' })
+		).toBe('&lt;img src="https://tracker.example/pixel"&gt;');
 	});
 
 	it('deduplicates reply-all recipients and excludes the current identity', () => {

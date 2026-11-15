@@ -15,6 +15,7 @@ import {
 	observerCanReconcile,
 	observerIsReady
 } from './buzz-observer-policy.mjs';
+import { formatObserverError } from './observer-log.mjs';
 
 const relayWs = process.env.BUZZ_RELAY_WS;
 const webhookSecret = process.env.RUSTSHARE_CHAT_WEBHOOK_SECRET;
@@ -104,7 +105,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function logError(message, error) {
 	state.lastError = message;
-	console.error(`buzz-observer: ${message}${error ? `: ${error.message}` : ''}`);
+	console.error(formatObserverError(message, error));
 }
 
 function signedEvent(kind, tags, content = '') {
