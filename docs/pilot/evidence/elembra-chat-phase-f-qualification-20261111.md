@@ -23,7 +23,7 @@ All suites used the RustShare browser UI and a disposable, uniquely named Compos
 - [Conversation browser acceptance](chat-conversation-acceptance-20261111-phase-f.json): 9/9 PASS. Includes #486 reaction fix, exact replies/nested threads, drafts, author/admin deletion, and private-thread revocation.
 - [Direct relay security acceptance](chat-direct-negative-acceptance-20261111-phase-f.json): 17/17 PASS, including guest write denial, removed/non-member writes, cross-community and cross-Host isolation, and NIP-42 authentication.
 
-The browser harness was adapted only in the disposable worktree to use the isolated relay port/Host and to combine account deactivation with observer restart/replay. Those temporary test-driver edits were restored and are retained as `acceptance-driver-port-and-replay-adaptation.patch`; RustShare product code remained at the SHA above.
+The browser harness was adapted only in the disposable worktree to use the isolated relay port/Host and to combine account deactivation with observer restart/replay; RustShare product code remained at the SHA above. The earlier report named `acceptance-driver-port-and-replay-adaptation.patch`, but that patch was not committed and could not be recovered during the November 15 review. The temporary driver edits are therefore unavailable. The retained JSON records historical results; it does not make those adapted runs reproducible from the recorded RustShare commit.
 
 ## CI and review
 
@@ -34,7 +34,7 @@ The browser harness was adapted only in the disposable worktree to use the isola
 
 ## Operations and release decision
 
-**Development qualification: PASS for the v1alpha1 relay candidate and the three acceptance matrices. Production/pilot release: NOT READY.** No pilot host/operator access was available. An off-host backup destination, encryption-key custody, isolated full restore, and rollback rehearsal preserving Buzz history and identities remain unverified. The draft pin PR must not be merged or deployed until those gates, independent review, and explicit operator approval are complete.
+**Historical development acceptance: PASS for the v1alpha1 relay candidate and the three matrices. Reproducibility qualification: BLOCKED pending the committed-driver rerun described below. Production/pilot release: NOT READY.** No pilot host/operator access was available. An off-host backup destination, encryption-key custody, isolated full restore, and rollback rehearsal preserving Buzz history and identities remain unverified. The draft pin PR must not be merged or deployed until those gates, independent review, and explicit operator approval are complete.
 
 The repository-level Pilot Release workflow (#335) is not evidence of real pilot-host acceptance. Phase G should follow #333 with a 10–15 user cohort, named institutional operators, verified backup/restore and monitoring, then a controlled host rehearsal before any user enrollment; do not expand directly to 100 users.
 
@@ -59,3 +59,24 @@ exact pinned index to close that evidence gap.
 - The exact-index run used the already-built RustShare backend/observer images from the Phase F source build; their image IDs match the existing Phase F artifact. No production or surviving development data was modified. The disposable project was reset after the run.
 
 The regenerated artifact is [chat-channel-acceptance-20261112-exact-pin.json](chat-channel-acceptance-20261112-exact-pin.json). It supersedes the earlier channel image reference for qualification of this candidate; the original JSON remains as historical evidence of the first run.
+
+## Reproducibility gate — 2026-11-15 review
+
+The missing temporary driver patch affects reproducibility of the historical
+Phase F acceptance above. The exact-index channel rerun resolves the relay
+artifact identity mismatch; it does not reconstruct the missing driver edits.
+Do not treat either result as closing this reproducibility gate.
+
+Before merging or deploying the candidate pin, rerun the mandatory channel,
+conversation and direct-relay security matrices against the exact immutable
+candidate using committed test drivers. Record the driver commit, executable
+commands, any required non-secret environment settings, application source and
+image identities, and resulting evidence. If driver adaptations are still
+necessary, commit and review them before the rerun. The currently committed
+acceptance runners are the starting point, not a claim that they reproduce the
+missing adaptations or that this rerun has executed.
+
+This documentation correction changes neither historical PASS/FAIL records nor
+the candidate image. PR #488 remains draft and must also satisfy its independent
+review, recovery, pilot-host and explicit operator-approval gates. No production
+compatibility pin or deployment was changed by this review.
