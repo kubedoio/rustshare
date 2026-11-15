@@ -221,10 +221,12 @@ only from evidence at the exact source revision listed.
 
 ## Consolidated documentation and current merge state — 2026-11-15
 
-- Protected RustShare `main` is `d7a1757323214fff6aebbd4ff765b89a9cee7bc7`. PRs #492, #496, #498, and #495 are merged; #495 adds the protected manual publication gate. The pre-gate pushes at `1494a34a` and `a62dfc69` each published a backend image to GHCR; their exact digests are recorded in the associated Actions publication artifacts. Do not infer that a deployment consumed them from publication alone.
-- PR #491's dated Dependabot disposition report (`dependabot-alert-disposition-2026-11-12.md`) and this findings ledger are consolidated in PR #494. The alert report is a historical snapshot based on main `2078abae`; its counts and package graph are not a current-main inventory. PR #491 is superseded by the combined documentation PR after this branch update.
-- PR #490 remains separate because, in addition to the dated synthetic-backup report, it changes `scripts/test-elembra-offsite-backup.sh`. It does not establish full Chat recovery.
-- PR #489 still conflicts with current main in `frontend/scripts/buzz-observer.mjs`; preserve the merged mail/observer diagnostic sanitization and the PR's reconciliation/authentication changes when resolving it. It needs fresh checks and review afterward.
-- PR #493 remains implementation/test work, not documentation. The full recovery drill has not passed at its current head; keep that operational gate explicit.
-- PR #497's source branch was refreshed to `4c563529a7abc56164725a8a7e41d178a1b30439`; CI is running with no failures reported at this timestamp. Recheck its head and all required checks before merging.
-- This combined documentation change requires fresh review and CI. It does not approve the Buzz pin, qualify disaster recovery, or authorize a pilot deployment.
+- Protected RustShare `main` is `4ba3152652a6ac727879733352e0af03643874b3`. PRs #492, #496, #498, #495, and #489 are merged. The #495 publication gate remains protected: ordinary main pushes run smoke qualification; publication requires explicit workflow dispatch and the protected `pilot-image-publication` environment. Historical GHCR publication before that gate is documented above.
+- PR #491's dated Dependabot disposition report (`dependabot-alert-disposition-2026-11-12.md`) is bundled here with the findings ledger. It remains a historical snapshot based on main `2078abae`; its alert counts and dependency graph are not current.
+- PR #478's Chat collaboration qualification is included in this documentation bundle. It records implementation scope and stop conditions; it is not a production or pilot qualification.
+- PR #489 was merged as `4ba3152652a6ac727879733352e0af03643874b3` after current-main conflict resolution, exact-head CI success, fresh approval, and zero unresolved review threads. The push-triggered pilot smoke is a separate workflow and does not authorize image publication.
+- PR #490 remains separate because it changes `scripts/test-elembra-offsite-backup.sh` as well as adding a report. Its test covers synthetic local backup mechanics, not full Chat recovery.
+- PR #493 remains recovery-harness code and requires fresh review and successful exact-head CI after updating from current main. Do not claim full cross-stack recovery qualification until its drill and evidence are reviewed.
+- PR #488 remains a draft and blocked by explicit operational recovery, operator, and real pilot-host gates. Do not merge or deploy its compatibility-pin change based on repository CI alone.
+- PRs #482, #454, #405, #407, and #438 are outside this documentation consolidation. Their conflicts, stale checks, and review gates require individual disposition; none is implicitly approved by this bundle.
+- This documentation bundle does not dismiss security alerts, qualify disaster recovery, approve the Buzz pin, or authorize a pilot deployment.

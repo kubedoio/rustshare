@@ -13,6 +13,7 @@
 #
 # Usage (from the deployment directory of the running stack):
 #   METRICS_API_TOKEN=<token> docker compose -f docker-compose.monitoring.yml up -d
+# Add -f docker-compose.monitoring-chat.yml when the Chat profile is enabled.
 #
 # The compose project must match the Elembra stack so `external: true`
 # resolves. When the Elembra stack is started from the repository root with
@@ -35,10 +36,10 @@ services:
     image: prom/blackbox-exporter@sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc
     # v0.28.0
     restart: unless-stopped
-    # HTTP 2xx probe module only; the default config already provides it.
-    # The probe target is the backend readiness endpoint (see
-    # docker/monitoring/prometheus.yml, job elembra-readiness) — Prometheus
-    # cannot scrape the JSON readiness endpoint directly.
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+    volumes:
+      - ./docker/monitoring/blackbox.yml:/etc/blackbox/blackbox.yml:ro
     ports:
       - "127.0.0.1:${BLACKBOX_EXPORTER_HOST_PORT:-9115}:9115"
     healthcheck:
@@ -73,6 +74,10 @@ services:
     volumes:
       - ./docker/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./docker/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      # Empty by default so non-Chat deployments do not alert on absent
+      # services. The monitoring-chat overlay supplies real targets.
+      - ./docker/monitoring/chat-observer-targets-empty.yml:/etc/prometheus/chat-observer-targets.yml:ro
+      - ./docker/monitoring/chat-relay-targets-empty.yml:/etc/prometheus/chat-relay-targets.yml:ro
       - prometheus_data:/prometheus
     ports:
       # Loopback only: expose publicly only through an authenticated reverse
