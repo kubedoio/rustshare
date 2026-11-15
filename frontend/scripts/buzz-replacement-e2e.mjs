@@ -143,7 +143,7 @@ function verify(e, pin) {
 	assert(Math.abs(Date.now() / 1000 - e.created_at) < 30);
 	return JSON.parse(e.content);
 }
-async function relayHttp(base, method, path, body) {
+async function relayHttp(base, method, path, body, observeHeldRead = false) {
 	const payload = body === undefined ? undefined : JSON.stringify(body);
 	const tags = [
 		['u', `${base}${path}`],
@@ -155,15 +155,25 @@ async function relayHttp(base, method, path, body) {
 	const response = await fetch(`${base}${path}`, {
 		method,
 		body: payload,
-		headers: { authorization: `Nostr ${auth}`, 'content-type': 'application/json' },
+		headers: {
+			authorization: `Nostr ${auth}`,
+			'content-type': 'application/json',
+			...(observeHeldRead ? { 'x-elembra-test-observation': '1' } : {})
+		},
 		signal: AbortSignal.timeout(10_000)
 	});
 	assert.equal(response.status, 200, `relay ${path}: ${await response.clone().text()}`);
 	return response.json();
 }
-async function membership(base, community, pubkey) {
+async function membership(base, community, pubkey, observeHeldRead = false) {
 	const request = { request_id: randomUUID(), community_id: community, pubkey };
-	const signed = await relayHttp(base, 'POST', '/api/v1/relay/membership/check', request);
+	const signed = await relayHttp(
+		base,
+		'POST',
+		'/api/v1/relay/membership/check',
+		request,
+		observeHeldRead
+	);
 	const result = verify(signed, relay.pk);
 	for (const [k, v] of Object.entries(request)) assert.equal(result[k], v);
 	assert.equal(signed.kind, 19030);
@@ -318,7 +328,7 @@ async function proxy(targetPort) {
 							}
 							if (fault.read === 'replay')
 								body = Buffer.from(JSON.stringify(fault.observations[0]));
-							if (fault.read === 'hold') {
+							if (fault.read === 'hold' && req.headers['x-elembra-test-observation'] !== '1') {
 								fault.held.push(() => res.writeHead(response.statusCode).end(body));
 								return;
 							}
@@ -429,8 +439,8 @@ const manifest = {
 	buzz_executable_sha256: hash(readFileSync(buzzBinary)),
 	results
 };
-assert.equal(manifest.buzz_source, 'dc09fc2602a7cc64ea15caa865bd773d8be61eed');
-assert.equal(manifest.buzz_tree, '8feb9d59c14b53999dfa16148b2cef62ba28de30');
+assert.equal(manifest.buzz_source, '14c11b64ac036827a141fd597290e0c47d9247c3');
+assert.equal(manifest.buzz_tree, 'cba147fdf4717f316fdce5ff539c77676c683535');
 assert.equal(manifest.buzz_executable_sha256, process.env.RUSTSHARE_TEST_BUZZ_BINARY_SHA256);
 async function validate(name, args, cwd = root, extra = {}) {
 	const fd = openSync(`${artifacts}/${name}.log`, 'w', 0o600);
@@ -1434,8 +1444,8 @@ try {
 	);
 	await assertGated(crashes, crashRequest.operation_id, { relayOldRevoked: false });
 	fault.holdCommand = null;
-	backend = start(backendBinary, backendEnv, 'elembra');
-	await backendReady();
+	// The killed worker's sockets cannot consume delayed commands.
+	fault.heldCommands.length = 0;
 	fault.afterAck = (command) => {
 		if (
 			command.kind === 9030 &&
@@ -1445,7 +1455,11 @@ try {
 			backend.kill('SIGKILL');
 		}
 	};
-	await until('post-ACK worker crash', async () => backend.exitCode !== null);
+	backend = start(backendBinary, backendEnv, 'elembra');
+	await until(
+		'post-ACK worker crash',
+		async () => backend.exitCode !== null || backend.signalCode !== null
+	);
 	assert.equal((await membership(relayBase, community, crashes.old.pk)).membership, 'revoked');
 	backend = start(backendBinary, backendEnv, 'elembra');
 	await backendReady();
@@ -1514,7 +1528,10 @@ try {
 	};
 	await initiate(disabled, disabledRequest);
 	await until('disabled candidate verification held', async () => fault.held.length > 0);
-	assert.equal((await membership(relayBase, community, disabled.candidate.pk)).send_enabled, false);
+	assert.equal(
+		(await membership(relayBase, community, disabled.candidate.pk, true)).send_enabled,
+		false
+	);
 	await api(
 		base,
 		admin,

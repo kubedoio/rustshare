@@ -183,7 +183,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: kubedoio/buzz
-          ref: dc09fc2602a7cc64ea15caa865bd773d8be61eed
+          ref: 14c11b64ac036827a141fd597290e0c47d9247c3
           path: .buzz-membership-source
           persist-credentials: false
 
@@ -331,7 +331,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: kubedoio/buzz
-          ref: dc09fc2602a7cc64ea15caa865bd773d8be61eed
+          ref: 14c11b64ac036827a141fd597290e0c47d9247c3
           path: .buzz-membership-source
           persist-credentials: false
       - name: Replacement against disposable services

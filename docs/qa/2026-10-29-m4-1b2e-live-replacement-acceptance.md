@@ -416,3 +416,32 @@ checks on the resulting exact head. Keep this PR draft and merge NO-GO until
 passing evidence and independent human review exist. Run ADR-0044 Phase 1
 against its independently pinned unmodified upstream sources in a separate
 harness; no result here enables managed key custody or identity migration.
+
+
+## 2026-11-15 CI remediation follow-up
+
+The debug-only qualification predicate, fixture assertions, runner and both CI
+checkouts now agree on Buzz source `14c11b64ac036827a141fd597290e0c47d9247c3`
+(tree `cba147fdf4717f316fdce5ff539c77676c683535`). This includes a test-only
+socket-lifecycle fix: the unauthenticated history probe opens its own connection
+after the rejected write, preserving both security assertions. The production
+qualification allowlist and compatibility configuration remain unchanged.
+
+The replacement harness also recognizes signal termination, arms crash injection
+before restarting the worker, discards held commands associated with the killed
+worker, and allows the signed membership assertion to bypass only the test
+proxy's held read. Backend membership reads remain held until the disable test
+releases them; relay signatures, request binding and freshness are still checked.
+
+Five dependency-free harness regressions pass (`node --test
+scripts/test-buzz-replacement-harness.mjs`). The four originally reported defects
+were reproduced against the previous source before fixing. Bash/Node syntax,
+Prettier, workspace formatting and diff checks pass. The existing Rust fixture
+qualification unit test also passes when compiled with its actual predicate in
+a standalone test harness; this does not substitute for the complete package
+tests or disposable-service integration.
+
+The full replacement matrix and downstream Buzz membership integration must run
+on this new source pair in CI before merge. No prior acceptance result qualifies
+this revision. No deployment, signing-key rotation or production pin change was
+performed.
