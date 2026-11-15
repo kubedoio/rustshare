@@ -5,6 +5,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      publish_image:
+        description: Publish the tested pilot image to GHCR after environment approval
+        required: true
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
@@ -1337,10 +1343,11 @@ jobs:
           retention-days: 90
 
   publish-pilot-image:
-    if: github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_image && github.ref == 'refs/heads/main'
     needs: pilot-compose-smoke
     runs-on: ubuntu-latest
     timeout-minutes: 80
+    environment: pilot-image-publication
     permissions:
       contents: read
       packages: write

@@ -3490,6 +3490,15 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_email_html_handles_nested_svg_mathml_payload() {
+        let raw = r#"<math><mi><svg><foreignObject><iframe><script>alert(1)</script></iframe></foreignObject></svg></mi></math>"#;
+        let (clean, _) = sanitize_email_html(raw, false);
+        assert!(!clean.contains("<script"));
+        assert!(!clean.contains("<iframe"));
+        assert!(!clean.contains("foreignObject"));
+    }
+
+    #[test]
     fn sanitize_email_html_filters_case_insensitive_css_urls() {
         let mut builder = ammonia::Builder::default();
         builder
