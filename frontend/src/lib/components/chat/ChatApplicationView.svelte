@@ -747,7 +747,7 @@
 							// Only a parsed, fresh snapshot is authoritative for
 							// clearing view state; null (in flight / failure /
 							// unconfirmable) keeps the previous verdict latched.
-							if (state) postingDenied = !canPostToChannel(state);
+							if (state) postingDenied = !canPostToChannel(state, $chatSessionStore.pubkey);
 						}}
 						onChanged={() => directoryQuery.refetch()}
 					/>
