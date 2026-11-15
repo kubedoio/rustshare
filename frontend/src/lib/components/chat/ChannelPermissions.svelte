@@ -91,7 +91,7 @@
 		channelState = parseChannelState(result.events, channelId, pubkey);
 		if (!channelState)
 			error = 'Channel metadata or membership could not be confirmed. Posting is disabled.';
-		onPostingChange(canPostToChannel(channelState));
+		onPostingChange(canPostToChannel(channelState, pubkey));
 		onStateChange?.(channelState);
 	}
 
@@ -264,8 +264,8 @@
 		>
 		{#if loading}<span role="status">Checking channel permissions…</span>{/if}
 		{#if error}<span role="alert" class="text-error">{error}</span>{/if}
-		{#if !loading && !error && channelState && !canPostToChannel(channelState)}<span role="status"
-				>Posting unavailable for your current channel role.</span
+		{#if !loading && !error && channelState && !canPostToChannel(channelState, pubkey)}<span
+				role="status">Posting unavailable for your current channel role.</span
 			>{/if}
 	</div>
 	{#if detailsOpen && channelState}
