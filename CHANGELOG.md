@@ -56,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Allow browser-held Chat identities to post in open channels without explicit membership, while keeping guests and unknown roster roles read-only.
+
 - Preserve a single event's stored IANA timezone when importing its UTC-timed `.ics` export, without changing the event instant.
 - Share management now authorizes through the same live permission resolver as Files and Notes, preserving the highest active direct, group, and inherited grant while enforcing tenant boundaries.
 

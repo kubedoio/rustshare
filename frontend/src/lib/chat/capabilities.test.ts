@@ -36,15 +36,47 @@ describe('supported browser-key Chat capabilities', () => {
 			visibility: 'private',
 			role: 'owner'
 		});
-		expect(canPostToChannel(state)).toBe(true);
+		expect(canPostToChannel(state, pubkey)).toBe(true);
 	});
 
-	it('requires both matching snapshots and denies guest, unknown and nonmember posting', () => {
+	it('requires both matching snapshots and denies guests, unknown roles, and private nonmembers', () => {
 		expect(parseChannelState([metadata], channel, pubkey)).toBeNull();
 		expect(parseChannelState([metadata, event(39002, [])], 'other-channel', pubkey)).toBeNull();
 		for (const tags of [[['p', pubkey, '', 'guest']], [['p', pubkey, '', 'future-role']], []]) {
 			expect(
-				canPostToChannel(parseChannelState([metadata, event(39002, tags)], channel, pubkey))
+				canPostToChannel(parseChannelState([metadata, event(39002, tags)], channel, pubkey), pubkey)
+			).toBe(false);
+		}
+	});
+
+	it('allows a nonmember to post in an open channel but keeps guests read-only', () => {
+		const openMetadata = event(39000, [['name', 'Public']]);
+		expect(
+			canPostToChannel(parseChannelState([openMetadata, event(39002, [])], channel, pubkey), pubkey)
+		).toBe(true);
+		expect(
+			canPostToChannel(
+				parseChannelState(
+					[openMetadata, event(39002, [['p', pubkey, '', 'guest']])],
+					channel,
+					pubkey
+				),
+				pubkey
+			)
+		).toBe(false);
+	});
+
+	it('denies unknown and missing roster roles even in an open channel', () => {
+		const openMetadata = event(39000, [['name', 'Public']]);
+		for (const tag of [
+			['p', pubkey, '', 'future-role'],
+			['p', pubkey]
+		]) {
+			expect(
+				canPostToChannel(
+					parseChannelState([openMetadata, event(39002, [tag])], channel, pubkey),
+					pubkey
+				)
 			).toBe(false);
 		}
 	});
@@ -55,11 +87,12 @@ describe('supported browser-key Chat capabilities', () => {
 			event(39002, [['p', pubkey, '', 'member']]),
 			event(39002, [['p', pubkey, '', 'guest']], 2)
 		];
-		expect(canPostToChannel(parseChannelState(events, channel, pubkey))).toBe(false);
+		expect(canPostToChannel(parseChannelState(events, channel, pubkey), pubkey)).toBe(false);
 		const archived = event(39000, [['archived', 'true']], 3);
 		expect(
 			canPostToChannel(
-				parseChannelState([archived, event(39002, [['p', pubkey, '', 'owner']])], channel, pubkey)
+				parseChannelState([archived, event(39002, [['p', pubkey, '', 'owner']])], channel, pubkey),
+				pubkey
 			)
 		).toBe(false);
 	});
