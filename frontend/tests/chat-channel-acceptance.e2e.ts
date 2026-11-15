@@ -1987,10 +1987,40 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 			.toBe(401);
 		const chatAfter = await api(c.context, 'GET', '/api/v1/applications/chat/channels');
 		expect([401, 403]).toContain(chatAfter.status);
-		record('e2', 'Disabled account loses session and Chat access', 'PASS', {
+		const observerName = `${COMPOSE_PROJECT}-chat-observer-1`;
+		execFileSync('docker', ['restart', observerName], { stdio: 'pipe', timeout: 120_000 });
+		await expect
+			.poll(
+				() => {
+					try {
+						execFileSync(
+							'docker',
+							['exec', observerName, 'wget', '-q', '-O', '-', 'http://127.0.0.1:8091/ready'],
+							{ stdio: 'pipe', timeout: 5_000 }
+						);
+						return true;
+					} catch {
+						return false;
+					}
+				},
+				{ timeout: 180_000, intervals: [2_000, 3_000, 5_000] }
+			)
+			.toBe(true);
+		const userAfterObserverRestart = await api(c.context, 'GET', '/api/v1/users/me');
+		expect(userAfterObserverRestart.status).toBe(401);
+		const chatAfterObserverRestart = await api(
+			c.context,
+			'GET',
+			'/api/v1/applications/chat/channels'
+		);
+		expect([401, 403]).toContain(chatAfterObserverRestart.status);
+		record('e2', 'Disabled account stays denied after observer restart', 'PASS', {
 			user: state.users.c.userId,
 			usersMeAfterDisable: 401,
-			chatChannelsAfterDisable: chatAfter.status
+			chatChannelsAfterDisable: chatAfter.status,
+			observerRestartedAndReady: true,
+			usersMeAfterObserverRestart: userAfterObserverRestart.status,
+			chatChannelsAfterObserverRestart: chatAfterObserverRestart.status
 		});
 	});
 });
