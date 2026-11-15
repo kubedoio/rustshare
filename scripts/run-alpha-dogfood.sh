@@ -416,23 +416,29 @@ check "P09 pagination cursor advances" \
 
 # --- P10 channel switching ---------------------------------------------------
 pub_msg alpha_alice "$BUZZ_CHANNEL2_ID" "alpha dogfood: ops channel message"
-# Wait for the ops channel to appear (observation-driven), like P07/P08.
+# Wait for this exact accepted event to be observed before reading the timeline.
+# The channel itself already exists, so merely seeing it says nothing about
+# observer delivery and can race the immediate channel-history request.
+P10_EVENT_ID="$(jq_get 'd["eventId"]' "$TMP/pub.json")"
+P10_ACCEPTED="$(jq_get 'd["accepted"]' "$TMP/pub.json")"
 ch2=""
-for i in $(seq 1 20); do
-	code=$(curl -s -b "$(sess alpha_alice)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/applications/chat/channels")
-	ch2="$(jq_get '[c for c in d if c["channel_id"] == "'$BUZZ_CHANNEL2_ID'"]' "$TMP/body")"
-	[[ "$ch2" != "[]" && "$ch2" != "" ]] && break
-	sleep 1
-done
-curl -s -b "$(sess alpha_alice)" -o "$TMP/body2" "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL2_ID}"
+P10_OBSERVED="False"
+if [[ "$P10_ACCEPTED" == "True" && -n "$P10_EVENT_ID" ]]; then
+	for i in $(seq 1 60); do
+		curl -s -b "$(sess alpha_alice)" -o "$TMP/body2" "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL2_ID}"
+		P10_OBSERVED="$(jq_get 'any(m["event_id"] == "'$P10_EVENT_ID'" for m in d["messages"])' "$TMP/body2")"
+		[[ "$P10_OBSERVED" == "True" ]] && break
+		sleep 1
+	done
+fi
 ch2_msgs="$(jq_get 'len(d["messages"])' "$TMP/body2")"
 curl -s -b "$(sess alpha_alice)" -o "$TMP/body1b" "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}"
 ch1_msgs="$(jq_get 'len(d["messages"])' "$TMP/body1b")"
 # isolation: the ops-channel timeline must never contain alpha-channel messages
 leak="$(jq_get 'any((m["body"] or "") and ("pagination" in m["body"] or "hello from" in m["body"]) for m in d["messages"])' "$TMP/body2")"
 check "P10 channel switch isolated" \
-	"$([[ "$ch2" != "[]" && "$ch2" != "" && "${ch2_msgs:-0}" != "0" && "${ch2_msgs:-0}" != "" && "$leak" != "True" && "${ch1_msgs:-0}" != "" ]] && echo true || echo false)" \
-	"ch1=$ch1_msgs msgs, ch2=$ch2_msgs msgs, leak=$leak"
+	"$([[ "$P10_ACCEPTED" == "True" && "$P10_OBSERVED" == "True" && "${ch2_msgs:-0}" != "0" && "${ch2_msgs:-0}" != "" && "$leak" != "True" && "${ch1_msgs:-0}" != "" ]] && echo true || echo false)" \
+	"accepted=$P10_ACCEPTED observed=$P10_OBSERVED ch1=$ch1_msgs msgs, ch2=$ch2_msgs msgs, leak=$leak"
 
 # --- P11 unauthorized user cannot read ---------------------------------------
 code=$(curl -s -b "$(sess alpha_eve)" -o "$TMP/body" -w '%{http_code}' "$ELEMBRA_API/applications/chat/messages?channel_id=${BUZZ_CHANNEL_ID}")
