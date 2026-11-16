@@ -1,0 +1,330 @@
+{
+  "generatedAt": "2026-11-11T22:52:20.584Z",
+  "baseUrl": "http://127.0.0.1:28080",
+  "relayUrl": "ws://localhost:27447",
+  "provenance": {
+    "gitSha": "2078abae9f96dcfc4f62e74c72baba99a63c2c5e",
+    "stack": "elembra-phasef-browser-acceptance (source build at 2078abae9f96dcfc4f62e74c72baba99a63c2c5e, relay ws://localhost:27447)",
+    "images": {
+      "backend": {
+        "image": "elembra-phasef-browser-acceptance-backend",
+        "repoDigest": "elembra-phasef-browser-acceptance-backend@sha256:134d28d4f28e324c9a9e4a5b2218c477dd36893b75c39d52d38e2dc4192188d3",
+        "imageId": "sha256:134d28d4f28e324c9a9e4a5b2218c477dd36893b75c39d52d38e2dc4192188d3"
+      },
+      "chat-observer": {
+        "image": "elembra-phasef-browser-acceptance-chat-observer",
+        "repoDigest": "elembra-phasef-browser-acceptance-chat-observer@sha256:0a17791909e58e72cdc0db37d9b59b90f2625b60b648a83ce6520a4237e55eb2",
+        "imageId": "sha256:0a17791909e58e72cdc0db37d9b59b90f2625b60b648a83ce6520a4237e55eb2"
+      },
+      "postgres": {
+        "image": "pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b",
+        "repoDigest": "pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b",
+        "imageId": "sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b"
+      },
+      "rustfs": {
+        "image": "rustfs/rustfs@sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a",
+        "repoDigest": "rustfs/rustfs@sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a",
+        "imageId": "sha256:60f4f2f41ce95216f8cac676e69f9d90c0bfec458a3bc7fd7fb9b7c2452ac57a"
+      },
+      "nginx": {
+        "image": "nginx@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606",
+        "repoDigest": "nginx@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606",
+        "imageId": "sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606"
+      },
+      "buzz-relay": {
+        "image": "ghcr.io/kubedoio/buzz-elembra@sha256:d846651cdad7e78189b9b8c3baaec541841129b932544c6a5b270c5ca9628d4e",
+        "repoDigest": "ghcr.io/kubedoio/buzz-elembra@sha256:d846651cdad7e78189b9b8c3baaec541841129b932544c6a5b270c5ca9628d4e",
+        "imageId": "sha256:d846651cdad7e78189b9b8c3baaec541841129b932544c6a5b270c5ca9628d4e"
+      }
+    }
+  },
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+  "communityId": "c9bdbbe7-04bf-4d99-8b62-3101c84a38b3",
+  "relayPubkey": "f92ad3f7cfecbc1f5bbe6f956f60f870626a6a39ce336f0b9c8abcdf7ed73fbd",
+  "users": {
+    "a": {
+      "username": "accept_a_mwcpkl6a6r3a6m2s0d1d",
+      "email": "accept_a_mwcpkl6a6r3a6m2s0d1d@acceptance.local",
+      "userId": "03234ecc-85ad-4711-bdaa-bf3b1eeced2c",
+      "pubkey": "138485f62fb2c4d7d7842f15f96e64791ebd2e0807d4692e07773789fbcd8e4f"
+    },
+    "b": {
+      "username": "accept_b_mwcpkl6a6r3a6m2s0d1d",
+      "email": "accept_b_mwcpkl6a6r3a6m2s0d1d@acceptance.local",
+      "userId": "ef442f6e-c292-440c-a7bc-7b64265c84ba",
+      "pubkey": "c86c3d73a91029c2edcf683390fbba212c01e3649930e4a97e407711f4cd829e"
+    },
+    "c": {
+      "username": "accept_c_mwcpkl6a6r3a6m2s0d1d",
+      "email": "accept_c_mwcpkl6a6r3a6m2s0d1d@acceptance.local",
+      "userId": "00fe4387-a4ca-4f96-91a7-31cd819fdaa9",
+      "pubkey": "eee19d7b5e903422b81912cfeabb4f649cb1aab9c184425f858c008fc336136c"
+    }
+  },
+  "channels": {
+    "open": {
+      "id": "9cc57578-0439-49a4-9b26-4e89b3e88384",
+      "name": "accept-open-mwcpkl6a6r3a6m2s0d1d renamed"
+    },
+    "private": {
+      "id": "6d4bab7c-9ae1-458f-9bed-6c0eda620339",
+      "name": "accept-private-mwcpkl6a6r3a6m2s0d1d"
+    }
+  },
+  "eventIds": {
+    "canary": "debdc39a2c354772df92d8a5470b9741f13373de1a152a2a2b746e6ccb80d060",
+    "msgA": "8e271dbeefa59c973b5db74164b91ff16ef26ff0313a0504b4be91c056bfcb1b",
+    "msgB": "c283b76c1726b7b517ae8da065da56cdcf2534b4d01d0cc37c219f5a57c36b8c",
+    "uncertain": "80899d5fdcf1366cd73632ea468bc0f2fa89b443b8be72213170053410cc9568"
+  },
+  "matrix": [
+    {
+      "id": "bind",
+      "title": "Real login + binding + relay admission (A/B/C)",
+      "status": "PASS",
+      "evidence": {
+        "runtimeProfile": "fork_client_held",
+        "pubkeys": {
+          "a": "138485f62fb2c4d7d7842f15f96e64791ebd2e0807d4692e07773789fbcd8e4f",
+          "b": "c86c3d73a91029c2edcf683390fbba212c01e3649930e4a97e407711f4cd829e",
+          "c": "eee19d7b5e903422b81912cfeabb4f649cb1aab9c184425f858c008fc336136c"
+        },
+        "keyBackupDecryptMatchesBindingPubkey": true
+      }
+    },
+    {
+      "id": "a",
+      "title": "Empty open channel created by A and discovered by B",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "9cc57578-0439-49a4-9b26-4e89b3e88384",
+        "channelName": "accept-open-mwcpkl6a6r3a6m2s0d1d",
+        "bDiscovery": {
+          "status": 200,
+          "channel": {
+            "channel_id": "9cc57578-0439-49a4-9b26-4e89b3e88384",
+            "name": "accept-open-mwcpkl6a6r3a6m2s0d1d",
+            "channel_kind": "workspace",
+            "channel_type": "stream",
+            "visibility": "open",
+            "member": false,
+            "latest_event_at": "2026-11-11T22:48:07.157140115Z"
+          }
+        }
+      }
+    },
+    {
+      "id": "h",
+      "title": "Lifecycle UI: edit name/description, roster roles, join/leave, deep link + reload",
+      "status": "PASS",
+      "evidence": {
+        "renamedTo": "accept-open-mwcpkl6a6r3a6m2s0d1d renamed",
+        "rosterOwner": "138485f62fb2c4d7d7842f15f96e64791ebd2e0807d4692e07773789fbcd8e4f",
+        "joinLeaveUser": "c86c3d73a91029c2edcf683390fbba212c01e3649930e4a97e407711f4cd829e",
+        "memberEditDenied": true,
+        "deepLink": "/apps/chat?channel=9cc57578-0439-49a4-9b26-4e89b3e88384"
+      }
+    },
+    {
+      "id": "b",
+      "title": "Private channel: B added and discovers; owner reads the canary, C cannot discover or read it",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "6d4bab7c-9ae1-458f-9bed-6c0eda620339",
+        "canaryEventId": "debdc39a2c354772df92d8a5470b9741f13373de1a152a2a2b746e6ccb80d060",
+        "ownerPositiveControl": true,
+        "bDirectoryVisibility": true,
+        "cDirectoryExclusion": true,
+        "cApiReadDenied": true,
+        "cDeepLinkRows": 0
+      }
+    },
+    {
+      "id": "c",
+      "title": "Message exchange with matching event ids and authors on both sides",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "9cc57578-0439-49a4-9b26-4e89b3e88384",
+        "aAuthor": "138485f62fb2c4d7d7842f15f96e64791ebd2e0807d4692e07773789fbcd8e4f",
+        "bAuthor": "c86c3d73a91029c2edcf683390fbba212c01e3649930e4a97e407711f4cd829e",
+        "eventIds": {
+          "a": "8e271dbeefa59c973b5db74164b91ff16ef26ff0313a0504b4be91c056bfcb1b",
+          "b": "c283b76c1726b7b517ae8da065da56cdcf2534b4d01d0cc37c219f5a57c36b8c"
+        },
+        "timelineCountA": 3,
+        "timelineCountB": 3
+      }
+    },
+    {
+      "id": "d",
+      "title": "Reload keeps the authorized history for A and B",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "9cc57578-0439-49a4-9b26-4e89b3e88384",
+        "reloaded": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    {
+      "id": "g",
+      "title": "Uncertain ACK path retried byte-identically; single application",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "9cc57578-0439-49a4-9b26-4e89b3e88384",
+        "pendingEventId": "80899d5fdcf1366cd73632ea468bc0f2fa89b443b8be72213170053410cc9568",
+        "appliedCopies": 1,
+        "retainedEventId": "80899d5fdcf1366cd73632ea468bc0f2fa89b443b8be72213170053410cc9568",
+        "relayDirectCopies": 1,
+        "relayDirectSigMatchesRetryBytes": true,
+        "relayDirectCopiesAsB": 1
+      }
+    },
+    {
+      "id": "i",
+      "title": "Role downgrade to guest: relay denies B signed post immediately; read intact; restore re-allows",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "9cc57578-0439-49a4-9b26-4e89b3e88384",
+        "downgradeEventId": "40aeb1a982d46c3d4040686a3f3ddc38c7c832f90cf89a4b77ea8ec2d9fdba0c",
+        "guestWriteDenied": true,
+        "guestWriteDenialAnchored": true,
+        "guestWriteAcceptedByRelayUnderTest": false,
+        "guestWriteDenialMessage": "restricted: guest members are read-only",
+        "denialAfterDowngradeMs": 23,
+        "guestReadEventCount": 4,
+        "guestReadSeesEarlierMessage": true,
+        "restoreEventId": "9ff219cb6a2ace0a07bcde1c9fd9f9e5f613db47968130c9ad4c7e9c30bc67f3",
+        "restoreProbeAccepted": true,
+        "restoreProbeMs": 25
+      }
+    },
+    {
+      "id": "e",
+      "title": "Removal revokes discovery, reads, posting (UI+relay), and attachments; B session stays live",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "6d4bab7c-9ae1-458f-9bed-6c0eda620339",
+        "removed": "c86c3d73a91029c2edcf683390fbba212c01e3649930e4a97e407711f4cd829e",
+        "privAttachmentFileId": "f377b8d6-e2d7-461f-b0d0-460c5f2b5aee",
+        "aOpenAttachmentAsOwner": 200,
+        "bOpenAttachmentAsMemberNoShare": 404,
+        "bOpenAttachmentWithFilesShare": 200,
+        "bOpenAttachmentAfterShareRevoke": 404,
+        "cOpenAttachmentBeforeRemoval": 404,
+        "bDirectoryAfterRemoval": 200,
+        "bAddressedSamples": 0,
+        "bComposerDeniedWhileAddressed": 0,
+        "bComposerEnabledWhileAddressed": 0,
+        "deepLinkHeldAfterRemoval": false,
+        "bPrivateTimelineRows": 0,
+        "directRelayWriteAccepted": false,
+        "directRelayWriteDenialMessage": "restricted: not a channel member",
+        "directRelayReadOk": false,
+        "directRelayReadDetail": "closed: restricted: not a channel member",
+        "directRelayReadEvents": 0,
+        "bOpenAttachmentAfterRemoval": 404,
+        "bReadAfterRemoval": "zero-rows",
+        "bLivenessOpenChannelReads": 200
+      }
+    },
+    {
+      "id": "f2",
+      "title": "Private-channel leak checks: search/deep-link/history/relay reads closed for C and removed B",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "6d4bab7c-9ae1-458f-9bed-6c0eda620339",
+        "cSearch": [
+          {
+            "term": "canary",
+            "hits": 0
+          },
+          {
+            "term": "post-removal",
+            "hits": 0
+          },
+          {
+            "term": "priv-attached",
+            "hits": 0
+          }
+        ],
+        "bSearch": [
+          {
+            "term": "canary",
+            "hits": 0
+          },
+          {
+            "term": "post-removal",
+            "hits": 0
+          },
+          {
+            "term": "priv-attached",
+            "hits": 0
+          }
+        ],
+        "ownerSuffixSearchHits": 6,
+        "ownerAttachmentSearchHits": 1,
+        "ownerAttachmentSearchFoundFile": true,
+        "ownerPrivateMessageBodyHits": 0,
+        "cDeepLinkRows": 0,
+        "cRelayReadOk": false,
+        "cRelayReadDetail": "closed: restricted: not a channel member",
+        "cRelayReadEvents": 0,
+        "bRelayReadOk": false,
+        "bRelayReadDetail": "closed: restricted: not a channel member",
+        "bRelayReadEvents": 0,
+        "ownerPositiveControlRows": 3
+      }
+    },
+    {
+      "id": "f",
+      "title": "Files attachment: authorized open succeeds; revoked and unrelated users fail",
+      "status": "PASS",
+      "evidence": {
+        "fileId": "329c8fed-09de-45ac-adc4-035d70c152b6",
+        "shareId": "4637df58-3a33-4b3f-abe9-da1ed5de1afd",
+        "bOpen": 200,
+        "cOpen": 404,
+        "bOpenAfterRevoke": 404
+      }
+    },
+    {
+      "id": "j",
+      "title": "Restart of relay+backend+observer: history retained, sessions reconnect, posting works",
+      "status": "PASS",
+      "evidence": {
+        "channelId": "9cc57578-0439-49a4-9b26-4e89b3e88384",
+        "restarted": {
+          "backend": "docker restart (in place)",
+          "nginx": "docker restart (upstream re-resolve)"
+        },
+        "recreated": [
+          "buzz-relay",
+          "chat-observer"
+        ],
+        "recreatedReason": "dogfood netns sharers must reattach to the restarted backend namespace",
+        "composeProject": "elembra-phasef-browser-acceptance",
+        "historyEventIdsRetained": {
+          "msgA": true,
+          "msgB": true,
+          "uncertain": true
+        },
+        "postRestartMessageObservedByB": true
+      }
+    },
+    {
+      "id": "e2",
+      "title": "Disabled account loses session and Chat access",
+      "status": "PASS",
+      "evidence": {
+        "user": "00fe4387-a4ca-4f96-91a7-31cd819fdaa9",
+        "usersMeAfterDisable": 401,
+        "chatChannelsAfterDisable": 401,
+        "observerRestartReplayReady": true,
+        "observerLastEventAt": "2026-11-11T22:52:19.707Z",
+        "usersMeAfterReplay": 401
+      }
+    }
+  ]
+}
