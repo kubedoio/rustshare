@@ -565,7 +565,7 @@ try {
 	assert.equal(manifest.buzz_schema, '30');
 	const community = sql(
 		buzz.container,
-		`SELECT id FROM communities WHERE host=${quote(`localhost:${relayPort}`)}`
+		`SELECT id FROM communities WHERE host=${quote(`127.0.0.1:${relayPort}`)}`
 	);
 	assert.match(community, /^[a-f0-9-]{36}$/);
 	const encryptionKey = Buffer.from(secret(), 'hex').toString('base64');
