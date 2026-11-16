@@ -112,6 +112,13 @@ describe('ChannelPermissions', () => {
 		await waitFor(() => expect(memberChanged.changed).toHaveBeenLastCalledWith(true));
 	});
 
+	it('allows a nonmember to post in an open channel', async () => {
+		mocks.query.mockResolvedValue(snapshot({ role: null, visibility: 'open' }));
+		const { changed } = mount();
+		await waitFor(() => expect(changed).toHaveBeenLastCalledWith(true));
+		expect(screen.queryByText('Posting unavailable for your current channel role.')).toBeNull();
+	});
+
 	it('fails closed after relay denial and when the key changes during a read', async () => {
 		mocks.query.mockResolvedValue({ ok: false, reason: 'rejected' });
 		const { changed } = mount();

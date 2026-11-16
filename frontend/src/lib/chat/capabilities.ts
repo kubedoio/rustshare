@@ -109,13 +109,16 @@ export function parseChannelState(
 }
 
 /** Conservative UI eligibility only; Buzz remains the final ingest authority. */
-export function canPostToChannel(state: ChatChannelState | null): boolean {
+export function canPostToChannel(state: ChatChannelState | null, pubkey: string): boolean {
 	return (
 		state !== null &&
 		!state.archived &&
 		(state.role === 'owner' ||
 			state.role === 'admin' ||
 			state.role === 'member' ||
-			state.role === 'bot')
+			state.role === 'bot' ||
+			(state.role === null &&
+				state.visibility === 'open' &&
+				!state.members.some((member) => member.pubkey === pubkey)))
 	);
 }

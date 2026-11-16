@@ -47,6 +47,53 @@ groups:
             The reverse proxy in front of the beta host stopped answering.
             Testers see an outage even if the backend is healthy.
 
+      - alert: ElembraAlertmanagerDown
+        expr: up{job="elembra-alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Alertmanager metrics endpoint is unavailable
+          description: >-
+            Prometheus cannot reach Alertmanager. Alerts may be firing without
+            being delivered; inspect the monitoring containers and route.
+
+      - alert: ElembraAlertDeliveryFailures
+        expr: increase(alertmanager_notifications_failed_total[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Alertmanager failed to deliver a notification
+          description: >-
+            At least one notification attempt failed in the last 10 minutes.
+            Check the configured receiver and acknowledge a test notification.
+
+      - alert: ElembraChatObserverUnavailable
+        expr: probe_success{job="elembra-chat-observer"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Chat observer is unavailable or not ready
+          description: >-
+            The observer readiness endpoint is failing. This endpoint becomes
+            ready only after relay authentication, community discovery, and
+            observation initialization succeed. Check observer logs and relay
+            connectivity; the probe does not include message content.
+
+      - alert: ElembraBuzzRelayUnavailable
+        expr: probe_success{job="elembra-chat-relay"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Buzz relay TCP listener is unavailable
+          description: >-
+            The configured internal relay TCP endpoint did not accept a
+            connection. This proves listener availability only; separately
+            verify public NIP-11, Host-derived community identity, and NIP-42
+            from the pilot origin.
+
   - name: elembra-integration-events
     rules:
       - alert: ElembraOutboxBacklogGrowing

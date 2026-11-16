@@ -189,6 +189,19 @@ class PilotLogRedactionTests(unittest.TestCase):
 
 
 class PilotEvidenceWorkflowTests(unittest.TestCase):
+    def test_pilot_image_publication_requires_manual_trigger_and_environment_approval(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        publisher = workflow.partition("  publish-pilot-image:")[2]
+
+        self.assertIn("      publish_image:", workflow)
+        self.assertIn("        type: boolean", workflow)
+        self.assertIn("        default: false", workflow)
+        self.assertIn(
+            "if: github.event_name == 'workflow_dispatch' && inputs.publish_image && github.ref == 'refs/heads/main'",
+            publisher,
+        )
+        self.assertIn("    environment: pilot-image-publication", publisher)
+
     def test_pilot_identity_requires_clean_checkout_without_python_bytecode(self) -> None:
         redaction_step = workflow_step("Test pilot log redaction")
         identity_step = workflow_run("Record pilot identity")
