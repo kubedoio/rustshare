@@ -1542,10 +1542,7 @@ try {
 	);
 	fault.read = null;
 	fault.held.length = 0;
-	assert.equal(
-		(await membership(relayBase, community, disabled.candidate.pk)).send_enabled,
-		false
-	);
+	assert.equal((await membership(relayBase, community, disabled.candidate.pk)).send_enabled, false);
 	assert.notEqual(
 		sql(
 			db.container,
@@ -1563,7 +1560,9 @@ try {
 		)[2],
 		false
 	);
-	pass('Principal disable during staged replacement keeps candidate send-gated and prevents completion');
+	pass(
+		'Principal disable during staged replacement keeps candidate send-gated and prevents completion'
+	);
 	const staleRevision = await onboard('stale-revision'),
 		staleRequest = await replacement(staleRevision);
 	fault.holdCommand = { pubkey: staleRevision.old.pk, kind: 9031 };
