@@ -523,8 +523,8 @@ try {
 	const actualRelayPort = await freePort(),
 		relayPort = await proxy(actualRelayPort),
 		apiPort = await freePort();
-	const relayUrl = `ws://localhost:${relayPort}`,
-		relayBase = `http://localhost:${relayPort}`,
+	const relayUrl = `ws://127.0.0.1:${relayPort}`,
+		relayBase = `http://127.0.0.1:${relayPort}`,
 		base = `http://127.0.0.1:${apiPort}`;
 	const s3Endpoint = `http://127.0.0.1:${s3.port(9000)}`;
 	relayEnv = {
