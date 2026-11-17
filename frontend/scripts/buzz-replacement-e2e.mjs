@@ -1583,8 +1583,7 @@ try {
 				buzz.container,
 				`SELECT revision FROM relay_membership_state WHERE community_id=${quote(community)}::uuid AND pubkey=${quote(staleRevision.old.pk)}`
 			)
-		) >
-			Number(staleCommand.tags.find((tag) => tag[0] === 'elembra-expected-revision')?.[1]),
+		) > Number(staleCommand.tags.find((tag) => tag[0] === 'elembra-expected-revision')?.[1]),
 		'stale fault must advance beyond the held command revision'
 	);
 	fault.holdCommand = null;
@@ -1595,9 +1594,9 @@ try {
 		fault.rejected.some((rejection) => rejection.event_id === staleCommand.id)
 	);
 	assert.equal(
-		fault.rejected.find((rejection) => rejection.event_id === staleCommand.id).reason.endsWith(
-			': stale_revision'
-		),
+		fault.rejected
+			.find((rejection) => rejection.event_id === staleCommand.id)
+			.reason.endsWith(': stale_revision'),
 		true
 	);
 	await until(
@@ -1723,13 +1722,15 @@ try {
 	};
 	await initiate(recovery, recoveryRequest);
 	for (let attempt = 1; attempt < 5; attempt++) {
-		await until(`retryable verification failure ${attempt}`, async () =>
-			Number(
-				sql(
-					db.container,
-					`SELECT transient_failures FROM chat_identity_replacements WHERE operation_id=${quote(recoveryRequest.operation_id)}`
-				)
-			) >= attempt
+		await until(
+			`retryable verification failure ${attempt}`,
+			async () =>
+				Number(
+					sql(
+						db.container,
+						`SELECT transient_failures FROM chat_identity_replacements WHERE operation_id=${quote(recoveryRequest.operation_id)}`
+					)
+				) >= attempt
 		);
 		sql(
 			db.container,
