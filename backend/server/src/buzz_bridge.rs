@@ -199,7 +199,7 @@ impl BuzzAdmissionBridge {
                     if reason.to_ascii_lowercase().contains("auth") {
                         continue;
                     }
-                    if conditional && reason == "stale_revision" {
+                    if conditional && reason.rsplit(": ").next() == Some("stale_revision") {
                         return Ok(Some(false));
                     }
                     if conditional {

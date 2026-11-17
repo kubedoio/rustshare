@@ -1571,22 +1571,35 @@ try {
 		'initial revoke command held for stale revision',
 		async () => fault.heldCommands.length > 0
 	);
-	const staleCommand = fault.heldCommands[0].command,
-		oldMembership = await membership(relayBase, community, staleRevision.old.pk),
-		competingRevoke = event(
-			9031,
-			[
-				['p', staleRevision.old.pk],
-				['elembra-op', randomUUID()],
-				['elembra-expected-revision', String(oldMembership.membership_revision)]
-			],
-			'',
-			service
-		);
-	assert.equal((await wire(relayUrl, service, competingRevoke))[2], true);
-	await assertGated(staleRevision, staleRequest.operation_id);
+	const staleCommand = fault.heldCommands[0].command;
+	// Advance only the revision so the held command goes stale without revoking the test member.
+	sql(
+		buzz.container,
+		`UPDATE relay_membership_state SET revision=revision+1 WHERE community_id=${quote(community)}::uuid AND pubkey=${quote(staleRevision.old.pk)}`
+	);
+	assert(
+		Number(
+			sql(
+				buzz.container,
+				`SELECT revision FROM relay_membership_state WHERE community_id=${quote(community)}::uuid AND pubkey=${quote(staleRevision.old.pk)}`
+			)
+		) >
+			Number(staleCommand.tags.find((tag) => tag[0] === 'elembra-expected-revision')?.[1]),
+		'stale fault must advance beyond the held command revision'
+	);
 	fault.holdCommand = null;
+	assert.equal((await membership(relayBase, community, staleRevision.old.pk)).membership, 'active');
+	await assertGated(staleRevision, staleRequest.operation_id, { relayOldRevoked: false });
 	fault.heldCommands.splice(0).forEach((held) => held.release());
+	await until('delayed conditional command rejected as stale', async () =>
+		fault.rejected.some((rejection) => rejection.event_id === staleCommand.id)
+	);
+	assert.equal(
+		fault.rejected.find((rejection) => rejection.event_id === staleCommand.id).reason.endsWith(
+			': stale_revision'
+		),
+		true
+	);
 	await until(
 		'fresh revision revoke attempt persisted',
 		async () =>
@@ -1608,13 +1621,6 @@ try {
 		`SELECT command_id,expected_revision,outcome FROM chat_identity_replacement_commands WHERE operation_id=${quote(staleRequest.operation_id)} AND phase='revoke' ORDER BY attempt`
 	);
 	assert.equal(staleAttempts[0].outcome, 'stale');
-	await until('delayed conditional command rejected as stale', async () =>
-		fault.rejected.some((rejection) => rejection.event_id === staleCommand.id)
-	);
-	assert.equal(
-		fault.rejected.find((rejection) => rejection.event_id === staleCommand.id).reason,
-		'stale_revision'
-	);
 	assert.equal(
 		staleAttempts[0].command_id,
 		staleCommand.tags.find((tag) => tag[0] === 'elembra-op')?.[1]
@@ -1698,25 +1704,54 @@ try {
 	);
 	const recovery = await onboard('operator-recovery'),
 		recoveryRequest = await replacement(recovery);
+	await api(
+		base,
+		admin,
+		'POST',
+		`/admin/organizations/${tenant}/administrators/${recovery.session.user.id}`,
+		{},
+		201
+	);
 	fault.afterAck = (command) => {
 		if (
 			command.kind === 9031 &&
 			command.tags.some((tag) => tag[0] === 'p' && tag[1] === recovery.old.pk)
 		) {
 			fault.afterAck = null;
-			fault.read = 'invalid';
+			fault.read = 'unavailable';
 		}
 	};
 	await initiate(recovery, recoveryRequest);
+	for (let attempt = 1; attempt < 5; attempt++) {
+		await until(`retryable verification failure ${attempt}`, async () =>
+			Number(
+				sql(
+					db.container,
+					`SELECT transient_failures FROM chat_identity_replacements WHERE operation_id=${quote(recoveryRequest.operation_id)}`
+				)
+			) >= attempt
+		);
+		sql(
+			db.container,
+			`UPDATE chat_identity_replacements SET retry_at=clock_timestamp() WHERE operation_id=${quote(recoveryRequest.operation_id)} AND transient_failures=${attempt}`
+		);
+	}
 	await until(
-		'blocked signed evidence for operator recovery',
+		'retry-exhausted replacement for operator recovery',
 		async () => (await operationStatus(recovery, recoveryRequest.operation_id)).state === 'blocked'
+	);
+	assert.equal(
+		sql(
+			db.container,
+			`SELECT failure_code FROM chat_identity_replacements WHERE operation_id=${quote(recoveryRequest.operation_id)}`
+		),
+		'replacement_retries_exhausted'
 	);
 	fault.read = null;
 	await assertGated(recovery, recoveryRequest.operation_id);
 	await api(
 		base,
-		admin,
+		recovery.session,
 		'POST',
 		`/admin/applications/chat/replacements/${recoveryRequest.operation_id}/recover`,
 		undefined,
@@ -1727,7 +1762,7 @@ try {
 	assert(
 		rows(
 			db.container,
-			`SELECT audit_id FROM chat_identity_replacement_audit WHERE operation_id=${quote(recoveryRequest.operation_id)} AND actor_id=${quote(admin.user.id)} AND reason_code='operator_recovery_fresh_verification'`
+			`SELECT audit_id FROM chat_identity_replacement_audit WHERE operation_id=${quote(recoveryRequest.operation_id)} AND actor_id=${quote(recovery.session.user.id)} AND reason_code='operator_recovery_fresh_verification'`
 		).length > 0
 	);
 	pass('orphaned blocked operation is recoverable only through audited admin fresh verification');
