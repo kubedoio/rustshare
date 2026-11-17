@@ -2276,8 +2276,8 @@ impl NoteService {
             final_fm.rustshare = Some(rs);
         }
 
-        // Update operational metadata.
-        final_fm.timestamp = Some(Utc::now());
+        // Update OKF v0.2 provenance.
+        final_fm.mark_generated();
 
         // Ensure required OKF keys are present, especially for legacy single-file notes.
         let required = OkfNoteFrontmatter {
@@ -2439,7 +2439,7 @@ impl NoteService {
                 rs.id = Some(okf_id);
             }
             fm.rustshare = Some(rs);
-            fm.timestamp = Some(Utc::now());
+            fm.mark_generated();
             if let Ok(document) = to_document(&fm, &body) {
                 let _ = self
                     .file_service
@@ -3344,6 +3344,21 @@ fn merge_incoming_frontmatter(
     }
     if incoming.resource.is_some() {
         merged.resource = incoming.resource;
+    }
+    if incoming.generated.is_some() {
+        merged.generated = incoming.generated;
+    }
+    if incoming.sources.is_some() {
+        merged.sources = incoming.sources;
+    }
+    if incoming.verified.is_some() {
+        merged.verified = incoming.verified;
+    }
+    if incoming.status.is_some() {
+        merged.status = incoming.status;
+    }
+    if incoming.stale_after.is_some() {
+        merged.stale_after = incoming.stale_after;
     }
     if !incoming.tags.is_empty() {
         merged.tags = incoming.tags;

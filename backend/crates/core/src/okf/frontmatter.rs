@@ -54,6 +54,27 @@ pub struct RustshareFrontmatter {
     pub extra: serde_json::Value,
 }
 
+/// OKF v0.2 generation provenance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OkfGenerated {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<DateTime<Utc>>,
+    #[serde(flatten, default)]
+    pub extra: serde_json::Value,
+}
+
+impl Default for OkfGenerated {
+    fn default() -> Self {
+        Self {
+            by: None,
+            at: None,
+            extra: serde_json::Value::Object(serde_json::Map::new()),
+        }
+    }
+}
+
 impl Default for RustshareFrontmatter {
     fn default() -> Self {
         Self {
@@ -96,8 +117,22 @@ pub struct OkfNoteFrontmatter {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     /// Timestamp of the frontmatter revision.
+    /// Legacy OKF field; new documents should use `generated.at`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<DateTime<Utc>>,
+    /// OKF v0.2 generation provenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated: Option<OkfGenerated>,
+    /// OKF v0.2 source and trust metadata. These fields remain permissive so
+    /// new OKF fields round-trip without RustShare needing to interpret them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sources: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_after: Option<DateTime<Utc>>,
     /// RustShare-specific metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rustshare: Option<RustshareFrontmatter>,
@@ -115,9 +150,26 @@ impl Default for OkfNoteFrontmatter {
             resource: None,
             tags: Vec::new(),
             timestamp: None,
+            generated: None,
+            sources: None,
+            verified: None,
+            status: None,
+            stale_after: None,
             rustshare: None,
             extra: serde_json::Value::Object(serde_json::Map::new()),
         }
+    }
+}
+
+impl OkfNoteFrontmatter {
+    /// Set v0.2 generation provenance while retaining extra producer metadata.
+    pub fn mark_generated(&mut self) {
+        let generated = self.generated.get_or_insert_with(|| OkfGenerated {
+            by: Some("process:rustshare".to_string()),
+            ..Default::default()
+        });
+        generated.by = Some("process:rustshare".to_string());
+        generated.at = Some(Utc::now());
     }
 }
 
@@ -220,6 +272,21 @@ pub fn merge_required_okf_keys(
     if merged.timestamp.is_none() {
         merged.timestamp = required.timestamp;
     }
+    if merged.generated.is_none() {
+        merged.generated = required.generated;
+    }
+    if merged.sources.is_none() {
+        merged.sources = required.sources;
+    }
+    if merged.verified.is_none() {
+        merged.verified = required.verified;
+    }
+    if merged.status.is_none() {
+        merged.status = required.status;
+    }
+    if merged.stale_after.is_none() {
+        merged.stale_after = required.stale_after;
+    }
 
     // Merge top-level unknown keys without overwriting.
     if let (Some(merged_obj), Some(req_obj)) =
@@ -302,7 +369,16 @@ pub fn default_note_frontmatter(
             workspace_id, note_id
         )),
         tags: Vec::new(),
-        timestamp: Some(Utc::now()),
+        timestamp: None,
+        generated: Some(OkfGenerated {
+            by: Some("process:rustshare".to_string()),
+            at: Some(Utc::now()),
+            ..Default::default()
+        }),
+        sources: None,
+        verified: None,
+        status: Some("draft".to_string()),
+        stale_after: None,
         rustshare: Some(RustshareFrontmatter {
             id: Some(note_id),
             module: Some("notes".to_string()),
@@ -614,6 +690,70 @@ mod yaml_compat_contract {
         assert_eq!(restored.timestamp, Some(parsed));
         // The serialized form is directly parseable as a timestamp again.
         assert!(yaml.contains("timestamp: 2026-05-11T18:53:00Z"));
+    }
+
+    #[test]
+    fn okf_v02_trust_metadata_round_trips_and_legacy_timestamp_remains_readable() {
+        let doc = concat!(
+            "type: Note\n",
+            "timestamp: 2026-05-11T18:53:00Z\n",
+            "generated:\n",
+            "  by: process:rustshare\n",
+            "  at: 2026-05-12T18:53:00+00:00\n",
+            "sources:\n",
+            "  - resource: https://example.com/source\n",
+            "    usage_count: 3\n",
+            "verified:\n",
+            "  by: human:reviewer\n",
+            "  at: 2026-05-13T18:53:00Z\n",
+            "status: draft\n",
+            "stale_after: 2027-05-13T18:53:00Z\n"
+        );
+        let fm: OkfNoteFrontmatter = serde_yaml::from_str(doc).unwrap();
+
+        assert!(fm.timestamp.is_some());
+        assert_eq!(
+            fm.generated
+                .as_ref()
+                .and_then(|generated| generated.by.as_deref()),
+            Some("process:rustshare")
+        );
+        assert_eq!(fm.status.as_deref(), Some("draft"));
+        assert_eq!(
+            fm.verified
+                .as_ref()
+                .and_then(|v| v.get("by"))
+                .and_then(|v| v.as_str()),
+            Some("human:reviewer")
+        );
+        let restored = round_trip(&fm);
+        assert_eq!(fm, restored);
+    }
+
+    #[test]
+    fn default_note_frontmatter_uses_v02_generation_metadata() {
+        let fm = default_note_frontmatter(
+            "New Note",
+            NOTE_ID.parse().unwrap(),
+            "660e8400-e29b-41d4-a716-446655440001".parse().unwrap(),
+            "",
+            "New Note",
+            "acl",
+        );
+
+        assert!(fm.timestamp.is_none());
+        assert_eq!(
+            fm.generated
+                .as_ref()
+                .and_then(|generated| generated.by.as_deref()),
+            Some("process:rustshare")
+        );
+        assert!(fm
+            .generated
+            .as_ref()
+            .and_then(|generated| generated.at)
+            .is_some());
+        assert_eq!(fm.status.as_deref(), Some("draft"));
     }
 
     #[test]

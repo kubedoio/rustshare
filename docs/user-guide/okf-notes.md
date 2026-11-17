@@ -192,7 +192,18 @@ resource: rustshare://workspace/<workspace-id>/notes/<note-id>
 tags:
   - onboarding
   - customers
-timestamp: 2026-06-26T00:00:00Z
+generated:
+  by: process:rustshare
+  at: 2026-06-26T00:00:00Z
+sources:
+  - resource: https://example.com/onboarding-policy
+    author: Acme Support
+    usage_count: 8
+verified:
+  - by: human:reviewer
+    at: 2026-06-26T00:00:00Z
+status: stable
+stale_after: 2027-06-26T00:00:00Z
 rustshare:
   id: <stable-note-uuid>
   module: notes
@@ -220,7 +231,12 @@ The first H1 is document content. It is not the file name and must not rename th
 | `description` | Short description or excerpt. | User |
 | `resource` | Canonical RustShare resource URI. | RustShare |
 | `tags` | User-defined tags. | User |
-| `timestamp` | ISO 8601 timestamp of creation or last significant update. | RustShare |
+| `generated` | OKF v0.2 producer and generation time. RustShare refreshes `at` when it updates a note. | RustShare |
+| `sources` | Source resources and optional provenance such as author or usage count. | User or importer |
+| `verified` | Optional verification records (`by` and `at`), as a list. | User or importer |
+| `status` | Optional lifecycle status (`draft`, `stable`, or `deprecated`). Absence means `stable`. | User |
+| `stale_after` | Optional ISO 8601 time after which the note should be treated as stale. | User |
+| `timestamp` | Legacy timestamp retained when reading and editing older notes; new notes use `generated.at`. | Legacy |
 | `rustshare` | RustShare operational metadata block. | RustShare |
 
 ### `rustshare` block fields
@@ -242,6 +258,8 @@ The first H1 is document content. It is not the file name and must not rename th
 
 RustShare preserves unknown top-level and `rustshare` fields during round-trip editing. You can add custom metadata for your own workflows, but RustShare will not interpret fields it does not recognize.
 
+RustShare supports OKF v0.2 trust metadata and retains the v0.1 `timestamp` field for compatibility. A bare `verified` record is also preserved as written; the v0.2 preferred form is a list of records.
+
 ---
 
-*Last updated: 2026-06-28*
+*Last updated: 2026-11-17*

@@ -218,7 +218,10 @@ title: "{{title}}"
 description: ""
 resource: "rustshare://workspace/{{workspace_id}}/notes/{{okf_id}}"
 tags: []
-timestamp: "1970-01-01T00:00:00Z"
+generated:
+  by: process:rustshare
+  at: "{{created_at}}"
+status: draft
 rustshare:
   id: "{{okf_id}}"
   module: notes
@@ -1832,7 +1835,10 @@ title: "{{title}}"
 description: ""
 resource: "rustshare://workspace/00000000-0000-0000-0000-000000000000/notes/00000000-0000-0000-0000-000000000000"
 tags: []
-timestamp: "1970-01-01T00:00:00Z"
+generated:
+  by: process:rustshare
+  at: "2026-06-26T00:00:00Z"
+status: draft
 rustshare:
   id: "00000000-0000-0000-0000-000000000000"
   module: notes
@@ -1856,6 +1862,14 @@ rustshare:
         assert_eq!(frontmatter.okf_type, Some("Note".to_string()));
         assert_eq!(frontmatter.title, Some("My Note".to_string()));
         assert!(frontmatter.tags.is_empty());
+        assert_eq!(
+            frontmatter
+                .generated
+                .as_ref()
+                .and_then(|generated| generated.by.as_deref()),
+            Some("process:rustshare")
+        );
+        assert_eq!(frontmatter.status.as_deref(), Some("draft"));
         let rustshare = frontmatter
             .rustshare
             .expect("rustshare block must be present");
