@@ -81,6 +81,11 @@
 	let idempotencyKey = $state('');
 	let showCc = $state(false);
 	let showBcc = $state(false);
+	let toInput = $state<HTMLInputElement>();
+
+	$effect(() => {
+		if (open) toInput?.focus();
+	});
 
 	onMount(async () => {
 		try {
@@ -234,8 +239,8 @@
 								placeholder="To"
 								aria-label="To"
 								bind:value={draft.to}
+								bind:this={toInput}
 								required
-								autofocus
 							/>
 							<span class="flex shrink-0 gap-1">
 								{#if !showCc}

@@ -726,11 +726,11 @@
 </script>
 
 <ApplicationPageShell title="Mail" subtitle={module.description}>
-	<div slot="primaryAction">
+	{#snippet primaryAction()}
 		<button type="button" class="btn gap-2 btn-primary btn-sm" onclick={openCompose}>
 			<Send size={14} /> Compose
 		</button>
-	</div>
+	{/snippet}
 
 	{#if $accountsQuery.isLoading}
 		<ApplicationPageSkeleton />

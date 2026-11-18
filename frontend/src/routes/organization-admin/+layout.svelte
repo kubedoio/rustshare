@@ -1,6 +1,8 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
 	import { getOrganizationAdminCapability } from '$lib/api/organization-admin';
+	let { children }: { children?: Snippet } = $props();
 
 	let state = $state<'loading' | 'allowed' | 'denied' | 'error'>('loading');
 
@@ -68,7 +70,7 @@
 			<a class="btn btn-sm" href="/organization-admin/invitations">Invitations</a>
 			<a class="btn btn-sm" href="/organization-admin/audit">Audit</a>
 		</nav>
-		<slot />
+		{@render children?.()}
 		<p class="mt-8 border-t border-base-300 pt-3 text-xs text-base-content/60">
 			Independent workspaces and workspace membership administration are deferred under ADR-0040.
 		</p>

@@ -1,13 +1,16 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { formatFileSize } from '$lib/utils/format';
 	import { getOfficeFileType } from '$lib/utils/format';
 	import { FileText, FileSpreadsheet, Presentation } from 'lucide-svelte';
 	import type { PreviewableFile } from '$lib/components/modals/FilePreviewModal.svelte';
 
 	let {
-		file = null
+		file = null,
+		downloadButton
 	}: {
 		file?: PreviewableFile | null;
+		downloadButton?: Snippet;
 	} = $props();
 
 	let officeType = $derived(file ? getOfficeFileType(file.mime_type, file.name) : null);
@@ -38,11 +41,12 @@
 
 <div class="flex flex-col items-center justify-center p-12 text-center">
 	{#if file && config}
+		{@const Icon = config.icon}
 		<div
 			class="h-24 w-24 rounded-2xl {config.bgColor} mb-6 flex items-center justify-center"
 			aria-label="{config.label} icon"
 		>
-			<svelte:component this={config.icon} size={48} class={config.color} />
+			<Icon size={48} class={config.color} />
 		</div>
 		<h3 class="mb-2 text-xl font-semibold text-base-content">{file.name}</h3>
 		<p class="mb-1 text-base-content/60">{config.label}</p>
@@ -54,7 +58,7 @@
 			<p class="max-w-sm text-sm text-base-content/60">
 				This file type cannot be previewed in the browser. Please download the file to view it.
 			</p>
-			<slot name="download-button" />
+			{@render downloadButton?.()}
 		</div>
 	{:else if file}
 		<div

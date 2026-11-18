@@ -126,6 +126,7 @@
 		<div class="slash-menu-empty">No matching commands</div>
 	{:else}
 		{#each filteredCommands as cmd, i}
+			{@const Icon = getIcon(cmd.icon)}
 			<button
 				class="slash-menu-item"
 				class:selected={i === selectedIndex}
@@ -136,7 +137,7 @@
 				onmouseenter={() => (selectedIndex = i)}
 			>
 				<span class="slash-menu-icon">
-					<svelte:component this={getIcon(cmd.icon)} size={16} />
+					<Icon size={16} />
 				</span>
 				<span class="slash-menu-text">
 					<span class="slash-menu-label">{cmd.label}</span>

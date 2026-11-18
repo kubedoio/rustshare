@@ -20,10 +20,11 @@
 
 <section class="summary-cards" aria-label="Workspace summary">
 	{#each cards as card}
+		{@const Icon = card.icon}
 		{#if card.href}
 			<a href={card.href} class="summary-region">
 				<div class="summary-icon" style="background: {card.iconBg}; color: {card.iconColor};">
-					<svelte:component this={card.icon} size={18} />
+					<Icon size={18} />
 				</div>
 				<div class="summary-body">
 					<span class="summary-value">{card.value}</span>
@@ -35,7 +36,7 @@
 		{:else}
 			<div class="summary-region">
 				<div class="summary-icon" style="background: {card.iconBg}; color: {card.iconColor};">
-					<svelte:component this={card.icon} size={18} />
+					<Icon size={18} />
 				</div>
 				<div class="summary-body">
 					<span class="summary-value">{card.value}</span>

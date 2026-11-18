@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { ChevronRight } from 'lucide-svelte';
 
 	interface Props {
@@ -6,9 +7,24 @@
 		subtitle?: string;
 		breadcrumb?: Array<{ label: string; onClick?: () => void }>;
 		metadata?: string;
+		children?: Snippet;
+		titleExtra?: Snippet;
+		primaryAction?: Snippet;
+		secondaryActions?: Snippet;
+		overflowActions?: Snippet;
 	}
 
-	let { title, subtitle, breadcrumb, metadata }: Props = $props();
+	let {
+		title,
+		subtitle,
+		breadcrumb,
+		metadata,
+		children,
+		titleExtra,
+		primaryAction,
+		secondaryActions,
+		overflowActions
+	}: Props = $props();
 </script>
 
 <div class="flex flex-col gap-6">
@@ -48,7 +64,7 @@
 
 			<div class="flex items-center gap-2">
 				<h1 class="text-xl font-semibold text-base-content">{title}</h1>
-				<slot name="titleExtra" />
+				{@render titleExtra?.()}
 			</div>
 
 			{#if subtitle}
@@ -61,14 +77,14 @@
 		</div>
 
 		<div class="flex flex-wrap items-center gap-2">
-			<slot name="primaryAction" />
-			<slot name="secondaryActions" />
-			<slot name="overflowActions" />
+			{@render primaryAction?.()}
+			{@render secondaryActions?.()}
+			{@render overflowActions?.()}
 		</div>
 	</div>
 
 	<!-- Content -->
 	<div class="flex flex-col gap-6">
-		<slot />
+		{@render children?.()}
 	</div>
 </div>

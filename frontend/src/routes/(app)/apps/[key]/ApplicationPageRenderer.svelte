@@ -34,4 +34,4 @@
 	let Renderer = $derived(rendererMap[module.ui.page.renderer] || GenericApplicationView);
 </script>
 
-<svelte:component this={Renderer} {module} />
+<Renderer {module} />

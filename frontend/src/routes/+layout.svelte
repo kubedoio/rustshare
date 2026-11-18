@@ -1,13 +1,13 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { QueryClientProvider } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
+	let { children }: { children: Snippet } = $props();
 </script>
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
 <QueryClientProvider client={queryClient}>
-	{#snippet children()}
-		<slot />
-	{/snippet}
+	{@render children()}
 </QueryClientProvider>

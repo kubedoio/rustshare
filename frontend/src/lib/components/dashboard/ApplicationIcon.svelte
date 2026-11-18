@@ -55,4 +55,4 @@
 	let IconComponent = $derived(iconMap[name] || iconMap[DEFAULT_MODULE_ICON] || Folder);
 </script>
 
-<svelte:component this={IconComponent} {size} {strokeWidth} />
+<IconComponent {size} {strokeWidth} />

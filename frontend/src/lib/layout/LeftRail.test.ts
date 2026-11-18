@@ -137,11 +137,12 @@ describe('LeftRail', () => {
 			expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toBeTruthy();
 		});
 
-		it('sets aria-expanded=true on the aside', () => {
-			const { container } = render(LeftRail);
-			const aside = container.querySelector('aside');
+		it('marks the collapse button expanded', () => {
+			render(LeftRail);
 
-			expect(aside?.getAttribute('aria-expanded')).toBe('true');
+			expect(
+				screen.getByRole('button', { name: 'Collapse sidebar' }).getAttribute('aria-expanded')
+			).toBe('true');
 		});
 	});
 
@@ -184,11 +185,12 @@ describe('LeftRail', () => {
 			expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeTruthy();
 		});
 
-		it('sets aria-expanded=false on the aside', () => {
-			const { container } = render(LeftRail);
-			const aside = container.querySelector('aside');
+		it('marks the expand button collapsed', () => {
+			render(LeftRail);
 
-			expect(aside?.getAttribute('aria-expanded')).toBe('false');
+			expect(
+				screen.getByRole('button', { name: 'Expand sidebar' }).getAttribute('aria-expanded')
+			).toBe('false');
 		});
 	});
 

@@ -821,7 +821,7 @@
 				showDeleteModal = true;
 			}}
 		>
-			<svelte:fragment slot="extraActions">
+			{#snippet extraActions()}
 				{#if key === 'notes'}
 					<button
 						class="btn gap-1.5 btn-ghost btn-sm"
@@ -861,7 +861,7 @@
 					<Folder size={14} />
 					<span>Open in Files</span>
 				</button>
-			</svelte:fragment>
+			{/snippet}
 		</MarkdownDocumentPage>
 
 		{#if key === 'meetings'}

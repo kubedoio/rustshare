@@ -122,21 +122,17 @@
 		}
 	}
 
-	async function handleSave(
-		event: CustomEvent<{ saveMode: 'overwrite' | 'new_version'; changeDescription?: string }>
-	) {
+	async function handleSave(detail: {
+		saveMode: 'overwrite' | 'new_version';
+		changeDescription?: string;
+	}) {
 		if (!file || !hasChanges) return;
 
 		isSaving = true;
 		error = null;
 
 		try {
-			const result = await editFile(
-				file.id,
-				content,
-				event.detail.saveMode,
-				event.detail.changeDescription
-			);
+			const result = await editFile(file.id, content, detail.saveMode, detail.changeDescription);
 
 			// Update file with new data
 			file = {
@@ -231,8 +227,8 @@
 	{saveMode}
 	{hasChanges}
 	title="Edit Text File"
-	on:close={handleClose}
-	on:save={handleSave}
+	onClose={handleClose}
+	onSave={handleSave}
 >
 	<div class="flex h-full flex-col overflow-hidden">
 		<div
