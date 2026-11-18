@@ -59,7 +59,10 @@ title: Customer onboarding checklist
 description: Working note for onboarding tasks and follow-up actions.
 resource: rustshare://workspace/<workspace-id>/notes/<note-id>
 tags: []
-timestamp: 2026-06-26T00:00:00Z
+generated:
+  by: process:rustshare
+  at: 2026-06-26T00:00:00Z
+status: draft
 rustshare:
   module: notes
   source_kind: note

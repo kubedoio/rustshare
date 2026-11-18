@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Adopt OKF v0.2 generation metadata for new and edited notes, preserve trust signals and legacy timestamps, and document the v0.2 frontmatter fields.
 - Reply to Chat messages with canonical NIP-10 thread tags, browse thread history from the relay, react to messages with toggleable emoji counts and authors, and delete messages through the relay's authorized deletion operations, with every mutation confirmed against relay state and uncertain acknowledgments retried as the identical signed event.
 - Preserve Chat drafts per account, channel, and thread across reloads, and hide thread and reply state whenever channel posting eligibility is lost.
 - Harden the Chat channel-management acceptance suite: member-removal, role-downgrade, and guest-write denial are now asserted relay-direct with decrypted browser-held keys against a candidate relay image, alongside private-channel leak checks (search, deep links, history, attachments), relay-side duplicate/byte-identity verification for retried signed messages, and relay/backend/observer restart resilience; a disposable two-community relay harness covers guest-role write denial and two-tenant isolation.
