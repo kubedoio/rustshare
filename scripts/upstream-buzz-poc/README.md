@@ -28,9 +28,12 @@ test.
 The protocol seed adds two separate members to tenant B's relay, creates a
 native kind-41010 private-channel DM, checks member discovery for kinds
 39000/39001/39002 and the kind-39000 `private`/`hidden` tags, then confirms the
-second member retrieves the exact kind-9 event ID. This loopback TLS proxy
-harness proves upstream protocol behavior only; trusted private-service
-connector and Cilium egress qualification use the separate ignored Rust test
+second member retrieves the exact kind-9 event ID. On tenant A it also checks
+NIP-10 root/reply tags, thread history, rejection of mismatched roots and
+cross-channel parents, and private-thread history before and after membership.
+This loopback TLS proxy harness proves upstream protocol behavior only; trusted
+private-service connector and Cilium egress qualification use the separate
+ignored Rust test
 `trusted_service_tenant_sessions_are_isolated_across_private_dm_relays`.
 
 For the GUI test, use a private desktop profile and a real unlocked OS
