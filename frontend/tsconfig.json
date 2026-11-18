@@ -15,7 +15,16 @@
 			"$lib": ["./src/lib"],
 			"$lib/*": ["./src/lib/*"]
 		}
-	}
+	},
+	"include": [
+		"src",
+		"test",
+		"tests",
+		".svelte-kit/types/**/$types.d.ts",
+		".svelte-kit/ambient.d.ts",
+		".svelte-kit/env.d.ts"
+	],
+	"exclude": ["src/service-worker"]
 	// Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
 	// except $lib which is handled by https://svelte.dev/docs/kit/configuration#files
 	//

@@ -89,8 +89,7 @@
 	function navigateToSharedFolder(folderId: string) {
 		if (!rootFolderId) return;
 		goto(sharedResourcePath('folder', rootFolderId, { folderId }), {
-			keepFocus: true,
-			noScroll: true
+			reset: false
 		});
 	}
 
