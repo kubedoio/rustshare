@@ -56,6 +56,12 @@ ignore = [
     { id = "RUSTSEC-2023-0071", reason = "No patched version of rsa crate available yet" },
     # proc-macro-error2 — unmaintained; pulled in by validator_derive v0.20.0 (latest validator release)
     { id = "RUSTSEC-2026-0173", reason = "validator v0.20.0 depends on proc-macro-error2; no alternative release available" },
+    # Chrono, chrono-tz, and chrono-tz-build have no patched releases. Chrono is
+    # used across the workspace and chrono-tz provides timezone support; replacing
+    # them with jiff/time requires a separate compatibility migration.
+    { id = "RUSTSEC-2026-0543", reason = "No patched release; workspace-wide migration from chrono to jiff/time is separate work" },
+    { id = "RUSTSEC-2026-0555", reason = "No patched release; timezone support remains on chrono-tz pending the chrono migration" },
+    { id = "RUSTSEC-2026-0559", reason = "No patched release; build-only chrono-tz dependency, removed with the timezone dependency migration" },
     # pin-utils is informationally unmaintained with no patched release; currently transitive through async-imap and AWS Smithy crates.
     { id = "RUSTSEC-2026-0441", reason = "Locked async-imap 0.11.3 and AWS Smithy need it; remove when async-imap drops pin-utils" },
     # h2 0.3.27 — final 0.3.x; upstream patched only the 0.4 line (RUSTSEC-2026-0258).
