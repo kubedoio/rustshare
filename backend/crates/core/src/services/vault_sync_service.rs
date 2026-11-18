@@ -37,15 +37,19 @@ pub struct VaultSyncService<S: VaultStore, O: ObjectStoreOps> {
 impl<S: VaultStore, O: ObjectStoreOps> VaultSyncService<S, O> {
     /// Create a new `VaultSyncService`.
     pub fn new(store: Arc<S>, object_store: Arc<O>) -> Self {
-        let gc_grace_period_hours = std::env::var("RUSTSHARE_OBJECT_GC_GRACE_PERIOD_HOURS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(24)
-            .max(1);
+        Self::new_with_gc_grace_period_hours(store, object_store, 24)
+    }
+
+    /// Create a service with the server-configured orphan retention window.
+    pub fn new_with_gc_grace_period_hours(
+        store: Arc<S>,
+        object_store: Arc<O>,
+        gc_grace_period_hours: i64,
+    ) -> Self {
         Self {
             store,
             object_store,
-            gc_grace_period_hours,
+            gc_grace_period_hours: gc_grace_period_hours.max(1),
         }
     }
 

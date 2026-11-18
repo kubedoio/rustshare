@@ -1,3 +1,4 @@
+use crate::services::EmailService;
 use axum::{
     body::Body,
     extract::{Multipart, Path, Query, State},
@@ -7,7 +8,7 @@ use axum::{
 };
 use chrono::{DateTime, NaiveDate, Utc};
 use rustshare_core::domain::{LinkTargetType, MailSortOrder, MailTlsMode};
-use rustshare_core::services::{EmailError, EmailService, OutboundEmail};
+use rustshare_core::services::{EmailError, OutboundEmail};
 use rustshare_infrastructure::eml_parser::EmlParser;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

@@ -929,7 +929,7 @@ pub async fn bulk_invite_users(
             .map_err(db_error)?
             .ok_or_else(|| admin_not_found("Organization administrator not found"))?;
 
-    let email_service = Arc::new(rustshare_core::services::EmailService::new(
+    let email_service = Arc::new(crate::services::EmailService::new(
         s.db_pool.clone(),
         s.secret_key.clone(),
     ));

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::sync::Arc;
 
+use crate::services::EmailService;
 use chrono::{DateTime, NaiveDate, Utc};
 use futures_util::stream::BoxStream;
 use rustshare_core::domain::{
@@ -16,7 +17,7 @@ use rustshare_core::events::{
     MailImportedPayload, MailLinkedPayload, MailUnlinkedPayload,
 };
 use rustshare_core::services::{
-    EmailService, FileService, FolderService, OutboundMailMessage, PermissionResolver,
+    FileService, FolderService, OutboundMailMessage, PermissionResolver,
 };
 use rustshare_crypto::{encrypt_secret, SecretEncryptionKey};
 use rustshare_infrastructure::eml_parser::EmlParser;

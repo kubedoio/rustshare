@@ -1037,9 +1037,14 @@ async fn validate_relay_url(value: &str) -> Result<(), AppError> {
         .ok_or_else(|| AppError::bad_request("relay_url must include a host"))?;
     url.port_or_known_default()
         .ok_or_else(|| AppError::bad_request("relay_url must include a valid port"))?;
-    rustshare_core::validation::resolve_chat_relay_socket_addrs_for_url(value)
-        .await
-        .map_err(|_| AppError::bad_request("relay_url must resolve to an allowed address"))?;
+    let deployment_relay_url = crate::config::deployment_chat_relay_url();
+    rustshare_core::validation::resolve_chat_relay_socket_addrs_for_url(
+        value,
+        crate::config::allow_internal_chat_relay(),
+        deployment_relay_url.as_deref(),
+    )
+    .await
+    .map_err(|_| AppError::bad_request("relay_url must resolve to an allowed address"))?;
     Ok(())
 }
 

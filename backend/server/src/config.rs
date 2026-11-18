@@ -184,6 +184,47 @@ pub struct AppConfig {
     pub calendar_sync_future_days: i64,
 }
 
+/// Read webhook URL transport policy at the server boundary. Core only receives
+/// the resolved boolean and does not inspect process environment state.
+pub fn http_webhooks_allowed() -> bool {
+    cfg!(debug_assertions)
+        || parse_allow_http_webhooks(
+            std::env::var("RUSTSHARE_ALLOW_HTTP_WEBHOOKS")
+                .ok()
+                .as_deref(),
+        )
+}
+
+pub fn object_gc_grace_period_hours() -> i64 {
+    std::env::var("RUSTSHARE_OBJECT_GC_GRACE_PERIOD_HOURS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(24)
+        .max(1)
+}
+
+pub fn allow_internal_mail_servers() -> bool {
+    std::env::var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS").as_deref() == Ok("true")
+}
+
+pub fn allow_internal_chat_relay() -> bool {
+    std::env::var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY").as_deref() == Ok("true")
+}
+
+pub fn accept_invalid_mail_tls_certs() -> bool {
+    std::env::var("RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS").as_deref() != Ok("never")
+}
+
+pub fn deployment_chat_relay_url() -> Option<String> {
+    std::env::var("RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL").ok()
+}
+
+fn parse_allow_http_webhooks(value: Option<&str>) -> bool {
+    value
+        .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
+        .unwrap_or(false)
+}
+
 fn default_jwt_issuer() -> String {
     "rustshare".to_string()
 }
@@ -803,6 +844,29 @@ impl DefaultTenantConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_http_webhook_policy_is_value_sensitive() {
+        for value in [Some("true"), Some("TRUE"), Some("True"), Some("1")] {
+            assert!(
+                parse_allow_http_webhooks(value),
+                "{value:?} should enable HTTP"
+            );
+        }
+        for value in [
+            Some("false"),
+            Some("FALSE"),
+            Some("0"),
+            Some(""),
+            Some("yes"),
+            None,
+        ] {
+            assert!(
+                !parse_allow_http_webhooks(value),
+                "{value:?} should disable HTTP"
+            );
+        }
+    }
 
     /// Env mutation is process-global; serialize the config tests so they
     /// cannot clobber each other's variables.
