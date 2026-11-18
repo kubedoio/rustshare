@@ -41,6 +41,34 @@ def has_dependency(value: object, workspace_dependencies: dict, package_name: st
     return False
 
 
+def reads_process_configuration(source: str) -> bool:
+    read = r"var(?:_os)?"
+    if re.search(rf"\b(?:std\s*::\s*)?env\s*::\s*{read}\s*\(", source):
+        return True
+
+    env_aliases = re.findall(r"\buse\s+std\s*::\s*env\s+as\s+(\w+)\s*;", source)
+    env_aliases.extend(
+        alias or "env"
+        for imports in re.findall(r"\buse\s+std\s*::\s*env\s*::\s*\{([^}]+)\}", source)
+        for alias in re.findall(r"\bself(?:\s+as\s+(\w+))?\b", imports)
+    )
+    imported_functions = re.findall(
+        rf"\buse\s+std\s*::\s*env\s*::\s*({read})(?:\s+as\s+(\w+))?\s*;",
+        source,
+    )
+    imported_functions.extend(
+        (name, alias)
+        for imports in re.findall(r"\buse\s+std\s*::\s*env\s*::\s*\{([^}]+)\}", source)
+        for name, alias in re.findall(rf"\b({read})(?:\s+as\s+(\w+))?\b", imports)
+    )
+    if any(re.search(rf"\b{alias}\s*::\s*{read}\s*\(", source) for alias in env_aliases):
+        return True
+    return any(
+        re.search(rf"\b{alias or imported_name}\s*\(", source)
+        for imported_name, alias in imported_functions
+    )
+
+
 def violations(
     manifest: str, sources: dict[str, str], workspace_manifest: str = ""
 ) -> list[str]:
@@ -57,11 +85,10 @@ def violations(
             for name, source in sources.items()
             if pattern.search(source)
         )
-    env_pattern = re.compile(r"\bstd\s*::\s*env\s*::\s*var(?:_os)?\s*\(")
     errors.extend(
         f"{name} reads process configuration"
         for name, source in sources.items()
-        if env_pattern.search(source)
+        if reads_process_configuration(source)
     )
     return errors
 
@@ -111,10 +138,18 @@ def self_test() -> None:
         '[workspace.dependencies]\nclock = { package = "chrono", version = "0.4" }\n'
         'parser = { package = "mailparse", version = "0.17" }\n',
     ) == []
-    assert violations(
-        '[dependencies]\nchrono = "1"\n',
-        {"src/lib.rs": 'std::env::var("RUSTSHARE_SETTING")'},
-    ) == ["src/lib.rs reads process configuration"]
+    for source in (
+        'std::env::var("RUSTSHARE_SETTING")',
+        'use std::env; env::var_os("RUSTSHARE_SETTING")',
+        'use std::env as process_env; process_env::var("RUSTSHARE_SETTING")',
+        'use std::env::{self as process_env}; process_env::var("RUSTSHARE_SETTING")',
+        'use std::env::var as read_setting; read_setting("RUSTSHARE_SETTING")',
+        'use std::env::var_os; var_os("RUSTSHARE_SETTING")',
+        'use std::env::{var as read_setting, var_os}; read_setting("RUSTSHARE_SETTING")',
+    ):
+        assert violations(
+            '[dependencies]\nchrono = "1"\n', {"src/lib.rs": source}
+        ) == ["src/lib.rs reads process configuration"], source
 
 
 def main() -> int:
