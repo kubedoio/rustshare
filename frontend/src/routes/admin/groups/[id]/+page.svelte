@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { createQuery, createMutation } from '$lib/query-compat';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { queryClient } from '$lib/query-client';
 	import { getAdminGroup, updateAdminGroup } from '$lib/api/admin';
 	import GroupMemberList from '$lib/components/admin/GroupMemberList.svelte';

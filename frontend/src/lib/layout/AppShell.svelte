@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { authStore } from '$lib/stores/auth';
 	import { showKeyboardShortcuts } from '$lib/stores/ui';
 	import LeftRail from './LeftRail.svelte';

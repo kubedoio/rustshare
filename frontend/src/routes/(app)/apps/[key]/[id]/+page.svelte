@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
 	import {

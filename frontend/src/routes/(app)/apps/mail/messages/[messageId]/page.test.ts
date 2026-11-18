@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => ({
 	discardDraft: vi.fn()
 }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/kit/page', () => ({
 	page: readable({ params: { messageId: 'msg-1' } })
 }));
 vi.mock('$app/navigation', () => ({ goto: mocks.goto }));

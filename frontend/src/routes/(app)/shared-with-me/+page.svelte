@@ -13,7 +13,7 @@
 
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 
 	onMount(() => {
 		if (browser) {

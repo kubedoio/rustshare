@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { getOrganizationAdminCapability } from '$lib/api/organization-admin';
 	import { createQuery } from '$lib/query-compat';
 	import { listEnabledApplications } from '$lib/api/applications';

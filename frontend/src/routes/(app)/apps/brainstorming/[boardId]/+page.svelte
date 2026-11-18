@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { onMount, onDestroy } from 'svelte';
 	import { queryClient } from '$lib/query-client';

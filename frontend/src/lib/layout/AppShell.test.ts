@@ -14,7 +14,7 @@ vi.mock('$lib/stores/auth', async () => {
 		})
 	};
 });
-vi.mock('$app/stores', async () => {
+vi.mock('$lib/kit/page', async () => {
 	const { readable } = await import('svelte/store');
 	return { page: readable({ url: new URL('http://localhost/apps/chat') }) };
 });

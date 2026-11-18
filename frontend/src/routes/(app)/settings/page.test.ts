@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 	logout: vi.fn()
 }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/kit/page', () => ({
 	page: {
 		subscribe: (run: (value: { url: URL }) => void) => {
 			mocks.pageSubscriber = run;

@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 	goto: vi.fn()
 }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/kit/page', () => ({
 	page: readable({ url: mocks.pageUrl })
 }));
 

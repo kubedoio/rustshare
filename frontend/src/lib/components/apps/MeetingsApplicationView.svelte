@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { createQuery } from '$lib/query-compat';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ApplicationPageSkeleton from '$lib/components/common/ApplicationPageSkeleton.svelte';

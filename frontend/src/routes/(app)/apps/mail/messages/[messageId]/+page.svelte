@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { goto } from '$app/navigation';
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';

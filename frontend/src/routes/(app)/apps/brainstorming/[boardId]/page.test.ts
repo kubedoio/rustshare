@@ -3,9 +3,9 @@ import { readable } from 'svelte/store';
 import { describe, expect, it, vi } from 'vitest';
 import BrainstormBoardPage from './+page.svelte';
 
-vi.mock('$app/environment', () => ({ browser: true }));
+vi.mock('$app/env', () => ({ browser: true }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/kit/page', () => ({
 	page: readable({ params: { boardId: 'test-board-123' } })
 }));
 

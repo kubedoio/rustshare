@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { createQuery } from '$lib/query-compat';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { queryClient } from '$lib/query-client';
 	import { getAdminUser } from '$lib/api/admin';
 	import UserDetailForm from '$lib/components/admin/UserDetailForm.svelte';

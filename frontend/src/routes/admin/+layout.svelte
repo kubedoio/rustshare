@@ -1,8 +1,8 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
-	import { browser } from '$app/environment';
+	import { page } from '$lib/kit/page';
+	import { browser } from '$app/env';
 	import { authStore } from '$lib/stores/auth';
 	let { children }: { children?: Snippet } = $props();
 

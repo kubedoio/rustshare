@@ -67,7 +67,7 @@
 
 	import { folderTreeStore } from '$lib/stores/folderTree';
 	import type { File, Folder, FolderContents as ApiFolderContents } from '$lib/api/types';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { goto } from '$app/navigation';
 	import { navigateToNote } from '$lib/navigation/artifactRoutes';
 
