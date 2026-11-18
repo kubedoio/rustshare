@@ -3482,6 +3482,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn incoming_null_clears_okf_trust_metadata() {
+        let existing = OkfNoteFrontmatter {
+            verified: Some(Some(serde_json::json!({"by": "reviewer"}))),
+            stale_after: Some(Some(Utc::now())),
+            ..Default::default()
+        };
+        let incoming: OkfNoteFrontmatter =
+            serde_yaml::from_str("verified: null\nstale_after: null\n").unwrap();
+
+        let merged = merge_incoming_frontmatter(existing, incoming);
+
+        assert_eq!(merged.verified, Some(None));
+        assert_eq!(merged.stale_after, Some(None));
+    }
+
+    #[test]
     fn note_conflict_resolution_serializes_to_snake_case() {
         assert_eq!(
             serde_json::to_string(&NoteConflictResolution::PreferYaml).unwrap(),

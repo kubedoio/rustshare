@@ -2,6 +2,14 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+fn deserialize_nullable_field<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
 /// Error type for OKF frontmatter parsing and serialization.
 #[derive(Debug, thiserror::Error)]
 pub enum FrontmatterError {
@@ -127,12 +135,20 @@ pub struct OkfNoteFrontmatter {
     /// new OKF fields round-trip without RustShare needing to interpret them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sources: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub verified: Option<serde_json::Value>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_nullable_field",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub verified: Option<Option<serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stale_after: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_nullable_field",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stale_after: Option<Option<DateTime<Utc>>>,
     /// RustShare-specific metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rustshare: Option<RustshareFrontmatter>,
@@ -722,12 +738,28 @@ mod yaml_compat_contract {
         assert_eq!(
             fm.verified
                 .as_ref()
+                .and_then(Option::as_ref)
                 .and_then(|v| v.get("by"))
                 .and_then(|v| v.as_str()),
             Some("human:reviewer")
         );
         let restored = round_trip(&fm);
         assert_eq!(fm, restored);
+    }
+
+    #[test]
+    fn nullable_trust_metadata_distinguishes_null_from_omitted() {
+        let omitted: OkfNoteFrontmatter = serde_yaml::from_str("type: Note\n").unwrap();
+        let cleared: OkfNoteFrontmatter =
+            serde_yaml::from_str("verified: null\nstale_after: null\n").unwrap();
+
+        assert_eq!(omitted.verified, None);
+        assert_eq!(omitted.stale_after, None);
+        assert_eq!(cleared.verified, Some(None));
+        assert_eq!(cleared.stale_after, Some(None));
+        let serialized = serde_yaml::to_string(&cleared).unwrap();
+        assert!(serialized.contains("verified: null"));
+        assert!(serialized.contains("stale_after: null"));
     }
 
     #[test]
