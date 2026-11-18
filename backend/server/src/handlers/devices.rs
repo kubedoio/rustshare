@@ -5,8 +5,8 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use rustshare_infrastructure::repositories::DeviceRecord;
 use serde::Serialize;
-use sqlx::FromRow;
 use uuid::Uuid;
 
 use crate::handlers::AppError;
@@ -33,19 +33,11 @@ pub struct ListDevicesResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Internal row type
+// Response mapping
 // ---------------------------------------------------------------------------
 
-#[derive(FromRow)]
-struct DeviceRow {
-    id: Uuid,
-    device_name: String,
-    created_at: chrono::DateTime<chrono::Utc>,
-    last_used_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl From<DeviceRow> for DeviceListResponse {
-    fn from(row: DeviceRow) -> Self {
+impl From<DeviceRecord> for DeviceListResponse {
+    fn from(row: DeviceRecord) -> Self {
         DeviceListResponse {
             id: row.id.to_string(),
             device_name: row.device_name,
@@ -73,19 +65,12 @@ impl From<DeviceRow> for DeviceListResponse {
 )]
 pub async fn list_devices(
     State(db): State<DatabaseState>,
-    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+    AuthenticatedUser { tenant_id, user_id }: AuthenticatedUser,
 ) -> Result<Json<ListDevicesResponse>, AppError> {
-    let rows: Vec<DeviceRow> = sqlx::query_as(
-        r#"
-        SELECT id, device_name, created_at, last_used_at
-        FROM device_tokens
-        WHERE user_id = $1 AND revoked_at IS NULL
-        ORDER BY created_at DESC
-        "#,
-    )
-    .bind(user_id)
-    .fetch_all(&db.db_pool)
-    .await?;
+    let rows = db
+        .device_repository
+        .list_for_user(tenant_id, user_id)
+        .await?;
 
     Ok(Json(ListDevicesResponse {
         devices: rows.into_iter().map(DeviceListResponse::from).collect(),
@@ -110,25 +95,14 @@ pub async fn list_devices(
 )]
 pub async fn revoke_device(
     State(db): State<DatabaseState>,
-    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+    AuthenticatedUser { tenant_id, user_id }: AuthenticatedUser,
     Path(device_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    // First, verify the device belongs to the user and is not already revoked
-    let result = sqlx::query!(
-        r#"
-        UPDATE device_tokens
-        SET revoked_at = NOW()
-        WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
-        "#,
-        device_id,
-        user_id
-    )
-    .execute(&db.db_pool)
-    .await?;
-
-    // If no rows were affected, the device either doesn't exist,
-    // doesn't belong to the user, or is already revoked
-    if result.rows_affected() == 0 {
+    if !db
+        .device_repository
+        .revoke_for_user(tenant_id, user_id, device_id)
+        .await?
+    {
         return Err(AppError::not_found("Device not found"));
     }
 
@@ -142,31 +116,6 @@ pub async fn revoke_device(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Test that SQL query syntax is valid by checking it compiles
-    #[test]
-    fn test_list_devices_query_syntax() {
-        // The query string is validated by sqlx at compile time
-        // This test ensures the query is syntactically correct
-        let query = r#"
-            SELECT id, device_name, created_at, last_used_at
-            FROM device_tokens
-            WHERE user_id = $1 AND revoked_at IS NULL
-            ORDER BY created_at DESC
-        "#;
-        assert!(!query.is_empty());
-    }
-
-    /// Test that revoke device query syntax is valid
-    #[test]
-    fn test_revoke_device_query_syntax() {
-        let query = r#"
-            UPDATE device_tokens
-            SET revoked_at = NOW()
-            WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
-        "#;
-        assert!(!query.is_empty());
-    }
 
     /// Test DeviceListResponse serialization
     #[test]
@@ -213,9 +162,9 @@ mod tests {
 
     /// Test DeviceRow to DeviceListResponse conversion
     #[test]
-    fn test_device_row_conversion() {
+    fn test_device_record_conversion() {
         let now = chrono::Utc::now();
-        let row = DeviceRow {
+        let row = DeviceRecord {
             id: Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap(),
             device_name: "My Device".to_string(),
             created_at: now,
