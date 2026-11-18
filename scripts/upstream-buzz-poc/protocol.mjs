@@ -254,6 +254,12 @@ try {
 		const signedTag = channelRef(privateMessage);
 		return result(wire.accepted && privateMessage.kind === 9 && signedTag.valid && signedTag.channel_id === privateChannel, { ...wire, kind: privateMessage.kind, author: pubs.ALICE, channel_id: privateChannel, signed_h_tags: signedTag.tags.map((tag) => tag[1]) });
 	});
+	let privateReply;
+	await check('private_channel_alice_thread_reply', async () => {
+		privateReply = await event(keys.ALICE, 9, [['h', privateChannel], ['e', privateMessage.id, '', 'root'], ['e', privateMessage.id, '', 'reply']], `POC ${randomUUID()}`);
+		const wire = await alice.publish(privateReply);
+		return result(wire.accepted, { ...wire, channel_id: privateChannel, root_event_id: privateMessage.id, parent_event_id: privateMessage.id });
+	});
 	await check('private_channel_alice_history', async () => {
 		const read = await alice.read({ kinds: [9], '#h': [privateChannel], limit: 20 }, true);
 		const observed = read.events.find((item) => item.id === privateMessage.id);
@@ -280,10 +286,44 @@ try {
 		const receivedMatch = receivedTags.length === 1 && receivedTags[0] === publicChannel;
 		return result(read.outcome === 'EOSE' && observed?.kind === 9 && observed?.pubkey === pubs.ALICE && signedTag.valid && signedTag.channel_id === publicChannel && receivedMatch && returnedTag.valid && returnedTag.channel_id === publicChannel, { outcome: read.outcome, event_id: observed?.id, kind: observed?.kind, author: observed?.pubkey, channel_id: publicChannel, expected_channel_id: publicChannel, observed_channel_id: returnedTag.channel_id, signed_h_tags: signedTag.tags.map((tag) => tag[1]), received_h_tags: receivedTags, returned_h_tags: returnedTag.tags.map((tag) => tag[1]), channel_match: receivedMatch && returnedTag.channel_id === publicChannel, history_observed: Boolean(observed) });
 	});
+	let threadRoot, threadReply, nestedThreadReply;
+	await check('nip10_thread_reply_publish', async () => {
+		threadRoot = await event(keys.ALICE, 9, [['h', publicChannel]], `POC thread root ${randomUUID()}`);
+		const rootWire = await alice.publish(threadRoot);
+		threadReply = await event(keys.ALICE, 9, [['h', publicChannel], ['e', threadRoot.id, '', 'root'], ['e', threadRoot.id, '', 'reply']], `POC thread reply ${randomUUID()}`);
+		const replyWire = await alice.publish(threadReply);
+		nestedThreadReply = await event(keys.ALICE, 9, [['h', publicChannel], ['e', threadRoot.id, '', 'root'], ['e', threadReply.id, '', 'reply']], `POC nested thread reply ${randomUUID()}`);
+		const nestedReplyWire = await alice.publish(nestedThreadReply);
+		return result(rootWire.accepted && replyWire.accepted && nestedReplyWire.accepted, { root_event_id: threadRoot.id, reply_event_id: threadReply.id, nested_reply_event_id: nestedThreadReply.id, root_accepted: rootWire.accepted, reply_accepted: replyWire.accepted, nested_reply_accepted: nestedReplyWire.accepted, channel_id: publicChannel, root_tag: threadReply.tags[1], reply_tag: threadReply.tags[2], nested_root_tag: nestedThreadReply.tags[1], nested_reply_tag: nestedThreadReply.tags[2] });
+	});
+	await check('nip10_thread_history_bob', async () => {
+		const read = await bob.read({ kinds: [9], '#h': [publicChannel], '#e': [threadRoot.id], limit: 20 }, true);
+		const observed = read.events.find((item) => item.id === threadReply.id);
+		const nestedObserved = read.events.find((item) => item.id === nestedThreadReply.id);
+		const ancestry = observed?.tags?.filter((tag) => tag[0] === 'e').map((tag) => [tag[1], tag[3]]);
+		const nestedAncestry = nestedObserved?.tags?.filter((tag) => tag[0] === 'e').map((tag) => [tag[1], tag[3]]);
+		return result(read.outcome === 'EOSE' && observed?.pubkey === pubs.ALICE && ancestry?.some(([id, marker]) => id === threadRoot.id && marker === 'root') === true && ancestry?.some(([id, marker]) => id === threadRoot.id && marker === 'reply') === true && nestedObserved?.pubkey === pubs.ALICE && nestedAncestry?.some(([id, marker]) => id === threadRoot.id && marker === 'root') === true && nestedAncestry?.some(([id, marker]) => id === threadReply.id && marker === 'reply') === true, { outcome: read.outcome, event_id: observed?.id, expected_event_id: threadReply.id, nested_event_id: nestedObserved?.id, expected_nested_event_id: nestedThreadReply.id, root_event_id: threadRoot.id, author: observed?.pubkey, ancestry, nested_ancestry: nestedAncestry, history_observed: Boolean(observed), nested_history_observed: Boolean(nestedObserved) });
+	});
+	await check('nip10_wrong_root_rejected', async () => {
+		const wrongRoot = bytesToHex(randomBytes(32));
+		const forged = await event(keys.ALICE, 9, [['h', publicChannel], ['e', wrongRoot, '', 'root'], ['e', nestedThreadReply.id, '', 'reply']], `POC invalid root ${randomUUID()}`);
+		const wire = await alice.publish(forged);
+		return result(!wire.accepted && wire.outcome === 'OK', { ...wire, expected_rejection: true, claimed_root_id: wrongRoot, parent_event_id: nestedThreadReply.id });
+	});
+	await check('nip10_cross_channel_parent_rejected', async () => {
+		const otherChannel = randomUUID();
+		const created = await owner.publish(await event(keys.OWNER, 9007, [['h', otherChannel], ['name', 'POC thread boundary'], ['visibility', 'open']]));
+		const parent = await event(keys.ALICE, 9, [['h', otherChannel]], `POC other-channel root ${randomUUID()}`);
+		const parentWire = await alice.publish(parent);
+		const forged = await event(keys.ALICE, 9, [['h', publicChannel], ['e', parent.id, '', 'root'], ['e', parent.id, '', 'reply']], `POC cross-channel reply ${randomUUID()}`);
+		const replyWire = await alice.publish(forged);
+		return result(created.accepted && parentWire.accepted && !replyWire.accepted && replyWire.outcome === 'OK', { channel_id: publicChannel, parent_channel_id: otherChannel, parent_event_id: parent.id, reply_event_id: forged.id, setup_accepted: created.accepted && parentWire.accepted, reply_accepted: replyWire.accepted, relay_message: replyWire.relay_message });
+	});
 	await check('private_channel_bob_denied', async () => {
 		const metadata = await bob.read({ kinds: [39000], '#d': [privateChannel], limit: 20 });
 		const history = await bob.read({ kinds: [9], '#h': [privateChannel], limit: 20 });
-		return result([metadata, history].every(deniedWithoutEvents), { metadata_outcome: metadata.outcome, metadata_event_count: metadata.events.length, history_outcome: history.outcome, history_event_count: history.events.length });
+		const thread = await bob.read({ kinds: [9], '#h': [privateChannel], '#e': [privateMessage.id], limit: 20 });
+		return result([metadata, history, thread].every(deniedWithoutEvents), { metadata_outcome: metadata.outcome, metadata_event_count: metadata.events.length, history_outcome: history.outcome, history_event_count: history.events.length, thread_outcome: thread.outcome, thread_event_count: thread.events.length });
 	});
 	await check('private_channel_add_bob', async () => {
 		const wire = await owner.publish(await event(keys.OWNER, 9000, [['h', privateChannel], ['p', pubs.BOB]]));
@@ -292,8 +332,10 @@ try {
 	await check('private_channel_bob_member_history', async () => {
 		const read = await bob.read({ kinds: [9], '#h': [privateChannel], limit: 20 }, true);
 		const observed = read.events.find((item) => item.id === privateMessage.id);
+		const threadRead = await bob.read({ kinds: [9], '#h': [privateChannel], '#e': [privateMessage.id], limit: 20 }, true);
+		const threadObserved = threadRead.events.find((item) => item.id === privateReply.id);
 		const tag = channelRef(observed), receivedTags = receivedChannelRef(bob, privateMessage.id);
-		return result(read.outcome === 'EOSE' && observed?.kind === 9 && observed?.pubkey === pubs.ALICE && tag.valid && tag.channel_id === privateChannel && receivedTags.length === 1 && receivedTags[0] === privateChannel, { outcome: read.outcome, event_id: observed?.id, kind: observed?.kind, author: observed?.pubkey, channel_id: privateChannel, expected_channel_id: privateChannel, observed_channel_id: tag.channel_id, received_h_tags: receivedTags, returned_h_tags: tag.tags.map((item) => item[1]), history_observed: Boolean(observed) });
+		return result(read.outcome === 'EOSE' && observed?.kind === 9 && observed?.pubkey === pubs.ALICE && tag.valid && tag.channel_id === privateChannel && receivedTags.length === 1 && receivedTags[0] === privateChannel && threadRead.outcome === 'EOSE' && threadObserved?.id === privateReply.id, { outcome: read.outcome, event_id: observed?.id, kind: observed?.kind, author: observed?.pubkey, channel_id: privateChannel, expected_channel_id: privateChannel, observed_channel_id: tag.channel_id, received_h_tags: receivedTags, returned_h_tags: tag.tags.map((item) => item[1]), history_observed: Boolean(observed), thread_history_outcome: threadRead.outcome, thread_reply_observed: Boolean(threadObserved) });
 	});
 	await check('nip43_add_outsider_for_private_dm_denial', async () => {
 		const wire = await owner.publish(await event(keys.OWNER, 9030, [['p', pubs.OUTSIDER]]));
