@@ -463,15 +463,15 @@ case against the previous harness and passes with the marker requirement.
 
 The production `BuzzAdmissionBridge` now recognizes a wrapped conditional
 relay rejection whose final reason token is `stale_revision`. It records the
-conditional attempt as rejected through the existing durable outcome path, so
-the worker can retry against a fresh revision. This does not bypass relay
-authentication, identity-replacement guards, or the production qualification
-allowlist. The stale-revision live scenario asserts the rejected attempt and
-the subsequent fresh command ID.
+conditional attempt with outcome `stale` through the existing durable outcome
+path, so the worker can retry against a fresh revision. This does not bypass
+relay authentication, identity-replacement guards, or the production
+qualification allowlist. The stale-revision live scenario asserts the rejected
+attempt and the subsequent fresh command ID.
 
 This is a bounded production retry-classification change in addition to the
 test harness and test-only Buzz source pin; the PR is not test-only. The prior
 protected disposable-service workflow passed on the preceding head. Fresh
-protected checks and independent review are pending on rebased head
-`86fe76d17b368c7393a19632858a62568313500b`; merge and production qualification
-remain blocked until those gates and human approval pass.
+protected checks and independent review were pending when this note was
+written; merge and production qualification remain blocked until those gates
+and human approval pass.
