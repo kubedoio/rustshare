@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { page } from '$lib/kit/page';
-	import { getApplicationByRouteSlug } from '$lib/applications/registry';
+	import { applicationsStore } from '$lib/applications/registry';
 	import MailSettingsPanel from '$lib/settings/MailSettingsPanel.svelte';
 	import CalendarSettingsPanel from '$lib/settings/CalendarSettingsPanel.svelte';
 
 	let slug = $derived($page.params.slug ?? '');
-	let application = $derived(getApplicationByRouteSlug(slug));
+	let application = $derived($applicationsStore.find((item) => item.key === slug));
 	let setting = $derived(
 		(application?.settings ?? []).find((item) => item.route === $page.url.pathname)
 	);
