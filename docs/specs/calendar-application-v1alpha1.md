@@ -257,58 +257,45 @@ Rows are deleted on consume (single use); expired rows are ignored/swept.
 
 ## Import semantics (iCal/.ics)
 
-- Upload is a multipart file to `POST /api/v1/calendar/import`; the handler
-  streams to a temp file via the same mechanism as the mail upload path
-  (`stream_multipart_field_to_temp_file`, whose mail cap is 25 MiB), with a
-  calendar cap of 10 MB.
-- The full multipart request is capped at 11 MiB, including framing and any
-  additional fields, so ignored fields cannot consume the server-wide upload
-  allowance.
-- A file may contain at most 10,000 VEVENT components. The importer rejects an
-  over-limit file as a failed job before parsing components or writing any
-  events; the byte and event-count limits jointly bound upload and import work.
-- The file is parsed with a maintained RFC 5545 parser crate (implementation
-  decision recorded in the plan; `icalendar` preferred, `ical` and a
-  hand-rolled parser rejected). Recurrence expansion uses the maintained
-  `rrule` crate (new dependency alongside `icalendar`).
-- Each VEVENT maps to one `calendar_events` row keyed by
-  `(source_id, UID, RECURRENCE-ID)`. Re-importing the same file is an
-  idempotent upsert: unchanged events are untouched, changed events update,
-  and duplicates are never created.
-- Time handling: `DTSTART;TZID=...` is converted to UTC using the embedded
-  VTIMEZONE definition — including non-IANA Windows zone names such as
-  `W. Europe Standard Time`, whose STANDARD/DAYLIGHT transition rules are
-  resolved — or the system IANA tz database; floating times are interpreted
-  as UTC and marked `timezone = 'UTC'`. All-day `DATE` values become
+- Upload is a two-step multipart flow: `POST /api/v1/calendar/import/preview`
+  validates the file against an explicitly selected caller-owned
+  `ical_import` source; `POST /api/v1/calendar/import` confirms the same file
+  using a SHA-256 token that binds the bytes, destination, and matching event
+  snapshot. Confirmation rechecks Calendar enablement, source ownership, source
+  kind, enabled state, and the event snapshot before queuing work.
+  Workers serialize jobs per source and recheck the queued snapshot before any
+  writes; database claim tokens fence stale processors after reclaim, and a
+  stale preview fails with a request to preview again.
+- Both endpoints stream the file through the bounded temp-file upload path
+  with a 10 MiB calendar cap. The complete multipart request is capped at 11
+  MiB.
+- A file may contain at most 1,000 VEVENT components. Unfolded property lines
+  and values are limited to 16 KiB; RRULE is limited to 1 KiB and must parse
+  with the existing recurrence engine. Preview and confirmation parsing time
+  out after 10 seconds.
+- The file is parsed with the maintained `icalendar` RFC 5545 crate.
+  Recurrence expansion uses the existing `rrule` crate.
+- Supported VEVENT data is UID, UTC DTSTAMP, SUMMARY, DESCRIPTION, LOCATION, the supported
+  STATUS values, UTC DATE-TIME, non-recurring IANA `TZID` DATE-TIME, all-day
+  DATE values, DURATION, and supported UTC RRULE. Floating times, recurrence
+  overrides, embedded or non-IANA `VTIMEZONE`, and non-UTC recurrence are
+  rejected with event-level diagnostics. All-day DATE values become
   UTC-midnight spans with `all_day = true` and `original_date` preserved.
-- For UTC-timed VEVENTs without an `RRULE` or explicit `DTSTART` `TZID`, a valid IANA
-  `X-WR-TIMEZONE` on the containing VCALENDAR is retained as the event's
-  display-timezone hint; it does not change the UTC instant. This preserves
-  the timezone metadata emitted by the single-event exporter. Explicit `TZID`
-  properties and all-day dates take precedence. UTC recurring masters retain
-  `UTC` so a display hint cannot change recurrence behavior across DST.
-- Timezone limitation for recurrence: an event imported with a non-IANA
-  `TZID` stores that raw TZID string, which the read-time expander cannot
-  resolve, so a recurring master with such a timezone expands on UTC
-  wall-clock (the stored master `starts_at` instant and non-recurring events
-  remain correct). Recurrence expansion is exact for IANA `TZID` values and
-  for floating/UTC times.
-- RRULE strings are stored verbatim; v1 does not validate every RRULE form
-  and never expands more than the requested range window at read time.
-- Expansion semantics (normative): iteration is wall-clock in the event's
-  IANA `TZID` (not UTC-instant); DST gaps push forward and overlaps keep the
-  first occurrence; `UNTIL`/`COUNT` expansion is capped at 1000 instances per
-  master; floating times (no `TZID`) are interpreted as UTC, matching
-  import-time storage.
-- VEVENT `STATUS` maps verbatim to `status` (`CONFIRMED`/`TENTATIVE`/
-  `CANCELLED`); a missing `STATUS` defaults to `confirmed`.
-- Change detection: the importer compares a normalized column set (or
-  `external_etag` when present) and updates the row only on actual change.
-- VALARM is parsed but discarded in v1 (reminders are out of scope); VTODO,
-  VJOURNAL, VFREEBUSY components are ignored and counted as skipped.
-- Malformed components fail only their own event (`failed_events += 1` with a
-  bounded error sample in `last_error`); a structurally unreadable file fails
-  the job.
+- Rows are scoped by the selected destination source and keyed by
+  `(source_id, UID, RECURRENCE-ID)`. The active-row unique index makes concurrent
+  upserts race-safe. The preview reports new, unchanged, changed, and
+  unsupported events. Confirmed re-imports leave unchanged rows untouched and
+  update changed content only within the selected destination.
+- For UTC events without DTSTART `TZID`, a valid IANA `X-WR-TIMEZONE` on the
+  containing VCALENDAR is retained as the display-timezone hint; it does not
+  change the UTC instant. Explicit TZID and all-day dates take precedence.
+- Attachments, URLs, participants, alarms, categories, exceptions, and other
+  unsupported event fields are reported and skipped. VTODO, VJOURNAL, and
+  VFREEBUSY are reported as unsupported. No remote URL or attachment is
+  fetched. Imported text stays plain untrusted content.
+- Per-event mapping and storage failures do not stop other events; the job
+  exposes processed/failed totals and a bounded diagnostic sample. A
+  structurally unreadable file fails the job.
 
 ## External sync semantics (Google / Microsoft)
 

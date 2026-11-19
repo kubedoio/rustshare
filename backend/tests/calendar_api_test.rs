@@ -2758,6 +2758,7 @@ async fn cross_tenant_ids_are_not_visible() {
         tenant_id: tenant_a,
         owner_id: user_a.id,
         source_id: source_a.id,
+        claim_token: None,
         status: "pending".to_string(),
         filename: "tenant-a.ics".to_string(),
         size_bytes: 16,
@@ -2773,7 +2774,7 @@ async fn cross_tenant_ids_are_not_visible() {
     };
     state
         .metadata_store
-        .create_calendar_import_job(&job_a, b"BEGIN:VCALENDAR")
+        .create_calendar_import_job(&job_a, b"BEGIN:VCALENDAR", None)
         .await
         .expect("create import job");
 

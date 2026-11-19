@@ -8,7 +8,9 @@ const mocks = vi.hoisted(() => ({
 	listSources: vi.fn(),
 	listImportJobs: vi.fn(),
 	listProviders: vi.fn(),
+	previewIcs: vi.fn(),
 	uploadIcs: vi.fn(),
+	createIcsSource: vi.fn(),
 	connectSource: vi.fn(),
 	disconnectSource: vi.fn(),
 	resyncSource: vi.fn()
@@ -19,7 +21,9 @@ vi.mock('$lib/api/calendar', () => ({
 		listSources: mocks.listSources,
 		listImportJobs: mocks.listImportJobs,
 		listProviders: mocks.listProviders,
+		previewIcs: mocks.previewIcs,
 		uploadIcs: mocks.uploadIcs,
+		createIcsSource: mocks.createIcsSource,
 		connectSource: mocks.connectSource,
 		disconnectSource: mocks.disconnectSource,
 		resyncSource: mocks.resyncSource
@@ -56,6 +60,13 @@ const googleSource = {
 	display_name: 'Google (alice@example.com)',
 	external_account: 'alice@example.com',
 	last_synced_at: '2026-10-01T10:00:00Z'
+};
+
+const importSource = {
+	...internalSource,
+	id: 'src-ical',
+	kind: 'ical_import',
+	display_name: 'Imported'
 };
 
 function setUrl(search: string) {
@@ -113,7 +124,61 @@ describe('CalendarSettingsPanel', () => {
 
 		expect(await screen.findByText('My calendar')).toBeTruthy();
 		expect(await screen.findByText('export.ics')).toBeTruthy();
-		expect(screen.getByText('5/5 events')).toBeTruthy();
+		expect(screen.getByText('5 processed · 0 failed of 5')).toBeTruthy();
+	});
+
+	it('previews event details and requires confirmation before queuing the import', async () => {
+		mocks.listSources.mockResolvedValue([internalSource, importSource]);
+		mocks.previewIcs.mockResolvedValue({
+			digest: 'sha256',
+			source_id: 'src-ical',
+			new_events: 1,
+			duplicates: 0,
+			conflicts: 0,
+			unsupported: 0,
+			events: [
+				{
+					uid: 'event-1',
+					title: '<script>unsafe</script>',
+					description: null,
+					location: null,
+					starts_at: '2026-11-19T09:00:00Z',
+					ends_at: '2026-11-19T10:00:00Z',
+					all_day: false,
+					timezone: 'UTC',
+					recurrence: false,
+					rrule: null,
+					status: 'confirmed',
+					outcome: 'new',
+					diagnostic: null
+				}
+			]
+		});
+		mocks.uploadIcs.mockResolvedValue({
+			job_id: 'job-1',
+			source_id: 'src-ical',
+			status: 'pending'
+		});
+		render(CalendarSettingsPanel);
+
+		await screen.findByRole('option', { name: 'Imported' });
+		await fireEvent.change(screen.getByLabelText('Destination calendar'), {
+			target: { value: 'src-ical' }
+		});
+		expect((screen.getByLabelText('Destination calendar') as HTMLSelectElement).value).toBe(
+			'src-ical'
+		);
+		const file = new File(['BEGIN:VCALENDAR'], 'event.ics', { type: 'text/calendar' });
+		await fireEvent.change(screen.getByLabelText('Choose .ics file'), {
+			target: { files: [file] }
+		});
+		await waitFor(() => expect(mocks.previewIcs).toHaveBeenCalledWith(file, 'src-ical'));
+		expect(await screen.findByText('<script>unsafe</script>')).toBeTruthy();
+		expect(screen.queryByRole('alert')).toBeNull();
+		expect(mocks.uploadIcs).not.toHaveBeenCalled();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }));
+		await waitFor(() => expect(mocks.uploadIcs).toHaveBeenCalledWith(file, 'src-ical', 'sha256'));
 	});
 
 	it('navigates to the provider authorize URL on connect', async () => {

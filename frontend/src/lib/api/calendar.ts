@@ -97,6 +97,32 @@ export interface CalendarImportResponse {
 	status: CalendarImportJobStatus;
 }
 
+export interface CalendarImportPreviewEvent {
+	uid: string | null;
+	title: string | null;
+	description: string | null;
+	location: string | null;
+	starts_at: string | null;
+	ends_at: string | null;
+	all_day: boolean;
+	timezone: string | null;
+	recurrence: boolean;
+	rrule: string | null;
+	status: string | null;
+	outcome: 'new' | 'duplicate' | 'conflict' | 'unsupported';
+	diagnostic: string | null;
+}
+
+export interface CalendarImportPreview {
+	digest: string;
+	source_id: string;
+	new_events: number;
+	duplicates: number;
+	conflicts: number;
+	unsupported: number;
+	events: CalendarImportPreviewEvent[];
+}
+
 export interface CalendarProviderStatus {
 	kind: string;
 	/** Whether this deployment has OAuth client credentials for the provider. */
@@ -196,10 +222,22 @@ export const calendarApi = {
 		await apiClient.delete(`/calendar/sources/${sourceId}`);
 	},
 
-	uploadIcs: async (file: File, sourceId?: string): Promise<CalendarImportResponse> => {
+	previewIcs: async (file: File, sourceId: string): Promise<CalendarImportPreview> => {
 		const form = new FormData();
 		form.append('file', file);
-		if (sourceId) form.append('source_id', sourceId);
+		form.append('source_id', sourceId);
+		return apiClient.post<CalendarImportPreview>('/calendar/import/preview', form);
+	},
+
+	uploadIcs: async (
+		file: File,
+		sourceId: string,
+		previewDigest: string
+	): Promise<CalendarImportResponse> => {
+		const form = new FormData();
+		form.append('file', file);
+		form.append('source_id', sourceId);
+		form.append('preview_digest', previewDigest);
 		return apiClient.post<CalendarImportResponse>('/calendar/import', form);
 	},
 

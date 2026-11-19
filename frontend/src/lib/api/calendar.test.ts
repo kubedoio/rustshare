@@ -141,26 +141,25 @@ describe('calendarApi', () => {
 		expect(apiClient.delete).toHaveBeenCalledWith('/calendar/sources/src-1');
 	});
 
-	it('uploads .ics files as multipart form data with an optional target source', async () => {
-		vi.mocked(apiClient.post).mockResolvedValueOnce({ job_id: 'job-1', source_id: 'src-1' });
+	it('previews an .ics upload for an explicit destination', async () => {
+		vi.mocked(apiClient.post).mockResolvedValueOnce({ digest: 'abc', events: [] });
 		const file = new File(['BEGIN:VCALENDAR'], 'export.ics', { type: 'text/calendar' });
-
-		await calendarApi.uploadIcs(file, 'src-1');
-
-		expect(apiClient.post).toHaveBeenCalledWith('/calendar/import', expect.any(FormData));
+		await calendarApi.previewIcs(file, 'src-1');
+		expect(apiClient.post).toHaveBeenCalledWith('/calendar/import/preview', expect.any(FormData));
 		const form = vi.mocked(apiClient.post).mock.calls[0][1] as FormData;
 		expect(form.get('file')).toBe(file);
 		expect(form.get('source_id')).toBe('src-1');
 	});
 
-	it('omits source_id when uploading without a target source', async () => {
-		vi.mocked(apiClient.post).mockResolvedValueOnce({ job_id: 'job-1', source_id: 'src-2' });
-		const file = new File(['BEGIN:VCALENDAR'], 'export.ics');
-
-		await calendarApi.uploadIcs(file);
-
+	it('confirms the exact previewed file and destination', async () => {
+		vi.mocked(apiClient.post).mockResolvedValueOnce({ job_id: 'job-1', source_id: 'src-1' });
+		const file = new File(['BEGIN:VCALENDAR'], 'export.ics', { type: 'text/calendar' });
+		await calendarApi.uploadIcs(file, 'src-1', 'abc');
+		expect(apiClient.post).toHaveBeenCalledWith('/calendar/import', expect.any(FormData));
 		const form = vi.mocked(apiClient.post).mock.calls[0][1] as FormData;
-		expect(form.get('source_id')).toBeNull();
+		expect(form.get('file')).toBe(file);
+		expect(form.get('source_id')).toBe('src-1');
+		expect(form.get('preview_digest')).toBe('abc');
 	});
 
 	it('lists and fetches import jobs', async () => {

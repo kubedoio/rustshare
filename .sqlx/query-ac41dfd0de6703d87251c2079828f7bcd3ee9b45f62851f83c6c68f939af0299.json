@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            WITH target AS (\n                SELECT j.id\n                FROM calendar_import_jobs j\n                JOIN calendar_sources s ON s.id = j.source_id\n                JOIN application_enablements e\n                  ON e.tenant_id = j.tenant_id\n                 AND e.workspace_id = j.tenant_id\n                 AND e.application_id = 'io.elembra.calendar'\n                WHERE j.status = 'pending'\n                  AND j.deleted_at IS NULL\n                  AND s.deleted_at IS NULL\n                  AND s.is_enabled = true\n                  AND e.enabled = true\n                ORDER BY j.created_at ASC\n                FOR UPDATE OF j SKIP LOCKED\n                LIMIT 1\n            ),\n            updated AS (\n                UPDATE calendar_import_jobs\n                SET status = 'running', started_at = NOW(), updated_at = NOW()\n                FROM target\n                WHERE calendar_import_jobs.id = target.id\n                RETURNING calendar_import_jobs.*\n            )\n            SELECT\n                id, tenant_id, owner_id, source_id, status, filename, size_bytes,\n                total_events, processed_events, failed_events, last_error,\n                started_at, completed_at, deleted_at, created_at, updated_at\n            FROM updated\n            ",
+  "query": "\n            SELECT\n                id, tenant_id, owner_id, source_id, status, filename, size_bytes,\n                total_events, processed_events, failed_events, last_error, claim_token,\n                started_at, completed_at, deleted_at, created_at, updated_at\n            FROM calendar_import_jobs\n            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL\n            ORDER BY created_at DESC\n            LIMIT $3\n            ",
   "describe": {
     "columns": [
       {
@@ -60,32 +60,41 @@
       },
       {
         "ordinal": 11,
+        "name": "claim_token",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 12,
         "name": "started_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "completed_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "deleted_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
     },
     "nullable": [
       false,
@@ -102,9 +111,10 @@
       true,
       true,
       true,
+      true,
       false,
       false
     ]
   },
-  "hash": "08e722b4d4334fd610c02b28dcc19a44c38dc63b95665018e37d2dc4d0d5b1dd"
+  "hash": "ac41dfd0de6703d87251c2079828f7bcd3ee9b45f62851f83c6c68f939af0299"
 }

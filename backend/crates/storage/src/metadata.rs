@@ -7164,6 +7164,34 @@ impl MetadataStore {
         Ok(row)
     }
 
+    /// Load only events matching imported UIDs in one already-authorized
+    /// destination, for the import preview's duplicate/update classification.
+    pub async fn list_calendar_import_matches(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        source_id: Uuid,
+        external_uids: &[String],
+    ) -> Result<Vec<CalendarEvent>> {
+        let events = sqlx::query_as::<_, CalendarEvent>(
+            r#"SELECT id, tenant_id, owner_id, source_id, external_uid, external_etag,
+                      recurrence_id, title, description, location, starts_at, ends_at,
+                      all_day, original_date, timezone, rrule, status, read_only, raw,
+                      deleted_at, created_at, updated_at
+               FROM calendar_events
+               WHERE tenant_id = $1 AND owner_id = $2 AND source_id = $3
+                 AND external_uid = ANY($4) AND recurrence_id IS NULL
+                 AND deleted_at IS NULL"#,
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(source_id)
+        .bind(external_uids)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(events)
+    }
+
     /// Whether an active calendar event row exists with this ID **in the
     /// caller's tenant**, regardless of owner. Used to distinguish a foreign
     /// but same-tenant ID (404) from an already-deleted/never-existing one
@@ -7364,14 +7392,15 @@ impl MetadataStore {
         &self,
         job: &CalendarImportJob,
         content: &[u8],
+        preview_digest: Option<&str>,
     ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO calendar_import_jobs (
                 id, tenant_id, owner_id, source_id, status, filename,
-                size_bytes, content, created_at, updated_at
+                size_bytes, content, preview_digest, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
             job.id,
             job.tenant_id,
@@ -7381,6 +7410,7 @@ impl MetadataStore {
             job.filename,
             job.size_bytes,
             content,
+            preview_digest,
             job.created_at,
             job.updated_at,
         )
@@ -7400,6 +7430,18 @@ impl MetadataStore {
         Ok(content)
     }
 
+    /// Expected destination snapshot for the confirmed import, when the job
+    /// was created by the preview-and-confirm API.
+    pub async fn get_calendar_import_job_preview_digest(&self, id: Uuid) -> Result<Option<String>> {
+        let digest = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT preview_digest FROM calendar_import_jobs WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(digest.flatten())
+    }
+
     /// List the most recent active import jobs for a user (bounded).
     pub async fn list_calendar_import_jobs_by_owner(
         &self,
@@ -7411,7 +7453,7 @@ impl MetadataStore {
             r#"
             SELECT
                 id, tenant_id, owner_id, source_id, status, filename, size_bytes,
-                total_events, processed_events, failed_events, last_error,
+                total_events, processed_events, failed_events, last_error, claim_token,
                 started_at, completed_at, deleted_at, created_at, updated_at
             FROM calendar_import_jobs
             WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL
@@ -7439,7 +7481,7 @@ impl MetadataStore {
             r#"
             SELECT
                 id, tenant_id, owner_id, source_id, status, filename, size_bytes,
-                total_events, processed_events, failed_events, last_error,
+                total_events, processed_events, failed_events, last_error, claim_token,
                 started_at, completed_at, deleted_at, created_at, updated_at
             FROM calendar_import_jobs
             WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL
@@ -7475,20 +7517,26 @@ impl MetadataStore {
                   AND s.deleted_at IS NULL
                   AND s.is_enabled = true
                   AND e.enabled = true
+                  AND NOT EXISTS (
+                    SELECT 1 FROM calendar_import_jobs running
+                    WHERE running.source_id = j.source_id
+                      AND running.status = 'running'
+                      AND running.deleted_at IS NULL
+                  )
                 ORDER BY j.created_at ASC
-                FOR UPDATE OF j SKIP LOCKED
+                FOR UPDATE OF s, j SKIP LOCKED
                 LIMIT 1
             ),
             updated AS (
                 UPDATE calendar_import_jobs
-                SET status = 'running', started_at = NOW(), updated_at = NOW()
+                SET status = 'running', claim_token = gen_random_uuid(), started_at = NOW(), updated_at = NOW()
                 FROM target
                 WHERE calendar_import_jobs.id = target.id
                 RETURNING calendar_import_jobs.*
             )
             SELECT
                 id, tenant_id, owner_id, source_id, status, filename, size_bytes,
-                total_events, processed_events, failed_events, last_error,
+                total_events, processed_events, failed_events, last_error, claim_token,
                 started_at, completed_at, deleted_at, created_at, updated_at
             FROM updated
             "#,
@@ -7510,7 +7558,7 @@ impl MetadataStore {
         let result = sqlx::query!(
             r#"
             UPDATE calendar_import_jobs
-            SET status = 'pending', started_at = NULL, last_error = 'stale running job reset by worker', updated_at = NOW()
+            SET status = 'pending', claim_token = NULL, started_at = NULL, last_error = 'stale running job reset by worker', updated_at = NOW()
             WHERE status = 'running'
               AND deleted_at IS NULL
               AND updated_at < NOW() - interval '1 second' * $1
@@ -7528,23 +7576,25 @@ impl MetadataStore {
     pub async fn update_calendar_import_job_progress(
         &self,
         id: Uuid,
+        claim_token: Uuid,
         total: i32,
         processed: i32,
         failed: i32,
         last_error: Option<&str>,
-    ) -> Result<()> {
-        sqlx::query!(
+    ) -> Result<bool> {
+        let result = sqlx::query!(
             r#"
             UPDATE calendar_import_jobs
             SET
-                total_events = $2,
-                processed_events = $3,
-                failed_events = $4,
-                last_error = $5,
+                total_events = $3,
+                processed_events = $4,
+                failed_events = $5,
+                last_error = $6,
                 updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1 AND claim_token = $2 AND status = 'running' AND deleted_at IS NULL
             "#,
             id,
+            claim_token,
             total,
             processed,
             failed,
@@ -7552,19 +7602,24 @@ impl MetadataStore {
         )
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     /// Mark a running calendar import job as completed. Returns `true` only
     /// when the job was still running (a concurrent cancel wins).
-    pub async fn mark_calendar_import_job_completed(&self, id: Uuid) -> Result<bool> {
+    pub async fn mark_calendar_import_job_completed(
+        &self,
+        id: Uuid,
+        claim_token: Uuid,
+    ) -> Result<bool> {
         let result = sqlx::query!(
             r#"
             UPDATE calendar_import_jobs
-            SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL AND status = 'running'
+            SET status = 'completed', claim_token = NULL, completed_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND claim_token = $2 AND deleted_at IS NULL AND status = 'running'
             "#,
-            id
+            id,
+            claim_token
         )
         .execute(&self.pool)
         .await?;
@@ -7572,14 +7627,20 @@ impl MetadataStore {
     }
 
     /// Mark a calendar import job as failed with a bounded error sample.
-    pub async fn mark_calendar_import_job_failed(&self, id: Uuid, error: &str) -> Result<bool> {
+    pub async fn mark_calendar_import_job_failed(
+        &self,
+        id: Uuid,
+        claim_token: Uuid,
+        error: &str,
+    ) -> Result<bool> {
         let result = sqlx::query!(
             r#"
             UPDATE calendar_import_jobs
-            SET status = 'failed', last_error = $2, completed_at = NOW(), updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL AND status IN ('pending', 'running')
+            SET status = 'failed', claim_token = NULL, last_error = $3, completed_at = NOW(), updated_at = NOW()
+            WHERE id = $1 AND claim_token = $2 AND deleted_at IS NULL AND status = 'running'
             "#,
             id,
+            claim_token,
             error
         )
         .execute(&self.pool)
@@ -7587,21 +7648,36 @@ impl MetadataStore {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Insert an imported event or update the existing row with the same
-    /// `(source_id, external_uid, recurrence_id)` key. The update is skipped
-    /// when the normalized columns are unchanged, so re-imports never bump
-    /// `updated_at`. Returns `true` when a row was inserted or changed.
-    pub async fn upsert_calendar_imported_event(&self, event: &CalendarEvent) -> Result<bool> {
-        let result = sqlx::query!(
+    /// Upsert by the selected import destination's external identity. Events
+    /// in other sources are outside this key and cannot be overwritten.
+    /// Unchanged re-imports do not bump timestamps; returns `true` for insert
+    /// or content update.
+    pub async fn upsert_calendar_imported_event(
+        &self,
+        job_id: Uuid,
+        event: &CalendarEvent,
+        claim_token: Uuid,
+        total_events: i32,
+    ) -> Result<Option<bool>> {
+        let result = sqlx::query_as::<_, (bool, bool, bool)>(
             r#"
+            WITH claim AS MATERIALIZED (
+                SELECT id
+                FROM calendar_import_jobs
+                WHERE id = $1 AND claim_token = $2 AND source_id = $6
+                  AND tenant_id = $4 AND owner_id = $5
+                  AND status = 'running' AND deleted_at IS NULL
+                FOR UPDATE
+            ), upserted AS (
             INSERT INTO calendar_events (
                 id, tenant_id, owner_id, source_id, external_uid, external_etag,
                 recurrence_id, title, description, location, starts_at, ends_at,
                 all_day, original_date, timezone, rrule, status, read_only, raw,
                 deleted_at, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                    $15, $16, $17, $18, $19, $20, $21, $22)
+            SELECT $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                   $17, $18, $19, $20, $21, $22, $23, $24
+            FROM claim
             ON CONFLICT (source_id, external_uid, COALESCE(recurrence_id, ''))
                 WHERE deleted_at IS NULL
             DO UPDATE SET
@@ -7615,7 +7691,7 @@ impl MetadataStore {
                 timezone = EXCLUDED.timezone,
                 rrule = EXCLUDED.rrule,
                 status = EXCLUDED.status,
-                updated_at = NOW()
+                updated_at = EXCLUDED.updated_at
             WHERE
                 calendar_events.title IS DISTINCT FROM EXCLUDED.title
                 OR calendar_events.description IS DISTINCT FROM EXCLUDED.description
@@ -7627,33 +7703,45 @@ impl MetadataStore {
                 OR calendar_events.timezone IS DISTINCT FROM EXCLUDED.timezone
                 OR calendar_events.rrule IS DISTINCT FROM EXCLUDED.rrule
                 OR calendar_events.status IS DISTINCT FROM EXCLUDED.status
+            RETURNING id
+            ), progress AS (
+                UPDATE calendar_import_jobs
+                SET total_events = $25, processed_events = processed_events + 1, updated_at = NOW()
+                WHERE id = $1 AND claim_token = $2 AND status = 'running' AND deleted_at IS NULL
+                RETURNING id
+            )
+            SELECT EXISTS(SELECT 1 FROM claim), EXISTS(SELECT 1 FROM progress),
+                   EXISTS(SELECT 1 FROM upserted)
             "#,
-            event.id,
-            event.tenant_id,
-            event.owner_id,
-            event.source_id,
-            event.external_uid,
-            event.external_etag,
-            event.recurrence_id,
-            event.title,
-            event.description,
-            event.location,
-            event.starts_at,
-            event.ends_at,
-            event.all_day,
-            event.original_date,
-            event.timezone,
-            event.rrule,
-            event.status,
-            event.read_only,
-            event.raw,
-            event.deleted_at,
-            event.created_at,
-            event.updated_at,
         )
-        .execute(&self.pool)
+        .bind(job_id)
+        .bind(claim_token)
+        .bind(event.id)
+        .bind(event.tenant_id)
+        .bind(event.owner_id)
+        .bind(event.source_id)
+        .bind(&event.external_uid)
+        .bind(&event.external_etag)
+        .bind(&event.recurrence_id)
+        .bind(&event.title)
+        .bind(&event.description)
+        .bind(&event.location)
+        .bind(event.starts_at)
+        .bind(event.ends_at)
+        .bind(event.all_day)
+        .bind(event.original_date)
+        .bind(&event.timezone)
+        .bind(&event.rrule)
+        .bind(&event.status)
+        .bind(event.read_only)
+        .bind(&event.raw)
+        .bind(event.deleted_at)
+        .bind(event.created_at)
+        .bind(event.updated_at)
+        .bind(total_events)
+        .fetch_one(&self.pool)
         .await?;
-        Ok(result.rows_affected() > 0)
+        Ok((result.0 && result.1).then_some(result.2))
     }
 
     /// Persist a single-use, user-bound OAuth state for the connect flow.

@@ -24,6 +24,7 @@ const CALENDAR_APPLICATION_ID: &str = "io.elembra.calendar";
 const MAIL_APPLICATION_ID: &str = "io.elembra.mail";
 /// Calendar .ics uploads are capped at 10 MB (spec §Import semantics).
 const MAX_CALENDAR_IMPORT_SIZE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_CALENDAR_PARSE_TIME: std::time::Duration = std::time::Duration::from_secs(10);
 /// Hard byte cap for the multipart `source_id` text field. A UUID is 36 bytes;
 /// the small allowance tolerates surrounding whitespace without letting an
 /// authenticated caller force a large allocation (the router still permits a
@@ -49,6 +50,19 @@ async fn read_bounded_field_text(
         buf.extend_from_slice(&chunk);
     }
     String::from_utf8(buf).map_err(|_| AppError::bad_request("Invalid source_id: expected a UUID"))
+}
+
+async fn preview_ical_file(
+    bytes: Vec<u8>,
+) -> Result<Vec<crate::services::ical_import::ImportPreviewEvent>, AppError> {
+    let parsed = tokio::time::timeout(
+        MAX_CALENDAR_PARSE_TIME,
+        tokio::task::spawn_blocking(move || crate::services::ical_import::preview_import(&bytes)),
+    )
+    .await
+    .map_err(|_| AppError::bad_request("Calendar file exceeded the 10-second processing limit"))?
+    .map_err(|e| AppError::internal(format!("Calendar preview task failed: {e}")))?;
+    parsed.map_err(|e| AppError::bad_request(e.to_string()))
 }
 
 async fn require_calendar_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
@@ -1162,10 +1176,153 @@ pub async fn delete_calendar_source(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-/// `POST /api/v1/calendar/import` — upload a `.ics` file (multipart `file`
-/// field, optional `source_id` text field) and enqueue a background import
-/// job. The upload is spooled to a temp file and the bytes persisted on the
-/// job row for the worker.
+/// Response for `POST /api/v1/calendar/import/preview`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarImportPreviewResponse {
+    pub digest: String,
+    pub source_id: Uuid,
+    pub new_events: usize,
+    pub duplicates: usize,
+    pub conflicts: usize,
+    pub unsupported: usize,
+    pub events: Vec<crate::services::ical_import::ImportPreviewEvent>,
+}
+
+/// Preview one bounded upload against an explicitly selected, caller-owned
+/// import destination. Preview rows contain only that caller's destination
+/// matches; destination existence stays hidden from unauthorized callers.
+#[utoipa::path(post, path = "/api/v1/calendar/import/preview", responses((status = 200, body = CalendarImportPreviewResponse)), security(("bearer_auth" = [])))]
+pub async fn preview_calendar_import(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    mut multipart: Multipart,
+) -> Result<Json<CalendarImportPreviewResponse>, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    let mut file_temp: Option<(
+        tempfile::NamedTempFile,
+        usize,
+        Option<String>,
+        Option<String>,
+    )> = None;
+    let mut source_id = None;
+    while let Some(mut field) = multipart.next_field().await.map_err(|e| {
+        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            return AppError::payload_too_large(
+                "Calendar import request exceeds the maximum allowed size",
+            );
+        }
+        AppError::bad_request(format!("Invalid calendar import request: {e}"))
+    })? {
+        match field.name().unwrap_or("") {
+            "file" => {
+                if file_temp.is_some() {
+                    return Err(AppError::bad_request("Expected a single .ics file"));
+                }
+                let filename = field.file_name().map(str::to_string);
+                let content_type = field.content_type().map(str::to_string);
+                let (temp, size) = super::stream_multipart_field_to_temp_file(
+                    &mut field,
+                    MAX_CALENDAR_IMPORT_SIZE_BYTES,
+                )
+                .await?;
+                file_temp = Some((temp, size, filename, content_type));
+            }
+            "source_id" => {
+                if source_id.is_some() {
+                    return Err(AppError::bad_request("Duplicate source_id field"));
+                }
+                let raw =
+                    read_bounded_field_text(&mut field, MAX_CALENDAR_SOURCE_ID_FIELD_BYTES).await?;
+                source_id =
+                    Some(Uuid::parse_str(raw.trim()).map_err(|_| {
+                        AppError::bad_request("Invalid source_id: expected a UUID")
+                    })?);
+            }
+            _ => {}
+        }
+    }
+    let (file, _, filename, content_type) =
+        file_temp.ok_or_else(|| AppError::bad_request("Missing file data"))?;
+    let filename = filename.unwrap_or_else(|| "import.ics".to_string());
+    if !content_type
+        .as_deref()
+        .is_some_and(|value| value.starts_with("text/calendar"))
+        && !filename.to_lowercase().ends_with(".ics")
+    {
+        return Err(AppError::bad_request(
+            "File must be a .ics (text/calendar) file",
+        ));
+    }
+    let source_id =
+        source_id.ok_or_else(|| AppError::bad_request("Choose an import destination"))?;
+    let source = state
+        .calendar_service
+        .get_source(auth.tenant_id, auth.user_id, source_id)
+        .await?
+        .ok_or(CalendarError::SourceNotFound(source_id))?;
+    if source.kind != CalendarSourceKind::IcalImport.as_str() || !source.is_enabled {
+        return Err(AppError::bad_request(
+            "Destination must be an enabled iCalendar import source",
+        ));
+    }
+    let bytes = tokio::fs::read(file.path())
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to read uploaded file: {e}")))?;
+    let mut events = preview_ical_file(bytes.clone()).await?;
+    let uids = events
+        .iter()
+        .filter_map(|event| event.uid.clone())
+        .collect::<Vec<_>>();
+    let existing = state
+        .metadata_store
+        .list_calendar_import_matches(auth.tenant_id, auth.user_id, source_id, &uids)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to preview calendar import: {e}")))?;
+    for event in &mut events {
+        if event.outcome != "new" {
+            continue;
+        }
+        let Some(uid) = event.uid.as_deref() else {
+            continue;
+        };
+        if let Some(saved) = existing
+            .iter()
+            .find(|saved| saved.external_uid.as_deref() == Some(uid))
+        {
+            event.outcome =
+                if crate::services::ical_import::preview_event_matches_saved(event, saved) {
+                    "duplicate"
+                } else {
+                    "conflict"
+                };
+        }
+    }
+    let new_events = events.iter().filter(|event| event.outcome == "new").count();
+    let duplicates = events
+        .iter()
+        .filter(|event| event.outcome == "duplicate")
+        .count();
+    let conflicts = events
+        .iter()
+        .filter(|event| event.outcome == "conflict")
+        .count();
+    let unsupported = events
+        .iter()
+        .filter(|event| event.outcome == "unsupported")
+        .count();
+    let digest = crate::services::ical_import::preview_digest(&bytes, source_id, &uids, &existing);
+    Ok(Json(CalendarImportPreviewResponse {
+        digest,
+        source_id,
+        new_events,
+        duplicates,
+        conflicts,
+        unsupported,
+        events,
+    }))
+}
+
+#[utoipa::path(post, path = "/api/v1/calendar/import", responses((status = 202, body = CalendarImportAcceptedResponse)), security(("bearer_auth" = [])))]
 pub async fn import_calendar_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
@@ -1180,6 +1337,7 @@ pub async fn import_calendar_file(
         Option<String>,
     )> = None;
     let mut source_id: Option<Uuid> = None;
+    let mut preview_digest: Option<String> = None;
 
     while let Some(mut field) = multipart.next_field().await.map_err(|e| {
         if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
@@ -1219,6 +1377,17 @@ pub async fn import_calendar_file(
                         AppError::bad_request("Invalid source_id: expected a UUID")
                     })?);
             }
+            "preview_digest" => {
+                if preview_digest.is_some() {
+                    return Err(AppError::bad_request("Duplicate preview_digest field"));
+                }
+                preview_digest = Some(
+                    read_bounded_field_text(&mut field, 64)
+                        .await?
+                        .trim()
+                        .to_string(),
+                );
+            }
             _ => {}
         }
     }
@@ -1241,54 +1410,71 @@ pub async fn import_calendar_file(
         .await
         .map_err(|e| AppError::internal(format!("Failed to read uploaded file: {e}")))?;
 
-    // Resolve the target source: the given ical_import source, or an existing
-    // one named after the file, or a newly created one.
-    let source = match source_id {
-        Some(id) => {
-            let source = state
-                .calendar_service
-                .get_source(auth.tenant_id, auth.user_id, id)
-                .await?
-                .ok_or(CalendarError::SourceNotFound(id))?;
-            if source.kind != CalendarSourceKind::IcalImport.as_str() {
-                return Err(AppError::bad_request(
-                    "source_id must reference an ical_import source",
-                ));
-            }
-            source
+    let source_id =
+        source_id.ok_or_else(|| AppError::bad_request("Choose an import destination"))?;
+    let source = state
+        .calendar_service
+        .get_source(auth.tenant_id, auth.user_id, source_id)
+        .await?
+        .ok_or(CalendarError::SourceNotFound(source_id))?;
+    if source.kind != CalendarSourceKind::IcalImport.as_str() || !source.is_enabled {
+        return Err(AppError::bad_request(
+            "Destination must be an enabled iCalendar import source",
+        ));
+    }
+    let preview_digest = preview_digest
+        .ok_or_else(|| AppError::bad_request("Preview and confirm the file before importing"))?;
+    let mut preview_events = preview_ical_file(bytes.clone()).await?;
+    if preview_events
+        .iter()
+        .any(|event| event.outcome == "conflict")
+    {
+        return Err(AppError::bad_request(
+            "The file contains different events with the same UID; resolve the conflict and preview again",
+        ));
+    }
+    let preview_uids = preview_events
+        .iter()
+        .filter_map(|event| event.uid.clone())
+        .collect::<Vec<_>>();
+    let existing = state
+        .metadata_store
+        .list_calendar_import_matches(auth.tenant_id, auth.user_id, source.id, &preview_uids)
+        .await
+        .map_err(|e| AppError::internal(format!("Failed to confirm calendar import: {e}")))?;
+    let actual_digest =
+        crate::services::ical_import::preview_digest(&bytes, source.id, &preview_uids, &existing);
+    if preview_digest != actual_digest {
+        return Err(AppError::conflict(
+            "The file or destination events changed after preview; preview again",
+        ));
+    }
+    for event in &mut preview_events {
+        if event.outcome != "new" {
+            continue;
         }
-        None => {
-            let display_name = filename.chars().take(255).collect::<String>();
-            let existing = state
-                .calendar_service
-                .list_sources(auth.tenant_id, auth.user_id)
-                .await?;
-            match existing.into_iter().find(|source| {
-                source.kind == CalendarSourceKind::IcalImport.as_str()
-                    && source.display_name == display_name
-            }) {
-                Some(source) => source,
-                None => {
-                    state
-                        .calendar_service
-                        .create_source(
-                            auth.tenant_id,
-                            auth.user_id,
-                            CalendarSourceKind::IcalImport,
-                            display_name,
-                        )
-                        .await?
-                }
-            }
+        let Some(uid) = event.uid.as_deref() else {
+            continue;
+        };
+        if let Some(saved) = existing
+            .iter()
+            .find(|saved| saved.external_uid.as_deref() == Some(uid))
+        {
+            event.outcome =
+                if crate::services::ical_import::preview_event_matches_saved(event, saved) {
+                    "duplicate"
+                } else {
+                    "conflict"
+                };
         }
-    };
-
+    }
     let now = Utc::now();
     let job = CalendarImportJob {
         id: Uuid::new_v4(),
         tenant_id: auth.tenant_id,
         owner_id: auth.user_id,
         source_id: source.id,
+        claim_token: None,
         status: "pending".to_string(),
         filename,
         size_bytes: size_bytes as i64,
@@ -1304,7 +1490,7 @@ pub async fn import_calendar_file(
     };
     state
         .metadata_store
-        .create_calendar_import_job(&job, &bytes)
+        .create_calendar_import_job(&job, &bytes, Some(&preview_digest))
         .await
         .map_err(|e| AppError::internal(format!("Failed to enqueue import job: {e}")))?;
 
