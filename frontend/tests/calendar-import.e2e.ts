@@ -22,6 +22,7 @@ test('Calendar Settings previews, confirms, displays, exports, and idempotently 
 	const reviewFilename = `calendar-review-${suffix}.ics`;
 	const exportedFilename = `calendar-export-${suffix}.ics`;
 	const day = new Date().toISOString().slice(0, 10).replaceAll('-', '');
+	const eventRange = `from=${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6)}T00%3A00%3A00Z&to=${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6)}T23%3A59%3A59Z`;
 	const firstUid = `calendar-first-${suffix}@example.test`;
 	const conflictUid = `calendar-conflict-${suffix}@example.test`;
 	const newUid = `calendar-new-${suffix}@example.test`;
@@ -149,9 +150,18 @@ test('Calendar Settings previews, confirms, displays, exports, and idempotently 
 		await page.getByRole('button', { name: 'Confirm import' }).click();
 		await waitForImport(exportedFilename);
 
-		const events = await api.get(
-			`/api/v1/calendar/events?from=${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6)}T00%3A00%3A00Z&to=${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6)}T23%3A59%3A59Z`
-		);
+		const disabled = await api.post('/api/v1/admin/applications/io.elembra.calendar/disable', {
+			headers
+		});
+		expect(disabled.ok()).toBeTruthy();
+		const deniedAfterDisable = await api.get(`/api/v1/calendar/events?${eventRange}`);
+		expect(deniedAfterDisable.status()).toBe(403);
+		const reenabled = await api.post('/api/v1/admin/applications/io.elembra.calendar/enable', {
+			headers
+		});
+		expect(reenabled.ok()).toBeTruthy();
+
+		const events = await api.get(`/api/v1/calendar/events?${eventRange}`);
 		expect(events.ok()).toBeTruthy();
 		const { events: storedEvents } = await events.json();
 		const imported = storedEvents.filter(
