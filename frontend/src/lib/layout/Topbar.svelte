@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import ThemeToggle from '$lib/components/common/ThemeToggle.svelte';
 	import { currentUser, authStore } from '$lib/stores/auth';
 	import { getApplicationByRouteSlug } from '$lib/applications/registry';

@@ -87,6 +87,7 @@
 		role="menu"
 	>
 		{#each items as item}
+			{@const Icon = item.icon}
 			{#if item.separator}
 				<div class="my-1 border-t border-base-200"></div>
 			{:else}
@@ -106,7 +107,7 @@
 				>
 					{#if item.icon}
 						<span class="flex-shrink-0 opacity-70">
-							<svelte:component this={item.icon} size={16} />
+							<Icon size={16} />
 						</span>
 					{:else}
 						<span class="w-4 flex-shrink-0"></span>

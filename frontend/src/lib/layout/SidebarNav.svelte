@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
-	import { page } from '$app/stores';
+	import { browser } from '$app/env';
+	import { page } from '$lib/kit/page';
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
 	import {

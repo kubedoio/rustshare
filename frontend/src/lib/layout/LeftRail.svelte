@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { getOrganizationAdminCapability } from '$lib/api/organization-admin';
 	import { createQuery } from '$lib/query-compat';
 	import { listEnabledApplications } from '$lib/api/applications';
@@ -113,7 +113,6 @@
 	class:w-56={railExpanded}
 	class:w-[4.5rem]={!railExpanded}
 	aria-label="Main navigation"
-	aria-expanded={railExpanded}
 	onmouseenter={handleMouseEnter}
 	onmouseleave={handleMouseLeave}
 >
@@ -153,13 +152,14 @@
 	<!-- Primary Navigation -->
 	<nav class="flex-1 space-y-1 overflow-y-auto px-2 py-4" aria-label="Primary">
 		{#each primaryItems as item}
+			{@const Icon = item.icon}
 			<RailItem
 				href={item.href}
 				label={item.label}
 				active={activePrimaryHref === item.href}
 				expanded={railExpanded}
 			>
-				<svelte:component this={item.icon} size={22} strokeWidth={1.75} />
+				<Icon size={22} strokeWidth={1.75} />
 			</RailItem>
 		{/each}
 
@@ -248,13 +248,14 @@
 	<!-- Secondary Navigation -->
 	<nav class="flex-shrink-0 space-y-1 border-t border-base-300/50 px-2 py-4" aria-label="Secondary">
 		{#each secondaryItems as item}
+			{@const Icon = item.icon}
 			<RailItem
 				href={item.href}
 				label={item.label}
 				active={activePrimaryHref === item.href}
 				expanded={railExpanded}
 			>
-				<svelte:component this={item.icon} size={22} strokeWidth={1.75} />
+				<Icon size={22} strokeWidth={1.75} />
 			</RailItem>
 		{/each}
 		{#if canAdministerOrganization}
@@ -275,6 +276,7 @@
 				{railExpanded ? 'w-full px-3' : 'w-11 justify-center'}
 				text-base-content/50 hover:bg-base-200 hover:text-base-content"
 			aria-label={$sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
+			aria-expanded={$sidebarExpanded}
 			onclick={() => sidebarExpanded.toggle()}
 		>
 			{#if $sidebarExpanded}

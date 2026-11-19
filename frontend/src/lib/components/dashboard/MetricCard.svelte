@@ -16,12 +16,13 @@
 		iconBg: string;
 		href?: string;
 	} = $props();
+	let Icon = $derived(icon);
 </script>
 
 {#if href}
 	<a {href} class="summary-card">
 		<div class="summary-icon" style="background: {iconBg}; color: {iconColor};">
-			<svelte:component this={icon} size={18} />
+			<Icon size={18} />
 		</div>
 		<div class="summary-body">
 			<span class="summary-value">{value}</span>
@@ -32,7 +33,7 @@
 {:else}
 	<div class="summary-card">
 		<div class="summary-icon" style="background: {iconBg}; color: {iconColor};">
-			<svelte:component this={icon} size={18} />
+			<Icon size={18} />
 		</div>
 		<div class="summary-body">
 			<span class="summary-value">{value}</span>

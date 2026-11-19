@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page as route } from '$app/stores';
+	import { page as route } from '$lib/kit/page';
 	import {
 		getOrganizationGroup,
 		listOrganizationUsers,

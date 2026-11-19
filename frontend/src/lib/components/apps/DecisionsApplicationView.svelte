@@ -253,18 +253,18 @@
 	title="Decisions"
 	subtitle="Record important decisions with context and rationale."
 >
-	<div slot="primaryAction">
+	{#snippet primaryAction()}
 		<button class="btn gap-2 btn-primary btn-sm" onclick={handleCreateDecision}>
 			<Plus size={14} />
 			<span>New decision</span>
 		</button>
-	</div>
-	<div slot="secondaryActions">
+	{/snippet}
+	{#snippet secondaryActions()}
 		<button class="btn gap-2 btn-outline btn-sm" onclick={handleOpenInFiles}>
 			<Folder size={14} />
 			<span>Open in Files</span>
 		</button>
-	</div>
+	{/snippet}
 
 	<div class="flex flex-col gap-4">
 		{#if $decisionsQuery.isLoading}

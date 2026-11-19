@@ -1,8 +1,11 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	let {
+		children,
 		title,
 		description = undefined
 	}: {
+		children?: Snippet;
 		title: string;
 		description?: string | undefined;
 	} = $props();
@@ -16,6 +19,6 @@
 		{/if}
 	</div>
 	<div class="space-y-0 divide-y divide-base-300">
-		<slot />
+		{@render children?.()}
 	</div>
 </section>

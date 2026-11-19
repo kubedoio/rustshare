@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { onMount } from 'svelte';
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import {
@@ -726,11 +726,11 @@
 </script>
 
 <ApplicationPageShell title="Mail" subtitle={module.description}>
-	<div slot="primaryAction">
+	{#snippet primaryAction()}
 		<button type="button" class="btn gap-2 btn-primary btn-sm" onclick={openCompose}>
 			<Send size={14} /> Compose
 		</button>
-	</div>
+	{/snippet}
 
 	{#if $accountsQuery.isLoading}
 		<ApplicationPageSkeleton />

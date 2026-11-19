@@ -129,18 +129,18 @@
 	title="Brainstorming"
 	subtitle="Capture sketches, flows, and early ideas as visual workspace boards."
 >
-	<div slot="primaryAction">
+	{#snippet primaryAction()}
 		<button class="btn gap-2 btn-primary btn-sm" onclick={handleCreateBoard}>
 			<Plus size={14} />
 			<span>New idea board</span>
 		</button>
-	</div>
-	<div slot="secondaryActions">
+	{/snippet}
+	{#snippet secondaryActions()}
 		<button class="btn gap-2 btn-outline btn-sm" onclick={handleOpenInFiles}>
 			<Folder size={14} />
 			<span>Open in Files</span>
 		</button>
-	</div>
+	{/snippet}
 	<div class="flex flex-col gap-4">
 		{#if $boardsQuery.isLoading}
 			<ApplicationPageSkeleton />

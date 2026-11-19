@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import {
 		calendarApi,

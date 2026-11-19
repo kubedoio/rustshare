@@ -197,6 +197,7 @@
 				</div>
 			{:else}
 				{#each visibleAttachments as attachment (attachment.id)}
+					{@const Icon = getKindIcon(attachment.kind)}
 					<div
 						class="attachment-item"
 						onclick={() => openPreview(attachment)}
@@ -205,7 +206,7 @@
 						onkeydown={(e) => e.key === 'Enter' && openPreview(attachment)}
 					>
 						<span class="attachment-icon">
-							<svelte:component this={getKindIcon(attachment.kind)} size={16} />
+							<Icon size={16} />
 						</span>
 						<div class="attachment-info">
 							<span class="attachment-name" title={attachment.filename}>

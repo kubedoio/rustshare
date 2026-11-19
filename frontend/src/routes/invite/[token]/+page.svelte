@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { getInvite, acceptInvite, type InviteDetail } from '$lib/api/invites';
 	import type { User } from '$lib/api/types';
 

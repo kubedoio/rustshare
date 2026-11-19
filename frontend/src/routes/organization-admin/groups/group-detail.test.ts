@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 	removeMember: vi.fn()
 }));
 
-vi.mock('$app/stores', async () => {
+vi.mock('$lib/kit/page', async () => {
 	const { writable } = await import('svelte/store');
 	mocks.route = writable({ params: { id: 'group-a' } });
 	return { page: mocks.route };

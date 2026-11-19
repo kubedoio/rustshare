@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { applicationsStore } from '$lib/applications/registry';
 	import { currentUser } from '$lib/stores/auth';
 	import ApplicationPageRenderer from './ApplicationPageRenderer.svelte';

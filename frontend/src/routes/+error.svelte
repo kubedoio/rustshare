@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { Home, AlertCircle, ArrowLeft } from 'lucide-svelte';
 </script>
 

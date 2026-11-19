@@ -1,5 +1,7 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	let {
+		children,
 		href,
 		label,
 		active,
@@ -7,6 +9,7 @@
 		badge = null,
 		ariaLabel = undefined
 	}: {
+		children?: Snippet;
 		href: string;
 		label: string;
 		active: boolean;
@@ -26,7 +29,7 @@
 	aria-current={active ? 'page' : undefined}
 	aria-label={ariaLabel ?? label}
 >
-	<slot />
+	{@render children?.()}
 
 	{#if expanded}
 		<span class="flex-1 truncate text-sm font-medium">{label}</span>

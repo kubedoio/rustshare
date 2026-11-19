@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { getVault, getManifest, updateVaultWritePolicy } from '$lib/api/vaults';
 	import { queryClient } from '$lib/query-client';

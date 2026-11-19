@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { createQuery } from '$lib/query-compat';
 	import { onMount } from 'svelte';
 	import type { File as SharedFile } from '$lib/api/types';

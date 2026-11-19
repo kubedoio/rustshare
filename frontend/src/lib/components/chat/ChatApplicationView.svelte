@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { createQuery } from '$lib/query-compat';
 	import {
 		getChatStatus,
@@ -101,7 +101,7 @@
 		const id = selectedChannelId;
 		if (!id) return;
 		try {
-			const url = new URL($page.url);
+			const url = new URL($page.url.href);
 			if (url.searchParams.get('channel') === id) return;
 			url.searchParams.set('channel', id);
 			history.replaceState(history.state, '', url);

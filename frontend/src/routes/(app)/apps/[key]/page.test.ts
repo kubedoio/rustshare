@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import Page from './+page.svelte';
-import { page } from '$app/stores';
+import { page } from '$lib/kit/page';
 import { currentUser } from '$lib/stores/auth';
 import * as registry from '$lib/applications/registry';
 
 // Mock SvelteKit stores
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/kit/page', () => ({
 	page: {
 		subscribe: vi.fn()
 	}

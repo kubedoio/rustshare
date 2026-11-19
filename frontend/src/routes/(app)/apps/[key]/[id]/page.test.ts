@@ -88,9 +88,9 @@ function navigateToNote(query: MockQuery, id: string, fileIds: string[] = []) {
 	query.setData({ routeKey: 'notes', routeId: id, item: noteItem(id, fileIds) });
 }
 
-vi.mock('$app/environment', () => ({ browser: true }));
+vi.mock('$app/env', () => ({ browser: true }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/kit/page', () => ({
 	page: mockPageStore
 }));
 

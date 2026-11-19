@@ -21,7 +21,7 @@ vi.mock('$lib/api/auth', () => ({
 	getAuthConfig: vi.fn()
 }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/kit/page', () => ({
 	page: {
 		subscribe: (fn: any) => {
 			fn({ url: { searchParams: new URLSearchParams() } });

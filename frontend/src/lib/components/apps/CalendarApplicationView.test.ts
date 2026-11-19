@@ -32,7 +32,7 @@ vi.mock('$lib/api/calendar', () => ({
 
 vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/kit/page', () => ({
 	page: {
 		subscribe: (run: (value: { url: URL; params: Record<string, string> }) => void) => {
 			run({

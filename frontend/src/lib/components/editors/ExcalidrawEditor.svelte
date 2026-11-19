@@ -124,9 +124,10 @@
 		}
 	}
 
-	async function handleSave(
-		event: CustomEvent<{ saveMode: 'overwrite' | 'new_version'; changeDescription?: string }>
-	) {
+	async function handleSave(detail: {
+		saveMode: 'overwrite' | 'new_version';
+		changeDescription?: string;
+	}) {
 		if (!file) return;
 
 		// Get current content from Excalidraw
@@ -155,12 +156,7 @@
 
 			const newContent = JSON.stringify(exportData);
 
-			const result = await editFile(
-				file.id,
-				newContent,
-				event.detail.saveMode,
-				event.detail.changeDescription
-			);
+			const result = await editFile(file.id, newContent, detail.saveMode, detail.changeDescription);
 
 			file = {
 				...file,
@@ -222,8 +218,8 @@
 	{saveMode}
 	{hasChanges}
 	title="Edit Excalidraw Diagram"
-	on:close={handleClose}
-	on:save={handleSave}
+	onClose={handleClose}
+	onSave={handleSave}
 >
 	<div bind:this={excalidrawContainer} class="h-full w-full bg-white"></div>
 </BaseEditor>

@@ -16,7 +16,7 @@
 	import { ChevronRight, Folder, FolderOpen, Loader2 } from 'lucide-svelte';
 	import { fileBrowserUi } from '$lib/stores/fileBrowserUi';
 	import { folderTreeStore } from '$lib/stores/folderTree';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { createMutation } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
 	import { moveFile } from '$lib/api/files';

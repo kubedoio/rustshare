@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/kit/page', () => ({
 	page: {
 		subscribe: (fn: (value: { url: { pathname: string } }) => void) => {
 			fn({ url: { pathname: '/admin/users' } });

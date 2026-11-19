@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { currentUser, authStore } from '$lib/stores/auth';
 	import { approveDevicePairing } from '$lib/api/auth';
 	import {

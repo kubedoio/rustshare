@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { goto } from '$app/navigation';
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
@@ -488,7 +488,7 @@
 		title={message.subject || '(no subject)'}
 		subtitle={message.from_name || message.from_address || 'Unknown sender'}
 	>
-		<div slot="secondaryActions">
+		{#snippet secondaryActions()}
 			{#if calendarEnabled}
 				<button class="btn gap-2 btn-outline btn-sm" onclick={() => openCalendarCreate(message)}>
 					<CalendarDays size={14} />
@@ -515,7 +515,7 @@
 				<Download size={14} />
 				<span>Download .eml</span>
 			</a>
-		</div>
+		{/snippet}
 
 		<div class="flex flex-col gap-6">
 			<div class="rounded-xl border border-base-300/70 bg-base-100 p-4 shadow-sm">

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import AskExperience from '$lib/components/ask/AskExperience.svelte';
 	import type { AskScope, OpenCitationResponse } from '$lib/api/ask';
 	import { chatMessageIdFromRef } from '$lib/api/chat';

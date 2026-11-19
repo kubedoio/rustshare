@@ -54,6 +54,7 @@
 <div class="hidden border-b border-base-300 sm:block">
 	<nav class="flex gap-1" aria-label="Settings tabs">
 		{#each tabs as tab}
+			{@const Icon = tab.icon}
 			<button
 				type="button"
 				class="flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors
@@ -63,7 +64,7 @@
 				onclick={() => handleTabClick(tab.id)}
 				aria-current={activeTab === tab.id ? 'page' : undefined}
 			>
-				<svelte:component this={tab.icon} size={16} />
+				<Icon size={16} />
 				{tab.label}
 			</button>
 		{/each}
@@ -89,6 +90,7 @@
 <div class="overflow-x-auto border-b border-base-300 sm:hidden">
 	<nav class="flex min-w-max gap-1 px-2" aria-label="Settings tabs">
 		{#each tabs as tab}
+			{@const Icon = tab.icon}
 			<button
 				type="button"
 				class="flex items-center gap-2 border-b-2 px-3 py-3 text-sm font-medium whitespace-nowrap transition-colors
@@ -98,7 +100,7 @@
 				onclick={() => handleTabClick(tab.id)}
 				aria-current={activeTab === tab.id ? 'page' : undefined}
 			>
-				<svelte:component this={tab.icon} size={16} />
+				<Icon size={16} />
 				{tab.label}
 			</button>
 		{/each}

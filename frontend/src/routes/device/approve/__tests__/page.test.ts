@@ -40,11 +40,11 @@ vi.mock('$app/navigation', () => ({
 	goto
 }));
 
-vi.mock('$app/environment', () => ({
+vi.mock('$app/env', () => ({
 	browser: true
 }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/kit/page', () => ({
 	page: {
 		subscribe: pageStore.subscribe
 	}

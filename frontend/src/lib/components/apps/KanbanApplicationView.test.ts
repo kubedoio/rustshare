@@ -173,6 +173,8 @@ describe('KanbanApplicationView', () => {
 			expect(screen.getByText('Backlog')).toBeTruthy();
 		});
 
+		const { getKanbanBoard } = await import('$lib/api/kanban');
+		expect(getKanbanBoard).toHaveBeenCalledWith('board-1');
 		expect(screen.getByText('Review')).toBeTruthy();
 		expect(screen.getByText('Define MVP')).toBeTruthy();
 		expect(screen.getByText('Design Review')).toBeTruthy();

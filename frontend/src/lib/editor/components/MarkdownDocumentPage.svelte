@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
 	import { createEventDispatcher, onDestroy, tick, untrack } from 'svelte';
+	import type { Snippet } from 'svelte';
 	import { Editor } from '@tiptap/core';
 	import {
 		ArrowLeft,
@@ -65,8 +66,10 @@
 		docId = '',
 		showNoteActions = false,
 		initialAttachmentsOpen = false,
-		subtitle = ''
+		subtitle = '',
+		extraActions
 	}: {
+		extraActions?: Snippet;
 		title?: string;
 		content?: string;
 		color?: string | null;
@@ -607,7 +610,7 @@
 			{/if}
 
 			<!-- Extra actions -->
-			<slot name="extraActions" />
+			{@render extraActions?.()}
 
 			<!-- Export & More -->
 			<div class="header-actions">
@@ -616,11 +619,7 @@
 						<button tabindex="0" class="btn btn-ghost btn-sm" aria-label="Export">
 							<Download size={14} />
 						</button>
-						<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-						<ul
-							tabindex="0"
-							class="menu dropdown-content z-10 w-40 menu-sm rounded-box bg-base-200 p-1 shadow"
-						>
+						<ul class="menu dropdown-content z-10 w-40 menu-sm rounded-box bg-base-200 p-1 shadow">
 							<li>
 								<button onclick={handleExportMarkdown}>
 									<FileText size={14} />
@@ -641,11 +640,7 @@
 					<button tabindex="0" class="btn btn-ghost btn-sm" aria-label="More options">
 						<MoreHorizontal size={14} />
 					</button>
-					<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
-					<ul
-						tabindex="0"
-						class="menu dropdown-content z-10 w-52 menu-sm rounded-box bg-base-200 p-1 shadow"
-					>
+					<ul class="menu dropdown-content z-10 w-52 menu-sm rounded-box bg-base-200 p-1 shadow">
 						<li>
 							<button onclick={toggleAttachments}>
 								<Paperclip size={14} />

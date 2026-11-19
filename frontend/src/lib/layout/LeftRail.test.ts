@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/svelte';
 import { writable } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('$app/stores', async () => {
+vi.mock('$lib/kit/page', async () => {
 	const { writable } = await import('svelte/store');
 	return {
 		page: writable({
@@ -62,7 +62,7 @@ vi.mock('$lib/stores/sidebarExpanded', async () => {
 	};
 });
 
-import { page } from '$app/stores';
+import { page } from '$lib/kit/page';
 import { sidebarExpanded } from '$lib/stores/sidebarExpanded';
 import LeftRail from './LeftRail.svelte';
 
@@ -137,11 +137,12 @@ describe('LeftRail', () => {
 			expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toBeTruthy();
 		});
 
-		it('sets aria-expanded=true on the aside', () => {
-			const { container } = render(LeftRail);
-			const aside = container.querySelector('aside');
+		it('marks the collapse button expanded', () => {
+			render(LeftRail);
 
-			expect(aside?.getAttribute('aria-expanded')).toBe('true');
+			expect(
+				screen.getByRole('button', { name: 'Collapse sidebar' }).getAttribute('aria-expanded')
+			).toBe('true');
 		});
 	});
 
@@ -184,11 +185,12 @@ describe('LeftRail', () => {
 			expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeTruthy();
 		});
 
-		it('sets aria-expanded=false on the aside', () => {
-			const { container } = render(LeftRail);
-			const aside = container.querySelector('aside');
+		it('marks the expand button collapsed', () => {
+			render(LeftRail);
 
-			expect(aside?.getAttribute('aria-expanded')).toBe('false');
+			expect(
+				screen.getByRole('button', { name: 'Expand sidebar' }).getAttribute('aria-expanded')
+			).toBe('false');
 		});
 	});
 

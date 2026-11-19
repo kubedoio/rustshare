@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { getApplicationByRouteSlug } from '$lib/applications/registry';
 	import MailSettingsPanel from '$lib/settings/MailSettingsPanel.svelte';
 	import CalendarSettingsPanel from '$lib/settings/CalendarSettingsPanel.svelte';

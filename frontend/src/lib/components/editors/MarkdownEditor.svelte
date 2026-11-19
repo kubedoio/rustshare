@@ -50,9 +50,10 @@
 		}
 	}
 
-	async function handleSave(
-		event: CustomEvent<{ saveMode: 'overwrite' | 'new_version'; changeDescription?: string }>
-	) {
+	async function handleSave(detail: {
+		saveMode: 'overwrite' | 'new_version';
+		changeDescription?: string;
+	}) {
 		if (!file || content === currentMarkdown) return;
 
 		isSaving = true;
@@ -62,8 +63,8 @@
 			const result = await editFile(
 				file.id,
 				currentMarkdown,
-				event.detail.saveMode,
-				event.detail.changeDescription
+				detail.saveMode,
+				detail.changeDescription
 			);
 
 			file = {
@@ -117,8 +118,8 @@
 	{saveMode}
 	hasChanges={content !== currentMarkdown}
 	title="Edit Markdown"
-	on:close={handleClose}
-	on:save={handleSave}
+	onClose={handleClose}
+	onSave={handleSave}
 >
 	<div class="flex h-full flex-col overflow-hidden bg-base-100">
 		{#if !isLoading && file}

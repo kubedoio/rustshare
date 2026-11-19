@@ -1,4 +1,5 @@
 <script lang="ts">
+	import FolderTreeItem from './FolderTreeItem.svelte';
 	import { Folder, ChevronRight, Loader as Loader2, Check, X } from 'lucide-svelte';
 	import { folderTreeStore, type FolderNode } from '$lib/stores/folderTree';
 
@@ -161,7 +162,7 @@
 	{#if isExpanded && folder.children && folder.children.length > 0}
 		<div class="mt-0.5" role="group">
 			{#each folder.children as child (child.id)}
-				<svelte:self
+				<FolderTreeItem
 					folder={child}
 					level={level + 1}
 					{renamingFolderId}

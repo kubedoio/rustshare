@@ -1,8 +1,10 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
-	import { browser } from '$app/environment';
+	import { page } from '$lib/kit/page';
+	import { browser } from '$app/env';
 	import { authStore } from '$lib/stores/auth';
+	let { children }: { children?: Snippet } = $props();
 
 	const navItems = [
 		{ href: '/admin/users', label: 'Users', icon: 'users' },
@@ -274,7 +276,7 @@
 			</header>
 
 			<main class="flex-1 overflow-auto bg-base-200 p-6">
-				<slot />
+				{@render children?.()}
 			</main>
 		</div>
 	</div>

@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
+	import type { Snippet } from 'svelte';
 	import type { File } from '$lib/api/types';
 	import { formatFileSize } from '$lib/utils/format';
 	import ConfirmModal from '$lib/components/common/ConfirmModal.svelte';
 
 	let {
+		children,
 		open = false,
 		file = null,
 		title = 'Edit File',
@@ -12,8 +13,11 @@
 		isSaving = false,
 		error = null,
 		saveMode = 'new_version',
-		hasChanges = false
+		hasChanges = false,
+		onClose,
+		onSave
 	}: {
+		children?: Snippet;
 		open?: boolean;
 		file?: File | null;
 		title?: string;
@@ -22,13 +26,9 @@
 		error?: string | null;
 		saveMode?: 'overwrite' | 'new_version';
 		hasChanges?: boolean;
+		onClose: () => void;
+		onSave: (detail: { saveMode: 'overwrite' | 'new_version'; changeDescription?: string }) => void;
 	} = $props();
-
-	type EditorEvents = {
-		close: void;
-		save: { saveMode: 'overwrite' | 'new_version'; changeDescription?: string };
-	};
-	const dispatch = createEventDispatcher<EditorEvents>();
 
 	let changeDescription = $state('');
 	let showSaveOptions = $state(false);
@@ -39,17 +39,17 @@
 			showConfirmModal = true;
 			return;
 		}
-		dispatch('close');
+		onClose();
 	}
 
 	function handleConfirmClose() {
 		showConfirmModal = false;
-		dispatch('close');
+		onClose();
 	}
 
 	function handleSave(forceMode?: 'overwrite' | 'new_version') {
 		const mode = forceMode || saveMode;
-		dispatch('save', {
+		onSave({
 			saveMode: mode,
 			changeDescription: mode === 'new_version' ? changeDescription : undefined
 		});
@@ -135,7 +135,7 @@
 
 		<!-- Content Area -->
 		<div class="relative flex-1 overflow-hidden">
-			<slot />
+			{@render children?.()}
 
 			{#if isLoading}
 				<div class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-base-100/80">

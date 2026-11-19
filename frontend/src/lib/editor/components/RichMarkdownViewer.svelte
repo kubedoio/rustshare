@@ -159,8 +159,7 @@
 		<!-- Raw Markdown fallback -->
 		<pre class="viewer-raw-fallback">{content}</pre>
 	{:else if renderedHtml}
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-		<div class="viewer-content prose max-w-none" onclick={handleViewerClick}>
+		<div class="viewer-content prose max-w-none" role="none" onclick={handleViewerClick}>
 			{@html renderedHtml}
 		</div>
 	{:else}

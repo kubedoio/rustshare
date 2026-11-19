@@ -609,18 +609,18 @@
 	</div>
 {:else if ($boardsQuery.data ?? []).length === 0}
 	<ApplicationPageShell title="Kanban" subtitle="Manage file-backed boards and track work.">
-		<div slot="primaryAction">
+		{#snippet primaryAction()}
 			<button class="btn gap-2 btn-primary btn-sm" onclick={handleCreateBoard}>
 				<Plus size={14} />
 				<span>New board</span>
 			</button>
-		</div>
-		<div slot="secondaryActions">
+		{/snippet}
+		{#snippet secondaryActions()}
 			<button class="btn gap-2 btn-outline btn-sm" onclick={handleOpenInFiles}>
 				<FolderIcon size={14} />
 				<span>Open in Files</span>
 			</button>
-		</div>
+		{/snippet}
 		<EmptyState
 			icon={'📋'}
 			title={emptyTitle}
@@ -631,18 +631,18 @@
 	</ApplicationPageShell>
 {:else if viewMode === 'overview'}
 	<ApplicationPageShell title="Kanban" subtitle="Manage file-backed boards and track work.">
-		<div slot="primaryAction">
+		{#snippet primaryAction()}
 			<button class="btn gap-2 btn-primary btn-sm" onclick={handleCreateBoard}>
 				<Plus size={14} />
 				<span>New board</span>
 			</button>
-		</div>
-		<div slot="secondaryActions">
+		{/snippet}
+		{#snippet secondaryActions()}
 			<button class="btn gap-2 btn-outline btn-sm" onclick={handleOpenInFiles}>
 				<FolderIcon size={14} />
 				<span>Open in Files</span>
 			</button>
-		</div>
+		{/snippet}
 
 		<KanbanBoardList boards={$boardsQuery.data ?? []} onSelect={selectBoard} />
 	</ApplicationPageShell>
@@ -657,7 +657,7 @@
 			? `${selectedBoard.columns.length} columns · ${selectedBoard.columns.reduce((sum, c) => sum + c.cards.length, 0)} cards`
 			: ''}
 	>
-		<div slot="primaryAction">
+		{#snippet primaryAction()}
 			<button
 				class="btn gap-2 btn-primary btn-sm"
 				onclick={handleAddCardToFirstColumn}
@@ -669,14 +669,14 @@
 				<Plus size={14} />
 				<span>Add card</span>
 			</button>
-		</div>
-		<div slot="secondaryActions">
+		{/snippet}
+		{#snippet secondaryActions()}
 			<button class="btn gap-2 btn-outline btn-sm" onclick={showAllBoards}>
 				<ArrowLeft size={14} />
 				<span>All Boards</span>
 			</button>
-		</div>
-		<div slot="overflowActions">
+		{/snippet}
+		{#snippet overflowActions()}
 			<div class="relative">
 				<button
 					class="btn btn-ghost p-1 btn-sm"
@@ -719,7 +719,7 @@
 					</div>
 				{/if}
 			</div>
-		</div>
+		{/snippet}
 
 		{#if errorMessage}
 			<div class="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm text-red-700">

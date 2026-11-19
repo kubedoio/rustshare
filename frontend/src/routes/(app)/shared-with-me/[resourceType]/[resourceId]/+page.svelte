@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
 	import { downloadFile, getFile } from '$lib/api/files';
@@ -89,8 +89,7 @@
 	function navigateToSharedFolder(folderId: string) {
 		if (!rootFolderId) return;
 		goto(sharedResourcePath('folder', rootFolderId, { folderId }), {
-			keepFocus: true,
-			noScroll: true
+			reset: false
 		});
 	}
 

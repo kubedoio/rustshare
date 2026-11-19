@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: mocks.toast } }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/kit/page', () => ({
 	page: readable({
 		url: new URL('http://localhost/dashboard'),
 		route: { id: '/(app)/dashboard' }

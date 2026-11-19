@@ -100,7 +100,7 @@ vi.mock('$lib/chat/keys', () => ({
 	clearChatKey: vi.fn()
 }));
 
-vi.mock('$app/stores', () => ({
+vi.mock('$lib/kit/page', () => ({
 	page: readable({ url: mocks.pageUrl })
 }));
 

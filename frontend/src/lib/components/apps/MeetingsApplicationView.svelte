@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { createQuery } from '$lib/query-compat';
 	import EmptyState from '$lib/components/common/EmptyState.svelte';
 	import ApplicationPageSkeleton from '$lib/components/common/ApplicationPageSkeleton.svelte';
@@ -269,18 +269,18 @@
 	title="Meeting Notes"
 	subtitle="Record simple meeting notes, decisions, and follow-up items."
 >
-	<div slot="primaryAction">
+	{#snippet primaryAction()}
 		<button class="btn gap-2 btn-primary btn-sm" onclick={handleNewMeeting} disabled={isCreating}>
 			<Plus size={14} />
 			<span>New meeting note</span>
 		</button>
-	</div>
-	<div slot="secondaryActions">
+	{/snippet}
+	{#snippet secondaryActions()}
 		<button class="btn gap-2 btn-outline btn-sm" onclick={handleOpenInFiles}>
 			<Folder size={14} />
 			<span>Open in Files</span>
 		</button>
-	</div>
+	{/snippet}
 
 	<div class="flex flex-col gap-4">
 		{#if createError}

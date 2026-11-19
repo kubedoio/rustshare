@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { onMount } from 'svelte';
 	import { markdownToHtml } from '$lib/editor/adapter/markdown';
 	import { sanitizeHtml } from '$lib/editor/adapter/security';

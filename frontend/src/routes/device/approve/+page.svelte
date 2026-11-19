@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$lib/kit/page';
 	import { approveDevicePairing, approveDevicePairingByDeviceCode } from '$lib/api/auth';
 	import { ApiError } from '$lib/api/types';
 	import { authStore } from '$lib/stores/auth';

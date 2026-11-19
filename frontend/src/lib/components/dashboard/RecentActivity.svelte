@@ -88,7 +88,8 @@
 								{#if typeof display.icon === 'string'}
 									{display.icon}
 								{:else}
-									<svelte:component this={display.icon} size={16} />
+									{@const Icon = display.icon}
+									<Icon size={16} />
 								{/if}
 							</div>
 							<div class="activity-body">
@@ -114,7 +115,8 @@
 								{#if typeof display.icon === 'string'}
 									{display.icon}
 								{:else}
-									<svelte:component this={display.icon} size={16} />
+									{@const Icon = display.icon}
+									<Icon size={16} />
 								{/if}
 							</div>
 							<div class="activity-body">
