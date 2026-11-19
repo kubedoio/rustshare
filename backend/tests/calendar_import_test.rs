@@ -425,7 +425,7 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
-async fn changed_uid_content_is_rejected_without_overwriting_the_existing_event() {
+async fn changed_uid_content_updates_only_the_matching_import_source() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env_without_calendar_outbox().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
@@ -434,6 +434,21 @@ async fn changed_uid_content_is_rejected_without_overwriting_the_existing_event(
     let token = create_auth_token(&state, user.id, tenant_id);
     let app = build_app(state.clone());
     spawn_import_worker(&state).await;
+    let internal = state
+        .calendar_service
+        .ensure_internal_source(tenant_id, user.id)
+        .await
+        .expect("internal calendar source");
+    sqlx::query(
+        "INSERT INTO calendar_events (tenant_id, owner_id, source_id, external_uid, title, starts_at, ends_at) \
+         VALUES ($1, $2, $3, 'stable-id', 'Internal event', '2026-10-05T14:00:00Z', '2026-10-05T15:00:00Z')",
+    )
+    .bind(tenant_id)
+    .bind(user.id)
+    .bind(internal.id)
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
 
     let original = "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:stable-id\nDTSTART:20261005T140000Z\nDTEND:20261005T150000Z\nSUMMARY:Original\nEND:VEVENT\nEND:VCALENDAR\n";
     let (status, accepted) = upload_ics(&app, &token, "conflict.ics", original).await;
@@ -445,18 +460,33 @@ async fn changed_uid_content_is_rejected_without_overwriting_the_existing_event(
     )
     .await;
 
-    let changed = original.replace("Original", "Unrelated replacement");
-    let (status, _) = upload_ics(&app, &token, "conflict.ics", &changed).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let changed = original.replace("Original", "Updated version");
+    let (status, accepted) = upload_ics(&app, &token, "conflict.ics", &changed).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    wait_for_job(
+        &app,
+        &token,
+        Uuid::parse_str(accepted["job_id"].as_str().unwrap()).unwrap(),
+    )
+    .await;
 
-    let title: String = sqlx::query_scalar(
-        "SELECT title FROM calendar_events WHERE tenant_id = $1 AND external_uid = 'stable-id'",
+    let imported_title: String = sqlx::query_scalar(
+        "SELECT title FROM calendar_events WHERE tenant_id = $1 AND source_id <> $2 AND external_uid = 'stable-id'",
     )
     .bind(tenant_id)
+    .bind(internal.id)
     .fetch_one(&state.db_pool)
     .await
     .unwrap();
-    assert_eq!(title, "Original");
+    let internal_title: String = sqlx::query_scalar(
+        "SELECT title FROM calendar_events WHERE source_id = $1 AND external_uid = 'stable-id'",
+    )
+    .bind(internal.id)
+    .fetch_one(&state.db_pool)
+    .await
+    .unwrap();
+    assert_eq!(imported_title, "Updated version");
+    assert_eq!(internal_title, "Internal event");
     cleanup_outbox(&state.db_pool, tenant_id).await;
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
@@ -1108,20 +1138,33 @@ async fn source_id_must_belong_to_the_caller_and_be_ical_import() {
         "/api/v1/calendar/import/preview",
         &owner_token,
         IMPORT_BOUNDARY,
-        preview_body.into_bytes(),
+        preview_body.as_bytes().to_vec(),
     )
     .await;
     let (status, preview) = response;
     assert_eq!(status, StatusCode::OK);
     let digest = preview["digest"].as_str().unwrap();
+    let confirm_body = format!(
+        "--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"d.ics\"\r\nContent-Type: text/calendar\r\n\r\n{ICS_FIXTURE}\r\n--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"source_id\"\r\n\r\n{source_id}\r\n--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"preview_digest\"\r\n\r\n{digest}\r\n--{IMPORT_BOUNDARY}--\r\n"
+    );
+    sqlx::query(
+        "INSERT INTO calendar_events (tenant_id, owner_id, source_id, external_uid, title, starts_at, ends_at) \
+         VALUES ($1, $2, $3, 'import-minimal-1', 'Changed after preview', '2026-10-05T14:00:00Z', '2026-10-05T15:00:00Z')",
+    )
+    .bind(tenant_id)
+    .bind(owner.id)
+    .bind(source_id)
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
+    let (status, _) = upload_multipart(&app, &owner_token, confirm_body.as_bytes().to_vec()).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
     sqlx::query("UPDATE calendar_sources SET is_enabled = FALSE WHERE id = $1")
         .bind(source_id)
         .execute(&state.db_pool)
         .await
         .unwrap();
-    let confirm_body = format!(
-        "--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"d.ics\"\r\nContent-Type: text/calendar\r\n\r\n{ICS_FIXTURE}\r\n--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"source_id\"\r\n\r\n{source_id}\r\n--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"preview_digest\"\r\n\r\n{digest}\r\n--{IMPORT_BOUNDARY}--\r\n"
-    );
     let (status, _) = upload_multipart(&app, &owner_token, confirm_body.into_bytes()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     sqlx::query("UPDATE calendar_sources SET is_enabled = TRUE WHERE id = $1")

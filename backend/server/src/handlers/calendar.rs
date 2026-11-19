@@ -66,6 +66,35 @@ async fn preview_ical_file(
     parsed.map_err(|e| AppError::bad_request(e.to_string()))
 }
 
+fn calendar_import_preview_digest(
+    bytes: &[u8],
+    source_id: Uuid,
+    uids: &[String],
+    existing: &[rustshare_core::domain::CalendarEvent],
+) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(bytes);
+    hasher.update(source_id.as_bytes());
+    let mut uids = uids.iter().collect::<Vec<_>>();
+    uids.sort_unstable();
+    uids.dedup();
+    for uid in uids {
+        hasher.update((uid.len() as u64).to_be_bytes());
+        hasher.update(uid.as_bytes());
+        if let Some(event) = existing
+            .iter()
+            .find(|event| event.external_uid.as_deref() == Some(uid))
+        {
+            let snapshot = serde_json::to_vec(event).expect("CalendarEvent serializes to JSON");
+            hasher.update((snapshot.len() as u64).to_be_bytes());
+            hasher.update(snapshot);
+        } else {
+            hasher.update(0_u64.to_be_bytes());
+        }
+    }
+    hex::encode(hasher.finalize())
+}
+
 async fn require_calendar_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
     let module = state
         .application_service
@@ -1319,8 +1348,9 @@ pub async fn preview_calendar_import(
         .iter()
         .filter(|event| event.outcome == "unsupported")
         .count();
+    let digest = calendar_import_preview_digest(&bytes, source_id, &uids, &existing);
     Ok(Json(CalendarImportPreviewResponse {
-        digest: hex::encode(sha2::Sha256::digest(&bytes)),
+        digest,
         source_id,
         new_events,
         duplicates,
@@ -1432,13 +1462,15 @@ pub async fn import_calendar_file(
     }
     let preview_digest = preview_digest
         .ok_or_else(|| AppError::bad_request("Preview and confirm the file before importing"))?;
-    let actual_digest = hex::encode(sha2::Sha256::digest(&bytes));
-    if preview_digest != actual_digest {
-        return Err(AppError::conflict(
-            "The selected file changed after preview; preview it again",
+    let mut preview_events = preview_ical_file(bytes.clone()).await?;
+    if preview_events
+        .iter()
+        .any(|event| event.outcome == "conflict")
+    {
+        return Err(AppError::bad_request(
+            "The file contains different events with the same UID; resolve the conflict and preview again",
         ));
     }
-    let mut preview_events = preview_ical_file(bytes.clone()).await?;
     let preview_uids = preview_events
         .iter()
         .filter_map(|event| event.uid.clone())
@@ -1448,6 +1480,12 @@ pub async fn import_calendar_file(
         .list_calendar_import_matches(auth.tenant_id, auth.user_id, source.id, &preview_uids)
         .await
         .map_err(|e| AppError::internal(format!("Failed to confirm calendar import: {e}")))?;
+    let actual_digest = calendar_import_preview_digest(&bytes, source.id, &preview_uids, &existing);
+    if preview_digest != actual_digest {
+        return Err(AppError::conflict(
+            "The file or destination events changed after preview; preview again",
+        ));
+    }
     for event in &mut preview_events {
         if event.outcome != "new" {
             continue;
@@ -1475,15 +1513,6 @@ pub async fn import_calendar_file(
             };
         }
     }
-    if preview_events
-        .iter()
-        .any(|event| event.outcome == "conflict")
-    {
-        return Err(AppError::bad_request(
-            "An event with this UID already exists with different content; remove it or use a different import destination",
-        ));
-    }
-
     let now = Utc::now();
     let job = CalendarImportJob {
         id: Uuid::new_v4(),

@@ -176,7 +176,19 @@ fn find_param<'a>(prop: &'a Property<'_>, name: &str) -> Option<&'a str> {
         .map(|val| val.as_str())
 }
 
-fn unsupported_event_fields(component: &Component<'_>) -> Vec<&'static str> {
+fn unsupported_event_fields(component: &Component<'_>) -> Vec<String> {
+    const SUPPORTED: &[&str] = &[
+        "DTEND",
+        "DTSTAMP",
+        "DTSTART",
+        "DURATION",
+        "DESCRIPTION",
+        "LOCATION",
+        "RRULE",
+        "STATUS",
+        "SUMMARY",
+        "UID",
+    ];
     const UNSUPPORTED: &[&str] = &[
         "ATTACH",
         "ATTENDEE",
@@ -197,17 +209,23 @@ fn unsupported_event_fields(component: &Component<'_>) -> Vec<&'static str> {
         "URL",
     ];
 
-    let mut fields: Vec<&'static str> = UNSUPPORTED
-        .iter()
-        .copied()
-        .filter(|name| find_prop(component, name).is_some())
-        .collect();
-    if component
-        .components
-        .iter()
-        .any(|child| child.name.as_str().eq_ignore_ascii_case("VALARM"))
-    {
-        fields.push("VALARM");
+    let mut fields = Vec::new();
+    for property in &component.properties {
+        let name = property.name.as_str();
+        if UNSUPPORTED
+            .iter()
+            .any(|known| name.eq_ignore_ascii_case(known))
+        {
+            fields.push(name.to_ascii_uppercase());
+        } else if !SUPPORTED
+            .iter()
+            .any(|known| name.eq_ignore_ascii_case(known))
+        {
+            fields.push(format!("unknown property {}", name.to_ascii_uppercase()));
+        }
+    }
+    for child in &component.components {
+        fields.push(format!("unsupported component {}", child.name));
     }
     let (recurrence_id_count, has_recurrence_range) = component
         .properties
@@ -224,11 +242,13 @@ fn unsupported_event_fields(component: &Component<'_>) -> Vec<&'static str> {
             )
         });
     if recurrence_id_count > 1 {
-        fields.push("multiple RECURRENCE-ID properties");
+        fields.push("multiple RECURRENCE-ID properties".to_string());
     }
     if has_recurrence_range {
-        fields.push("RECURRENCE-ID RANGE");
+        fields.push("RECURRENCE-ID RANGE".to_string());
     }
+    fields.sort();
+    fields.dedup();
     fields
 }
 
@@ -1041,6 +1061,10 @@ DTSTART:20261005T140000Z
 DTEND:20261005T150000Z
 ORGANIZER:mailto:private@example.test
 ATTENDEE;CN=Private:mailto:private@example.test
+PRIORITY:1
+X-CLIENT-DATA:private payload
+BEGIN:X-CLIENT-COMPONENT
+END:X-CLIENT-COMPONENT
 END:VEVENT
 END:VCALENDAR
 ";
@@ -1051,6 +1075,18 @@ END:VCALENDAR
             .expect_err("unsupported fields fail the event");
 
         assert!(error.contains("ATTENDEE, ORGANIZER"), "error was {error}");
+        assert!(
+            error.contains("unknown property PRIORITY"),
+            "error was {error}"
+        );
+        assert!(
+            error.contains("unknown property X-CLIENT-DATA"),
+            "error was {error}"
+        );
+        assert!(
+            error.contains("unsupported component X-CLIENT-COMPONENT"),
+            "error was {error}"
+        );
         assert!(
             error.contains("event was not imported"),
             "error was {error}"

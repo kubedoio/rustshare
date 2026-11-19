@@ -260,8 +260,9 @@ Rows are deleted on consume (single use); expired rows are ignored/swept.
 - Upload is a two-step multipart flow: `POST /api/v1/calendar/import/preview`
   validates the file against an explicitly selected caller-owned
   `ical_import` source; `POST /api/v1/calendar/import` confirms the same file
-  using its preview SHA-256 digest. Confirmation rechecks Calendar enablement,
-  source ownership, source kind, and enabled state before queuing work.
+  using a SHA-256 token that binds the bytes, destination, and matching event
+  snapshot. Confirmation rechecks Calendar enablement, source ownership, source
+  kind, enabled state, and the event snapshot before queuing work.
 - Both endpoints stream the file through the bounded temp-file upload path
   with a 10 MiB calendar cap. The complete multipart request is capped at 11
   MiB.

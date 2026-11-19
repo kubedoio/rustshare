@@ -7615,10 +7615,10 @@ impl MetadataStore {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Insert an imported event without replacing any existing event with the
-    /// same destination identity. The unique constraint makes concurrent
-    /// imports idempotent and prevents UID collisions from overwriting data.
-    /// Returns `true` only when a row was inserted.
+    /// Upsert by the selected import destination's external identity. Events
+    /// in other sources are outside this key and cannot be overwritten.
+    /// Unchanged re-imports do not bump timestamps; returns `true` for insert
+    /// or content update.
     pub async fn upsert_calendar_imported_event(&self, event: &CalendarEvent) -> Result<bool> {
         let result = sqlx::query(
             r#"
@@ -7632,7 +7632,29 @@ impl MetadataStore {
                     $15, $16, $17, $18, $19, $20, $21, $22)
             ON CONFLICT (source_id, external_uid, COALESCE(recurrence_id, ''))
                 WHERE deleted_at IS NULL
-            DO NOTHING
+            DO UPDATE SET
+                title = EXCLUDED.title,
+                description = EXCLUDED.description,
+                location = EXCLUDED.location,
+                starts_at = EXCLUDED.starts_at,
+                ends_at = EXCLUDED.ends_at,
+                all_day = EXCLUDED.all_day,
+                original_date = EXCLUDED.original_date,
+                timezone = EXCLUDED.timezone,
+                rrule = EXCLUDED.rrule,
+                status = EXCLUDED.status,
+                updated_at = EXCLUDED.updated_at
+            WHERE
+                calendar_events.title IS DISTINCT FROM EXCLUDED.title
+                OR calendar_events.description IS DISTINCT FROM EXCLUDED.description
+                OR calendar_events.location IS DISTINCT FROM EXCLUDED.location
+                OR calendar_events.starts_at IS DISTINCT FROM EXCLUDED.starts_at
+                OR calendar_events.ends_at IS DISTINCT FROM EXCLUDED.ends_at
+                OR calendar_events.all_day IS DISTINCT FROM EXCLUDED.all_day
+                OR calendar_events.original_date IS DISTINCT FROM EXCLUDED.original_date
+                OR calendar_events.timezone IS DISTINCT FROM EXCLUDED.timezone
+                OR calendar_events.rrule IS DISTINCT FROM EXCLUDED.rrule
+                OR calendar_events.status IS DISTINCT FROM EXCLUDED.status
             "#,
         )
         .bind(event.id)
