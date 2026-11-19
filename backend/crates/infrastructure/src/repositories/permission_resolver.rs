@@ -53,7 +53,7 @@ impl PermissionResolverRepository {
 impl PermissionResolverOps for PermissionResolverRepository {
     async fn group_belongs_to_tenant(&self, group_id: Uuid, tenant_id: Uuid) -> Result<bool> {
         sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1 AND tenant_id = $2)",
+            "SELECT EXISTS(SELECT 1 FROM user_groups WHERE id = $1 AND tenant_id = $2 AND archived_at IS NULL)",
         )
         .bind(group_id)
         .bind(tenant_id)
@@ -92,10 +92,9 @@ impl PermissionResolverOps for PermissionResolverRepository {
         group_ids: &[Uuid],
         tenant_id: Uuid,
     ) -> Result<Vec<Share>> {
-        let shares = sqlx::query_as!(
-            Share,
+        let shares = sqlx::query_as::<_, Share>(
             r#"
-            SELECT id, file_id, folder_id, share_token, permissions as "permissions: SharePermissions", password_hash,
+            SELECT id, file_id, folder_id, share_token, permissions::text AS permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, recipient_group_id,
                    created_by, created_at, revoked_at, tenant_id
             FROM shares
@@ -103,13 +102,19 @@ impl PermissionResolverOps for PermissionResolverRepository {
               AND folder_id IS NOT DISTINCT FROM $2::uuid
               AND recipient_group_id = ANY($3)
               AND tenant_id = $4
+              AND EXISTS (
+                  SELECT 1 FROM user_groups g
+                  WHERE g.id = shares.recipient_group_id
+                    AND g.tenant_id = $4
+                    AND g.archived_at IS NULL
+              )
               AND revoked_at IS NULL
             "#,
-            file_id,
-            folder_id,
-            group_ids,
-            tenant_id
         )
+        .bind(file_id)
+        .bind(folder_id)
+        .bind(group_ids)
+        .bind(tenant_id)
         .fetch_all(&self.share_repo.pool)
         .await?;
 
@@ -150,22 +155,27 @@ impl PermissionResolverOps for PermissionResolverRepository {
         group_ids: &[Uuid],
         tenant_id: Uuid,
     ) -> Result<Vec<Share>> {
-        let shares = sqlx::query_as!(
-            Share,
+        let shares = sqlx::query_as::<_, Share>(
             r#"
-            SELECT id, file_id, folder_id, share_token, permissions as "permissions: SharePermissions", password_hash,
+            SELECT id, file_id, folder_id, share_token, permissions::text AS permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, recipient_group_id,
                    created_by, created_at, revoked_at, tenant_id
             FROM shares
             WHERE folder_id = ANY($1)
               AND recipient_group_id = ANY($2)
               AND tenant_id = $3
+              AND EXISTS (
+                  SELECT 1 FROM user_groups g
+                  WHERE g.id = shares.recipient_group_id
+                    AND g.tenant_id = $3
+                    AND g.archived_at IS NULL
+              )
               AND revoked_at IS NULL
             "#,
-            folder_ids,
-            group_ids,
-            tenant_id
         )
+        .bind(folder_ids)
+        .bind(group_ids)
+        .bind(tenant_id)
         .fetch_all(&self.share_repo.pool)
         .await?;
 
@@ -181,7 +191,7 @@ impl PermissionResolverOps for PermissionResolverRepository {
     }
 
     async fn get_user_group_ids(&self, user_id: UserId, tenant_id: Uuid) -> Result<Vec<Uuid>> {
-        let group_ids = sqlx::query_scalar!(
+        let group_ids = sqlx::query_scalar::<_, Uuid>(
             r#"
             SELECT gm.group_id
             FROM group_members gm
@@ -190,10 +200,11 @@ impl PermissionResolverOps for PermissionResolverRepository {
             WHERE gm.user_id = $1
               AND u.tenant_id = $2
               AND g.tenant_id = $2
+              AND g.archived_at IS NULL
             "#,
-            user_id,
-            tenant_id
         )
+        .bind(user_id)
+        .bind(tenant_id)
         .fetch_all(&self.user_repo.pool)
         .await?;
 
@@ -232,10 +243,9 @@ impl PermissionResolverOps for PermissionResolverRepository {
         file_id: FileId,
         tenant_id: Uuid,
     ) -> Result<Vec<Share>> {
-        let shares = sqlx::query_as!(
-            Share,
+        let shares = sqlx::query_as::<_, Share>(
             r#"
-            SELECT id, file_id, folder_id, share_token, permissions as "permissions: SharePermissions", password_hash,
+            SELECT id, file_id, folder_id, share_token, permissions::text AS permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, recipient_group_id,
                    created_by, created_at, revoked_at, tenant_id
             FROM shares
@@ -246,13 +256,14 @@ impl PermissionResolverOps for PermissionResolverRepository {
               AND EXISTS (
                   SELECT 1 FROM user_groups g
                   WHERE g.id = shares.recipient_group_id AND g.tenant_id = $2
+                    AND g.archived_at IS NULL
               )
               AND revoked_at IS NULL
               AND (expires_at IS NULL OR expires_at > NOW())
             "#,
-            file_id,
-            tenant_id
         )
+        .bind(file_id)
+        .bind(tenant_id)
         .fetch_all(&self.share_repo.pool)
         .await?;
         Ok(shares)
@@ -289,10 +300,9 @@ impl PermissionResolverOps for PermissionResolverRepository {
         folder_ids: &[FolderId],
         tenant_id: Uuid,
     ) -> Result<Vec<Share>> {
-        let shares = sqlx::query_as!(
-            Share,
+        let shares = sqlx::query_as::<_, Share>(
             r#"
-            SELECT id, file_id, folder_id, share_token, permissions as "permissions: SharePermissions", password_hash,
+            SELECT id, file_id, folder_id, share_token, permissions::text AS permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, recipient_group_id,
                    created_by, created_at, revoked_at, tenant_id
             FROM shares
@@ -302,13 +312,14 @@ impl PermissionResolverOps for PermissionResolverRepository {
               AND EXISTS (
                   SELECT 1 FROM user_groups g
                   WHERE g.id = shares.recipient_group_id AND g.tenant_id = $2
+                    AND g.archived_at IS NULL
               )
               AND revoked_at IS NULL
               AND (expires_at IS NULL OR expires_at > NOW())
             "#,
-            folder_ids,
-            tenant_id
         )
+        .bind(folder_ids)
+        .bind(tenant_id)
         .fetch_all(&self.share_repo.pool)
         .await?;
         Ok(shares)

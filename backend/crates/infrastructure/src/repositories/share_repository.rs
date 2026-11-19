@@ -64,10 +64,9 @@ impl ShareRepository {
         limit: i64,
         offset: i64,
     ) -> anyhow::Result<Vec<Share>> {
-        let shares = sqlx::query_as!(
-            Share,
+        let shares = sqlx::query_as::<_, Share>(
             r#"
-            SELECT id, file_id, folder_id, share_token, permissions as "permissions: SharePermissions", password_hash,
+            SELECT id, file_id, folder_id, share_token, permissions::text AS permissions, password_hash,
                    expires_at, upload_only, access_count, recipient_user_id, recipient_group_id, created_by,
                    created_at, revoked_at, tenant_id
             FROM shares
@@ -77,7 +76,7 @@ impl ShareRepository {
                   FROM group_members gm
                   JOIN users u ON u.id = gm.user_id
                   JOIN user_groups g ON g.id = gm.group_id AND g.tenant_id = $2
-                  WHERE gm.user_id = $1 AND u.tenant_id = $2
+                  WHERE gm.user_id = $1 AND u.tenant_id = $2 AND g.archived_at IS NULL
               ))
               AND revoked_at IS NULL
               AND (expires_at IS NULL OR expires_at > NOW())
@@ -99,11 +98,11 @@ impl ShareRepository {
             ORDER BY created_at DESC
             LIMIT $3 OFFSET $4
             "#,
-            user_id,
-            tenant_id,
-            limit,
-            offset
         )
+        .bind(user_id)
+        .bind(tenant_id)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await?;
 

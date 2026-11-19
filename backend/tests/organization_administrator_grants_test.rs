@@ -577,7 +577,9 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     let foreign_token = create_auth_token(&state, foreign, foreign_tenant);
     let nil_token = create_auth_token(&state, nil_admin, Uuid::nil());
     state.default_tenant_config = rustshare_server::config::DefaultTenantConfig::Set(tenant);
-    let app = rustshare_server::routes::admin_routes().with_state(state.clone());
+    let app = rustshare_server::routes::admin_routes()
+        .merge(rustshare_server::routes::group_routes())
+        .with_state(state.clone());
 
     for token in [&op_token, &member_token, &foreign_token] {
         let (status, _) = send(
@@ -987,6 +989,65 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     .await;
     assert_eq!(status, axum::http::StatusCode::OK);
     assert_eq!(members_page["members"].as_array().unwrap().len(), 1);
+    let (status, archived_group) = send_json(
+        &app,
+        "PATCH",
+        &format!("/api/v1/organization-admin/groups/{group_id}"),
+        &org_token,
+        None,
+        serde_json::json!({"archived":true}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(!archived_group["archived_at"].is_null());
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        &format!("/api/v1/organization-admin/groups/{group_id}/members"),
+        &org_token,
+        None,
+        serde_json::json!({"user_id":member}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    let (status, my_groups) = send(&app, "GET", "/api/v1/groups/my", &member_token, None).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(my_groups.as_array().unwrap().is_empty());
+    let (status, _) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/groups/my/{group_id}"),
+        &member_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    let (status, _) = send_json(
+        &app,
+        "PATCH",
+        &format!("/api/v1/organization-admin/groups/{group_id}"),
+        &foreign_token,
+        None,
+        serde_json::json!({"archived":false}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+    let (status, restored_group) = send_json(
+        &app,
+        "PATCH",
+        &format!("/api/v1/organization-admin/groups/{group_id}"),
+        &org_token,
+        None,
+        serde_json::json!({"archived":false}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(restored_group["archived_at"].is_null());
+    let (status, my_groups) = send(&app, "GET", "/api/v1/groups/my", &member_token, None).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(my_groups.as_array().unwrap().len(), 1);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM admin_actions WHERE tenant_id=$1 AND action_type='group.archived' AND target_id=$2").bind(tenant).bind(group_id).fetch_one(&pool).await.unwrap(),1);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM admin_actions WHERE tenant_id=$1 AND action_type='group.restored' AND target_id=$2").bind(tenant).bind(group_id).fetch_one(&pool).await.unwrap(),1);
     let (status, _) = send_json(
         &app,
         "PATCH",

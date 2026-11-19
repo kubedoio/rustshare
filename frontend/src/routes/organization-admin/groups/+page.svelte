@@ -4,6 +4,7 @@
 		createOrganizationGroup,
 		deleteOrganizationGroup,
 		listOrganizationGroups,
+		updateOrganizationGroup,
 		type OrgGroup
 	} from '$lib/api/organization-admin';
 
@@ -70,6 +71,25 @@
 			busy = false;
 		}
 	}
+
+	async function setArchived(group: OrgGroup) {
+		const archived = !group.archived_at;
+		const action = archived ? 'Archive' : 'Restore';
+		const consequence = archived
+			? 'Members will lose access granted through this group. Memberships and shares will be kept.'
+			: 'Existing group shares will become effective for current members again.';
+		if (!confirm(`${action} “${group.name}”? ${consequence}`)) return;
+		busy = true;
+		error = '';
+		try {
+			await updateOrganizationGroup(group.id, group.name, group.description ?? '', archived);
+			await load();
+		} catch (e) {
+			error = e instanceof Error ? e.message : `Unable to ${action.toLowerCase()} group`;
+		} finally {
+			busy = false;
+		}
+	}
 </script>
 
 <svelte:head><title>Groups — Organization administration</title></svelte:head>
@@ -106,26 +126,40 @@
 			<table class="table table-zebra">
 				<caption class="sr-only">Organization groups</caption>
 				<thead><tr><th>Name</th><th>Description</th><th>Members</th><th>Actions</th></tr></thead>
-				<tbody
-					>{#each groups as group (group.id)}
-						<tr
-							><td
-								><a class="link font-medium link-hover" href="/organization-admin/groups/{group.id}"
+				<tbody>
+					{#each groups as group (group.id)}
+						<tr>
+							<td>
+								<a class="link font-medium link-hover" href="/organization-admin/groups/{group.id}"
 									>{group.name}</a
-								></td
-							><td>{group.description || '—'}</td><td>{group.member_count}</td><td
-								class="flex gap-2"
-								><a class="btn btn-ghost btn-xs" href="/organization-admin/groups/{group.id}"
+								>
+								{#if group.archived_at}<span class="ml-2 badge badge-sm badge-warning"
+										>Archived</span
+									>{/if}
+							</td>
+							<td>{group.description || '—'}</td>
+							<td>{group.member_count}</td>
+							<td class="flex gap-2">
+								<a class="btn btn-ghost btn-xs" href="/organization-admin/groups/{group.id}"
 									>Manage members</a
-								><button
+								>
+								<button
+									class="btn btn-outline btn-xs"
+									disabled={busy}
+									onclick={() => setArchived(group)}
+									>{group.archived_at ? 'Restore' : 'Archive'}</button
+								>
+								<button
 									class="btn btn-error btn-xs"
 									disabled={busy}
 									onclick={() => removeGroup(group)}>Delete</button
-								></td
-							></tr
-						>
-					{:else}<tr><td colspan="4" class="text-center">No groups yet.</td></tr>{/each}</tbody
-				>
+								>
+							</td>
+						</tr>
+					{:else}
+						<tr><td colspan="4" class="text-center">No groups yet.</td></tr>
+					{/each}
+				</tbody>
 			</table>
 		</div>
 		<div class="flex items-center justify-between">

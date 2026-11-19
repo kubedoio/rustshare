@@ -40,6 +40,7 @@ export interface OrgGroup {
 	description: string | null;
 	created_at: string;
 	updated_at?: string;
+	archived_at: string | null;
 	member_count: number;
 }
 
@@ -122,6 +123,7 @@ export const getOrganizationGroup = (id: string, params: { page?: number; per_pa
 		id: string;
 		name: string;
 		description: string | null;
+		archived_at: string | null;
 		members: OrgMember[];
 		total: number;
 		page: number;
@@ -131,10 +133,16 @@ export const getOrganizationGroup = (id: string, params: { page?: number; per_pa
 export const createOrganizationGroup = (name: string, description: string) =>
 	apiClient.post<OrgGroup>(`${root}/groups`, { name, description: description || null });
 
-export const updateOrganizationGroup = (id: string, name: string, description: string) =>
+export const updateOrganizationGroup = (
+	id: string,
+	name: string,
+	description: string,
+	archived?: boolean
+) =>
 	apiClient.patch<OrgGroup>(`${root}/groups/${encodeURIComponent(id)}`, {
 		name,
-		description: description || null
+		description: description || null,
+		...(archived === undefined ? {} : { archived })
 	});
 
 export const deleteOrganizationGroup = (id: string) =>

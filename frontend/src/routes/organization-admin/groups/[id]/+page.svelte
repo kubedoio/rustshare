@@ -12,7 +12,12 @@
 
 	const perPage = 50;
 	let groupId = $derived($route.params.id ?? '');
-	let group = $state<{ id: string; name: string; description: string | null } | null>(null);
+	let group = $state<{
+		id: string;
+		name: string;
+		description: string | null;
+		archived_at: string | null;
+	} | null>(null);
 	let members = $state<OrgMember[]>([]);
 	let total = $state(0);
 	let page = $state(1);
@@ -138,6 +143,10 @@
 	{:else if error && !group}<div class="alert alert-error" role="alert">{error}</div>
 	{:else if group}
 		<h2 class="text-2xl font-semibold">Manage group: {group.name}</h2>
+		{#if group.archived_at}<p class="alert alert-warning">
+				Archived groups do not grant access. Restore it from the groups list to reactivate its
+				retained shares.
+			</p>{/if}
 		{#if error}<div class="alert alert-error" role="alert">{error}</div>{/if}
 		<form
 			class="grid gap-3 rounded-lg border border-base-300 p-4 md:grid-cols-[1fr_2fr_auto] md:items-end"
@@ -188,7 +197,7 @@
 					</select>
 					<button
 						class="btn btn-primary btn-sm"
-						disabled={busy || !selectedUser}
+						disabled={busy || !selectedUser || !!group.archived_at}
 						onclick={addMember}>Add to group</button
 					>
 				</div>

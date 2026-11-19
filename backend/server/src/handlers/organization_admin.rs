@@ -93,6 +93,7 @@ pub struct Group {
     pub description: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
     pub member_count: i64,
 }
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -100,6 +101,7 @@ pub struct GroupDetail {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
+    pub archived_at: Option<chrono::DateTime<chrono::Utc>>,
     pub members: Vec<Member>,
     pub total: i64,
     pub page: i64,
@@ -110,6 +112,7 @@ pub struct UpdateGroupInput {
     pub name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_present_nullable_string")]
     pub description: Option<Option<String>>,
+    pub archived: Option<bool>,
 }
 
 fn deserialize_present_nullable_string<'de, D>(
@@ -511,7 +514,7 @@ pub async fn groups(
     let r = if offset >= total {
         Vec::new()
     } else {
-        sqlx::query_as::<_, (Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, i64)>("SELECT g.id,g.name,g.description,g.created_at,g.updated_at,count(u.id) FROM user_groups g LEFT JOIN group_members m ON m.group_id=g.id LEFT JOIN users u ON u.id=m.user_id AND u.tenant_id=g.tenant_id WHERE g.tenant_id=$1 GROUP BY g.id ORDER BY g.created_at DESC LIMIT $2 OFFSET $3")
+        sqlx::query_as::<_, (Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, i64)>("SELECT g.id,g.name,g.description,g.created_at,g.updated_at,g.archived_at,count(u.id) FROM user_groups g LEFT JOIN group_members m ON m.group_id=g.id LEFT JOIN users u ON u.id=m.user_id AND u.tenant_id=g.tenant_id WHERE g.tenant_id=$1 GROUP BY g.id ORDER BY g.created_at DESC LIMIT $2 OFFSET $3")
             .bind(tenant_id).bind(per_page).bind(offset).fetch_all(&s.db_pool).await.map_err(db_error)?
     };
     Ok(Json(OrgGroups {
@@ -523,7 +526,8 @@ pub async fn groups(
                 description: x.2,
                 created_at: x.3,
                 updated_at: x.4,
-                member_count: x.5,
+                archived_at: x.5,
+                member_count: x.6,
             })
             .collect(),
         total,
@@ -539,8 +543,16 @@ pub async fn group(
     Query(q): Query<PaginationQuery>,
 ) -> Result<Json<GroupDetail>, AppError> {
     let (page, per_page, offset) = pagination(q.page, q.per_page)?;
-    let row = sqlx::query_as::<_, (Uuid, String, Option<String>)>(
-        "SELECT id,name,description FROM user_groups WHERE id=$1 AND tenant_id=$2",
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
+        "SELECT id,name,description,archived_at FROM user_groups WHERE id=$1 AND tenant_id=$2",
     )
     .bind(id)
     .bind(tenant_id)
@@ -560,6 +572,7 @@ pub async fn group(
         id: row.0,
         name: row.1,
         description: row.2,
+        archived_at: row.3,
         members: members
             .into_iter()
             .map(|m| Member {
@@ -607,6 +620,7 @@ pub async fn create_group(
             description: r.2,
             created_at: r.3,
             updated_at: r.4,
+            archived_at: None,
             member_count: 0,
         }),
     ))
@@ -620,8 +634,8 @@ pub async fn update_group(
     Json(input): Json<UpdateGroupInput>,
 ) -> Result<Json<Group>, AppError> {
     let mut tx = s.db_pool.begin().await.map_err(db_error)?;
-    let current = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT name,description FROM user_groups WHERE id=$1 AND tenant_id=$2 FOR UPDATE",
+    let current = sqlx::query_as::<_, (String, Option<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+        "SELECT name,description,archived_at FROM user_groups WHERE id=$1 AND tenant_id=$2 FOR UPDATE",
     )
     .bind(id)
     .bind(tenant_id)
@@ -634,28 +648,55 @@ pub async fn update_group(
         return Err(admin_bad_request("Group name must not be empty"));
     }
     let description = input.description.unwrap_or(current.1);
-    let r=sqlx::query_as::<_,(Uuid,String,Option<String>,chrono::DateTime<chrono::Utc>,chrono::DateTime<chrono::Utc>,i64)>("UPDATE user_groups g SET name=$3,description=$4,updated_at=now() WHERE g.id=$1 AND g.tenant_id=$2 RETURNING g.id,g.name,g.description,g.created_at,g.updated_at,(SELECT count(*) FROM group_members m JOIN users u ON u.id=m.user_id AND u.tenant_id=$2 WHERE m.group_id=g.id)").bind(id).bind(tenant_id).bind(name).bind(description).fetch_one(&mut *tx).await.map_err(group_db_error)?;
+    let archive_changed = input
+        .archived
+        .is_some_and(|archived| archived != current.2.is_some());
+    let targets = if archive_changed {
+        crate::services::note_service::capture_group_share_targets(&mut tx, id)
+            .await
+            .map_err(db_error)?
+    } else {
+        Vec::new()
+    };
+    let r=sqlx::query_as::<_,(Uuid,String,Option<String>,chrono::DateTime<chrono::Utc>,chrono::DateTime<chrono::Utc>,Option<chrono::DateTime<chrono::Utc>>,i64)>("UPDATE user_groups g SET name=$3,description=$4,archived_at=CASE WHEN $5::boolean IS NULL THEN g.archived_at WHEN $5 THEN now() ELSE NULL END,updated_at=now() WHERE g.id=$1 AND g.tenant_id=$2 RETURNING g.id,g.name,g.description,g.created_at,g.updated_at,g.archived_at,(SELECT count(*) FROM group_members m JOIN users u ON u.id=m.user_id AND u.tenant_id=$2 WHERE m.group_id=g.id)").bind(id).bind(tenant_id).bind(name).bind(description).bind(input.archived).fetch_one(&mut *tx).await.map_err(group_db_error)?;
+    let action = if archive_changed {
+        if input.archived == Some(true) {
+            "group.archived"
+        } else {
+            "group.restored"
+        }
+    } else {
+        "group.updated"
+    };
     insert_scoped_admin_action(
         &mut tx,
         tenant_id,
         user_id,
-        "group.updated",
+        action,
         Some("group"),
         Some(id),
-        json!({"name":r.1}),
+        json!({"name":r.1,"archived":r.5.is_some()}),
         request_correlation_id(&h),
     )
     .await
     .map_err(db_error)?;
     tx.commit().await.map_err(db_error)?;
-    Ok(Json(Group {
+    let group = Group {
         id: r.0,
         name: r.1,
         description: r.2,
         created_at: r.3,
         updated_at: r.4,
-        member_count: r.5,
-    }))
+        archived_at: r.5,
+        member_count: r.6,
+    };
+    if archive_changed {
+        crate::services::note_service::dispatch_share_target_acl_refresh(
+            Arc::clone(&s.note_service),
+            targets,
+        );
+    }
+    Ok(Json(group))
 }
 #[utoipa::path(delete,path="/api/v1/organization-admin/groups/{id}",params(("id"=Uuid,Path)),responses((status=204),(status=404)))]
 pub async fn delete_group(
@@ -756,7 +797,7 @@ pub async fn add_member(
         ));
     }
     let mut tx = s.db_pool.begin().await.map_err(db_error)?;
-    let valid=sqlx::query("SELECT g.id FROM user_groups g JOIN users u ON u.tenant_id=g.tenant_id WHERE g.id=$1 AND g.tenant_id=$2 AND u.id=$3 FOR UPDATE OF g,u").bind(id).bind(tenant_id).bind(input.user_id).fetch_optional(&mut *tx).await.map_err(db_error)?;
+    let valid=sqlx::query("SELECT g.id FROM user_groups g JOIN users u ON u.tenant_id=g.tenant_id WHERE g.id=$1 AND g.tenant_id=$2 AND g.archived_at IS NULL AND u.id=$3 FOR UPDATE OF g,u").bind(id).bind(tenant_id).bind(input.user_id).fetch_optional(&mut *tx).await.map_err(db_error)?;
     if valid.is_none() {
         return Err(admin_not_found("Group or user not found"));
     }
@@ -985,7 +1026,7 @@ pub async fn bulk_invite_users(
                         .await
                         .map_err(db_error)?;
                         let assigned = sqlx::query(
-                            "INSERT INTO invite_token_group_assignments (invite_token_id,group_id) SELECT $1,g.id FROM user_groups g WHERE g.tenant_id=$2 AND g.id=ANY($3)",
+                            "INSERT INTO invite_token_group_assignments (invite_token_id,group_id) SELECT $1,g.id FROM user_groups g WHERE g.tenant_id=$2 AND g.id=ANY($3) AND g.archived_at IS NULL",
                         )
                         .bind(invite_id)
                         .bind(tenant_id)
@@ -1180,7 +1221,7 @@ async fn bulk_invite_validation(
         return Ok("duplicate_group");
     }
     let group_count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM user_groups WHERE tenant_id=$1 AND id=ANY($2)")
+        sqlx::query_scalar("SELECT count(*) FROM user_groups WHERE tenant_id=$1 AND id=ANY($2) AND archived_at IS NULL")
             .bind(tenant_id)
             .bind(&row.group_ids)
             .fetch_one(&mut *conn)

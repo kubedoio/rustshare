@@ -21976,6 +21976,13 @@
           "member_count"
         ],
         "properties": {
+          "archived_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -22014,6 +22021,13 @@
           "per_page"
         ],
         "properties": {
+          "archived_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
           "description": {
             "type": [
               "string",
@@ -29201,6 +29215,12 @@
       "UpdateGroupInput": {
         "type": "object",
         "properties": {
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "description": {
             "type": [
               "string",
