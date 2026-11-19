@@ -12,6 +12,11 @@ import check_handler_sql as guard
 
 
 class HandlerSqlGuardTests(unittest.TestCase):
+    def test_device_auth_persistence_stays_outside_http_handlers(self):
+        handler = guard.ROOT / "backend/server/src/handlers/device_auth.rs"
+        production = handler.read_text().split("#[cfg(test)]", 1)[0]
+        self.assertEqual(guard.calls(production), [])
+
     def test_each_sql_form_is_detected_without_other_imports(self):
         cases = [
             ('sqlx::query("SELECT 1");', "query"),
