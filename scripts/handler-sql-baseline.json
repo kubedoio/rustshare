@@ -266,12 +266,7 @@
     "query_scalar:7813ac94803fb45b96bacc5a284e10491008e4472960a1b19541c3aec2ebbd47",
     "query_scalar:cd4787f16bca792badadd90f66113a7750c76e7507ae06f56a0815acb1131860"
   ],
-  "backend/server/src/handlers/devices.rs": [
-    "Executor.execute:b1d1ee831f15a8f99068b63138828d629d19281b624a6dfe88bd1b58f0d134c7",
-    "Executor.fetch_all:61a101a18bd004de788ba4c69c56ae15468b1ff46311598da75d32a861d92936",
-    "query:9c359688171892a57ed80f838f07df84957dac8eea08af73aab6c03274084cac",
-    "query_as:c5c799ea708ef4968fc3341609152ca12a5c2982d1668ec34125115f72a20adb"
-  ],
+  "backend/server/src/handlers/devices.rs": [],
   "backend/server/src/handlers/extractors.rs": [
     "Executor.execute:44001fdfee8bce0132d9d58976e8a6bb1fddd30110ed6b063b083257e45493a1",
     "Executor.fetch_optional:0a4e7c2df8dd56af35b7f3b17d82348fa531b36bd297913746be9ee340b4a4e4",
@@ -423,7 +418,6 @@
     "query_scalar:b013880056f4c4e7d8ed0548560d77758ec3c1f8b1b25d49816a020f849c133f",
     "query_scalar:bf259907d26e286b461d2b51a902ee2456a7c1687d8bfd8aa91e6ed62a109f10"
   ],
-  "backend/server/src/handlers/meetings.rs": [],
   "backend/server/src/handlers/memory_reconcile.rs": [
     "Executor.fetch_optional:0a4e7c2df8dd56af35b7f3b17d82348fa531b36bd297913746be9ee340b4a4e4",
     "query_scalar:32b218a123f7ab576a58cdb265775b60f14aa4e887a2515f1806ae29a463ee1e"

@@ -1,4 +1,5 @@
 pub mod application_user_preference_repository;
+pub mod device_repository;
 pub mod file_repository;
 pub mod folder_repository;
 pub mod memory_orphan_cleanup_repository;
@@ -9,6 +10,7 @@ pub mod user_repository;
 pub mod workflow_repository;
 
 pub use application_user_preference_repository::ApplicationUserPreferenceRepository;
+pub use device_repository::{DeviceRecord, DeviceRepository};
 pub use file_repository::FileRepository;
 pub use folder_repository::FolderRepository;
 pub use memory_orphan_cleanup_repository::{
