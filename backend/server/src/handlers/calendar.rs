@@ -783,6 +783,24 @@ mod export_tests {
     }
 
     #[test]
+    fn export_preserves_utc_instants_across_dst_transitions() {
+        let mut event = event();
+        event.rrule = None;
+        event.starts_at = "2026-03-29T00:30:00Z".parse().unwrap();
+        event.ends_at = "2026-03-29T01:30:00Z".parse().unwrap();
+        let spring = serialize_calendar_event(&event).unwrap();
+        assert!(spring.contains("X-WR-TIMEZONE:Europe/Berlin\r\n"));
+        assert!(spring.contains("DTSTART:20260329T003000Z\r\n"));
+        assert!(spring.contains("DTEND:20260329T013000Z\r\n"));
+
+        event.starts_at = "2026-10-25T00:30:00Z".parse().unwrap();
+        event.ends_at = "2026-10-25T01:30:00Z".parse().unwrap();
+        let fall = serialize_calendar_event(&event).unwrap();
+        assert!(fall.contains("DTSTART:20261025T003000Z\r\n"));
+        assert!(fall.contains("DTEND:20261025T013000Z\r\n"));
+    }
+
+    #[test]
     fn export_preserves_imported_uid_and_escapes_line_breaks() {
         let mut event = event();
         event.external_uid = Some("partner-event\r\nSUMMARY:injected".to_string());

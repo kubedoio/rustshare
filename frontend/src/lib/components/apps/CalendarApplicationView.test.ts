@@ -9,6 +9,7 @@ import CalendarApplicationView from './CalendarApplicationView.svelte';
 
 const mocks = vi.hoisted(() => ({
 	listEvents: vi.fn(),
+	exportEvent: vi.fn(),
 	getEvent: vi.fn(),
 	getEventMailLink: vi.fn(),
 	openEventMeeting: vi.fn(),
@@ -133,6 +134,7 @@ describe('CalendarApplicationView', () => {
 		toastStore.clear();
 		mocks.listSources.mockResolvedValue([internalSource, googleSource]);
 		mocks.listEvents.mockResolvedValue([]);
+		mocks.exportEvent.mockResolvedValue('BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n');
 		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(1)));
 		mocks.getEventMailLink.mockRejectedValue(new Error('Related Mail unavailable'));
 		mocks.openEventMeeting.mockResolvedValue({ id: 'meeting-1' });
@@ -214,6 +216,21 @@ describe('CalendarApplicationView', () => {
 
 		await fireEvent.click(await screen.findByText(/Sprint review/));
 		expect(await screen.findByRole('button', { name: /Edit event/ })).toBeTruthy();
+	});
+
+	it('downloads the authorized event as an iCalendar file', async () => {
+		mocks.listEvents.mockResolvedValue([eventAt(dayFromToday(1))]);
+		const download = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+		await fireEvent.click(screen.getByRole('button', { name: 'Export .ics' }));
+
+		await waitFor(() =>
+			expect(mocks.exportEvent).toHaveBeenCalledWith(expect.stringContaining('evt-'))
+		);
+		expect(download).toHaveBeenCalledOnce();
+		download.mockRestore();
 	});
 
 	it('moves a month event by pointer and preserves event-local time and duration', async () => {

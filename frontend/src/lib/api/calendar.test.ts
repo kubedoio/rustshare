@@ -8,6 +8,7 @@ vi.mock('./client', () => ({
 		post: vi.fn(),
 		patch: vi.fn(),
 		delete: vi.fn(),
+		requestText: vi.fn(),
 		getBaseURL: vi.fn(() => 'http://localhost:8080/api/v1')
 	}
 }));
@@ -81,6 +82,13 @@ describe('calendarApi', () => {
 
 		expect(apiClient.get).toHaveBeenCalledWith('/calendar/events/evt-1');
 		expect(apiClient.post).toHaveBeenCalledWith('/calendar/events/evt-1/meeting');
+	});
+
+	it('exports a caller-owned event as iCalendar text', async () => {
+		vi.mocked(apiClient.requestText).mockResolvedValueOnce('BEGIN:VCALENDAR');
+
+		expect(await calendarApi.exportEvent('evt-1')).toBe('BEGIN:VCALENDAR');
+		expect(apiClient.requestText).toHaveBeenCalledWith('/calendar/events/evt-1/export');
 	});
 
 	it('lists sources', async () => {
