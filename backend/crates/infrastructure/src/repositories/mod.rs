@@ -10,7 +10,10 @@ pub mod user_repository;
 pub mod workflow_repository;
 
 pub use application_user_preference_repository::ApplicationUserPreferenceRepository;
-pub use device_repository::{DeviceRecord, DeviceRepository};
+pub use device_repository::{
+    DeviceApprovalBearer, DeviceApprovalLookup, DeviceApprovalOutcome, DevicePairPollRecord,
+    DeviceRecord, DeviceRepository, DeviceTokenIssueOutcome,
+};
 pub use file_repository::FileRepository;
 pub use folder_repository::FolderRepository;
 pub use memory_orphan_cleanup_repository::{
