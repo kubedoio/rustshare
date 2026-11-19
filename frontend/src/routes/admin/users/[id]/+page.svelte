@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { createQuery } from '$lib/query-compat';
 	import { page } from '$lib/kit/page';
 	import { queryClient } from '$lib/query-client';
@@ -22,7 +23,7 @@
 </script>
 
 <svelte:head>
-	<title>Edit User — Admin | RustShare</title>
+	<title>Edit User — Admin | {productBranding.productName}</title>
 </svelte:head>
 
 <div class="space-y-4">

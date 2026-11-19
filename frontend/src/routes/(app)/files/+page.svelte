@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	/**
 	 * ==============================================================================
 	 * UNIFIED FILES PAGE
@@ -1816,7 +1817,7 @@
 </script>
 
 <svelte:head>
-	<title>{workspaceTitle} - RustShare</title>
+	<title>{workspaceTitle} - {productBranding.productName}</title>
 </svelte:head>
 
 <svelte:window onkeydown={handleKeyDown} />

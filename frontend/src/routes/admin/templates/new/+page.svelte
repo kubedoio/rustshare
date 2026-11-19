@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { goto } from '$app/navigation';
 	import { createMutation, createQuery, useQueryClient } from '$lib/query-compat';
 	import { createTemplate } from '$lib/api/admin-applications';
@@ -212,7 +213,7 @@
 </script>
 
 <svelte:head>
-	<title>New Template - Admin - RustShare</title>
+	<title>New Template - Admin - {productBranding.productName}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-3xl">

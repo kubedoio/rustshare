@@ -25,6 +25,7 @@
 	} from 'lucide-svelte';
 	import WorkspaceIcon from '$lib/components/dashboard/WorkspaceIcon.svelte';
 	import RailItem from './RailItem.svelte';
+	import { productBranding } from '$lib/branding';
 
 	const primaryItems = [
 		{ icon: WorkspaceIcon, label: 'Workspace', href: '/dashboard' },
@@ -122,29 +123,33 @@
 		class:px-4={railExpanded}
 		class:justify-center={!railExpanded}
 	>
-		<a href="/dashboard" class="flex items-center gap-3" aria-label="RustShare">
-			<svg
-				class="h-9 w-9 flex-shrink-0"
-				viewBox="0 0 32 32"
-				fill="none"
-				xmlns="http://www.w3.org/2000/svg"
-			>
-				<rect
-					x="2"
-					y="6"
-					width="28"
-					height="20"
-					rx="3"
-					fill="currentColor"
-					class="text-brand-500"
-				/>
-				<rect x="2" y="9" width="28" height="4" fill="currentColor" class="text-brand-400" />
-				<circle cx="24" cy="21" r="5" fill="currentColor" class="text-base-200" />
-				<circle cx="24" cy="21" r="3" fill="currentColor" class="text-brand-500" />
-				<rect x="22.5" y="19.5" width="3" height="3" fill="currentColor" class="text-base-200" />
-			</svg>
+		<a href="/dashboard" class="flex items-center gap-3" aria-label={productBranding.productName}>
+			{#if productBranding.logoUrl}
+				<img src={productBranding.logoUrl} alt="" class="h-9 w-9 flex-shrink-0 object-contain" />
+			{:else}<svg
+					class="h-9 w-9 flex-shrink-0"
+					viewBox="0 0 32 32"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+				>
+					<rect
+						x="2"
+						y="6"
+						width="28"
+						height="20"
+						rx="3"
+						fill="currentColor"
+						class="text-brand-500"
+					/>
+					<rect x="2" y="9" width="28" height="4" fill="currentColor" class="text-brand-400" />
+					<circle cx="24" cy="21" r="5" fill="currentColor" class="text-base-200" />
+					<circle cx="24" cy="21" r="3" fill="currentColor" class="text-brand-500" />
+					<rect x="22.5" y="19.5" width="3" height="3" fill="currentColor" class="text-base-200" />
+				</svg>{/if}
 			{#if railExpanded}
-				<span class="truncate text-lg font-bold tracking-tight text-base-content">RustShare</span>
+				<span class="truncate text-lg font-bold tracking-tight text-base-content"
+					>{productBranding.productName}</span
+				>
 			{/if}
 		</a>
 	</div>

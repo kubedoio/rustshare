@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { onMount } from 'svelte';
 	import { page } from '$lib/kit/page';
 	import { currentUser, authStore } from '$lib/stores/auth';
@@ -383,7 +384,7 @@
 </script>
 
 <svelte:head>
-	<title>Settings - RustShare</title>
+	<title>Settings - {productBranding.productName}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-4xl">

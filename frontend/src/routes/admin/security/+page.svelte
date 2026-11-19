@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { createMutation, createQuery, useQueryClient } from '$lib/query-compat';
 	import {
 		getSecurityConfig,
@@ -41,7 +42,7 @@
 </script>
 
 <svelte:head>
-	<title>Security — Admin | RustShare</title>
+	<title>Security — Admin | {productBranding.productName}</title>
 </svelte:head>
 
 <div class="max-w-3xl space-y-4">

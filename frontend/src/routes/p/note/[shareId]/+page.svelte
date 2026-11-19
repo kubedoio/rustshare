@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { page } from '$lib/kit/page';
 	import { onMount } from 'svelte';
 	import { markdownToHtml } from '$lib/editor/adapter/markdown';
@@ -34,8 +35,11 @@
 </script>
 
 <svelte:head>
-	<title>{note?.title || 'Shared Note'} - RustShare</title>
-	<meta name="description" content={note?.excerpt || 'A shared note on RustShare'} />
+	<title>{note?.title || 'Shared Note'} - {productBranding.productName}</title>
+	<meta
+		name="description"
+		content={note?.excerpt || `A shared note on ${productBranding.productName}`}
+	/>
 </svelte:head>
 
 <div class="public-page">
@@ -43,7 +47,7 @@
 		<div class="public-header-inner">
 			<a href="/" class="public-logo">
 				<FileText size={20} class="text-brand-500" />
-				<span>RustShare</span>
+				<span>{productBranding.productName}</span>
 			</a>
 		</div>
 	</header>
@@ -59,7 +63,7 @@
 				<AlertCircle size={32} />
 				<h1>Note not found</h1>
 				<p>This note may have been removed or made private.</p>
-				<a href="/" class="btn mt-4 btn-primary btn-sm">Go to RustShare</a>
+				<a href="/" class="btn mt-4 btn-primary btn-sm">Go to {productBranding.productName}</a>
 			</div>
 		{:else if note}
 			<article class="public-note">
@@ -78,7 +82,7 @@
 	</main>
 
 	<footer class="public-footer">
-		<p>Shared with RustShare</p>
+		<p>Shared with {productBranding.productName}</p>
 	</footer>
 </div>
 

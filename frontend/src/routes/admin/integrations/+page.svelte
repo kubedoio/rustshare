@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { createQuery } from '$lib/query-compat';
 	import { queryClient } from '$lib/query-client';
 	import { listWebhooks } from '$lib/api/admin';
@@ -25,7 +26,7 @@
 </script>
 
 <svelte:head>
-	<title>Integrations — Admin | RustShare</title>
+	<title>Integrations — Admin | {productBranding.productName}</title>
 </svelte:head>
 
 <div class="space-y-4">

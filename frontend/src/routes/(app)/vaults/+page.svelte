@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { createQuery } from '$lib/query-compat';
 	import { listVaults } from '$lib/api/vaults';
 	import type { Vault } from '$lib/api/types';
@@ -26,7 +27,7 @@
 </script>
 
 <svelte:head>
-	<title>Vaults - RustShare</title>
+	<title>Vaults - {productBranding.productName}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-5xl space-y-6">

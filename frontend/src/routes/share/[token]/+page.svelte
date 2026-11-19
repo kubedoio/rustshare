@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { goto } from '$app/navigation';
 	import { page } from '$lib/kit/page';
 	import { createQuery } from '$lib/query-compat';
@@ -302,7 +303,7 @@
 </script>
 
 <svelte:head>
-	<title>Shared Resource - RustShare</title>
+	<title>Shared Resource - {productBranding.productName}</title>
 </svelte:head>
 
 <div class="flex min-h-screen items-center justify-center bg-base-200 p-4">
@@ -827,7 +828,7 @@
 				<div class="divider"></div>
 				<div class="text-center">
 					<p class="text-xs text-base-content/60">
-						Powered by <span class="font-semibold">RustShare</span>
+						Powered by <span class="font-semibold">{productBranding.productName}</span>
 					</p>
 				</div>
 			{/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import {
 		provisionChatCommunity,
@@ -88,7 +89,7 @@
 </script>
 
 <svelte:head>
-	<title>Chat Settings - Admin - RustShare</title>
+	<title>Chat Settings - Admin - {productBranding.productName}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-6xl">

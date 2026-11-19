@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { page } from '$lib/kit/page';
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
@@ -176,8 +177,8 @@
 <svelte:head>
 	<title>
 		{shareEntry
-			? `${shareEntry.resource_name} - Shared with Me - RustShare`
-			: 'Shared Resource - RustShare'}
+			? `${shareEntry.resource_name} - Shared with Me - ${productBranding.productName}`
+			: `Shared Resource - ${productBranding.productName}`}
 	</title>
 </svelte:head>
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { createQuery } from '$lib/query-compat';
 	import { listAuditLog } from '$lib/api/admin';
 	import AuditTable from '$lib/components/admin/AuditTable.svelte';
@@ -31,7 +32,7 @@
 </script>
 
 <svelte:head>
-	<title>Audit Log — Admin | RustShare</title>
+	<title>Audit Log — Admin | {productBranding.productName}</title>
 </svelte:head>
 
 <div class="space-y-4">

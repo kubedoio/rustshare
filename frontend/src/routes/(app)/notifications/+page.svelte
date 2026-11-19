@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { createMutation, createQuery } from '$lib/query-compat';
 	import { goto } from '$app/navigation';
 	import {
@@ -102,7 +103,7 @@
 </script>
 
 <svelte:head>
-	<title>Notifications - RustShare</title>
+	<title>Notifications - {productBranding.productName}</title>
 </svelte:head>
 
 <div class="space-y-6">
