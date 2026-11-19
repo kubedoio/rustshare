@@ -93,6 +93,10 @@ cd frontend && npm install && npm run check && npm run lint && npm run test && n
 
 For more detailed validation guidance, see [`docs/agent-guides/testing.md`](docs/agent-guides/testing.md) and [`docs/agent-guides/code-quality.md`](docs/agent-guides/code-quality.md).
 
+## Mandatory PR Review and Fix Loop
+
+Every LLM agent that implements a change and opens a pull request must review the exact PR head after creating the PR. This is required for every PR, including documentation-only changes, and is separate from CI and requested human approval. Follow the review-and-fix loop in [`docs/agent-guides/pr-workflow.md`](docs/agent-guides/pr-workflow.md) until no actionable findings remain. Never merge or describe a PR as review-complete while an actionable finding is unresolved.
+
 ## Safety Boundaries
 
 These areas are security or data-safety sensitive. Changes here require tests and a short security note in the PR:
