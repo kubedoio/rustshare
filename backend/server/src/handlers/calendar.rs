@@ -11,7 +11,6 @@ use rustshare_core::domain::{
 };
 use rustshare_resource_auth::resource_ref::ResourceRef;
 use serde::{Deserialize, Serialize};
-use sha2::Digest;
 use uuid::Uuid;
 
 use crate::handlers::{AppError, AuthenticatedUser, ValidatedJson};
@@ -64,35 +63,6 @@ async fn preview_ical_file(
     .map_err(|_| AppError::bad_request("Calendar file exceeded the 10-second processing limit"))?
     .map_err(|e| AppError::internal(format!("Calendar preview task failed: {e}")))?;
     parsed.map_err(|e| AppError::bad_request(e.to_string()))
-}
-
-fn calendar_import_preview_digest(
-    bytes: &[u8],
-    source_id: Uuid,
-    uids: &[String],
-    existing: &[rustshare_core::domain::CalendarEvent],
-) -> String {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(bytes);
-    hasher.update(source_id.as_bytes());
-    let mut uids = uids.iter().collect::<Vec<_>>();
-    uids.sort_unstable();
-    uids.dedup();
-    for uid in uids {
-        hasher.update((uid.len() as u64).to_be_bytes());
-        hasher.update(uid.as_bytes());
-        if let Some(event) = existing
-            .iter()
-            .find(|event| event.external_uid.as_deref() == Some(uid))
-        {
-            let snapshot = serde_json::to_vec(event).expect("CalendarEvent serializes to JSON");
-            hasher.update((snapshot.len() as u64).to_be_bytes());
-            hasher.update(snapshot);
-        } else {
-            hasher.update(0_u64.to_be_bytes());
-        }
-    }
-    hex::encode(hasher.finalize())
 }
 
 async fn require_calendar_enabled(state: &AppState, tenant_id: Uuid) -> Result<(), AppError> {
@@ -1319,20 +1289,12 @@ pub async fn preview_calendar_import(
             .iter()
             .find(|saved| saved.external_uid.as_deref() == Some(uid))
         {
-            event.outcome = if saved.title == event.title.as_deref().unwrap_or_default()
-                && saved.description == event.description
-                && saved.location == event.location
-                && Some(saved.starts_at) == event.starts_at
-                && Some(saved.ends_at) == event.ends_at
-                && saved.all_day == event.all_day
-                && Some(saved.timezone.as_str()) == event.timezone.as_deref()
-                && saved.rrule == event.rrule
-                && Some(saved.status.as_str()) == event.status.as_deref()
-            {
-                "duplicate"
-            } else {
-                "conflict"
-            };
+            event.outcome =
+                if crate::services::ical_import::preview_event_matches_saved(event, saved) {
+                    "duplicate"
+                } else {
+                    "conflict"
+                };
         }
     }
     let new_events = events.iter().filter(|event| event.outcome == "new").count();
@@ -1348,7 +1310,7 @@ pub async fn preview_calendar_import(
         .iter()
         .filter(|event| event.outcome == "unsupported")
         .count();
-    let digest = calendar_import_preview_digest(&bytes, source_id, &uids, &existing);
+    let digest = crate::services::ical_import::preview_digest(&bytes, source_id, &uids, &existing);
     Ok(Json(CalendarImportPreviewResponse {
         digest,
         source_id,
@@ -1480,7 +1442,8 @@ pub async fn import_calendar_file(
         .list_calendar_import_matches(auth.tenant_id, auth.user_id, source.id, &preview_uids)
         .await
         .map_err(|e| AppError::internal(format!("Failed to confirm calendar import: {e}")))?;
-    let actual_digest = calendar_import_preview_digest(&bytes, source.id, &preview_uids, &existing);
+    let actual_digest =
+        crate::services::ical_import::preview_digest(&bytes, source.id, &preview_uids, &existing);
     if preview_digest != actual_digest {
         return Err(AppError::conflict(
             "The file or destination events changed after preview; preview again",
@@ -1497,20 +1460,12 @@ pub async fn import_calendar_file(
             .iter()
             .find(|saved| saved.external_uid.as_deref() == Some(uid))
         {
-            event.outcome = if saved.title == event.title.as_deref().unwrap_or_default()
-                && saved.description == event.description
-                && saved.location == event.location
-                && Some(saved.starts_at) == event.starts_at
-                && Some(saved.ends_at) == event.ends_at
-                && saved.all_day == event.all_day
-                && Some(saved.timezone.as_str()) == event.timezone.as_deref()
-                && saved.rrule == event.rrule
-                && Some(saved.status.as_str()) == event.status.as_deref()
-            {
-                "duplicate"
-            } else {
-                "conflict"
-            };
+            event.outcome =
+                if crate::services::ical_import::preview_event_matches_saved(event, saved) {
+                    "duplicate"
+                } else {
+                    "conflict"
+                };
         }
     }
     let now = Utc::now();
@@ -1534,7 +1489,7 @@ pub async fn import_calendar_file(
     };
     state
         .metadata_store
-        .create_calendar_import_job(&job, &bytes)
+        .create_calendar_import_job(&job, &bytes, Some(&preview_digest))
         .await
         .map_err(|e| AppError::internal(format!("Failed to enqueue import job: {e}")))?;
 

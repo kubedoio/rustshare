@@ -2773,7 +2773,7 @@ async fn cross_tenant_ids_are_not_visible() {
     };
     state
         .metadata_store
-        .create_calendar_import_job(&job_a, b"BEGIN:VCALENDAR")
+        .create_calendar_import_job(&job_a, b"BEGIN:VCALENDAR", None)
         .await
         .expect("create import job");
 

@@ -7392,14 +7392,15 @@ impl MetadataStore {
         &self,
         job: &CalendarImportJob,
         content: &[u8],
+        preview_digest: Option<&str>,
     ) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO calendar_import_jobs (
                 id, tenant_id, owner_id, source_id, status, filename,
-                size_bytes, content, created_at, updated_at
+                size_bytes, content, preview_digest, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
             job.id,
             job.tenant_id,
@@ -7409,6 +7410,7 @@ impl MetadataStore {
             job.filename,
             job.size_bytes,
             content,
+            preview_digest,
             job.created_at,
             job.updated_at,
         )
@@ -7426,6 +7428,18 @@ impl MetadataStore {
         .fetch_optional(&self.pool)
         .await?;
         Ok(content)
+    }
+
+    /// Expected destination snapshot for the confirmed import, when the job
+    /// was created by the preview-and-confirm API.
+    pub async fn get_calendar_import_job_preview_digest(&self, id: Uuid) -> Result<Option<String>> {
+        let digest = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT preview_digest FROM calendar_import_jobs WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(digest.flatten())
     }
 
     /// List the most recent active import jobs for a user (bounded).
@@ -7503,8 +7517,14 @@ impl MetadataStore {
                   AND s.deleted_at IS NULL
                   AND s.is_enabled = true
                   AND e.enabled = true
+                  AND NOT EXISTS (
+                    SELECT 1 FROM calendar_import_jobs running
+                    WHERE running.source_id = j.source_id
+                      AND running.status = 'running'
+                      AND running.deleted_at IS NULL
+                  )
                 ORDER BY j.created_at ASC
-                FOR UPDATE OF j SKIP LOCKED
+                FOR UPDATE OF s, j SKIP LOCKED
                 LIMIT 1
             ),
             updated AS (

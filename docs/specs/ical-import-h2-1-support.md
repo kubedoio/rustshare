@@ -9,7 +9,7 @@ preview and are not silently flattened.
 | --- | --- |
 | `VEVENT` identity | Preserve required `UID`; key by destination source and UID. H2.1 rejects recurrence overrides, so recurrence identifiers are absent. |
 | Re-import | Unchanged content is idempotent. Explicitly confirming changed content updates the event only inside the selected import source; a same-UID event in another Calendar source remains untouched. |
-| Preview token | SHA-256 binds the uploaded bytes, destination source, and current matching event snapshot; changed destination state requires a fresh preview. |
+| Preview token | SHA-256 binds the uploaded bytes, destination source, and current matching event snapshot. Confirmation and the serialized per-source worker both recheck it; stale jobs fail before writing. |
 | `DTSTAMP` | Preserve a valid UTC value as the stored update timestamp; missing values use the import time. |
 | `CREATED`, `LAST-MODIFIED`, `SEQUENCE` | Report as unsupported because the event model cannot retain them independently. |
 | `SUMMARY`, `DESCRIPTION`, `LOCATION` | Preserve as plain untrusted text; no HTML rendering or remote fetch. |

@@ -14,6 +14,7 @@ use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone
 use icalendar::parser::{read_components, Component, Property};
 use rustshare_core::domain::{CalendarEvent, CalendarImportJob};
 use rustshare_storage::{MetadataStore, OutboxStore};
+use sha2::Digest;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
@@ -99,6 +100,48 @@ pub fn preview_import(bytes: &[u8]) -> Result<Vec<ImportPreviewEvent>, IcalImpor
     Ok(preview)
 }
 
+pub fn preview_digest(
+    bytes: &[u8],
+    source_id: Uuid,
+    uids: &[String],
+    existing: &[CalendarEvent],
+) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(bytes);
+    hasher.update(source_id.as_bytes());
+    let mut uids = uids.iter().collect::<Vec<_>>();
+    uids.sort_unstable();
+    uids.dedup();
+    for uid in uids {
+        hasher.update((uid.len() as u64).to_be_bytes());
+        hasher.update(uid.as_bytes());
+        if let Some(event) = existing
+            .iter()
+            .find(|event| event.external_uid.as_deref() == Some(uid))
+        {
+            let snapshot = serde_json::to_vec(event).expect("CalendarEvent serializes to JSON");
+            hasher.update((snapshot.len() as u64).to_be_bytes());
+            hasher.update(snapshot);
+        } else {
+            hasher.update(0_u64.to_be_bytes());
+        }
+    }
+    hex::encode(hasher.finalize())
+}
+
+pub fn preview_event_matches_saved(event: &ImportPreviewEvent, saved: &CalendarEvent) -> bool {
+    event.uid.as_deref() == saved.external_uid.as_deref()
+        && saved.title == event.title.as_deref().unwrap_or_default()
+        && saved.description == event.description
+        && saved.location == event.location
+        && Some(saved.starts_at) == event.starts_at
+        && Some(saved.ends_at) == event.ends_at
+        && saved.all_day == event.all_day
+        && Some(saved.timezone.as_str()) == event.timezone.as_deref()
+        && saved.rrule == event.rrule
+        && Some(saved.status.as_str()) == event.status.as_deref()
+}
+
 /// Cap on the `last_error` sample persisted on the job row.
 const MAX_LAST_ERROR_LEN: usize = 512;
 /// Maximum VEVENT components accepted in one uploaded calendar.
@@ -137,6 +180,8 @@ pub enum IcalImportError {
     InvalidJobStatus(String),
     #[error("uploaded file content is missing")]
     MissingContent,
+    #[error("destination events changed after confirmation; preview and confirm again")]
+    StalePreview,
     #[error("calendar file is unreadable: {0}")]
     Unparseable(String),
     #[error("storage error: {0}")]
@@ -839,7 +884,30 @@ pub async fn process_import_job(
         .map_err(|e| IcalImportError::Storage(e.to_string()))?
         .ok_or(IcalImportError::MissingContent)?;
 
-    let result = parse_and_upsert(metadata_store, job, &bytes).await;
+    let result = async {
+        if job.processed_events == 0 {
+            if let Some(expected_digest) = metadata_store
+                .get_calendar_import_job_preview_digest(job.id)
+                .await
+                .map_err(|e| IcalImportError::Storage(e.to_string()))?
+            {
+                let preview = preview_import(&bytes)?;
+                let uids = preview
+                    .iter()
+                    .filter_map(|event| event.uid.clone())
+                    .collect::<Vec<_>>();
+                let existing = metadata_store
+                    .list_calendar_import_matches(job.tenant_id, job.owner_id, job.source_id, &uids)
+                    .await
+                    .map_err(|e| IcalImportError::Storage(e.to_string()))?;
+                if preview_digest(&bytes, job.source_id, &uids, &existing) != expected_digest {
+                    return Err(IcalImportError::StalePreview);
+                }
+            }
+        }
+        parse_and_upsert(metadata_store, job, &bytes).await
+    }
+    .await;
     match &result {
         Ok(outcome) => {
             if metadata_store

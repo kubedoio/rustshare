@@ -370,32 +370,53 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
     let first_count = count_imported_events(&state, tenant_id).await;
     assert_eq!(first_count, 4);
 
-    // Overlapping re-uploads share the unique destination identity; both jobs
-    // complete without creating duplicate event rows.
+    // Overlapping previews may make one confirmation stale; that request must
+    // retry its preview instead of overwriting the event queued by the other.
     let ((status_a, job_a), (status_b, job_b)) = tokio::join!(
         upload_ics(&app, &token, "export.ics", ICS_FIXTURE),
         upload_ics(&app, &token, "export.ics", ICS_FIXTURE),
     );
-    assert_eq!(status_a, StatusCode::ACCEPTED);
-    assert_eq!(status_b, StatusCode::ACCEPTED);
-    assert_eq!(job_a["source_id"], source_id.to_string());
-    assert_eq!(job_b["source_id"], source_id.to_string());
-    let (second_job, third_job) = tokio::join!(
-        wait_for_job(
+    let mut job_ids = Vec::new();
+    let mut refresh_preview = false;
+    for (status, body) in [(status_a, job_a), (status_b, job_b)] {
+        assert!(
+            status == StatusCode::ACCEPTED || status == StatusCode::CONFLICT,
+            "overlapping confirmation returned {status}: {body}"
+        );
+        if status == StatusCode::ACCEPTED {
+            assert_eq!(body["source_id"], source_id.to_string());
+            job_ids.push(Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap());
+        } else {
+            refresh_preview = true;
+        }
+    }
+    assert!(!job_ids.is_empty());
+    for job_id in &job_ids {
+        let job = wait_for_job(&app, &token, *job_id).await;
+        if job["status"] == "failed" {
+            assert!(job["last_error"]
+                .as_str()
+                .unwrap()
+                .contains("changed after confirmation"));
+            refresh_preview = true;
+        } else {
+            assert_eq!(job["status"], "completed");
+            assert_eq!(job["total_events"], 5);
+            assert_eq!(job["processed_events"], 4);
+        }
+    }
+    if refresh_preview {
+        let (status, body) = upload_ics(&app, &token, "export.ics", ICS_FIXTURE).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let job = wait_for_job(
             &app,
             &token,
-            Uuid::parse_str(job_a["job_id"].as_str().unwrap()).unwrap(),
-        ),
-        wait_for_job(
-            &app,
-            &token,
-            Uuid::parse_str(job_b["job_id"].as_str().unwrap()).unwrap(),
-        ),
-    );
-    for job in [second_job, third_job] {
+            Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap(),
+        )
+        .await;
         assert_eq!(job["status"], "completed");
-        assert_eq!(job["total_events"], 5);
         assert_eq!(job["processed_events"], 4);
+        job_ids.push(Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap());
     }
 
     let second_count = count_imported_events(&state, tenant_id).await;
@@ -417,7 +438,7 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
         .unwrap();
     let (status, body) = response_json(response).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["jobs"].as_array().unwrap().len(), 3);
+    assert_eq!(body["jobs"].as_array().unwrap().len(), 1 + job_ids.len());
 
     cleanup_outbox(&state.db_pool, tenant_id).await;
     cleanup_tenant(&state.db_pool, tenant_id).await;
@@ -487,6 +508,53 @@ async fn changed_uid_content_updates_only_the_matching_import_source() {
     .unwrap();
     assert_eq!(imported_title, "Updated version");
     assert_eq!(internal_title, "Internal event");
+    cleanup_outbox(&state.db_pool, tenant_id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn queued_import_fails_if_its_confirmed_destination_snapshot_is_stale() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env_without_calendar_outbox().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_import_stale_preview", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let ics = "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:stale-id\nDTSTART:20261005T140000Z\nDTEND:20261005T150000Z\nSUMMARY:Previewed event\nEND:VEVENT\nEND:VCALENDAR\n";
+    let (status, accepted) = upload_ics(&app, &token, "stale.ics", ics).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let source_id = Uuid::parse_str(accepted["source_id"].as_str().unwrap()).unwrap();
+    let job_id = Uuid::parse_str(accepted["job_id"].as_str().unwrap()).unwrap();
+
+    sqlx::query(
+        "INSERT INTO calendar_events (tenant_id, owner_id, source_id, external_uid, title, starts_at, ends_at) \
+         VALUES ($1, $2, $3, 'stale-id', 'Concurrent winner', '2026-10-05T14:00:00Z', '2026-10-05T15:00:00Z')",
+    )
+    .bind(tenant_id)
+    .bind(user.id)
+    .bind(source_id)
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
+
+    spawn_import_worker(&state).await;
+    let job = wait_for_job(&app, &token, job_id).await;
+    assert_eq!(job["status"], "failed");
+    assert!(job["last_error"]
+        .as_str()
+        .unwrap()
+        .contains("changed after confirmation"));
+    let title: String = sqlx::query_scalar(
+        "SELECT title FROM calendar_events WHERE source_id = $1 AND external_uid = 'stale-id'",
+    )
+    .bind(source_id)
+    .fetch_one(&state.db_pool)
+    .await
+    .unwrap();
+    assert_eq!(title, "Concurrent winner");
     cleanup_outbox(&state.db_pool, tenant_id).await;
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
