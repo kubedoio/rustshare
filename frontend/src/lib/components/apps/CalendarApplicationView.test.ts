@@ -238,6 +238,23 @@ describe('CalendarApplicationView', () => {
 		);
 	});
 
+	it('explains when recurring events are outside the supported export format', async () => {
+		mocks.listEvents.mockResolvedValue([
+			eventAt(dayFromToday(1), {
+				rrule: 'FREQ=WEEKLY',
+				timezone: 'Europe/Berlin'
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+
+		expect(
+			await screen.findByText('This recurring event cannot be exported as .ics yet.')
+		).toBeTruthy();
+		expect(screen.queryByRole('button', { name: 'Export .ics' })).toBeNull();
+	});
+
 	it('moves a month event by pointer and preserves event-local time and duration', async () => {
 		mocks.listEvents.mockResolvedValue([
 			eventAt('2026-10-14', {
