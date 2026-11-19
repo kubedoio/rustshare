@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Keep concrete email/HTTP transports and process config out of rustshare-core.
-
-SQLx and image processing remain existing Core dependencies; this guard
-prevents removed transports and direct environment reads from regressing.
-"""
+"""Keep concrete transports/renderers and process config out of rustshare-core."""
 
 import argparse
 import re
@@ -12,7 +8,7 @@ import tomllib
 from pathlib import Path
 
 
-FORBIDDEN = ("mailparse", "reqwest", "lettre")
+FORBIDDEN = ("mailparse", "reqwest", "lettre", "image")
 
 
 def import_pattern(name: str) -> re.Pattern[str]:
@@ -160,13 +156,13 @@ def main() -> int:
 
     if args.self_test:
         self_test()
-        print("Core mailparse guard positive and negative fixtures passed")
+        print("Core boundary positive and negative fixtures passed")
 
     errors = check(args.root)
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1
-    print("rustshare-core has no mailparse/reqwest/lettre transport or process config reads")
+    print("rustshare-core has no concrete mail/HTTP/image adapters or process config reads")
     return 0
 
 

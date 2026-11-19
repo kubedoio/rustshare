@@ -150,7 +150,7 @@ jobs:
         run: |
           python3 scripts/check_rust_toolchain.py
           python3 -m unittest discover -s scripts -p 'test_check_rust_toolchain.py'
-      - name: Check Core mailparse boundary and negative fixture
+      - name: Check Core infrastructure boundary and negative fixtures
         run: python3 scripts/check_core_mailparse_boundary.py --self-test
       - name: Check handler SQL baseline and negative fixture
         run: |
