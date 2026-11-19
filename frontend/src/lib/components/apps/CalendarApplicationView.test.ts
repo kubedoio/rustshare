@@ -194,6 +194,25 @@ describe('CalendarApplicationView', () => {
 		expect(screen.queryByRole('button', { name: /Edit event/ })).toBeNull();
 	});
 
+	it('renders imported HTML descriptions as inert text', async () => {
+		const description = '<script>globalThis.importedCalendarPayload = true</script>';
+		mocks.listEvents.mockResolvedValue([
+			eventAt(dayFromToday(1), {
+				id: 'evt-untrusted-description',
+				description,
+				source_id: 'src-ics',
+				source_kind: 'ical_import',
+				read_only: true
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+		const dialog = await screen.findByRole('dialog', { name: 'Event details' });
+		expect(dialog.textContent).toContain(description);
+		expect(dialog.querySelector('script')).toBeNull();
+	});
+
 	it('keeps imported Outlook events with non-IANA zones readable', async () => {
 		mocks.listEvents.mockResolvedValue([
 			eventAt(dayFromToday(1), {

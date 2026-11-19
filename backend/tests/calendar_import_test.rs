@@ -41,6 +41,7 @@ UID:import-minimal-1
 DTSTART:20261005T140000Z
 DTEND:20261005T150000Z
 SUMMARY:Minimal meeting
+DESCRIPTION:<script>globalThis.importedCalendarPayload = true</script>
 END:VEVENT
 BEGIN:VEVENT
 UID:import-tzid-1
@@ -348,6 +349,14 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
     // overridden) and the override row is returned as stored.
     assert!(titles.contains(&"Weekly sync"));
     assert!(!titles.contains(&"Weekly sync moved"));
+    let minimal = events
+        .iter()
+        .find(|event| event["title"] == "Minimal meeting")
+        .unwrap();
+    assert_eq!(
+        minimal["description"],
+        "<script>globalThis.importedCalendarPayload = true</script>"
+    );
 
     // TZID event is stored as the correct UTC instant (14:00 CEST = 12:00Z).
     let berlin = events
@@ -958,6 +967,8 @@ DTSTART:20261008T140000Z
 DTEND:20261008T150000Z
 ORGANIZER:mailto:private@example.test
 ATTENDEE;CN=Private:mailto:private@example.test
+ATTACH;VALUE=URI:http://127.0.0.1:9/private.ics
+URL:http://127.0.0.1:9/meeting
 SUMMARY:Meeting with unsupported participants
 END:VEVENT
 END:VCALENDAR
@@ -976,12 +987,16 @@ END:VCALENDAR
     assert_eq!(job["processed_events"], 0);
     assert_eq!(job["failed_events"], 1);
     let error = job["last_error"].as_str().expect("actionable import error");
-    assert!(error.contains("ATTENDEE, ORGANIZER"), "error was {error}");
+    assert!(
+        error.contains("ATTACH, ATTENDEE, ORGANIZER, URL"),
+        "error was {error}"
+    );
     assert!(
         error.contains("event was not imported"),
         "error was {error}"
     );
     assert!(!error.contains("private@example.test"));
+    assert!(!error.contains("127.0.0.1"));
 
     let imported_count = sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM calendar_events \
