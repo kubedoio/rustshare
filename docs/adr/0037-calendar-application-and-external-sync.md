@@ -167,6 +167,29 @@ authorization to add a capability endpoint.
   external-ingress logs are shown to redact or suppress the token path; require
   hashed high-entropy tokens, owner-bound queries, immediate revocation, and
   access-revocation tests. Do not log request URLs or token values.
+- **Subscription authentication decision (H2.2, 2026-11-20):** application
+  authentication and a capability URL are not interchangeable deployment
+  choices. Approach A, using the existing session cookie or bearer token,
+  would preserve live owner, tenant, account, and Calendar-application checks
+  on every request. It is usable by Elembra's web/API clients, but native
+  calendar subscription clients accept a calendar URL and refresh feeds.
+  Apple's subscription flow requests the URL of an `.ics` file, and Outlook's
+  web subscription flow accepts a calendar URL; neither documented flow
+  establishes support for supplying Elembra session credentials or a custom
+  Authorization header. No Apple Calendar, Outlook, or other native-client
+  test establishes compatibility, so an authenticated feed does not meet the
+  interoperability requirement ([Apple Calendar subscription guide](https://support.apple.com/en-ca/guide/iphone/iph3d1110d4/27/ios/27),
+  [Outlook subscription guide](https://support.microsoft.com/en-us/outlook/import-or-subscribe-to-a-calendar-in-outlook-com-or-outlook-on-the-web)).
+  Approach B, a random revocable capability URL, is the required client shape
+  for those consumers, but its path component is a bearer credential. The app
+  request-trace middleware and `TraceLayer::new_for_http()` currently observe
+  request paths/URIs, bundled Nginx has access logging enabled, and external
+  TLS/load-balancer logging is outside this repository and has no accepted
+  redaction evidence. Therefore no feed route or token lifecycle is exposed.
+  Capability feeds remain disabled by default until all three logging layers
+  have verified redaction evidence and the token lifecycle, owner-bound
+  authorization, disablement, revocation, resource limits, and leak tests pass.
+  Do not treat successful curl access as client compatibility evidence.
 - **CalDAV: defer server compatibility for the institutional pilot.** A
   standards-capable read-only server entails WebDAV discovery and
   `OPTIONS`/`PROPFIND`, principal and calendar-home mapping, calendar
