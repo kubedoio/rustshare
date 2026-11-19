@@ -25,4 +25,5 @@ pub mod note_service;
 pub mod outlook_calendar;
 pub mod standup_service;
 pub mod template_service;
+pub mod thumbnail_renderer;
 pub mod unified_search;

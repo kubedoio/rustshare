@@ -9,6 +9,28 @@ use crate::domain::{
 };
 use crate::services::ObjectStoreOps;
 
+/// Domain-neutral rendering boundary implemented by the application adapter.
+#[async_trait::async_trait]
+pub trait ThumbnailRenderer: Send + Sync {
+    /// Render a supported category to bytes and its response content type.
+    async fn render(
+        &self,
+        content: &[u8],
+        file_name: &str,
+        size: ThumbnailSize,
+        category: ThumbnailCategory,
+    ) -> Result<RenderedThumbnail, String>;
+}
+
+/// Rendered bytes and their media type, ready for object storage.
+#[derive(Debug)]
+pub struct RenderedThumbnail {
+    /// Encoded thumbnail bytes.
+    pub bytes: Vec<u8>,
+    /// Media type associated with `bytes`.
+    pub content_type: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ThumbnailError {
     #[error("File not found")]
@@ -27,14 +49,23 @@ pub enum ThumbnailError {
 pub struct ThumbnailService<S> {
     db_pool: sqlx::PgPool,
     storage: Arc<S>,
+    renderer: Arc<dyn ThumbnailRenderer>,
 }
 
 impl<S> ThumbnailService<S>
 where
     S: ObjectStoreOps,
 {
-    pub fn new(db_pool: sqlx::PgPool, storage: Arc<S>) -> Self {
-        Self { db_pool, storage }
+    pub fn new(
+        db_pool: sqlx::PgPool,
+        storage: Arc<S>,
+        renderer: Arc<dyn ThumbnailRenderer>,
+    ) -> Self {
+        Self {
+            db_pool,
+            storage,
+            renderer,
+        }
     }
 
     /// Check if a thumbnail exists and return it
@@ -132,18 +163,18 @@ where
         let category = get_file_thumbnail_category(mime_type, file_name);
         tracing::debug!(category = ?category, "Thumbnail category determined");
 
-        let (thumbnail_data, content_type) = match category {
-            ThumbnailCategory::Image => self.generate_image_thumbnail(&content, size).await?,
-            ThumbnailCategory::Pdf => self.generate_pdf_thumbnail(&content, size).await?,
-            ThumbnailCategory::Video => self.generate_video_thumbnail(&content, size).await?,
-            ThumbnailCategory::Diagram => {
-                self.generate_diagram_thumbnail(&content, file_name, size)
-                    .await?
-            }
-            ThumbnailCategory::Unsupported => {
-                return Err(ThumbnailError::UnsupportedType);
-            }
-        };
+        if category == ThumbnailCategory::Unsupported {
+            return Err(ThumbnailError::UnsupportedType);
+        }
+        let rendered = self
+            .renderer
+            .render(&content, file_name, size, category)
+            .await
+            .map_err(ThumbnailError::Generation)?;
+        let RenderedThumbnail {
+            bytes: thumbnail_data,
+            content_type,
+        } = rendered;
 
         tracing::debug!(thumbnail_size = thumbnail_data.len(), content_type = %content_type, "Thumbnail generated");
 
@@ -184,255 +215,6 @@ where
 
         tracing::info!(file_id = %file_id, size = size.as_str(), "Thumbnail generation completed successfully");
         Ok(thumbnail)
-    }
-
-    /// Generate image thumbnail using the `image` crate
-    async fn generate_image_thumbnail(
-        &self,
-        content: &[u8],
-        size: ThumbnailSize,
-    ) -> Result<(Vec<u8>, String), ThumbnailError> {
-        // Use tokio::task::spawn_blocking for CPU-intensive image processing
-        let (width, height) = size.dimensions();
-        let content_len = content.len();
-
-        let content = content.to_vec();
-        let result = tokio::task::spawn_blocking(move || {
-            use image::imageops::FilterType;
-
-            tracing::debug!(
-                content_len = content_len,
-                width = width,
-                height = height,
-                "Starting image thumbnail generation"
-            );
-
-            // Load image
-            let img = image::load_from_memory(&content).map_err(|e| {
-                tracing::error!(error = %e, "Failed to load image from memory");
-                ThumbnailError::Generation(format!("Failed to load image: {}", e))
-            })?;
-
-            tracing::debug!(
-                original_width = img.width(),
-                original_height = img.height(),
-                "Image loaded successfully"
-            );
-
-            // Resize maintaining aspect ratio (fit within bounds)
-            let resized = img.resize(width, height, FilterType::Lanczos3);
-
-            tracing::debug!(
-                resized_width = resized.width(),
-                resized_height = resized.height(),
-                "Image resized"
-            );
-
-            // Encode as WebP
-            let mut output = Vec::new();
-            let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
-            let rgba = resized.to_rgba8();
-
-            tracing::debug!(rgba_len = rgba.len(), "Encoding WebP");
-
-            encoder
-                .encode(
-                    &rgba,
-                    resized.width(),
-                    resized.height(),
-                    image::ColorType::Rgba8.into(),
-                )
-                .map_err(|e| {
-                    tracing::error!(error = %e, "WebP encoding failed");
-                    ThumbnailError::Generation(format!("WebP encode failed: {}", e))
-                })?;
-
-            tracing::debug!(output_len = output.len(), "WebP encoding successful");
-
-            Ok::<(Vec<u8>, String), ThumbnailError>((output, "image/webp".to_string()))
-        })
-        .await;
-
-        match result {
-            Ok(Ok(data)) => Ok(data),
-            Ok(Err(e)) => Err(e),
-            Err(join_err) => {
-                tracing::error!(error = %join_err, "Thumbnail generation task panicked or was cancelled");
-                Err(ThumbnailError::Generation(format!(
-                    "Task failed: {}",
-                    join_err
-                )))
-            }
-        }
-    }
-
-    /// Generate PDF thumbnail by rendering first page
-    async fn generate_pdf_thumbnail(
-        &self,
-        content: &[u8],
-        size: ThumbnailSize,
-    ) -> Result<(Vec<u8>, String), ThumbnailError> {
-        let (width, height) = size.dimensions();
-        let _content = content.to_vec();
-
-        let result = tokio::task::spawn_blocking(move || {
-            // Try to render PDF using pdf2image or similar
-            // For now, generate a PDF icon placeholder with page count indicator
-            // This is a simplified version - in production you'd use a PDF rendering library
-
-            // Create a PDF document icon
-            let mut img = image::RgbaImage::new(width, height);
-
-            // Fill with PDF red color
-            let pdf_red = image::Rgba([220, 53, 69, 255]);
-            for pixel in img.pixels_mut() {
-                *pixel = pdf_red;
-            }
-
-            // Add white PDF text/icon indicator
-            // This is a simplified placeholder - real implementation would render actual PDF page
-
-            // Encode as WebP
-            let mut output = Vec::new();
-            let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
-            encoder
-                .encode(&img, width, height, image::ColorType::Rgba8.into())
-                .map_err(|e| ThumbnailError::Generation(format!("WebP encode failed: {}", e)))?;
-
-            Ok::<(Vec<u8>, String), ThumbnailError>((output, "image/webp".to_string()))
-        })
-        .await
-        .map_err(|e| ThumbnailError::Generation(format!("PDF thumbnail task failed: {}", e)))?;
-
-        result
-    }
-
-    /// Generate video thumbnail by extracting a frame
-    async fn generate_video_thumbnail(
-        &self,
-        _content: &[u8],
-        size: ThumbnailSize,
-    ) -> Result<(Vec<u8>, String), ThumbnailError> {
-        let (width, height) = size.dimensions();
-
-        let result = tokio::task::spawn_blocking(move || {
-            // Create a video play button placeholder
-            // Real implementation would use ffmpeg or similar to extract a frame
-            let mut img = image::RgbaImage::new(width, height);
-
-            // Fill with dark background
-            let dark_bg = image::Rgba([30, 30, 30, 255]);
-            for pixel in img.pixels_mut() {
-                *pixel = dark_bg;
-            }
-
-            // Add play button triangle (simplified)
-            let play_color = image::Rgba([255, 255, 255, 200]);
-            let center_x = width / 2;
-            let center_y = height / 2;
-            let triangle_size = width.min(height) / 4;
-
-            // Simple triangle drawing
-            for y in center_y.saturating_sub(triangle_size / 2)
-                ..=center_y.saturating_add(triangle_size / 2)
-            {
-                for x in center_x..=center_x.saturating_add(triangle_size) {
-                    if x < width && y < height {
-                        let dy = y as i32 - center_y as i32;
-                        let dx = x as i32 - center_x as i32;
-                        if dx.abs() <= triangle_size as i32 && dy.abs() <= dx.abs() {
-                            img.put_pixel(x, y, play_color);
-                        }
-                    }
-                }
-            }
-
-            // Encode as WebP
-            let mut output = Vec::new();
-            let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
-            encoder
-                .encode(&img, width, height, image::ColorType::Rgba8.into())
-                .map_err(|e| ThumbnailError::Generation(format!("WebP encode failed: {}", e)))?;
-
-            Ok::<(Vec<u8>, String), ThumbnailError>((output, "image/webp".to_string()))
-        })
-        .await
-        .map_err(|e| ThumbnailError::Generation(format!("Video thumbnail task failed: {}", e)))?;
-
-        result
-    }
-
-    /// Generate diagram thumbnail (Excalidraw, Draw.io)
-    async fn generate_diagram_thumbnail(
-        &self,
-        _content: &[u8],
-        file_name: &str,
-        size: ThumbnailSize,
-    ) -> Result<(Vec<u8>, String), ThumbnailError> {
-        let (width, height) = size.dimensions();
-        let file_name = file_name.to_lowercase();
-
-        let result = tokio::task::spawn_blocking(move || {
-            let mut img = image::RgbaImage::new(width, height);
-
-            // Determine diagram type and color scheme
-            let (bg_color, icon_color, _label) =
-                if file_name.ends_with(".excalidraw") || file_name.ends_with(".excalidraw.json") {
-                    // Excalidraw: light beige background
-                    (
-                        image::Rgba([255, 250, 240, 255]),
-                        image::Rgba([105, 67, 53, 255]),
-                        "✏️",
-                    )
-                } else if file_name.ends_with(".drawio") || file_name.ends_with(".dio") {
-                    // Draw.io: blue background
-                    (
-                        image::Rgba([240, 248, 255, 255]),
-                        image::Rgba([46, 125, 247, 255]),
-                        "📐",
-                    )
-                } else {
-                    // Generic diagram
-                    (
-                        image::Rgba([245, 245, 245, 255]),
-                        image::Rgba([100, 100, 100, 255]),
-                        "📊",
-                    )
-                };
-
-            // Fill background
-            for pixel in img.pixels_mut() {
-                *pixel = bg_color;
-            }
-
-            // Add border
-            let border_color = icon_color;
-            for x in 0..width {
-                img.put_pixel(x, 0, border_color);
-                img.put_pixel(x, height - 1, border_color);
-            }
-            for y in 0..height {
-                img.put_pixel(0, y, border_color);
-                img.put_pixel(width - 1, y, border_color);
-            }
-
-            // Note: In a real implementation, we would parse the JSON content
-            // and render a simplified preview of the diagram elements
-            // For now, we create a styled placeholder with an icon
-
-            // Encode as WebP
-            let mut output = Vec::new();
-            let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut output);
-            encoder
-                .encode(&img, width, height, image::ColorType::Rgba8.into())
-                .map_err(|e| ThumbnailError::Generation(format!("WebP encode failed: {}", e)))?;
-
-            Ok::<(Vec<u8>, String), ThumbnailError>((output, "image/webp".to_string()))
-        })
-        .await
-        .map_err(|e| ThumbnailError::Generation(format!("Diagram thumbnail task failed: {}", e)))?;
-
-        result
     }
 
     /// Delete thumbnails when file is updated

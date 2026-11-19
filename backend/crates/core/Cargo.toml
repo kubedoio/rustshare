@@ -24,7 +24,6 @@ tokio = { workspace = true }
 rand = { workspace = true }
 rustshare-crypto = { path = "../crypto" }
 url = "2.5"
-image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 utoipa = { workspace = true }
 
 [dev-dependencies]

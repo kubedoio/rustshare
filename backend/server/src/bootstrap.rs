@@ -378,6 +378,7 @@ async fn init_services(
             Arc::new(ThumbnailService::new(
                 db_pool.clone(),
                 Arc::clone(&object_store),
+                crate::services::thumbnail_renderer::default_thumbnail_renderer(),
             ))
         },
         async { Arc::new(NotificationService::new(notification_repository)) },

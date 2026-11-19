@@ -74,7 +74,9 @@ pub use share_service::{
     EventStoreOps as ShareEventStoreOps, JwtOps, MetadataStoreOps as ShareMetadataStoreOps,
     ShareNotificationRepo, ShareService,
 };
-pub use thumbnail_service::{ThumbnailError, ThumbnailService};
+pub use thumbnail_service::{
+    RenderedThumbnail, ThumbnailError, ThumbnailRenderer, ThumbnailService,
+};
 pub use upload_service::{
     UploadError, UploadMetadataStore, UploadObjectStore, UploadService, UploadSessionRepository,
 };

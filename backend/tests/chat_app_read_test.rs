@@ -687,7 +687,11 @@ async fn setup_app_state(pool: PgPool) -> (AppState, ChatIdentityStore, Arc<Chat
         share_notification_repo.clone(),
     ));
 
-    let thumbnail_service = Arc::new(ThumbnailService::new(pool.clone(), object_store.clone()));
+    let thumbnail_service = Arc::new(ThumbnailService::new(
+        pool.clone(),
+        object_store.clone(),
+        rustshare_server::services::thumbnail_renderer::default_thumbnail_renderer(),
+    ));
     let notification_service = Arc::new(NotificationService::new(NotificationRepository::new(
         pool.clone(),
     )));

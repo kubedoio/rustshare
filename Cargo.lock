@@ -4577,7 +4577,6 @@ dependencies = [
  "bytes",
  "chrono",
  "hex",
- "image",
  "rand 0.10.3",
  "rustshare-crypto",
  "serde",
