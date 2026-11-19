@@ -1,7 +1,10 @@
 use crate::authz;
 use crate::buzz_gateway::{BuzzGatewayAuthority, BuzzGatewayClient};
 use crate::buzz_observation::BuzzObservationService;
-use crate::config::{AppConfig, ChatProvisioningMode, DefaultTenantConfig, OutboxWorkerConfig};
+use crate::config::{
+    http_webhooks_allowed, object_gc_grace_period_hours, AppConfig, ChatProvisioningMode,
+    DefaultTenantConfig, OutboxWorkerConfig,
+};
 use crate::handlers::collab::CollabRooms;
 use crate::handlers::ensure_optional_seed_user;
 use crate::object_gc::{spawn_object_gc_worker, ObjectGcConfig};
@@ -21,9 +24,9 @@ use rustshare_core::{
     events::EventBroadcaster,
     services::{
         AiService, ChatIntegrationService, ContentIndexer, FileService, FolderService,
-        HttpWebhookDispatcher, IntegrationEventPublisher, KeywordIndexer, NotificationService,
-        PermissionResolver, ShareService, SimpleEmbeddingGenerator, ThumbnailService,
-        UserShareService, UserShareServiceDeps, VaultSyncService, VectorStore,
+        IntegrationEventPublisher, KeywordIndexer, NotificationService, PermissionResolver,
+        ShareService, SimpleEmbeddingGenerator, ThumbnailService, UserShareService,
+        UserShareServiceDeps, VaultSyncService, VectorStore,
     },
 };
 use rustshare_crypto::{SecretEncryptionKey, WebhookSigner};
@@ -32,7 +35,7 @@ use rustshare_infrastructure::{
         FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
         ShareRepository, UserRepository,
     },
-    PgVectorStore,
+    HttpWebhookDispatcher, PgVectorStore,
 };
 use rustshare_resource_auth::{BuzzAuthority, LocalFallbackAuthority};
 use rustshare_storage::{
@@ -45,7 +48,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{info, warn};
 
 struct Services {
     file_service:
@@ -205,14 +208,23 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-/// Replay-window (seconds) for incoming Buzz/Chat webhook signatures. Mirrors
-/// `ChatIntegrationService`'s parsing of `RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS`:
-/// a positive integer, defaulting to 300; any other value is ignored.
-fn chat_webhook_max_age_seconds() -> u64 {
-    std::env::var("RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|&value| value >= 1)
+/// Replay-window (seconds) for incoming Buzz/Chat webhook signatures.
+fn chat_webhook_max_age_seconds() -> i64 {
+    parse_chat_webhook_max_age_seconds(
+        std::env::var("RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn parse_chat_webhook_max_age_seconds(value: Option<&str>) -> i64 {
+    value
+        .map(|value| {
+            value.parse::<i64>().ok().filter(|&value| value >= 1).unwrap_or_else(|| {
+				warn!(value = %value, "RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS must be a positive integer; using default");
+                300
+            })
+        })
         .unwrap_or(300)
 }
 
@@ -325,9 +337,10 @@ async fn init_services(
         db_pool.clone(),
         Arc::clone(&application_registry),
     ));
-    let vault_sync_service = Arc::new(VaultSyncService::new(
+    let vault_sync_service = Arc::new(VaultSyncService::new_with_gc_grace_period_hours(
         Arc::clone(&metadata_store),
         Arc::clone(&object_store),
+        object_gc_grace_period_hours(),
     ));
 
     let (
@@ -593,12 +606,13 @@ async fn init_services(
         "uploads".to_string(),
     );
 
-    let upload_service = Arc::new(AppUploadService::new(
+    let upload_service = Arc::new(AppUploadService::new_with_gc_grace_period_hours(
         Arc::new(upload_session_repo),
         Arc::clone(&object_store),
         Arc::clone(&metadata_store),
         Arc::clone(&event_store),
         Arc::clone(&broadcaster),
+        object_gc_grace_period_hours(),
     ));
 
     info!(
@@ -607,12 +621,15 @@ async fn init_services(
     );
 
     let chat_webhook_secret = config.rustshare_chat_webhook_secret.clone();
-    let chat_integration_service = Arc::new(ChatIntegrationService::new(
+    let chat_integration_service = Arc::new(ChatIntegrationService::new_with_max_age(
         Arc::clone(&metadata_store),
         Arc::clone(&event_store),
         Arc::clone(&broadcaster),
         chat_webhook_secret,
-        Arc::new(HttpWebhookDispatcher::new()),
+        Arc::new(HttpWebhookDispatcher::with_http_allowed(
+            http_webhooks_allowed(),
+        )),
+        chat_webhook_max_age_seconds(),
     ));
     info!("Chat integration service initialized");
 
@@ -733,7 +750,7 @@ pub async fn init_app() -> Result<AppState> {
         (*chat_observation_store).clone(),
         Arc::clone(&services.outbox_store),
         WebhookSigner::new(config.rustshare_chat_webhook_secret.clone()),
-        chat_webhook_max_age_seconds(),
+        chat_webhook_max_age_seconds() as u64,
         Arc::clone(&broadcaster),
     ));
 
@@ -1218,6 +1235,14 @@ pub fn default_storage_quota_bytes() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_webhook_max_age_requires_a_positive_integer() {
+        for value in [Some("0"), Some("-1"), Some("invalid"), None] {
+            assert_eq!(parse_chat_webhook_max_age_seconds(value), 300);
+        }
+        assert_eq!(parse_chat_webhook_max_age_seconds(Some("60")), 60);
+    }
 
     #[test]
     fn resolve_admin_password_uses_configured_password() {

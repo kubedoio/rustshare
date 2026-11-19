@@ -12,9 +12,10 @@ use rustshare_core::domain::{File, Folder, Share, UserId};
 use rustshare_core::events::{Event, EventBroadcaster};
 use rustshare_core::services::{
     ChatEventStoreOps, ChatIntegrationError, ChatIntegrationService, ChatMetadataStoreOps,
-    HttpWebhookDispatcher, IncomingChatEvent,
+    IncomingChatEvent,
 };
 use rustshare_crypto::WebhookSigner;
+use rustshare_infrastructure::HttpWebhookDispatcher;
 use std::sync::Arc;
 use uuid::Uuid;
 

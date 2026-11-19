@@ -504,11 +504,14 @@ impl BuzzGatewayClient {
         let host = base
             .host_str()
             .ok_or_else(|| BuzzAuthorityError::Config("relay_url must include a host".into()))?;
-        let addrs = resolve_chat_relay_socket_addrs_for_url(relay_url)
-            .await
-            .map_err(|_| {
-                BuzzAuthorityError::Config("relay target failed SSRF validation".into())
-            })?;
+        let deployment_relay_url = crate::config::deployment_chat_relay_url();
+        let addrs = resolve_chat_relay_socket_addrs_for_url(
+            relay_url,
+            crate::config::allow_internal_chat_relay(),
+            deployment_relay_url.as_deref(),
+        )
+        .await
+        .map_err(|_| BuzzAuthorityError::Config("relay target failed SSRF validation".into()))?;
         let http = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .resolve_to_addrs(host, &addrs)

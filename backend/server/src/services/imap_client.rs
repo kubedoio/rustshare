@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use crate::config::{accept_invalid_mail_tls_certs, allow_internal_mail_servers};
 use async_imap::types::{Fetch, Name, NameAttribute};
 use async_trait::async_trait;
 use base64::Engine;
@@ -150,7 +151,8 @@ impl ImapClient {
         // opted in (e.g. self-hosted or air-gapped mail servers). Pin the
         // resolved addresses so a second DNS lookup cannot rebind to an
         // internal address.
-        let addrs = resolve_mail_server_socket_addrs(host, port)
+        let allow_internal = allow_internal_mail_servers();
+        let addrs = resolve_mail_server_socket_addrs(host, port, allow_internal)
             .await
             .map_err(|e| {
                 ImapError::ConnectionFailed(format!("IMAP host failed SSRF validation: {e}"))
@@ -163,7 +165,8 @@ impl ImapClient {
         // Relaxed certificate verification is only ever enabled for
         // internal/private destinations (e.g. self-signed intranet servers
         // reached by IP); public hosts always get full verification.
-        let accept_invalid_certs = should_accept_invalid_certs(&addrs);
+        let accept_invalid_certs =
+            should_accept_invalid_certs(&addrs, allow_internal, accept_invalid_mail_tls_certs());
         if accept_invalid_certs {
             tracing::warn!(
                 host = %host,

@@ -6,7 +6,6 @@
 //! - Link unfurl requests with permission checking
 //! - Dispatching events to registered chat webhook URLs
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -54,10 +53,6 @@ pub enum ChatIntegrationError {
     /// Webhook dispatch failed.
     #[error("Webhook dispatch failed: {0}")]
     DispatchFailed(String),
-
-    /// Database operation failed.
-    #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
 
     /// Serialization error.
     #[error("Serialization error: {0}")]
@@ -246,34 +241,15 @@ pub async fn validate_chat_webhook_url(
     url: &str,
     allow_http: bool,
 ) -> Result<(), ChatIntegrationError> {
-    checked_webhook_socket_addrs(url, allow_http).await?;
+    resolve_chat_webhook_socket_addrs(url, allow_http).await?;
     Ok(())
 }
 
-/// Determine whether HTTP webhook URLs are allowed for dispatch validation.
-///
-/// HTTP is always permitted in debug builds. In release builds it is only
-/// permitted when `RUSTSHARE_ALLOW_HTTP_WEBHOOKS` is set to `"true"` or `"1"`
-/// (case-insensitive). Keep this policy aligned with webhook registration.
-fn http_webhooks_allowed() -> bool {
-    cfg!(debug_assertions)
-        || parse_allow_http_webhooks(
-            std::env::var("RUSTSHARE_ALLOW_HTTP_WEBHOOKS")
-                .ok()
-                .as_deref(),
-        )
-}
-
-fn parse_allow_http_webhooks(value: Option<&str>) -> bool {
-    value
-        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-        .unwrap_or(false)
-}
-
-async fn checked_webhook_socket_addrs(
+/// Resolve a validated webhook URL to the public addresses the HTTP adapter must pin.
+pub async fn resolve_chat_webhook_socket_addrs(
     url: &str,
     allow_http: bool,
-) -> Result<(String, Vec<SocketAddr>), ChatIntegrationError> {
+) -> Result<(String, Vec<std::net::SocketAddr>), ChatIntegrationError> {
     let parsed = url::Url::parse(url).map_err(|_| ChatIntegrationError::InvalidWebhookUrl)?;
 
     // Scheme check.
@@ -303,113 +279,8 @@ pub trait WebhookDispatcher: Send + Sync {
     async fn dispatch(&self, url: &str, event: &ChatEvent) -> std::result::Result<(), String>;
 }
 
-/// Default HTTP webhook dispatcher.
-#[derive(Debug, Clone)]
-pub struct HttpWebhookDispatcher {
-    timeout: Duration,
-}
-
-impl HttpWebhookDispatcher {
-    /// Create a new HTTP webhook dispatcher.
-    pub fn new() -> Self {
-        Self {
-            timeout: Duration::from_secs(30),
-        }
-    }
-
-    /// Create with custom timeout.
-    pub fn with_timeout(timeout: Duration) -> Self {
-        Self { timeout }
-    }
-}
-
-fn webhook_client_builder() -> reqwest::ClientBuilder {
-    reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
-}
-
-/// Build a reqwest client that does not follow redirects, preventing SSRF
-/// payloads from redirecting to internal addresses after validation.
-#[cfg(test)]
-fn build_webhook_client() -> reqwest::Client {
-    webhook_client_builder().build().unwrap_or_else(|e| {
-        warn!(error = %e, "Failed to build no-redirect webhook client; falling back to default");
-        reqwest::Client::new()
-    })
-}
-
-/// Build a webhook client whose DNS resolution is pinned to the socket
-/// addresses that passed SSRF validation. This prevents a separate client DNS
-/// lookup from resolving the same hostname to an internal address.
-fn build_pinned_webhook_client(
-    host: &str,
-    addrs: &[SocketAddr],
-) -> Result<reqwest::Client, String> {
-    webhook_client_builder()
-        .resolve_to_addrs(host, addrs)
-        .build()
-        .map_err(|e| format!("Failed to build webhook client: {e}"))
-}
-
-impl Default for HttpWebhookDispatcher {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl WebhookDispatcher for HttpWebhookDispatcher {
-    async fn dispatch(&self, url: &str, event: &ChatEvent) -> std::result::Result<(), String> {
-        // Re-validate and pin the vetted socket addresses at dispatch time.
-        let (host, addrs) = checked_webhook_socket_addrs(url, http_webhooks_allowed())
-            .await
-            .map_err(|e| {
-                warn!(url = %url, error = %e, "Webhook URL failed SSRF validation at dispatch time");
-                "Invalid webhook URL".to_string()
-            })?;
-        let client = build_pinned_webhook_client(&host, &addrs)?;
-
-        let response = client
-            .post(url)
-            .header("Content-Type", "application/json")
-            .header("X-RustShare-Event", format!("{:?}", event.event_type))
-            .header("X-RustShare-Signature", &event.signature)
-            .timeout(self.timeout)
-            .json(event)
-            .send()
-            .await
-            .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "<failed to read body>".to_string());
-            Err(format!("HTTP {}: {}", status, body))
-        }
-    }
-}
-
 /// Default maximum age for incoming webhook events (seconds).
 const DEFAULT_WEBHOOK_MAX_AGE_SECONDS: i64 = 300;
-
-fn parse_webhook_max_age_seconds(value: Option<&str>) -> i64 {
-    value
-        .map(|s| {
-            s.parse::<i64>()
-                .ok()
-                .filter(|&v| v >= 1)
-                .unwrap_or_else(|| {
-                    warn!(
-                        value = %s,
-                        "RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS must be a positive integer; using default"
-                    );
-                    DEFAULT_WEBHOOK_MAX_AGE_SECONDS
-                })
-        })
-        .unwrap_or(DEFAULT_WEBHOOK_MAX_AGE_SECONDS)
-}
 
 /// Chat integration service for managing webhook events and link unfurls.
 pub struct ChatIntegrationService<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> {
@@ -431,12 +302,6 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
         webhook_secret: impl AsRef<[u8]>,
         dispatcher: Arc<W>,
     ) -> Self {
-        let webhook_max_age_seconds = parse_webhook_max_age_seconds(
-            std::env::var("RUSTSHARE_WEBHOOK_MAX_AGE_SECONDS")
-                .ok()
-                .as_deref(),
-        );
-
         Self {
             metadata_store,
             event_store,
@@ -444,12 +309,11 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
             signer: WebhookSigner::new(webhook_secret),
             dispatcher,
             webhook_urls: Vec::new(),
-            webhook_max_age_seconds,
+            webhook_max_age_seconds: DEFAULT_WEBHOOK_MAX_AGE_SECONDS,
         }
     }
 
-    /// Create a new chat integration service with an explicit max age (tests only).
-    #[cfg(test)]
+    /// Create the service with the webhook replay window selected by the host application.
     pub fn new_with_max_age(
         metadata_store: Arc<M>,
         event_store: Arc<E>,
@@ -1204,18 +1068,6 @@ mod tests {
         assert_eq!(service.get_webhook_urls().len(), 1);
     }
 
-    #[test]
-    fn test_parse_webhook_max_age_invalid_values_use_default() {
-        assert_eq!(parse_webhook_max_age_seconds(Some("0")), 300);
-        assert_eq!(parse_webhook_max_age_seconds(Some("-1")), 300);
-        assert_eq!(parse_webhook_max_age_seconds(Some("not-a-number")), 300);
-    }
-
-    #[test]
-    fn test_parse_webhook_max_age_positive_value_is_used() {
-        assert_eq!(parse_webhook_max_age_seconds(Some("60")), 60);
-    }
-
     fn sample_incoming_event() -> IncomingChatEvent {
         IncomingChatEvent {
             event_type: "share.revoked".to_string(),
@@ -1380,20 +1232,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_checked_webhook_socket_addrs_pins_public_ip_literal() {
-        let (host, addrs) = checked_webhook_socket_addrs("https://1.1.1.1/webhook", false)
+    async fn test_resolved_webhook_socket_addrs_pins_public_ip_literal() {
+        let (host, addrs) = resolve_chat_webhook_socket_addrs("https://1.1.1.1/webhook", false)
             .await
             .expect("public IP literal should pass validation");
 
         assert_eq!(host, "1.1.1.1");
-        assert_eq!(addrs, vec![SocketAddr::from(([1, 1, 1, 1], 443))]);
-    }
-
-    #[tokio::test]
-    async fn test_pinned_webhook_client_uses_validated_addresses() {
-        let addrs = [SocketAddr::from(([1, 1, 1, 1], 443))];
-        build_pinned_webhook_client("example.com", &addrs)
-            .expect("pinned webhook client should build");
+        assert_eq!(addrs, vec![std::net::SocketAddr::from(([1, 1, 1, 1], 443))]);
     }
 
     #[tokio::test]
@@ -1410,30 +1255,14 @@ mod tests {
             .is_ok());
     }
 
-    #[test]
-    fn test_parse_allow_http_webhooks_is_value_sensitive() {
-        assert!(parse_allow_http_webhooks(Some("true")));
-        assert!(parse_allow_http_webhooks(Some("TRUE")));
-        assert!(parse_allow_http_webhooks(Some("1")));
-        assert!(!parse_allow_http_webhooks(Some("false")));
-        assert!(!parse_allow_http_webhooks(Some("0")));
-        assert!(!parse_allow_http_webhooks(Some("yes")));
-        assert!(!parse_allow_http_webhooks(None));
-    }
-
     #[tokio::test]
-    async fn test_dispatch_http_validation_uses_allow_http_policy() {
-        if !http_webhooks_allowed() {
-            return;
-        }
-
-        let (host, addrs) =
-            checked_webhook_socket_addrs("http://1.1.1.1/webhook", http_webhooks_allowed())
-                .await
-                .expect("dispatch policy should allow HTTP webhooks when enabled");
+    async fn test_http_webhook_validation_accepts_explicitly_allowed_http() {
+        let (host, addrs) = resolve_chat_webhook_socket_addrs("http://1.1.1.1/webhook", true)
+            .await
+            .expect("explicitly allowed HTTP webhooks should pass validation");
 
         assert_eq!(host, "1.1.1.1");
-        assert_eq!(addrs, vec![SocketAddr::from(([1, 1, 1, 1], 80))]);
+        assert_eq!(addrs, vec![std::net::SocketAddr::from(([1, 1, 1, 1], 80))]);
     }
 
     #[tokio::test]
@@ -1588,39 +1417,6 @@ mod tests {
                 .await
                 .is_err()
         );
-    }
-
-    #[tokio::test]
-    async fn test_webhook_client_does_not_follow_redirects() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
-            Ok(listener) => listener,
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
-            Err(error) => panic!("failed to bind redirect test listener: {error}"),
-        };
-        let addr = listener.local_addr().unwrap();
-
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buffer = [0u8; 1024];
-            let _ = socket.read(&mut buffer).await.unwrap();
-            socket
-                .write_all(
-                    b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1/internal\r\nContent-Length: 0\r\n\r\n",
-                )
-                .await
-                .unwrap();
-        });
-
-        let response = build_webhook_client()
-            .post(format!("http://{addr}/webhook"))
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
-        server.await.unwrap();
     }
 
     #[tokio::test]

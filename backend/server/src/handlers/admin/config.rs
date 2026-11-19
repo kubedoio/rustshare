@@ -1,7 +1,8 @@
 //! Admin OIDC and SMTP config handlers.
 
+use crate::services::EmailService;
 use axum::{extract::State, http::StatusCode, Json};
-use rustshare_core::services::{EmailError, EmailService};
+use rustshare_core::services::EmailError;
 use rustshare_crypto::encrypt_secret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;

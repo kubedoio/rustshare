@@ -1,10 +1,10 @@
+use crate::services::EmailService;
 use axum::{
     extract::{Path, State},
     Json,
 };
 use rand::Rng;
 use rustshare_auth::PasswordHasher;
-use rustshare_core::services::EmailService;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

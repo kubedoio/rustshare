@@ -12,12 +12,15 @@ use axum::{body::Body, extract::State, http::Request, Json, Router};
 use nostr::{EventBuilder, Keys, Kind, Tag};
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{
-    ChatIntegrationService, FileService, FolderService, HttpWebhookDispatcher, NotificationService,
-    PermissionResolver, ShareService, ThumbnailService,
+    ChatIntegrationService, FileService, FolderService, NotificationService, PermissionResolver,
+    ShareService, ThumbnailService,
 };
-use rustshare_infrastructure::repositories::{
-    FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
-    ShareRepository, UserRepository,
+use rustshare_infrastructure::{
+    repositories::{
+        FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
+        ShareRepository, UserRepository,
+    },
+    HttpWebhookDispatcher,
 };
 use rustshare_resource_auth::BindingChallenge;
 use rustshare_server::{

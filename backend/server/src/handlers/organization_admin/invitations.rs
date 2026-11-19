@@ -324,10 +324,8 @@ pub async fn resend_invitation(
         state.public_base_url.trim_end_matches('/'),
         invitation.token
     );
-    let email_service = rustshare_core::services::EmailService::new(
-        state.db_pool.clone(),
-        state.secret_key.clone(),
-    );
+    let email_service =
+        crate::services::EmailService::new(state.db_pool.clone(), state.secret_key.clone());
     let sent = email_service
         .send_invite_email(
             &invitation.sender_name,

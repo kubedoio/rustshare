@@ -78,13 +78,16 @@ use rustshare_core::domain::{
 };
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{
-    ChatIntegrationService, FileService, FolderService, HttpWebhookDispatcher, NotificationService,
-    PermissionResolver, ShareService, ThumbnailService, VaultSyncService,
+    ChatIntegrationService, FileService, FolderService, NotificationService, PermissionResolver,
+    ShareService, ThumbnailService, VaultSyncService,
 };
 use rustshare_crypto::{SecretEncryptionKey, WebhookSigner};
-use rustshare_infrastructure::repositories::{
-    FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
-    ShareRepository, UserRepository,
+use rustshare_infrastructure::{
+    repositories::{
+        FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
+        ShareRepository, UserRepository,
+    },
+    HttpWebhookDispatcher,
 };
 use rustshare_integration_events::event_types::CHAT_BUZZ_EVENT_OBSERVED_V1;
 use rustshare_integration_events::OutboxConsumer;

@@ -398,7 +398,7 @@ async fn setup_test_env_with_pool_inner(
         event_store.clone(),
         broadcaster.clone(),
         "test-secret",
-        Arc::new(rustshare_core::services::HttpWebhookDispatcher::new()),
+        Arc::new(rustshare_infrastructure::HttpWebhookDispatcher::new()),
     ));
 
     let secret_key = rustshare_crypto::SecretEncryptionKey::from_bytes([0u8; 32]);

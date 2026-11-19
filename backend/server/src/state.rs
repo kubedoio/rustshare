@@ -39,7 +39,7 @@ pub type AppAiService = rustshare_core::services::AiService<
 pub type AppChatIntegrationService = rustshare_core::services::ChatIntegrationService<
     rustshare_storage::MetadataStore,
     rustshare_storage::EventStore,
-    rustshare_core::services::HttpWebhookDispatcher,
+    rustshare_infrastructure::HttpWebhookDispatcher,
 >;
 
 pub type AppUploadService = rustshare_core::services::UploadService<

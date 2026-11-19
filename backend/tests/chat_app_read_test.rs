@@ -47,12 +47,15 @@ use nostr::Keys;
 use rustshare_core::domain::{ApplicationId, PrincipalId, TenantId};
 use rustshare_core::events::EventBroadcaster;
 use rustshare_core::services::{
-    ChatIntegrationService, FileService, FolderService, HttpWebhookDispatcher, NotificationService,
-    PermissionResolver, ShareService, ThumbnailService,
+    ChatIntegrationService, FileService, FolderService, NotificationService, PermissionResolver,
+    ShareService, ThumbnailService,
 };
-use rustshare_infrastructure::repositories::{
-    FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
-    ShareRepository, UserRepository,
+use rustshare_infrastructure::{
+    repositories::{
+        FileRepository, FolderRepository, NotificationRepository, PermissionResolverRepository,
+        ShareRepository, UserRepository,
+    },
+    HttpWebhookDispatcher,
 };
 use rustshare_resource_auth::ResourceRef;
 use rustshare_server::authz::ChatResourceOwner;

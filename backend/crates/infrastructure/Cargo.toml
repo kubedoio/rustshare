@@ -20,6 +20,7 @@ thiserror = { workspace = true }
 mailparse = "0.17"
 anyhow = { workspace = true }
 async-trait = "0.1"
+reqwest = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

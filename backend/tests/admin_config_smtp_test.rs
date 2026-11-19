@@ -16,8 +16,9 @@
 mod support;
 
 use axum::{body::Body, http::Request};
-use rustshare_core::services::{EmailError, EmailService};
+use rustshare_core::services::EmailError;
 use rustshare_crypto::{decrypt_secret, encrypt_secret, SecretEncryptionKey};
+use rustshare_server::services::EmailService;
 use sqlx::Row;
 use std::error::Error;
 use support::calendar_harness::{assert_local_database, setup_test_env, SERIAL};

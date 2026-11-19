@@ -1,7 +1,9 @@
 pub mod brainstorming_service;
 pub mod decision_service;
+pub mod email_service;
 pub mod icon_registry;
 pub mod imap_client;
+pub use email_service::EmailService;
 pub use imap_client::{
     ImapArchiveSession, ImapClient, ImapError, ImapMessageSummary, ImapSession, MailFolder,
 };

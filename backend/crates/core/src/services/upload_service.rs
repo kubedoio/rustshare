@@ -260,6 +260,7 @@ where
     metadata_store: Arc<M>,
     event_store: Arc<E>,
     broadcaster: Arc<EventBroadcaster>,
+    gc_grace_period_hours: i64,
 }
 
 impl<R, O, M, E> UploadService<R, O, M, E>
@@ -277,12 +278,32 @@ where
         event_store: Arc<E>,
         broadcaster: Arc<EventBroadcaster>,
     ) -> Self {
+        Self::new_with_gc_grace_period_hours(
+            repository,
+            object_store,
+            metadata_store,
+            event_store,
+            broadcaster,
+            24,
+        )
+    }
+
+    /// Create an upload service with the server-configured orphan retention window.
+    pub fn new_with_gc_grace_period_hours(
+        repository: Arc<R>,
+        object_store: Arc<O>,
+        metadata_store: Arc<M>,
+        event_store: Arc<E>,
+        broadcaster: Arc<EventBroadcaster>,
+        gc_grace_period_hours: i64,
+    ) -> Self {
         Self {
             repository,
             object_store,
             metadata_store,
             event_store,
             broadcaster,
+            gc_grace_period_hours: gc_grace_period_hours.max(1),
         }
     }
 
@@ -671,17 +692,12 @@ where
                 // referenced by other files. Queue it for reference-aware
                 // garbage collection instead; it is reclaimed once proven
                 // unreferenced.
-                let grace_hours = std::env::var("RUSTSHARE_OBJECT_GC_GRACE_PERIOD_HOURS")
-                    .ok()
-                    .and_then(|value| value.parse().ok())
-                    .unwrap_or(24)
-                    .max(1);
                 if let Err(error) = self
                     .metadata_store
                     .enqueue_object_gc_candidate(
                         &format!("blobs/{final_hash}"),
                         "upload_hash_mismatch",
-                        grace_hours,
+                        self.gc_grace_period_hours,
                     )
                     .await
                 {

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Keep the mailparse EML adapter out of rustshare-core.
+"""Keep concrete email/HTTP transports and process config out of rustshare-core.
 
-This incremental guard covers only mailparse; other existing concrete Core
-dependencies remain architecture debt for later bounded extractions.
+SQLx and image processing remain existing Core dependencies; this guard
+prevents removed transports and direct environment reads from regressing.
 """
 
 import argparse
@@ -12,13 +12,17 @@ import tomllib
 from pathlib import Path
 
 
-IMPORT = re.compile(
-    r"\bmailparse\s*::|\buse\b[^;]*\bmailparse\b|"
-    r"\bextern\s+crate\s+(?:r#)?mailparse\b",
-)
+FORBIDDEN = ("mailparse", "reqwest", "lettre")
 
 
-def has_mailparse_dependency(value: object, workspace_dependencies: dict) -> bool:
+def import_pattern(name: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"\b{name}\s*::|\buse\b[^;]*\b{name}\b|"
+        rf"\bextern\s+crate\s+(?:r#)?{name}\b",
+    )
+
+
+def has_dependency(value: object, workspace_dependencies: dict, package_name: str) -> bool:
     if not isinstance(value, dict):
         return False
     for key, dependency in value.items():
@@ -28,13 +32,41 @@ def has_mailparse_dependency(value: object, workspace_dependencies: dict) -> boo
             for name, config in dependency.items():
                 if isinstance(config, dict) and config.get("workspace"):
                     config = workspace_dependencies.get(name, config)
-                if name == "mailparse" or (
-                    isinstance(config, dict) and config.get("package") == "mailparse"
+                if name == package_name or (
+                    isinstance(config, dict) and config.get("package") == package_name
                 ):
                     return True
-        if has_mailparse_dependency(dependency, workspace_dependencies):
+        if has_dependency(dependency, workspace_dependencies, package_name):
             return True
     return False
+
+
+def reads_process_configuration(source: str) -> bool:
+    read = r"var(?:_os)?"
+    if re.search(rf"\b(?:std\s*::\s*)?env\s*::\s*{read}\s*\(", source):
+        return True
+
+    env_aliases = re.findall(r"\buse\s+std\s*::\s*env\s+as\s+(\w+)\s*;", source)
+    env_aliases.extend(
+        alias or "env"
+        for imports in re.findall(r"\buse\s+std\s*::\s*env\s*::\s*\{([^}]+)\}", source)
+        for alias in re.findall(r"\bself(?:\s+as\s+(\w+))?\b", imports)
+    )
+    imported_functions = re.findall(
+        rf"\buse\s+std\s*::\s*env\s*::\s*({read})(?:\s+as\s+(\w+))?\s*;",
+        source,
+    )
+    imported_functions.extend(
+        (name, alias)
+        for imports in re.findall(r"\buse\s+std\s*::\s*env\s*::\s*\{([^}]+)\}", source)
+        for name, alias in re.findall(rf"\b({read})(?:\s+as\s+(\w+))?\b", imports)
+    )
+    if any(re.search(rf"\b{alias}\s*::\s*{read}\s*\(", source) for alias in env_aliases):
+        return True
+    return any(
+        re.search(rf"\b{alias or imported_name}\s*\(", source)
+        for imported_name, alias in imported_functions
+    )
 
 
 def violations(
@@ -43,9 +75,21 @@ def violations(
     errors = []
     workspace = tomllib.loads(workspace_manifest).get("workspace", {})
     workspace_dependencies = workspace.get("dependencies", {})
-    if has_mailparse_dependency(tomllib.loads(manifest), workspace_dependencies):
-        errors.append("rustshare-core/Cargo.toml declares mailparse")
-    errors.extend(f"{name} imports mailparse" for name, source in sources.items() if IMPORT.search(source))
+    parsed_manifest = tomllib.loads(manifest)
+    for package_name in FORBIDDEN:
+        if has_dependency(parsed_manifest, workspace_dependencies, package_name):
+            errors.append(f"rustshare-core/Cargo.toml declares {package_name}")
+        pattern = import_pattern(package_name)
+        errors.extend(
+            f"{name} imports {package_name}"
+            for name, source in sources.items()
+            if pattern.search(source)
+        )
+    errors.extend(
+        f"{name} reads process configuration"
+        for name, source in sources.items()
+        if reads_process_configuration(source)
+    )
     return errors
 
 
@@ -62,20 +106,21 @@ def check(root: Path) -> list[str]:
 
 def self_test() -> None:
     assert violations('[dependencies]\nchrono = "1"\n', {"src/lib.rs": "use chrono::Utc;"}) == []
-    assert violations(
-        '[dependencies]\nmailparse = "0.17"\n',
-        {"src/lib.rs": "use chrono::Utc;"},
-    ) == ["rustshare-core/Cargo.toml declares mailparse"]
-    for source in (
-        "use mailparse::parse_mail;",
-        "pub(crate) use mailparse as parser;",
-        "use {mailparse as parser};",
-        "use{mailparse as parser};",
-        "pub extern crate mailparse as parser;",
-    ):
+    for package_name in FORBIDDEN:
         assert violations(
-            '[dependencies]\nchrono = "1"\n', {"src/lib.rs": source}
-        ) == ["src/lib.rs imports mailparse"], source
+            f'[dependencies]\n{package_name} = "1"\n',
+            {"src/lib.rs": "use chrono::Utc;"},
+        ) == [f"rustshare-core/Cargo.toml declares {package_name}"]
+        for source in (
+            f"use {package_name}::parse;",
+            f"pub(crate) use {package_name} as parser;",
+            f"use {{{package_name} as parser}};",
+            f"use{{{package_name} as parser}};",
+            f"pub extern crate {package_name} as parser;",
+        ):
+            assert violations(
+                '[dependencies]\nchrono = "1"\n', {"src/lib.rs": source}
+            ) == [f"src/lib.rs imports {package_name}"], source
     for table in (
         "dependencies",
         "dev-dependencies",
@@ -93,6 +138,18 @@ def self_test() -> None:
         '[workspace.dependencies]\nclock = { package = "chrono", version = "0.4" }\n'
         'parser = { package = "mailparse", version = "0.17" }\n',
     ) == []
+    for source in (
+        'std::env::var("RUSTSHARE_SETTING")',
+        'use std::env; env::var_os("RUSTSHARE_SETTING")',
+        'use std::env as process_env; process_env::var("RUSTSHARE_SETTING")',
+        'use std::env::{self as process_env}; process_env::var("RUSTSHARE_SETTING")',
+        'use std::env::var as read_setting; read_setting("RUSTSHARE_SETTING")',
+        'use std::env::var_os; var_os("RUSTSHARE_SETTING")',
+        'use std::env::{var as read_setting, var_os}; read_setting("RUSTSHARE_SETTING")',
+    ):
+        assert violations(
+            '[dependencies]\nchrono = "1"\n', {"src/lib.rs": source}
+        ) == ["src/lib.rs reads process configuration"], source
 
 
 def main() -> int:
@@ -109,7 +166,7 @@ def main() -> int:
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1
-    print("rustshare-core has no mailparse dependency or imports")
+    print("rustshare-core has no mailparse/reqwest/lettre transport or process config reads")
     return 0
 
 

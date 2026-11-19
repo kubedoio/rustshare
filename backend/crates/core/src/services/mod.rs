@@ -30,14 +30,13 @@ pub use ai::{
 };
 pub use ai_service::{AiError, AiService, FileSummary, SemanticSearchResult, SourceCitation};
 pub use chat_integration::{
-    validate_chat_webhook_url, ChatEvent, ChatEventPayload, ChatEventType, ChatIntegrationError,
-    ChatIntegrationService, EventStoreOps as ChatEventStoreOps, HttpWebhookDispatcher,
-    IncomingChatEvent, MetadataStoreOps as ChatMetadataStoreOps, UnfurlMetadata, UnfurlRequest,
-    UnfurlResponse, WebhookDispatcher,
+    resolve_chat_webhook_socket_addrs, validate_chat_webhook_url, ChatEvent, ChatEventPayload,
+    ChatEventType, ChatIntegrationError, ChatIntegrationService,
+    EventStoreOps as ChatEventStoreOps, IncomingChatEvent,
+    MetadataStoreOps as ChatMetadataStoreOps, UnfurlMetadata, UnfurlRequest, UnfurlResponse,
+    WebhookDispatcher,
 };
-pub use email_service::{
-    EmailError, EmailService, OutboundEmail, OutboundMailMessage, SmtpAttachment,
-};
+pub use email_service::{EmailError, OutboundEmail, OutboundMailMessage, SmtpAttachment};
 pub use eml_parser::{EmlParseError, ParsedAddress, ParsedAttachment, ParsedMail};
 pub use errors::{FileError, FolderError, VaultSyncError};
 pub use file_service::{

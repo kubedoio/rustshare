@@ -1,42 +1,10 @@
 //! Shared validation and hashing utilities.
 
-#[cfg(test)]
-use std::ffi::OsString;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use bytes::Bytes;
 use sha2::{Digest, Sha256};
-
-/// Serializes unit tests that mutate environment-backed mail/chat security flags.
-#[cfg(test)]
-pub(crate) static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-#[cfg(test)]
-pub(crate) struct EnvVarRestore {
-    key: &'static str,
-    original: Option<OsString>,
-}
-
-#[cfg(test)]
-impl EnvVarRestore {
-    pub(crate) fn new(key: &'static str) -> Self {
-        Self {
-            key,
-            original: std::env::var_os(key),
-        }
-    }
-}
-
-#[cfg(test)]
-impl Drop for EnvVarRestore {
-    fn drop(&mut self) {
-        match self.original.take() {
-            Some(value) => std::env::set_var(self.key, value),
-            None => std::env::remove_var(self.key),
-        }
-    }
-}
 
 /// Returns true if the IPv4 address is unspecified, loopback, private, link-local,
 /// multicast, or part of the CGNAT range (100.64.0.0/10).
@@ -72,38 +40,6 @@ pub fn is_internal_ip(ip: &IpAddr) -> bool {
     }
 }
 
-/// Returns true when the operator has explicitly opted into allowing Mail
-/// (IMAP/SMTP) connections to internal/private destinations. Off by default to
-/// mitigate SSRF; self-hosted or air-gapped deployments may need it.
-pub fn allow_internal_mail_servers() -> bool {
-    std::env::var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS").as_deref() == Ok("true")
-}
-
-/// Returns true when the operator has explicitly opted into allowing Chat
-/// relay URLs pointing at loopback/internal destinations (dev/dogfooding
-/// deployments that run the Buzz relay on the same host). Off by default to
-/// mitigate SSRF — the same posture as `allow_internal_mail_servers`.
-pub fn allow_internal_chat_relay() -> bool {
-    std::env::var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY").as_deref() == Ok("true")
-}
-
-/// Parse the `RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS` setting. Anything other
-/// than `never` keeps the default of accepting invalid certificates for
-/// internal mail servers; `never` enforces strict verification everywhere
-/// (e.g. deployments with an internal CA that should still be validated).
-fn invalid_cert_setting_allows(raw: Option<String>) -> bool {
-    !matches!(raw.as_deref(), Some("never"))
-}
-
-/// Returns true when invalid (self-signed, expired, or hostname-mismatched)
-/// certificates may be accepted for internal/private mail servers. Internal
-/// mail servers are frequently self-signed or reached by IP address, so this
-/// defaults to true; set `RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS=never` to
-/// require valid certificates even internally.
-pub fn accept_invalid_certs_for_internal_servers() -> bool {
-    invalid_cert_setting_allows(std::env::var("RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS").ok())
-}
-
 /// Returns true when every resolved address is internal/private.
 pub fn all_addrs_internal(addrs: &[SocketAddr]) -> bool {
     !addrs.is_empty() && addrs.iter().all(|addr| is_internal_ip(&addr.ip()))
@@ -113,10 +49,12 @@ pub fn all_addrs_internal(addrs: &[SocketAddr]) -> bool {
 /// connection. Relaxed verification is only ever allowed when internal mail
 /// servers are explicitly enabled and every resolved address is
 /// internal/private — public destinations always get full verification.
-pub fn should_accept_invalid_certs(addrs: &[SocketAddr]) -> bool {
-    allow_internal_mail_servers()
-        && accept_invalid_certs_for_internal_servers()
-        && all_addrs_internal(addrs)
+pub fn should_accept_invalid_certs(
+    addrs: &[SocketAddr],
+    allow_internal_mail_servers: bool,
+    accept_invalid_certs: bool,
+) -> bool {
+    allow_internal_mail_servers && accept_invalid_certs && all_addrs_internal(addrs)
 }
 
 async fn resolve_socket_addrs_internal(
@@ -177,8 +115,9 @@ pub async fn resolve_public_socket_addrs(host: &str, port: u16) -> Result<Vec<So
 pub async fn resolve_mail_server_socket_addrs(
     host: &str,
     port: u16,
+    allow_internal: bool,
 ) -> Result<Vec<SocketAddr>, String> {
-    resolve_socket_addrs_internal(host, port, allow_internal_mail_servers()).await
+    resolve_socket_addrs_internal(host, port, allow_internal).await
 }
 
 /// Resolve socket addresses for a Chat relay URL. Honors the public-only SSRF
@@ -189,14 +128,15 @@ pub async fn resolve_mail_server_socket_addrs(
 pub async fn resolve_chat_relay_socket_addrs(
     host: &str,
     port: u16,
+    allow_internal: bool,
 ) -> Result<Vec<SocketAddr>, String> {
-    if allow_internal_chat_relay() && host.eq_ignore_ascii_case("localhost") {
+    if allow_internal && host.eq_ignore_ascii_case("localhost") {
         return Ok(vec![SocketAddr::new(
             std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
             port,
         )]);
     }
-    resolve_socket_addrs_internal(host, port, allow_internal_chat_relay()).await
+    resolve_socket_addrs_internal(host, port, allow_internal).await
 }
 
 /// Resolve a configured Chat relay URL. A private destination is allowed only
@@ -205,6 +145,8 @@ pub async fn resolve_chat_relay_socket_addrs(
 /// it cannot turn arbitrary private URLs into trusted Chat relays.
 pub async fn resolve_chat_relay_socket_addrs_for_url(
     relay_url: &str,
+    allow_internal: bool,
+    deployment_relay_url: Option<&str>,
 ) -> Result<Vec<SocketAddr>, String> {
     let parsed =
         url::Url::parse(relay_url).map_err(|error| format!("invalid relay URL: {error}"))?;
@@ -222,15 +164,13 @@ pub async fn resolve_chat_relay_socket_addrs_for_url(
     let port = parsed
         .port_or_known_default()
         .ok_or_else(|| "Chat relay URL must include a valid port".to_string())?;
-    let configured = std::env::var("RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL").ok();
-    let deployment_owned = configured
-        .as_deref()
+    let deployment_owned = deployment_relay_url
         .and_then(|value| url::Url::parse(value).ok())
         .is_some_and(|value| value == parsed);
-    if (deployment_owned || allow_internal_chat_relay()) && host.eq_ignore_ascii_case("localhost") {
+    if (deployment_owned || allow_internal) && host.eq_ignore_ascii_case("localhost") {
         return Ok(vec![SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)]);
     }
-    resolve_socket_addrs_internal(host, port, deployment_owned || allow_internal_chat_relay()).await
+    resolve_socket_addrs_internal(host, port, deployment_owned || allow_internal).await
 }
 
 /// Validate a file or folder name.
@@ -278,42 +218,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn allow_internal_mail_servers_defaults_to_false() {
-        let _guard = ENV_LOCK.lock().await;
-        let _restore = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
-        // The variable is not set in unit-test runs, so the guard must be off.
-        std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
-        assert!(!allow_internal_mail_servers());
-    }
-
-    #[tokio::test]
-    async fn allow_internal_mail_servers_activates_with_true() {
-        let _guard = ENV_LOCK.lock().await;
-        let _restore = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
-        std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
-        assert!(allow_internal_mail_servers());
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn env_var_restore_preserves_non_unicode_values() {
-        use std::os::unix::ffi::OsStringExt;
-
-        let _guard = ENV_LOCK.lock().await;
-        let original = std::env::var_os("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
-        let restore = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
-        std::env::set_var(
-            "RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS",
-            OsString::from_vec(vec![0xff]),
-        );
-        drop(restore);
-        assert_eq!(
-            std::env::var_os("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS"),
-            original
-        );
-    }
-
-    #[tokio::test]
     async fn resolve_public_socket_addrs_rejects_private_ip_literal() {
         let result = resolve_public_socket_addrs("10.0.0.1", 993).await;
         assert!(result.is_err());
@@ -322,10 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_mail_server_socket_addrs_allows_private_ip_when_enabled() {
-        let _guard = ENV_LOCK.lock().await;
-        let _restore = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
-        std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
-        let result = resolve_mail_server_socket_addrs("10.0.0.1", 993).await;
+        let result = resolve_mail_server_socket_addrs("10.0.0.1", 993, true).await;
         assert!(result.is_ok());
         let addrs = result.unwrap();
         assert_eq!(addrs.len(), 1);
@@ -335,29 +236,20 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_mail_server_socket_addrs_rejects_localhost_even_when_enabled() {
-        let _guard = ENV_LOCK.lock().await;
-        let _restore = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
-        std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
-        let result = resolve_mail_server_socket_addrs("localhost", 993).await;
+        let result = resolve_mail_server_socket_addrs("localhost", 993, true).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("localhost"));
     }
 
     #[tokio::test]
     async fn chat_relay_rejects_localhost_by_default() {
-        let _guard = ENV_LOCK.lock().await;
-        let _restore = EnvVarRestore::new("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY");
-        std::env::remove_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY");
-        let result = resolve_chat_relay_socket_addrs("localhost", 7447).await;
+        let result = resolve_chat_relay_socket_addrs("localhost", 7447, false).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn chat_relay_allows_localhost_when_flag_set() {
-        let _guard = ENV_LOCK.lock().await;
-        let _restore = EnvVarRestore::new("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY");
-        std::env::set_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY", "true");
-        let result = resolve_chat_relay_socket_addrs("localhost", 7447).await;
+        let result = resolve_chat_relay_socket_addrs("localhost", 7447, true).await;
         assert!(result.is_ok());
         let addrs = result.unwrap();
         assert_eq!(addrs.len(), 1);
@@ -367,38 +259,26 @@ mod tests {
 
     #[tokio::test]
     async fn chat_relay_allows_private_ip_when_flag_set() {
-        let _guard = ENV_LOCK.lock().await;
-        let _restore = EnvVarRestore::new("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY");
-        std::env::set_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY", "true");
-        let result = resolve_chat_relay_socket_addrs("10.0.0.7", 7447).await;
+        let result = resolve_chat_relay_socket_addrs("10.0.0.7", 7447, true).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn configured_chat_relay_allows_only_the_exact_private_url() {
-        let _guard = ENV_LOCK.lock().await;
-        let _restore = EnvVarRestore::new("RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL");
-        let _restore_legacy = EnvVarRestore::new("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY");
-        std::env::set_var("RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL", "ws://localhost:7447");
-        std::env::set_var("RUSTSHARE_CHAT_ALLOW_LOCAL_RELAY", "false");
-        assert!(
-            resolve_chat_relay_socket_addrs_for_url("ws://localhost:7447")
-                .await
-                .is_ok()
-        );
-        assert!(
-            resolve_chat_relay_socket_addrs_for_url("ws://127.0.0.1:7447")
-                .await
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn invalid_cert_setting_defaults_to_allow_and_honors_never() {
-        assert!(invalid_cert_setting_allows(None));
-        assert!(invalid_cert_setting_allows(Some("internal".to_string())));
-        assert!(invalid_cert_setting_allows(Some("unexpected".to_string())));
-        assert!(!invalid_cert_setting_allows(Some("never".to_string())));
+        assert!(resolve_chat_relay_socket_addrs_for_url(
+            "ws://localhost:7447",
+            false,
+            Some("ws://localhost:7447")
+        )
+        .await
+        .is_ok());
+        assert!(resolve_chat_relay_socket_addrs_for_url(
+            "ws://127.0.0.1:7447",
+            false,
+            Some("ws://localhost:7447")
+        )
+        .await
+        .is_err());
     }
 
     #[test]
@@ -416,26 +296,19 @@ mod tests {
 
     #[tokio::test]
     async fn should_accept_invalid_certs_composes_all_gates() {
-        let _guard = ENV_LOCK.lock().await;
-        let _restore_internal = EnvVarRestore::new("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
-        let _restore_certs = EnvVarRestore::new("RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS");
         let private: SocketAddr = "10.5.199.84:993".parse().unwrap();
         let public: SocketAddr = "142.250.74.5:993".parse().unwrap();
 
         // Internal servers enabled + default setting: private relaxes, public
         // never does.
-        std::env::set_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS", "true");
-        assert!(should_accept_invalid_certs(&[private]));
-        assert!(!should_accept_invalid_certs(&[public]));
-        assert!(!should_accept_invalid_certs(&[private, public]));
+        assert!(should_accept_invalid_certs(&[private], true, true));
+        assert!(!should_accept_invalid_certs(&[public], true, true));
+        assert!(!should_accept_invalid_certs(&[private, public], true, true));
 
         // Explicit "never" restores strict verification even for private hosts.
-        std::env::set_var("RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS", "never");
-        assert!(!should_accept_invalid_certs(&[private]));
+        assert!(!should_accept_invalid_certs(&[private], true, false));
 
         // Without the internal-servers opt-in, nothing relaxes.
-        std::env::remove_var("RUSTSHARE_MAIL_TLS_ACCEPT_INVALID_CERTS");
-        std::env::remove_var("RUSTSHARE_ALLOW_INTERNAL_MAIL_SERVERS");
-        assert!(!should_accept_invalid_certs(&[private]));
+        assert!(!should_accept_invalid_certs(&[private], false, true));
     }
 }
