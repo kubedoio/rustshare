@@ -332,3 +332,146 @@ Senol approved this head and no review threads remain unresolved. M4.1b2e is
 still **PARTIAL / merge NO-GO / production release NO-GO** because the
 remaining requested fault/recovery cases have not been implemented. The PR
 remains draft and production qualification remains disabled.
+
+## M4.1b2e fault-closure draft — 2026-10-31
+
+The feature branch `feat/m41b2e-replacement-fault-closure` starts from
+Elembra main `aea1cc8baec281a3d5cc1453468373c06021ed33` (tree
+`3fc0919e489e34196f686b01a5b5c541a7532f7a`). It extends the existing
+`scripts/run-buzz-replacement-e2e.sh` /
+`frontend/scripts/buzz-replacement-e2e.mjs` harness and retains the required
+`Buzz Identity Replacement E2E` job. The test-only Buzz pin is updated to the
+then-current PR #7 head `dc09fc2602a7cc64ea15caa865bd773d8be61eed` (tree
+`8feb9d59c14b53999dfa16148b2cef62ba28de30`); no production pin or allowlist
+was changed.
+
+The harness contains these 12 fault-closure groups:
+
+| Fault group | Status |
+| --- | --- |
+| Worker crash before relay ACK and after relay ACK | Implemented; not executed |
+| Lease expiry and fenced claim recovery | Implemented; not executed |
+| Identical concurrent initiation and competing starts | Implemented; not executed |
+| Principal disabled during staged verification | Implemented; not executed |
+| Mapping and relay-pin rotation mid-operation | Implemented; not executed |
+| Definitive stale revision and fresh conditional retry | Implemented; not executed |
+| Reordered conditional revocation delivery | Implemented; not executed |
+| Unexpected old-key reactivation and tombstone retention | Implemented; not executed |
+| Database failure during completion commit | Implemented; not executed |
+| Blocked operation recovery by an audited administrator | Implemented; not executed |
+| Staged release racing with revocation | Implemented; not executed |
+| Lost release ACK and exact-event replay | Implemented; not executed |
+
+Existing acceptance checks remain in the harness and have not been removed:
+the v1alpha1 path, relay OK without local completion, send and subscription
+gating, cross-tenant access, and ambiguous revoke retry. The historical 22/22
+result is preserved as prior evidence only; it is not a run of these additions.
+
+The required invocation was attempted with test-only source and target
+directories. Buzz `buzz-relay` built from `dc09fc2602a7cc64ea15caa865bd773d8be61eed`
+with SHA-256
+`2b5949ef0a856028fe6d76d9b626bca68937358d29e5d1fe395e605681f439f8`.
+Elembra `rustshare-server` built from the branch's unchanged backend source
+with SHA-256
+`1e597e7353cd3b7a9b67d53e900840d5e2ed14c45d572952e35429ec505fd61d`.
+`node --check frontend/scripts/buzz-replacement-e2e.mjs` and `git diff --check`
+passed; `bash -n scripts/run-buzz-replacement-e2e.sh` and frontend `npm run lint`
+passed (0 errors; 155 existing warnings). Rust workspace formatting, Clippy,
+SQLx metadata, OpenAPI, structural guards, full PostgreSQL
+tests, migration tests, actual relay conformance, multi-node/media tests, and
+the frontend acceptance validation were not run. The runner stopped before service startup because the sandbox denied
+access to `/var/run/docker.sock`; no new real relay case, migration check,
+PostgreSQL test, live conformance test, or validation tail was executed. No
+E2E `results.json` or live-run digest pair exists for this draft.
+
+**Disposition: IMPLEMENTED / NOT QUALIFIED / merge NO-GO / production
+qualification NO-GO.** The historical 22/22 pass above belongs to the earlier
+Elembra head and Buzz `e22ba1ed44822fd47a6c31362eea5087a8730d74`; it does not
+prove this test-only source update or any new fault case. Protected CI,
+independent security review, and real disposable-service execution remain
+required.
+
+## Upstream-only design compatibility and CI follow-up — 2026-10-31
+
+PR #438 protects existing downstream Buzz deployments. The proposed ADR-0044
+in PR #439 introduces a separate upstream-only managed identity design;
+this acceptance harness does not qualify that design or stock `block/buzz`.
+Its signed membership proofs, conditional revisions, tombstones and staged
+release remain downstream-specific. Production pins, runtime qualification
+allowlists and replacement enablement must remain unchanged.
+
+CI run `41145967534`, testing PR head
+`40016029ddefaa83d597bd46e6d1f228214b7b35`, supersedes the local execution
+limitation above for that head: disposable services started and the first
+four acceptance groups passed. Replacement initiation then returned HTTP 404,
+`Chat identity replacement is disabled`, at harness line 966. The independent
+integration job failed in the downstream `authoritative_membership` test at
+line 521 with `WebSocket(Protocol(SendAfterClosing))`. These are failing live
+results, not qualification evidence; the earlier local Docker failure does
+not describe this CI execution.
+
+Next: diagnose fixture qualification without bypassing production guards,
+resolve the downstream membership test failure, and rerun all required
+checks on the resulting exact head. Keep this PR draft and merge NO-GO until
+passing evidence and independent human review exist. Run ADR-0044 Phase 1
+against its independently pinned unmodified upstream sources in a separate
+harness; no result here enables managed key custody or identity migration.
+
+
+## 2026-11-15 CI remediation follow-up
+
+The debug-only qualification predicate, fixture assertions, runner and both CI
+checkouts now agree on Buzz source `14c11b64ac036827a141fd597290e0c47d9247c3`
+(tree `cba147fdf4717f316fdce5ff539c77676c683535`). This includes a test-only
+socket-lifecycle fix: the unauthenticated history probe opens its own connection
+after the rejected write, preserving both security assertions. The production
+qualification allowlist and compatibility configuration remain unchanged.
+
+The replacement harness also recognizes signal termination, arms crash injection
+before restarting the worker, discards held commands associated with the killed
+worker, and allows the signed membership assertion to bypass only the test
+proxy's held read. Backend membership reads remain held until the disable test
+releases them; relay signatures, request binding and freshness are still checked.
+
+Seven dependency-free harness regressions pass (`node --test
+scripts/test-buzz-replacement-harness.mjs`). The four originally reported defects
+were reproduced against the previous source before fixing. Bash/Node syntax,
+Prettier, workspace formatting and diff checks pass. The existing Rust fixture
+qualification unit test also passes when compiled with its actual predicate in
+a standalone test harness; this does not substitute for the complete package
+tests or disposable-service integration.
+
+The full replacement matrix and downstream Buzz membership integration must run
+on this new source pair in CI before merge. No prior acceptance result qualifies
+this revision. No deployment, signing-key rotation or production pin change was
+performed.
+
+Fresh review also replaced the mapping-rotation sleep with a wait for the durable
+blocked operation and keeps the injected completion trigger installed until its
+failed transaction has a retry audit. Two executable lifecycle regressions fail
+on the prior harness and pass with these changes. They are test-driver
+regressions with controlled dependencies, not additional live acceptance evidence.
+
+The completion-failure check additionally requires a nontransactional sequence
+marker set only by the target operation's injected trigger before it raises.
+This marker survives rollback; a staged candidate and an unrelated transport
+retry cannot satisfy the check. The sequence is dropped with the fault trigger
+in `finally`. The focused lifecycle regression reproduces that false-positive
+case against the previous harness and passes with the marker requirement.
+
+## 2026-11-19 rebased review follow-up
+
+The production `BuzzAdmissionBridge` now recognizes a wrapped conditional
+relay rejection whose final reason token is `stale_revision`. It records the
+conditional attempt with outcome `stale` through the existing durable outcome
+path, so the worker can retry against a fresh revision. This does not bypass
+relay authentication, identity-replacement guards, or the production
+qualification allowlist. The stale-revision live scenario asserts the rejected
+attempt and the subsequent fresh command ID.
+
+This is a bounded production retry-classification change in addition to the
+test harness and test-only Buzz source pin; the PR is not test-only. The prior
+protected disposable-service workflow passed on the preceding head. Fresh
+protected checks and independent review were pending when this note was
+written; merge and production qualification remain blocked until those gates
+and human approval pass.
