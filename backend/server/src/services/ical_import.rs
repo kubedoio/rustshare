@@ -808,7 +808,12 @@ pub async fn parse_and_upsert(
         match event {
             Ok(parsed) => {
                 let result = metadata_store
-                    .upsert_calendar_imported_event(job.id, &to_event(job, &parsed), claim_token)
+                    .upsert_calendar_imported_event(
+                        job.id,
+                        &to_event(job, &parsed),
+                        claim_token,
+                        total,
+                    )
                     .await;
                 match result {
                     Ok(Some(_)) => record_upsert_result(&mut outcome, Ok(()), &mut last_error),

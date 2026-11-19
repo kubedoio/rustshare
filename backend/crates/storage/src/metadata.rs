@@ -7657,8 +7657,9 @@ impl MetadataStore {
         job_id: Uuid,
         event: &CalendarEvent,
         claim_token: Uuid,
+        total_events: i32,
     ) -> Result<Option<bool>> {
-        let result = sqlx::query_as::<_, (bool, bool)>(
+        let result = sqlx::query_as::<_, (bool, bool, bool)>(
             r#"
             WITH claim AS MATERIALIZED (
                 SELECT id
@@ -7703,8 +7704,14 @@ impl MetadataStore {
                 OR calendar_events.rrule IS DISTINCT FROM EXCLUDED.rrule
                 OR calendar_events.status IS DISTINCT FROM EXCLUDED.status
             RETURNING id
+            ), progress AS (
+                UPDATE calendar_import_jobs
+                SET total_events = $25, processed_events = processed_events + 1, updated_at = NOW()
+                WHERE id = $1 AND claim_token = $2 AND status = 'running' AND deleted_at IS NULL
+                RETURNING id
             )
-            SELECT EXISTS(SELECT 1 FROM claim), EXISTS(SELECT 1 FROM upserted)
+            SELECT EXISTS(SELECT 1 FROM claim), EXISTS(SELECT 1 FROM progress),
+                   EXISTS(SELECT 1 FROM upserted)
             "#,
         )
         .bind(job_id)
@@ -7731,9 +7738,10 @@ impl MetadataStore {
         .bind(event.deleted_at)
         .bind(event.created_at)
         .bind(event.updated_at)
+        .bind(total_events)
         .fetch_one(&self.pool)
         .await?;
-        Ok(result.0.then_some(result.1))
+        Ok((result.0 && result.1).then_some(result.2))
     }
 
     /// Persist a single-use, user-bound OAuth state for the connect flow.

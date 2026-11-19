@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use rustshare_core::domain::CalendarImportJob;
+use rustshare_core::domain::{CalendarEvent, CalendarImportJob};
 use rustshare_server::state::AppState;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -705,21 +705,83 @@ END:VCALENDAR
 async fn reclaimed_import_fences_out_the_original_worker() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env_without_calendar_outbox().await;
+    let abandoned_tenants: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT tenant_id FROM users WHERE username LIKE 'calendar_worker_fencing-%'",
+    )
+    .fetch_all(&state.db_pool)
+    .await
+    .unwrap();
+    for tenant_id in abandoned_tenants {
+        cleanup_outbox(&state.db_pool, tenant_id).await;
+        cleanup_tenant(&state.db_pool, tenant_id).await;
+    }
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let user = create_test_user(&state, "calendar_worker_fencing", tenant_id).await;
     configure_calendar(&state, tenant_id, user.id, true).await;
     let token = create_auth_token(&state, user.id, tenant_id);
     let app = build_app(state.clone());
-    let ics = "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:fenced@example.test\nDTSTART:20261008T120000Z\nDTEND:20261008T130000Z\nSUMMARY:Current import\nEND:VEVENT\nEND:VCALENDAR\n";
+    let ics = "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:fenced-first@example.test\nDTSTART:20261008T120000Z\nDTEND:20261008T130000Z\nSUMMARY:First event\nEND:VEVENT\nBEGIN:VEVENT\nUID:fenced-second@example.test\nDTSTART:20261008T130000Z\nDTEND:20261008T140000Z\nSUMMARY:Second event\nEND:VEVENT\nEND:VCALENDAR\n";
     let (status, body) = upload_ics(&app, &token, "fenced.ics", ics).await;
     assert_eq!(status, StatusCode::ACCEPTED);
+    let job_id = Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap();
 
-    let old_claim = state
+    let mut old_claim = state
         .metadata_store
         .claim_next_pending_calendar_import_job()
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(old_claim.id, job_id);
+    let now = chrono::Utc::now();
+    let partial_event = CalendarEvent {
+        id: Uuid::new_v4(),
+        tenant_id,
+        owner_id: user.id,
+        source_id: old_claim.source_id,
+        external_uid: Some("fenced-first@example.test".to_string()),
+        external_etag: None,
+        recurrence_id: None,
+        title: "First event".to_string(),
+        description: None,
+        location: None,
+        starts_at: chrono::DateTime::parse_from_rfc3339("2026-10-08T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+        ends_at: chrono::DateTime::parse_from_rfc3339("2026-10-08T13:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+        all_day: false,
+        original_date: None,
+        timezone: "UTC".to_string(),
+        rrule: None,
+        status: "confirmed".to_string(),
+        read_only: true,
+        raw: None,
+        deleted_at: None,
+        created_at: now,
+        updated_at: now,
+    };
+    assert_eq!(
+        state
+            .metadata_store
+            .upsert_calendar_imported_event(
+                old_claim.id,
+                &partial_event,
+                old_claim.claim_token.unwrap(),
+                2,
+            )
+            .await
+            .unwrap(),
+        Some(true)
+    );
+    let persisted_progress: i32 =
+        sqlx::query_scalar("SELECT processed_events FROM calendar_import_jobs WHERE id = $1")
+            .bind(old_claim.id)
+            .fetch_one(&state.db_pool)
+            .await
+            .unwrap();
+    assert_eq!(persisted_progress, 1);
+    old_claim.processed_events = 1;
     sqlx::query(
         "UPDATE calendar_import_jobs SET updated_at = NOW() - INTERVAL '10 minutes' WHERE id = $1",
     )
@@ -739,6 +801,7 @@ async fn reclaimed_import_fences_out_the_original_worker() {
         .unwrap()
         .unwrap();
     assert_ne!(old_claim.claim_token, new_claim.claim_token);
+    assert_eq!(new_claim.processed_events, 1);
 
     let old_result = rustshare_server::services::ical_import::process_import_job(
         &state.metadata_store,
@@ -750,7 +813,7 @@ async fn reclaimed_import_fences_out_the_original_worker() {
         old_result,
         Err(rustshare_server::services::ical_import::IcalImportError::ClaimLost)
     ));
-    assert_eq!(count_imported_events(&state, tenant_id).await, 0);
+    assert_eq!(count_imported_events(&state, tenant_id).await, 1);
 
     rustshare_server::services::ical_import::process_import_job(
         &state.metadata_store,
@@ -759,7 +822,6 @@ async fn reclaimed_import_fences_out_the_original_worker() {
     )
     .await
     .unwrap();
-    let job_id = Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap();
     let job: CalendarImportJob = state
         .metadata_store
         .get_calendar_import_job(tenant_id, user.id, job_id)
@@ -767,7 +829,8 @@ async fn reclaimed_import_fences_out_the_original_worker() {
         .unwrap()
         .unwrap();
     assert_eq!(job.status, "completed");
-    assert_eq!(count_imported_events(&state, tenant_id).await, 1);
+    assert_eq!(job.processed_events, 2);
+    assert_eq!(count_imported_events(&state, tenant_id).await, 2);
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
 
