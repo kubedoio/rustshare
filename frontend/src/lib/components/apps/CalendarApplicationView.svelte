@@ -11,6 +11,7 @@
 	} from '$lib/api/calendar';
 	import { queryClient } from '$lib/query-client';
 	import { ApiError } from '$lib/api/types';
+	import { downloadTextFile } from '$lib/editor/adapter/export';
 	import ApplicationPageShell from '$lib/components/layout/ApplicationPageShell.svelte';
 	import ApplicationPageSkeleton from '$lib/components/common/ApplicationPageSkeleton.svelte';
 	import ErrorState from '$lib/components/common/ErrorState.svelte';
@@ -20,6 +21,7 @@
 		ChevronLeft,
 		ChevronRight,
 		MoveRight,
+		Download,
 		Pencil,
 		Plus,
 		X
@@ -154,6 +156,18 @@
 			if (selectedEvent?.id !== eventId) return;
 			relatedMailMessageId = null;
 			relatedMailUnavailable = !(error instanceof ApiError && error.status === 404);
+		}
+	}
+
+	async function exportEvent(event: CalendarEvent) {
+		try {
+			const content = await calendarApi.exportEvent(event.id);
+			downloadTextFile(`${event.id}.ics`, content, 'text/calendar;charset=utf-8');
+		} catch (error) {
+			toastStore.show(
+				`Failed to export event: ${error instanceof Error ? error.message : 'unknown error'}`,
+				'error'
+			);
 		}
 	}
 
@@ -503,6 +517,10 @@
 			!event.recurrence_id &&
 			!event.instance_start
 		);
+	}
+
+	function canExportEvent(event: CalendarEvent): boolean {
+		return !event.recurrence_id && (!event.rrule || event.timezone === 'UTC');
 	}
 
 	function dragClass(event: CalendarEvent): string {
@@ -1126,6 +1144,19 @@
 				<p class="mt-3 text-xs text-base-content/50">{sourceAttribution(selectedEvent)}</p>
 			{/if}
 			<div class="mt-4 flex flex-wrap items-center justify-end gap-2">
+				{#if canExportEvent(selectedEvent)}
+					<button
+						type="button"
+						class="btn btn-outline btn-sm"
+						onclick={() => exportEvent(selectedEvent!)}
+					>
+						<Download size={13} /> Export .ics
+					</button>
+				{:else if selectedEvent.rrule || selectedEvent.recurrence_id}
+					<span class="text-xs text-base-content/60" role="note">
+						This recurring event cannot be exported as .ics yet.
+					</span>
+				{/if}
 				{#if relatedMailMessageId}
 					<button type="button" class="btn btn-outline btn-sm" onclick={openRelatedMail}>
 						Related Mail

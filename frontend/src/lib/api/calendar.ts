@@ -111,6 +111,10 @@ export interface CalendarProvidersResponse {
 }
 
 export const calendarApi = {
+	exportEvent: async (eventId: string): Promise<string> => {
+		return apiClient.requestText(`/calendar/events/${eventId}/export`);
+	},
+
 	createMailLink: async (eventId: string, messageId: string): Promise<{ id: string }> => {
 		return apiClient.post('/calendar/mail-links', {
 			event_id: eventId,

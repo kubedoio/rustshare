@@ -47,3 +47,7 @@ The PR #395 Playwright test was executed against the seeded local environment. I
 ## Gate A boundary
 
 This evidence is local acceptance evidence, not institutional Gate A readiness. Gate A still requires evidence from the exact deployed candidate, including operational ownership, independent administrators, deployed secret/log-redaction controls, restore/recovery evidence, and the required permission-negative checks on that deployment. No production or pilot deployment was used for this record.
+
+## Current follow-up status (2026-11-19)
+
+The historical #327 notes above predate the completed interaction work. Responsive rescheduling is implemented and #396 is closed; email-to-event context is implemented and #397 is closed. Live Google/Microsoft OAuth remains unverified without operator credentials and is now tracked as #507. The workspace-folder JSON proposal is retired under ADR-0040. See #328 for durable meeting workflows and #329 for iCalendar interoperability; this does not change the Gate A limitation above.

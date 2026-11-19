@@ -9,6 +9,7 @@ import CalendarApplicationView from './CalendarApplicationView.svelte';
 
 const mocks = vi.hoisted(() => ({
 	listEvents: vi.fn(),
+	exportEvent: vi.fn(),
 	getEvent: vi.fn(),
 	getEventMailLink: vi.fn(),
 	openEventMeeting: vi.fn(),
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
 	uploadIcs: vi.fn(),
 	listImportJobs: vi.fn(),
 	getImportJob: vi.fn(),
+	downloadTextFile: vi.fn(),
 	pageUrl: ''
 }));
 
@@ -31,6 +33,7 @@ vi.mock('$lib/api/calendar', () => ({
 }));
 
 vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
+vi.mock('$lib/editor/adapter/export', () => ({ downloadTextFile: mocks.downloadTextFile }));
 
 vi.mock('$lib/kit/page', () => ({
 	page: {
@@ -133,6 +136,8 @@ describe('CalendarApplicationView', () => {
 		toastStore.clear();
 		mocks.listSources.mockResolvedValue([internalSource, googleSource]);
 		mocks.listEvents.mockResolvedValue([]);
+		mocks.exportEvent.mockResolvedValue('BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n');
+		mocks.downloadTextFile.mockReset();
 		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(1)));
 		mocks.getEventMailLink.mockRejectedValue(new Error('Related Mail unavailable'));
 		mocks.openEventMeeting.mockResolvedValue({ id: 'meeting-1' });
@@ -214,6 +219,40 @@ describe('CalendarApplicationView', () => {
 
 		await fireEvent.click(await screen.findByText(/Sprint review/));
 		expect(await screen.findByRole('button', { name: /Edit event/ })).toBeTruthy();
+	});
+
+	it('downloads the authorized event as an iCalendar file', async () => {
+		mocks.listEvents.mockResolvedValue([eventAt(dayFromToday(1))]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+		await fireEvent.click(screen.getByRole('button', { name: 'Export .ics' }));
+
+		await waitFor(() =>
+			expect(mocks.exportEvent).toHaveBeenCalledWith(expect.stringContaining('evt-'))
+		);
+		expect(mocks.downloadTextFile).toHaveBeenCalledWith(
+			expect.stringMatching(/^evt-.*\.ics$/),
+			'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n',
+			'text/calendar;charset=utf-8'
+		);
+	});
+
+	it('explains when recurring events are outside the supported export format', async () => {
+		mocks.listEvents.mockResolvedValue([
+			eventAt(dayFromToday(1), {
+				rrule: 'FREQ=WEEKLY',
+				timezone: 'Europe/Berlin'
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+
+		expect(
+			await screen.findByText('This recurring event cannot be exported as .ics yet.')
+		).toBeTruthy();
+		expect(screen.queryByRole('button', { name: 'Export .ics' })).toBeNull();
 	});
 
 	it('moves a month event by pointer and preserves event-local time and duration', async () => {

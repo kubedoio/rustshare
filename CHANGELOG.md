@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep policy-permitted Notes body keyword search and indexing available with AI disabled, using the existing PostgreSQL index without creating embeddings. Honor restrictions in current source frontmatter even when sidecar metadata is stale.
 - Create Calendar events from saved Mail messages and link them by reference with live authorization in both Applications.
 - Accessible Calendar movement for internal, non-recurring timed events across Month, work-week, Day and Agenda views. Movement preserves event-zone wall time and duration; recurring, occurrence, all-day and read-only events remain unsupported.
+- Download an authorized single-event iCalendar export from Calendar event details, preserving event identity and UTC instants across DST transitions.
 - Add effective-access source and permission explanations to shared folder
   contents and folder-tree responses, using the live resolver decision and
   restricting share identifiers to inspectable direct Admin grants.
