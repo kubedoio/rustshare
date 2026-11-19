@@ -282,6 +282,63 @@ async fn test_create_group_share_success() {
     cleanup_group_share_fixture(&pool, &f, Some(share.id)).await;
 }
 
+/// Archiving suspends group-derived access immediately and restore reactivates retained grants.
+#[tokio::test]
+async fn test_archived_group_denies_access_until_restored() {
+    let pool = test_pool().await;
+    let f = setup_group_share_fixture(&pool).await;
+    let share_service = create_test_share_service(pool.clone());
+    let share = share_service
+        .create_group_share(
+            Resource::File(f.file_id),
+            f.group_id,
+            SharePermissions::View,
+            f.owner_id,
+            f.tenant_id,
+        )
+        .await
+        .expect("create group grant before archive");
+
+    let resolver =
+        PermissionResolver::new(Arc::new(PermissionResolverRepository::new(pool.clone())));
+    assert!(resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View)
+        .await
+        .expect("initial permission check"));
+
+    sqlx::query("UPDATE user_groups SET archived_at = now() WHERE id = $1")
+        .bind(f.group_id)
+        .execute(&pool)
+        .await
+        .expect("archive group");
+    assert!(!resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View)
+        .await
+        .expect("archived permission check"));
+    assert!(share_service
+        .create_group_share(
+            Resource::File(f.file_id),
+            f.group_id,
+            SharePermissions::View,
+            f.owner_id,
+            f.tenant_id,
+        )
+        .await
+        .is_err());
+
+    sqlx::query("UPDATE user_groups SET archived_at = NULL WHERE id = $1")
+        .bind(f.group_id)
+        .execute(&pool)
+        .await
+        .expect("restore group");
+    assert!(resolver
+        .check_file_permission(f.member_id, f.tenant_id, f.file_id, SharePermissions::View)
+        .await
+        .expect("restored permission check"));
+
+    cleanup_group_share_fixture(&pool, &f, Some(share.id)).await;
+}
+
 /// Test that non-members cannot share with group
 #[tokio::test]
 async fn test_non_member_cannot_share_with_group() {

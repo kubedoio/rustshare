@@ -140,6 +140,7 @@ pub async fn list_my_groups(
         LEFT JOIN users u2 ON u2.id = m2.user_id AND u2.tenant_id = g.tenant_id
         WHERE m.user_id = $1
           AND g.tenant_id = $2
+          AND g.archived_at IS NULL
         GROUP BY g.id
         ORDER BY g.name ASC
         LIMIT $3 OFFSET $4
@@ -190,7 +191,7 @@ pub async fn get_my_group(
     // another organization must be indistinguishable from a missing one
     // (fail-closed), so both return 404 here.
     let group = sqlx::query_as::<_, (Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, name, description, created_at FROM user_groups WHERE id = $1 AND tenant_id = $2",
+        "SELECT id, name, description, created_at FROM user_groups WHERE id = $1 AND tenant_id = $2 AND archived_at IS NULL",
     )
     .bind(group_id)
     .bind(auth.tenant_id)
