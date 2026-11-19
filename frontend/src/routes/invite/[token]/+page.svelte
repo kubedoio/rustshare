@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { page } from '$lib/kit/page';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
@@ -78,10 +79,10 @@
 </script>
 
 <svelte:head>
-	<title>You're Invited — RustShare</title>
+	<title>You're Invited — {productBranding.productName}</title>
 	<meta
 		name="description"
-		content="Accept your invitation to join RustShare, a secure file sharing platform."
+		content={`Accept your invitation to join ${productBranding.productName}, a secure file sharing platform.`}
 	/>
 </svelte:head>
 
@@ -152,7 +153,7 @@
 						/>
 					</svg>
 				</div>
-				<h1 class="mb-2 text-xl font-bold text-white">Welcome to RustShare!</h1>
+				<h1 class="mb-2 text-xl font-bold text-white">Welcome to {productBranding.productName}!</h1>
 				<p class="mb-3 text-sm text-white/50">
 					Your account is being created. Redirecting you to login...
 				</p>
@@ -197,7 +198,7 @@
 								/>
 							</svg>
 						</div>
-						<span class="text-sm font-semibold text-white/60">RustShare</span>
+						<span class="text-sm font-semibold text-white/60">{productBranding.productName}</span>
 					</div>
 					<h1 class="text-2xl leading-tight font-bold text-white">{workflow.subject}</h1>
 					<p class="mt-1.5 text-sm text-white/50">{workflow.body}</p>

@@ -84,6 +84,10 @@
 		--rs-brand: #c65a1e;
 		--rs-brand-strong: #a34716;
 		--rs-brand-soft: rgba(198, 90, 30, 0.1);
+		--rs-brand-100: #f8e2d2;
+		--rs-brand-300: #e29b74;
+		--rs-brand-400: #d47648;
+		--rs-brand-700: #833a15;
 		--rs-success: #1d7a52;
 		--rs-warning: #a56a12;
 		--rs-error: #b63e3e;
@@ -122,6 +126,10 @@
 		--rs-brand: #c46a35;
 		--rs-brand-strong: #d67a4a;
 		--rs-brand-soft: rgba(196, 106, 53, 0.16);
+		--rs-brand-100: #f8e2d2;
+		--rs-brand-300: #e29b74;
+		--rs-brand-400: #d47648;
+		--rs-brand-700: #833a15;
 		--rs-success: #3aa06f;
 		--rs-warning: #cf9129;
 		--rs-error: #d25a5a;
@@ -137,6 +145,54 @@
 		--rs-accent-yellow: #facc15;
 		--rs-accent-purple: #a78bfa;
 		--rs-accent-gray: #9ca3af;
+	}
+
+	html[data-branding-theme='ocean'] {
+		--color-primary: #087e8b;
+		--color-primary-content: #ffffff;
+		--rs-brand: #087e8b;
+		--rs-brand-strong: #06616b;
+		--rs-brand-soft: rgb(8 126 139 / 10%);
+		--rs-brand-100: #c9f0f2;
+		--rs-brand-300: #69c4ca;
+		--rs-brand-400: #36a4ad;
+		--rs-brand-700: #064e55;
+	}
+
+	html[data-branding-theme='ocean'][data-theme='rustshare-dark'] {
+		--color-primary: #46bac5;
+		--color-primary-content: #121315;
+		--rs-brand: #46bac5;
+		--rs-brand-strong: #72d0d8;
+		--rs-brand-soft: rgb(70 186 197 / 16%);
+		--rs-brand-100: #c9f0f2;
+		--rs-brand-300: #69c4ca;
+		--rs-brand-400: #36a4ad;
+		--rs-brand-700: #a8e5e9;
+	}
+
+	html[data-branding-theme='forest'] {
+		--color-primary: #347a4a;
+		--color-primary-content: #ffffff;
+		--rs-brand: #347a4a;
+		--rs-brand-strong: #285d39;
+		--rs-brand-soft: rgb(52 122 74 / 10%);
+		--rs-brand-100: #d5efdc;
+		--rs-brand-300: #8bc59a;
+		--rs-brand-400: #5aa16d;
+		--rs-brand-700: #1f4c2e;
+	}
+
+	html[data-branding-theme='forest'][data-theme='rustshare-dark'] {
+		--color-primary: #75c58b;
+		--color-primary-content: #121315;
+		--rs-brand: #75c58b;
+		--rs-brand-strong: #9ad8a9;
+		--rs-brand-soft: rgb(117 197 139 / 16%);
+		--rs-brand-100: #d5efdc;
+		--rs-brand-300: #8bc59a;
+		--rs-brand-400: #5aa16d;
+		--rs-brand-700: #b1e4bd;
 	}
 
 	html {

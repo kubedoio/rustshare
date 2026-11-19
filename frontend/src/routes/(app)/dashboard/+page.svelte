@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { goto } from '$app/navigation';
 	import { createQuery } from '$lib/query-compat';
 	import { listAllFiles } from '$lib/api/files';
@@ -293,7 +294,7 @@
 </script>
 
 <svelte:head>
-	<title>Workspace overview - RustShare</title>
+	<title>Workspace overview - {productBranding.productName}</title>
 </svelte:head>
 
 {#if isLoading}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$lib/kit/page';
@@ -229,7 +230,7 @@
 </script>
 
 <svelte:head>
-	<title>Pair Device - RustShare</title>
+	<title>Pair Device - {productBranding.productName}</title>
 	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 </svelte:head>
 
@@ -254,7 +255,9 @@
 				</svg>
 			</div>
 			<h1 class="mb-1 text-2xl font-bold">Pair Your Device</h1>
-			<p class="text-sm text-base-content/60">Connect this device to your RustShare account</p>
+			<p class="text-sm text-base-content/60">
+				Connect this device to your {productBranding.productName} account
+			</p>
 		</div>
 
 		{#if isLoading}
@@ -376,7 +379,7 @@
 							<div class="space-y-2">
 								<h2 class="text-lg font-semibold">Scan with another device</h2>
 								<p class="text-sm text-base-content/60">
-									Open RustShare on an authenticated device and scan this code
+									Open {productBranding.productName} on an authenticated device and scan this code
 								</p>
 							</div>
 
@@ -432,7 +435,7 @@
 							<div class="space-y-2">
 								<h2 class="text-lg font-semibold">Enter pairing key</h2>
 								<p class="text-sm text-base-content/60">
-									Enter this 8-character code on an authenticated RustShare session
+									Enter this 8-character code on an authenticated {productBranding.productName} session
 								</p>
 							</div>
 
@@ -508,7 +511,7 @@
 							<div class="space-y-2">
 								<h2 class="text-lg font-semibold">Scan QR code</h2>
 								<p class="text-sm text-base-content/60">
-									Scan a pairing QR code from another RustShare device
+									Scan a pairing QR code from another {productBranding.productName} device
 								</p>
 							</div>
 

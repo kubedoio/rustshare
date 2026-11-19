@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { page } from '$lib/kit/page';
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { onMount, onDestroy } from 'svelte';
@@ -306,7 +307,7 @@
 </script>
 
 <svelte:head>
-	<title>{$boardQuery.data?.title ?? 'Brainstorming Board'} — RustShare</title>
+	<title>{$boardQuery.data?.title ?? 'Brainstorming Board'} — {productBranding.productName}</title>
 </svelte:head>
 
 <div class="brainstorm-editor">

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { page } from '$lib/kit/page';
 	import { applicationsStore } from '$lib/applications/registry';
 	import { currentUser } from '$lib/stores/auth';
@@ -19,7 +20,7 @@
 </script>
 
 <svelte:head>
-	<title>{module?.displayName ?? 'Application'} - RustShare</title>
+	<title>{module?.displayName ?? 'Application'} - {productBranding.productName}</title>
 </svelte:head>
 
 {#if !module}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import type { Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$lib/kit/page';
@@ -56,7 +57,9 @@
 				: 'hidden'}"
 		>
 			<div class="flex items-center gap-2 border-b border-neutral-700 p-4">
-				<a href="/files" class="text-xl font-bold transition-opacity hover:opacity-80">RustShare</a>
+				<a href="/files" class="text-xl font-bold transition-opacity hover:opacity-80"
+					>{productBranding.productName}</a
+				>
 				<span class="ml-auto badge badge-sm badge-warning">Admin</span>
 			</div>
 

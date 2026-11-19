@@ -6,13 +6,13 @@ export default {
 			colors: {
 				brand: {
 					50: '#fff4ec',
-					100: '#f8e2d2',
+					100: 'var(--rs-brand-100)',
 					200: '#efc4a8',
-					300: '#e29b74',
-					400: '#d47648',
-					500: '#c65a1e',
-					600: '#a34716',
-					700: '#833a15',
+					300: 'var(--rs-brand-300)',
+					400: 'var(--rs-brand-400)',
+					500: 'var(--rs-brand)',
+					600: 'var(--rs-brand-strong)',
+					700: 'var(--rs-brand-700)',
 					800: '#683016',
 					900: '#562916',
 					950: '#2e1409'

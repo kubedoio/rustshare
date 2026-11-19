@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { browser } from '$app/env';
@@ -85,7 +86,7 @@
 </script>
 
 <svelte:head>
-	<title>Sign in - RustShare</title>
+	<title>Sign in - {productBranding.productName}</title>
 </svelte:head>
 
 <div class="relative min-h-screen overflow-hidden bg-base-200 px-4 py-8 lg:px-8 lg:py-10">
@@ -101,8 +102,8 @@
 					Controlled file access starts with a calm login.
 				</h1>
 				<p class="mt-6 max-w-2xl text-base leading-7 text-base-content/68 xl:text-lg">
-					RustShare is built for teams that need files, identity, and hosting under their own
-					control. This screen is for system access, not product marketing.
+					{productBranding.productName} is built for teams that need files, identity, and hosting under
+					their own control. This screen is for system access, not product marketing.
 				</p>
 			</div>
 
@@ -186,21 +187,25 @@
 		>
 			<div class="mb-8">
 				<div class="mb-5 flex h-16 w-16 items-center justify-center bg-brand-500 text-brand-500">
-					<svg
-						class="h-10 w-10 text-white"
-						viewBox="0 0 32 32"
-						fill="none"
-						xmlns="http://www.w3.org/2000/svg"
-						aria-hidden="true"
-					>
-						<rect x="2" y="6" width="28" height="20" rx="3" fill="currentColor" />
-						<rect x="2" y="9" width="28" height="4" fill="currentColor" class="text-brand-300" />
-						<circle cx="24" cy="21" r="5" fill="#121315" />
-						<circle cx="24" cy="21" r="3" fill="currentColor" />
-						<rect x="22.5" y="19.5" width="3" height="3" fill="#121315" />
-					</svg>
+					{#if productBranding.logoUrl}
+						<img src={productBranding.logoUrl} alt="" class="h-10 w-10 object-contain" />
+					{:else}<svg
+							class="h-10 w-10 text-white"
+							viewBox="0 0 32 32"
+							fill="none"
+							xmlns="http://www.w3.org/2000/svg"
+							aria-hidden="true"
+						>
+							<rect x="2" y="6" width="28" height="20" rx="3" fill="currentColor" />
+							<rect x="2" y="9" width="28" height="4" fill="currentColor" class="text-brand-300" />
+							<circle cx="24" cy="21" r="5" fill="#121315" />
+							<circle cx="24" cy="21" r="3" fill="currentColor" />
+							<rect x="22.5" y="19.5" width="3" height="3" fill="#121315" />
+						</svg>{/if}
 				</div>
-				<h2 class="font-display text-4xl leading-none text-base-content">RustShare</h2>
+				<h2 class="font-display text-4xl leading-none text-base-content">
+					{productBranding.productName}
+				</h2>
 				<p class="mt-3 text-sm leading-6 text-base-content/65">
 					Sign in to the file workspace your organization controls.
 				</p>

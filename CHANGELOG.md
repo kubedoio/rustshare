@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Configure deployment-wide product name, local logo and one of three approved brand palettes at frontend build time.
 - Adopt OKF v0.2 generation metadata for new and edited notes, preserve trust signals and legacy timestamps, and document the v0.2 frontmatter fields.
 - Reply to Chat messages with canonical NIP-10 thread tags, browse thread history from the relay, react to messages with toggleable emoji counts and authors, and delete messages through the relay's authorized deletion operations, with every mutation confirmed against relay state and uncertain acknowledgments retried as the identical signed event.
 - Preserve Chat drafts per account, channel, and thread across reloads, and hide thread and reply state whenever channel posting eligibility is lost.

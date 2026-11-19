@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { browser } from '$app/env';
 	import { goto } from '$app/navigation';
 	import { page } from '$lib/kit/page';
@@ -100,7 +101,7 @@
 </script>
 
 <svelte:head>
-	<title>Approve Device - RustShare</title>
+	<title>Approve Device - {productBranding.productName}</title>
 </svelte:head>
 
 <div class="flex min-h-screen items-center justify-center bg-base-200 p-4">

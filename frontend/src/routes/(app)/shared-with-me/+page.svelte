@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	/**
 	 * ==============================================================================
 	 * LEGACY SHARED-WITH-ME REDIRECT
@@ -24,7 +25,7 @@
 </script>
 
 <svelte:head>
-	<title>Redirecting... - RustShare</title>
+	<title>Redirecting... - {productBranding.productName}</title>
 </svelte:head>
 
 <div class="flex h-full items-center justify-center">

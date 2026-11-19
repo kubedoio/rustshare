@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
 	import { getOrganizationAdminCapability } from '$lib/api/organization-admin';
@@ -35,7 +36,7 @@
 </script>
 
 <svelte:head>
-	<title>Organization administration — RustShare</title>
+	<title>Organization administration — {productBranding.productName}</title>
 </svelte:head>
 
 {#if state === 'loading'}
@@ -58,7 +59,7 @@
 {:else}
 	<div class="mx-auto max-w-7xl p-4 sm:p-6">
 		<header class="mb-6 border-b border-base-300 pb-4">
-			<p class="text-sm text-base-content/60">RustShare</p>
+			<p class="text-sm text-base-content/60">{productBranding.productName}</p>
 			<h1 class="text-3xl font-bold">Organization administration</h1>
 			<p class="mt-1 text-sm text-base-content/70">
 				Manage users, groups, invitations and administrative activity for your organization.

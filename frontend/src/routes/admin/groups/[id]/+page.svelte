@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { createQuery, createMutation } from '$lib/query-compat';
 	import { page } from '$lib/kit/page';
 	import { queryClient } from '$lib/query-client';
@@ -45,7 +46,7 @@
 </script>
 
 <svelte:head>
-	<title>Group Detail — Admin | RustShare</title>
+	<title>Group Detail — Admin | {productBranding.productName}</title>
 </svelte:head>
 
 <div class="space-y-6">

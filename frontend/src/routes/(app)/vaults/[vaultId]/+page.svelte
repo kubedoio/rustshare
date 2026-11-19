@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { productBranding } from '$lib/branding';
 	import { tick } from 'svelte';
 	import { page } from '$lib/kit/page';
 	import { createQuery, createMutation } from '$lib/query-compat';
@@ -97,7 +98,7 @@
 </script>
 
 <svelte:head>
-	<title>{vault?.name ?? 'Vault'} - RustShare</title>
+	<title>{vault?.name ?? 'Vault'} - {productBranding.productName}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-[90rem] space-y-6">
