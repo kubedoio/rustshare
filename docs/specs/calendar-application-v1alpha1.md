@@ -264,7 +264,8 @@ Rows are deleted on consume (single use); expired rows are ignored/swept.
   snapshot. Confirmation rechecks Calendar enablement, source ownership, source
   kind, enabled state, and the event snapshot before queuing work.
   Workers serialize jobs per source and recheck the queued snapshot before any
-  writes; a stale job fails with a request to preview again.
+  writes; database claim tokens fence stale processors after reclaim, and a
+  stale preview fails with a request to preview again.
 - Both endpoints stream the file through the bounded temp-file upload path
   with a 10 MiB calendar cap. The complete multipart request is capped at 11
   MiB.

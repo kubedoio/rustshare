@@ -182,6 +182,8 @@ pub enum IcalImportError {
     MissingContent,
     #[error("destination events changed after confirmation; preview and confirm again")]
     StalePreview,
+    #[error("calendar import worker claim was lost")]
+    ClaimLost,
     #[error("calendar file is unreadable: {0}")]
     Unparseable(String),
     #[error("storage error: {0}")]
@@ -788,6 +790,7 @@ fn to_event(job: &CalendarImportJob, parsed: &ParsedEvent) -> CalendarEvent {
 pub async fn parse_and_upsert(
     metadata_store: &MetadataStore,
     job: &CalendarImportJob,
+    claim_token: Uuid,
     bytes: &[u8],
 ) -> Result<ImportOutcome, IcalImportError> {
     let parsed = parse_file(bytes)?;
@@ -805,11 +808,15 @@ pub async fn parse_and_upsert(
         match event {
             Ok(parsed) => {
                 let result = metadata_store
-                    .upsert_calendar_imported_event(&to_event(job, &parsed))
-                    .await
-                    .map(|_| ())
-                    .map_err(|e| e.to_string());
-                record_upsert_result(&mut outcome, result, &mut last_error);
+                    .upsert_calendar_imported_event(job.id, &to_event(job, &parsed), claim_token)
+                    .await;
+                match result {
+                    Ok(Some(_)) => record_upsert_result(&mut outcome, Ok(()), &mut last_error),
+                    Ok(None) => return Err(IcalImportError::ClaimLost),
+                    Err(error) => {
+                        record_upsert_result(&mut outcome, Err(error.to_string()), &mut last_error)
+                    }
+                }
             }
             Err(message) => {
                 outcome.failed_events += 1;
@@ -819,13 +826,27 @@ pub async fn parse_and_upsert(
         dirty = true;
 
         if (index + 1) % PROGRESS_FLUSH_INTERVAL == 0 {
-            flush_progress(metadata_store, job, &outcome, last_error.as_deref()).await?;
+            flush_progress(
+                metadata_store,
+                job,
+                claim_token,
+                &outcome,
+                last_error.as_deref(),
+            )
+            .await?;
             dirty = false;
         }
     }
 
     if dirty {
-        flush_progress(metadata_store, job, &outcome, last_error.as_deref()).await?;
+        flush_progress(
+            metadata_store,
+            job,
+            claim_token,
+            &outcome,
+            last_error.as_deref(),
+        )
+        .await?;
     }
 
     Ok(outcome)
@@ -850,12 +871,14 @@ fn record_upsert_result(
 async fn flush_progress(
     metadata_store: &MetadataStore,
     job: &CalendarImportJob,
+    claim_token: Uuid,
     outcome: &ImportOutcome,
     last_error: Option<&str>,
 ) -> Result<(), IcalImportError> {
     metadata_store
         .update_calendar_import_job_progress(
             job.id,
+            claim_token,
             outcome.total_events,
             outcome.processed_events,
             outcome.failed_events,
@@ -863,6 +886,7 @@ async fn flush_progress(
         )
         .await
         .map_err(|e| IcalImportError::Storage(e.to_string()))
+        .and_then(|updated| updated.then_some(()).ok_or(IcalImportError::ClaimLost))
 }
 
 /// Worker entry point for one claimed job: read the spooled bytes, parse and
@@ -877,6 +901,7 @@ pub async fn process_import_job(
     if !matches!(job.status.as_str(), "pending" | "running") {
         return Err(IcalImportError::InvalidJobStatus(job.status.clone()));
     }
+    let claim_token = job.claim_token.ok_or(IcalImportError::ClaimLost)?;
 
     let bytes = metadata_store
         .get_calendar_import_job_content(job.id)
@@ -905,13 +930,13 @@ pub async fn process_import_job(
                 }
             }
         }
-        parse_and_upsert(metadata_store, job, &bytes).await
+        parse_and_upsert(metadata_store, job, claim_token, &bytes).await
     }
     .await;
     match &result {
         Ok(outcome) => {
             if metadata_store
-                .mark_calendar_import_job_completed(job.id)
+                .mark_calendar_import_job_completed(job.id, claim_token)
                 .await
                 .map_err(|e| IcalImportError::Storage(e.to_string()))?
             {
@@ -937,7 +962,11 @@ pub async fn process_import_job(
         }
         Err(error) => {
             let marked = metadata_store
-                .mark_calendar_import_job_failed(job.id, &bounded_error(&error.to_string()))
+                .mark_calendar_import_job_failed(
+                    job.id,
+                    claim_token,
+                    &bounded_error(&error.to_string()),
+                )
                 .await
                 .map_err(|e| IcalImportError::Storage(e.to_string()))?;
             if !marked {

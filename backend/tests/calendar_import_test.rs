@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use rustshare_core::domain::CalendarImportJob;
 use rustshare_server::state::AppState;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -701,6 +702,77 @@ END:VCALENDAR
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
+async fn reclaimed_import_fences_out_the_original_worker() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env_without_calendar_outbox().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_worker_fencing", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    let ics = "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:fenced@example.test\nDTSTART:20261008T120000Z\nDTEND:20261008T130000Z\nSUMMARY:Current import\nEND:VEVENT\nEND:VCALENDAR\n";
+    let (status, body) = upload_ics(&app, &token, "fenced.ics", ics).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+
+    let old_claim = state
+        .metadata_store
+        .claim_next_pending_calendar_import_job()
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query(
+        "UPDATE calendar_import_jobs SET updated_at = NOW() - INTERVAL '10 minutes' WHERE id = $1",
+    )
+    .bind(old_claim.id)
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
+    state
+        .metadata_store
+        .reset_stale_running_calendar_import_jobs(std::time::Duration::from_secs(0), &[])
+        .await
+        .unwrap();
+    let new_claim = state
+        .metadata_store
+        .claim_next_pending_calendar_import_job()
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(old_claim.claim_token, new_claim.claim_token);
+
+    let old_result = rustshare_server::services::ical_import::process_import_job(
+        &state.metadata_store,
+        &state.outbox_store,
+        &old_claim,
+    )
+    .await;
+    assert!(matches!(
+        old_result,
+        Err(rustshare_server::services::ical_import::IcalImportError::ClaimLost)
+    ));
+    assert_eq!(count_imported_events(&state, tenant_id).await, 0);
+
+    rustshare_server::services::ical_import::process_import_job(
+        &state.metadata_store,
+        &state.outbox_store,
+        &new_claim,
+    )
+    .await
+    .unwrap();
+    let job_id = Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap();
+    let job: CalendarImportJob = state
+        .metadata_store
+        .get_calendar_import_job(tenant_id, user.id, job_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.status, "completed");
+    assert_eq!(count_imported_events(&state, tenant_id).await, 1);
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
 async fn exported_event_round_trip_preserves_timezone_and_utc_instants() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env_without_calendar_outbox().await;
@@ -1304,9 +1376,9 @@ async fn cancelled_import_job_does_not_publish_completion_event() {
     assert_eq!(status, StatusCode::ACCEPTED, "response: {body}");
     let job_id = Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap();
 
-    let mut job = state
+    let job = state
         .metadata_store
-        .get_calendar_import_job(tenant_id, user.id, job_id)
+        .claim_next_pending_calendar_import_job()
         .await
         .expect("load job")
         .expect("job exists");
@@ -1315,17 +1387,17 @@ async fn cancelled_import_job_does_not_publish_completion_event() {
         .execute(&state.db_pool)
         .await
         .expect("cancel job");
-    // The worker still holds the job as running in memory.
-    job.status = "running".to_string();
-
-    let outcome = rustshare_server::services::ical_import::process_import_job(
+    let result = rustshare_server::services::ical_import::process_import_job(
         &state.metadata_store,
         &state.outbox_store,
         &job,
     )
-    .await
-    .expect("processing succeeds");
-    assert!(outcome.processed_events > 0);
+    .await;
+    assert!(matches!(
+        result,
+        Err(rustshare_server::services::ical_import::IcalImportError::ClaimLost)
+    ));
+    assert_eq!(count_imported_events(&state, tenant_id).await, 0);
 
     let published = sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM integration_outbox \

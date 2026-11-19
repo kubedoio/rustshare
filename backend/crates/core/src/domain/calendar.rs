@@ -268,6 +268,8 @@ pub struct CalendarImportJob {
     pub owner_id: UserId,
     #[schema(value_type = Uuid)]
     pub source_id: Uuid,
+    #[serde(skip)]
+    pub claim_token: Option<Uuid>,
     pub status: String,
     pub filename: String,
     pub size_bytes: i64,

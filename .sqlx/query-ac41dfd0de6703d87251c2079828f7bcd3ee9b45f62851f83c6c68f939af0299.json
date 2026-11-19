@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT\n                id, tenant_id, owner_id, source_id, status, filename, size_bytes,\n                total_events, processed_events, failed_events, last_error,\n                started_at, completed_at, deleted_at, created_at, updated_at\n            FROM calendar_import_jobs\n            WHERE id = $1 AND tenant_id = $2 AND owner_id = $3 AND deleted_at IS NULL\n            ",
+  "query": "\n            SELECT\n                id, tenant_id, owner_id, source_id, status, filename, size_bytes,\n                total_events, processed_events, failed_events, last_error, claim_token,\n                started_at, completed_at, deleted_at, created_at, updated_at\n            FROM calendar_import_jobs\n            WHERE tenant_id = $1 AND owner_id = $2 AND deleted_at IS NULL\n            ORDER BY created_at DESC\n            LIMIT $3\n            ",
   "describe": {
     "columns": [
       {
@@ -60,26 +60,31 @@
       },
       {
         "ordinal": 11,
+        "name": "claim_token",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 12,
         "name": "started_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "completed_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "deleted_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -88,7 +93,7 @@
       "Left": [
         "Uuid",
         "Uuid",
-        "Uuid"
+        "Int8"
       ]
     },
     "nullable": [
@@ -106,9 +111,10 @@
       true,
       true,
       true,
+      true,
       false,
       false
     ]
   },
-  "hash": "d57a043eaca5a39551caad39f50ebf3ee392c7475c1ee7a4060777229f42e404"
+  "hash": "ac41dfd0de6703d87251c2079828f7bcd3ee9b45f62851f83c6c68f939af0299"
 }

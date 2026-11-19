@@ -1474,6 +1474,7 @@ pub async fn import_calendar_file(
         tenant_id: auth.tenant_id,
         owner_id: auth.user_id,
         source_id: source.id,
+        claim_token: None,
         status: "pending".to_string(),
         filename,
         size_bytes: size_bytes as i64,
