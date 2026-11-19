@@ -531,6 +531,12 @@ pub fn calendar_routes() -> Router<AppState> {
             post(crate::handlers::calendar::resync_calendar_source),
         )
         .route(
+            "/api/v1/calendar/import/preview",
+            post(crate::handlers::calendar::preview_calendar_import).layer(
+                axum::extract::DefaultBodyLimit::max(MAX_CALENDAR_IMPORT_REQUEST_BYTES),
+            ),
+        )
+        .route(
             "/api/v1/calendar/import",
             post(crate::handlers::calendar::import_calendar_file).layer(
                 axum::extract::DefaultBodyLimit::max(MAX_CALENDAR_IMPORT_REQUEST_BYTES),

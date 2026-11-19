@@ -96,12 +96,96 @@ async fn upload_ics(
     filename: &str,
     content: &str,
 ) -> (StatusCode, Value) {
-    upload_multipart(
-        app,
-        token,
-        multipart_file_body(IMPORT_BOUNDARY, filename, content),
-    )
-    .await
+    let sources_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/sources")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, sources) = response_json(sources_response).await;
+    assert_eq!(status, StatusCode::OK);
+    let source = sources["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["kind"] == "ical_import" && source["display_name"] == filename)
+        .cloned();
+    let source = match source {
+        Some(source) => source,
+        None => {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/calendar/sources")
+                        .method("POST")
+                        .header("Authorization", format!("Bearer {token}"))
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(
+                            serde_json::json!({
+                                "kind": "ical_import", "display_name": filename
+                            })
+                            .to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let (status, source) = response_json(response).await;
+            assert_eq!(status, StatusCode::CREATED);
+            source
+        }
+    };
+    let source_id = source["id"].as_str().unwrap();
+    let preview_body = format!(
+        "--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: text/calendar\r\n\r\n{content}\r\n--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"source_id\"\r\n\r\n{source_id}\r\n--{IMPORT_BOUNDARY}--\r\n"
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/import/preview")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header(
+                    "Content-Type",
+                    format!("multipart/form-data; boundary={IMPORT_BOUNDARY}"),
+                )
+                .body(Body::from(preview_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, preview) = response_json(response).await;
+    if status != StatusCode::OK {
+        return (status, preview);
+    }
+    let digest = preview["digest"].as_str().unwrap();
+    let confirm_body = format!(
+        "--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: text/calendar\r\n\r\n{content}\r\n--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"source_id\"\r\n\r\n{source_id}\r\n--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"preview_digest\"\r\n\r\n{digest}\r\n--{IMPORT_BOUNDARY}--\r\n"
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/import")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header(
+                    "Content-Type",
+                    format!("multipart/form-data; boundary={IMPORT_BOUNDARY}"),
+                )
+                .body(Body::from(confirm_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    response_json(response).await
 }
 
 async fn spawn_import_worker(state: &AppState) {
@@ -214,15 +298,18 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
     // The worker picks it up and completes it.
     let job = wait_for_job(&app, &token, job_id).await;
     assert_eq!(job["status"], "completed");
-    assert_eq!(job["failed_events"], 0);
+    assert_eq!(
+        job["failed_events"], 1,
+        "recurrence overrides are reported unsupported"
+    );
     assert_eq!(job["total_events"], 5);
-    assert_eq!(job["processed_events"], 5);
+    assert_eq!(job["processed_events"], 4);
 
     // The completed run published one imported.v1 envelope with counts and
     // the source ResourceRef — identifiers/counts only, never titles. The
     // worker commits the status before the best-effort publish, so poll.
     let envelope = wait_for_imported_envelope(&state.db_pool, tenant_id).await;
-    assert_eq!(envelope["data"]["processed_events"], 5);
+    assert_eq!(envelope["data"]["processed_events"], 4);
     assert_eq!(envelope["data"]["total_events"], 5);
     assert_eq!(envelope["elembraResource"]["resourceType"], "source");
     assert_eq!(
@@ -259,7 +346,7 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
     // The weekly master expands (2 in-window instances; the third is
     // overridden) and the override row is returned as stored.
     assert!(titles.contains(&"Weekly sync"));
-    assert!(titles.contains(&"Weekly sync moved"));
+    assert!(!titles.contains(&"Weekly sync moved"));
 
     // TZID event is stored as the correct UTC instant (14:00 CEST = 12:00Z).
     let berlin = events
@@ -281,22 +368,35 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
 
     // Row count after the first import.
     let first_count = count_imported_events(&state, tenant_id).await;
-    assert_eq!(first_count, 5);
+    assert_eq!(first_count, 4);
 
-    // Re-upload the identical file (same filename reuses the source) and let
-    // the worker process it: no duplicate rows appear.
-    let (status, body) = upload_ics(&app, &token, "export.ics", ICS_FIXTURE).await;
-    assert_eq!(status, StatusCode::ACCEPTED);
-    assert_eq!(body["source_id"], source_id.to_string());
-    let second_job = wait_for_job(
-        &app,
-        &token,
-        Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap(),
-    )
-    .await;
-    assert_eq!(second_job["status"], "completed");
-    assert_eq!(second_job["total_events"], 5);
-    assert_eq!(second_job["processed_events"], 5);
+    // Overlapping re-uploads share the unique destination identity; both jobs
+    // complete without creating duplicate event rows.
+    let ((status_a, job_a), (status_b, job_b)) = tokio::join!(
+        upload_ics(&app, &token, "export.ics", ICS_FIXTURE),
+        upload_ics(&app, &token, "export.ics", ICS_FIXTURE),
+    );
+    assert_eq!(status_a, StatusCode::ACCEPTED);
+    assert_eq!(status_b, StatusCode::ACCEPTED);
+    assert_eq!(job_a["source_id"], source_id.to_string());
+    assert_eq!(job_b["source_id"], source_id.to_string());
+    let (second_job, third_job) = tokio::join!(
+        wait_for_job(
+            &app,
+            &token,
+            Uuid::parse_str(job_a["job_id"].as_str().unwrap()).unwrap(),
+        ),
+        wait_for_job(
+            &app,
+            &token,
+            Uuid::parse_str(job_b["job_id"].as_str().unwrap()).unwrap(),
+        ),
+    );
+    for job in [second_job, third_job] {
+        assert_eq!(job["status"], "completed");
+        assert_eq!(job["total_events"], 5);
+        assert_eq!(job["processed_events"], 4);
+    }
 
     let second_count = count_imported_events(&state, tenant_id).await;
     assert_eq!(
@@ -304,7 +404,7 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
         "re-import must not duplicate rows"
     );
 
-    // The job list shows both runs.
+    // The job list shows the initial and overlapping runs.
     let response = app
         .oneshot(
             Request::builder()
@@ -317,8 +417,46 @@ async fn ics_upload_import_and_reimport_is_idempotent() {
         .unwrap();
     let (status, body) = response_json(response).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["jobs"].as_array().unwrap().len(), 2);
+    assert_eq!(body["jobs"].as_array().unwrap().len(), 3);
 
+    cleanup_outbox(&state.db_pool, tenant_id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
+async fn changed_uid_content_is_rejected_without_overwriting_the_existing_event() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env_without_calendar_outbox().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_import_uid_conflict", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+    spawn_import_worker(&state).await;
+
+    let original = "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:stable-id\nDTSTART:20261005T140000Z\nDTEND:20261005T150000Z\nSUMMARY:Original\nEND:VEVENT\nEND:VCALENDAR\n";
+    let (status, accepted) = upload_ics(&app, &token, "conflict.ics", original).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    wait_for_job(
+        &app,
+        &token,
+        Uuid::parse_str(accepted["job_id"].as_str().unwrap()).unwrap(),
+    )
+    .await;
+
+    let changed = original.replace("Original", "Unrelated replacement");
+    let (status, _) = upload_ics(&app, &token, "conflict.ics", &changed).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let title: String = sqlx::query_scalar(
+        "SELECT title FROM calendar_events WHERE tenant_id = $1 AND external_uid = 'stable-id'",
+    )
+    .bind(tenant_id)
+    .fetch_one(&state.db_pool)
+    .await
+    .unwrap();
+    assert_eq!(title, "Original");
     cleanup_outbox(&state.db_pool, tenant_id).await;
     cleanup_tenant(&state.db_pool, tenant_id).await;
 }
@@ -683,7 +821,7 @@ END:VCALENDAR
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
-async fn structurally_invalid_ics_fails_the_job() {
+async fn structurally_invalid_ics_is_rejected_before_confirmation() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env_without_calendar_outbox().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
@@ -691,18 +829,8 @@ async fn structurally_invalid_ics_fails_the_job() {
     configure_calendar(&state, tenant_id, user.id, true).await;
     let token = create_auth_token(&state, user.id, tenant_id);
     let app = build_app(state.clone());
-    spawn_import_worker(&state).await;
-
-    let (status, body) = upload_ics(&app, &token, "broken.ics", "not a calendar").await;
-    assert_eq!(status, StatusCode::ACCEPTED);
-    let job = wait_for_job(
-        &app,
-        &token,
-        Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap(),
-    )
-    .await;
-    assert_eq!(job["status"], "failed");
-    assert!(job["last_error"].is_string());
+    let (status, _) = upload_ics(&app, &token, "broken.ics", "not a calendar").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 
     assert_eq!(count_imported_events(&state, tenant_id).await, 0);
 
@@ -851,7 +979,9 @@ async fn oversized_ics_upload_is_rejected_before_creating_import_state() {
         StatusCode::PAYLOAD_TOO_LARGE,
         "response: {request_body}"
     );
-    assert_eq!(import_state, (0, 0));
+    // The import workflow requires choosing the destination before upload;
+    // a rejected payload may leave that empty destination available to retry.
+    assert_eq!(import_state, (0, 1));
 }
 
 #[tokio::test]
@@ -912,11 +1042,16 @@ async fn source_id_must_belong_to_the_caller_and_be_ical_import() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env_without_calendar_outbox().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
+    let other_tenant_id = create_test_tenant(&state.db_pool).await;
     let owner = create_test_user(&state, "calendar_import_owner", tenant_id).await;
     let other = create_test_user(&state, "calendar_import_other", tenant_id).await;
+    let cross_tenant_user =
+        create_test_user(&state, "calendar_import_cross_tenant", other_tenant_id).await;
     configure_calendar(&state, tenant_id, owner.id, true).await;
+    configure_calendar(&state, other_tenant_id, cross_tenant_user.id, true).await;
     let owner_token = create_auth_token(&state, owner.id, tenant_id);
     let other_token = create_auth_token(&state, other.id, tenant_id);
+    let cross_tenant_token = create_auth_token(&state, cross_tenant_user.id, other_tenant_id);
     let app = build_app(state.clone());
 
     let source_id: Uuid = sqlx::query_scalar(
@@ -943,8 +1078,76 @@ async fn source_id_must_belong_to_the_caller_and_be_ical_import() {
          --calendar-import-boundary--\r\n",
         source_id
     );
-    let (status, _) = upload_multipart(&app, &other_token, body.into_bytes()).await;
+    let (status, _) = support::calendar_harness::upload_multipart(
+        &app,
+        "/api/v1/calendar/import/preview",
+        &other_token,
+        IMPORT_BOUNDARY,
+        body.as_bytes().to_vec(),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = support::calendar_harness::upload_multipart(
+        &app,
+        "/api/v1/calendar/import/preview",
+        &cross_tenant_token,
+        IMPORT_BOUNDARY,
+        body.as_bytes().to_vec(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = upload_multipart(&app, &cross_tenant_token, body.into_bytes()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Preview is bound to a destination that can be revoked before confirm.
+    let preview_body = format!(
+        "--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"d.ics\"\r\nContent-Type: text/calendar\r\n\r\n{ICS_FIXTURE}\r\n--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"source_id\"\r\n\r\n{source_id}\r\n--{IMPORT_BOUNDARY}--\r\n"
+    );
+    let response = support::calendar_harness::upload_multipart(
+        &app,
+        "/api/v1/calendar/import/preview",
+        &owner_token,
+        IMPORT_BOUNDARY,
+        preview_body.into_bytes(),
+    )
+    .await;
+    let (status, preview) = response;
+    assert_eq!(status, StatusCode::OK);
+    let digest = preview["digest"].as_str().unwrap();
+    sqlx::query("UPDATE calendar_sources SET is_enabled = FALSE WHERE id = $1")
+        .bind(source_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    let confirm_body = format!(
+        "--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"d.ics\"\r\nContent-Type: text/calendar\r\n\r\n{ICS_FIXTURE}\r\n--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"source_id\"\r\n\r\n{source_id}\r\n--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"preview_digest\"\r\n\r\n{digest}\r\n--{IMPORT_BOUNDARY}--\r\n"
+    );
+    let (status, _) = upload_multipart(&app, &owner_token, confirm_body.into_bytes()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    sqlx::query("UPDATE calendar_sources SET is_enabled = TRUE WHERE id = $1")
+        .bind(source_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+
+    state
+        .application_service
+        .disable_application("io.elembra.calendar", owner.id, tenant_id)
+        .await
+        .unwrap();
+    let disabled_body = format!(
+        "--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"d.ics\"\r\nContent-Type: text/calendar\r\n\r\n{ICS_FIXTURE}\r\n--{IMPORT_BOUNDARY}\r\nContent-Disposition: form-data; name=\"source_id\"\r\n\r\n{source_id}\r\n--{IMPORT_BOUNDARY}--\r\n"
+    );
+    let (status, _) = support::calendar_harness::upload_multipart(
+        &app,
+        "/api/v1/calendar/import/preview",
+        &owner_token,
+        IMPORT_BOUNDARY,
+        disabled_body.into_bytes(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    configure_calendar(&state, tenant_id, owner.id, true).await;
 
     // An `internal` source is not a valid import target: bad request.
     let internal = state
@@ -970,6 +1173,7 @@ async fn source_id_must_belong_to_the_caller_and_be_ical_import() {
 
     cleanup_outbox(&state.db_pool, tenant_id).await;
     cleanup_tenant(&state.db_pool, tenant_id).await;
+    cleanup_tenant(&state.db_pool, other_tenant_id).await;
 }
 
 #[tokio::test]
@@ -986,7 +1190,7 @@ async fn cancelled_import_job_does_not_publish_completion_event() {
     // No worker runs, so the job stays pending; cancel it while a worker would
     // have been processing it.
     let (status, body) = upload_ics(&app, &token, "cancel.ics", ICS_FIXTURE).await;
-    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(status, StatusCode::ACCEPTED, "response: {body}");
     let job_id = Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap();
 
     let mut job = state
@@ -1090,7 +1294,7 @@ END:VCALENDAR
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
-async fn event_limit_fails_the_job_without_persisting_partial_import() {
+async fn event_limit_is_rejected_during_preview_without_persisting_partial_import() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env_without_calendar_outbox().await;
     let tenant_id = create_test_tenant(&state.db_pool).await;
@@ -1098,33 +1302,19 @@ async fn event_limit_fails_the_job_without_persisting_partial_import() {
     configure_calendar(&state, tenant_id, user.id, true).await;
     let token = create_auth_token(&state, user.id, tenant_id);
     let app = build_app(state.clone());
-    spawn_import_worker(&state).await;
-
     // Exceed the parser's event cap by one while staying below the existing
     // multipart byte limit. Since the whole file must parse before upserting,
     // this hard failure must leave the calendar unchanged.
     let mut ics = String::from("BEGIN:VCALENDAR\n");
-    for index in 0..=10_000 {
+    for index in 0..=1_000 {
         ics.push_str(&format!(
             "BEGIN:VEVENT\nUID:limit-{index}\nDTSTART:20261005T140000Z\nDTEND:20261005T150000Z\nEND:VEVENT\n"
         ));
     }
     ics.push_str("END:VCALENDAR\n");
 
-    let (status, body) = upload_ics(&app, &token, "over-limit.ics", &ics).await;
-    assert_eq!(status, StatusCode::ACCEPTED);
-    let job = wait_for_job(
-        &app,
-        &token,
-        Uuid::parse_str(body["job_id"].as_str().unwrap()).unwrap(),
-    )
-    .await;
-
-    assert_eq!(job["status"], "failed");
-    assert_eq!(
-        job["last_error"],
-        "calendar file is unreadable: calendar exceeds the 10000-VEVENT import limit"
-    );
+    let (status, _) = upload_ics(&app, &token, "over-limit.ics", &ics).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(count_imported_events(&state, tenant_id).await, 0);
 
     cleanup_tenant(&state.db_pool, tenant_id).await;
@@ -1143,7 +1333,7 @@ async fn maximum_sized_calendar_import_completes_and_persists_every_event() {
     spawn_import_worker(&state).await;
 
     let mut ics = String::from("BEGIN:VCALENDAR\nVERSION:2.0\n");
-    for index in 0..10_000 {
+    for index in 0..1_000 {
         ics.push_str(&format!(
             "BEGIN:VEVENT\nUID:maximum-{index}\nDTSTART:20261005T140000Z\nDTEND:20261005T150000Z\nEND:VEVENT\n"
         ));
@@ -1154,7 +1344,7 @@ async fn maximum_sized_calendar_import_completes_and_persists_every_event() {
 
     let started_at = std::time::Instant::now();
     let (status, body) = upload_ics(&app, &token, "maximum.ics", &ics).await;
-    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(status, StatusCode::ACCEPTED, "response: {body}");
     let job = wait_for_job_with_timeout(
         &app,
         &token,
@@ -1166,10 +1356,10 @@ async fn maximum_sized_calendar_import_completes_and_persists_every_event() {
     let imported_events = count_imported_events(&state, tenant_id).await;
 
     assert_eq!(job["status"], "completed");
-    assert_eq!(job["total_events"], 10_000);
-    assert_eq!(job["processed_events"], 10_000);
+    assert_eq!(job["total_events"], 1_000);
+    assert_eq!(job["processed_events"], 1_000);
     assert_eq!(job["failed_events"], 0);
-    assert_eq!(imported_events, 10_000);
+    assert_eq!(imported_events, 1_000);
     eprintln!(
         "MAX_CALENDAR_IMPORT events=10000 payload_bytes={payload_bytes} elapsed_ms={} persisted_events={imported_events}",
         elapsed.as_millis(),

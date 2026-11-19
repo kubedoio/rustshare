@@ -4796,6 +4796,57 @@
         }
       }
     },
+    "/api/v1/calendar/import": {
+      "post": {
+        "tags": [
+          "crate::handlers::calendar"
+        ],
+        "operationId": "import_calendar_file",
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarImportAcceptedResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/calendar/import/preview": {
+      "post": {
+        "tags": [
+          "crate::handlers::calendar"
+        ],
+        "summary": "Preview one bounded upload against an explicitly selected, caller-owned\nimport destination. Preview rows contain only that caller's destination\nmatches; destination existence stays hidden from unauthorized callers.",
+        "operationId": "preview_calendar_import",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarImportPreviewResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/calendar/mail-links": {
       "get": {
         "tags": [
@@ -17699,6 +17750,72 @@
           }
         }
       },
+      "CalendarImportAcceptedResponse": {
+        "type": "object",
+        "description": "`202` body for `POST /api/v1/calendar/import`.",
+        "required": [
+          "job_id",
+          "source_id",
+          "status"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "CalendarImportPreviewResponse": {
+        "type": "object",
+        "description": "Response for `POST /api/v1/calendar/import/preview`.",
+        "required": [
+          "digest",
+          "source_id",
+          "new_events",
+          "duplicates",
+          "conflicts",
+          "unsupported",
+          "events"
+        ],
+        "properties": {
+          "conflicts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "digest": {
+            "type": "string"
+          },
+          "duplicates": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportPreviewEvent"
+            }
+          },
+          "new_events": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "unsupported": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "CalendarMailEventResponse": {
         "type": "object",
         "required": [
@@ -22106,6 +22223,87 @@
           },
           "readiness": {
             "type": "string"
+          }
+        }
+      },
+      "ImportPreviewEvent": {
+        "type": "object",
+        "required": [
+          "all_day",
+          "recurrence",
+          "outcome"
+        ],
+        "properties": {
+          "all_day": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "diagnostic": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ends_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "location": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "recurrence": {
+            "type": "boolean"
+          },
+          "rrule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "starts_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uid": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

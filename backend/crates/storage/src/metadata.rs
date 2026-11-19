@@ -7164,6 +7164,34 @@ impl MetadataStore {
         Ok(row)
     }
 
+    /// Load only events matching imported UIDs in one already-authorized
+    /// destination, for the import preview's duplicate/update classification.
+    pub async fn list_calendar_import_matches(
+        &self,
+        tenant_id: Uuid,
+        owner_id: UserId,
+        source_id: Uuid,
+        external_uids: &[String],
+    ) -> Result<Vec<CalendarEvent>> {
+        let events = sqlx::query_as::<_, CalendarEvent>(
+            r#"SELECT id, tenant_id, owner_id, source_id, external_uid, external_etag,
+                      recurrence_id, title, description, location, starts_at, ends_at,
+                      all_day, original_date, timezone, rrule, status, read_only, raw,
+                      deleted_at, created_at, updated_at
+               FROM calendar_events
+               WHERE tenant_id = $1 AND owner_id = $2 AND source_id = $3
+                 AND external_uid = ANY($4) AND recurrence_id IS NULL
+                 AND deleted_at IS NULL"#,
+        )
+        .bind(tenant_id)
+        .bind(owner_id)
+        .bind(source_id)
+        .bind(external_uids)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(events)
+    }
+
     /// Whether an active calendar event row exists with this ID **in the
     /// caller's tenant**, regardless of owner. Used to distinguish a foreign
     /// but same-tenant ID (404) from an already-deleted/never-existing one
@@ -7587,12 +7615,12 @@ impl MetadataStore {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Insert an imported event or update the existing row with the same
-    /// `(source_id, external_uid, recurrence_id)` key. The update is skipped
-    /// when the normalized columns are unchanged, so re-imports never bump
-    /// `updated_at`. Returns `true` when a row was inserted or changed.
+    /// Insert an imported event without replacing any existing event with the
+    /// same destination identity. The unique constraint makes concurrent
+    /// imports idempotent and prevents UID collisions from overwriting data.
+    /// Returns `true` only when a row was inserted.
     pub async fn upsert_calendar_imported_event(&self, event: &CalendarEvent) -> Result<bool> {
-        let result = sqlx::query!(
+        let result = sqlx::query(
             r#"
             INSERT INTO calendar_events (
                 id, tenant_id, owner_id, source_id, external_uid, external_etag,
@@ -7604,53 +7632,31 @@ impl MetadataStore {
                     $15, $16, $17, $18, $19, $20, $21, $22)
             ON CONFLICT (source_id, external_uid, COALESCE(recurrence_id, ''))
                 WHERE deleted_at IS NULL
-            DO UPDATE SET
-                title = EXCLUDED.title,
-                description = EXCLUDED.description,
-                location = EXCLUDED.location,
-                starts_at = EXCLUDED.starts_at,
-                ends_at = EXCLUDED.ends_at,
-                all_day = EXCLUDED.all_day,
-                original_date = EXCLUDED.original_date,
-                timezone = EXCLUDED.timezone,
-                rrule = EXCLUDED.rrule,
-                status = EXCLUDED.status,
-                updated_at = NOW()
-            WHERE
-                calendar_events.title IS DISTINCT FROM EXCLUDED.title
-                OR calendar_events.description IS DISTINCT FROM EXCLUDED.description
-                OR calendar_events.location IS DISTINCT FROM EXCLUDED.location
-                OR calendar_events.starts_at IS DISTINCT FROM EXCLUDED.starts_at
-                OR calendar_events.ends_at IS DISTINCT FROM EXCLUDED.ends_at
-                OR calendar_events.all_day IS DISTINCT FROM EXCLUDED.all_day
-                OR calendar_events.original_date IS DISTINCT FROM EXCLUDED.original_date
-                OR calendar_events.timezone IS DISTINCT FROM EXCLUDED.timezone
-                OR calendar_events.rrule IS DISTINCT FROM EXCLUDED.rrule
-                OR calendar_events.status IS DISTINCT FROM EXCLUDED.status
+            DO NOTHING
             "#,
-            event.id,
-            event.tenant_id,
-            event.owner_id,
-            event.source_id,
-            event.external_uid,
-            event.external_etag,
-            event.recurrence_id,
-            event.title,
-            event.description,
-            event.location,
-            event.starts_at,
-            event.ends_at,
-            event.all_day,
-            event.original_date,
-            event.timezone,
-            event.rrule,
-            event.status,
-            event.read_only,
-            event.raw,
-            event.deleted_at,
-            event.created_at,
-            event.updated_at,
         )
+        .bind(event.id)
+        .bind(event.tenant_id)
+        .bind(event.owner_id)
+        .bind(event.source_id)
+        .bind(&event.external_uid)
+        .bind(&event.external_etag)
+        .bind(&event.recurrence_id)
+        .bind(&event.title)
+        .bind(&event.description)
+        .bind(&event.location)
+        .bind(event.starts_at)
+        .bind(event.ends_at)
+        .bind(event.all_day)
+        .bind(event.original_date)
+        .bind(&event.timezone)
+        .bind(&event.rrule)
+        .bind(&event.status)
+        .bind(event.read_only)
+        .bind(&event.raw)
+        .bind(event.deleted_at)
+        .bind(event.created_at)
+        .bind(event.updated_at)
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)

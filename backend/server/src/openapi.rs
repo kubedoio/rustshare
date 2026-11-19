@@ -109,6 +109,8 @@ use utoipa::OpenApi;
         crate::handlers::calendar::delete_calendar_mail_link,
         crate::handlers::calendar::get_calendar_event_mail_link,
         crate::handlers::calendar::list_calendar_mail_links,
+        crate::handlers::calendar::preview_calendar_import,
+        crate::handlers::calendar::import_calendar_file,
         crate::handlers::brainstorming::create_brainstorm_board,
         crate::handlers::brainstorming::delete_brainstorm_board,
         crate::handlers::brainstorming::get_brainstorm_board,

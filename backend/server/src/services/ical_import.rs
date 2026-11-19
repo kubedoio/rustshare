@@ -2,36 +2,110 @@
 //! contained VEVENTs into `calendar_events` (issue #315, Task 2).
 //!
 //! Import semantics are normative in `docs/specs/calendar-application-v1alpha1.md`
-//! §Import semantics: upsert on `(source_id, UID, RECURRENCE-ID)`, TZID
-//! converted to UTC via the embedded VTIMEZONE or the system tz database
-//! (floating times are UTC), all-day DATE values become UTC-midnight spans,
-//! RRULE stored verbatim, VALARM discarded, VTODO/VJOURNAL/VFREEBUSY counted
-//! as skipped, per-component failures counted with a bounded `last_error`
-//! sample, and a structurally unreadable file fails the whole job.
-//!
-//! Non-IANA TZIDs (for example the Windows zone names Outlook emits) are
-//! resolved from the file's embedded VTIMEZONE definitions, including their
-//! yearly STANDARD/DAYLIGHT transition rules. DST transitions are resolved
-//! conservatively: ambiguous local times (fall-back overlap) keep the earliest
-//! occurrence and nonexistent local times (spring-forward gap) are pushed
-//! forward to the first valid instant, matching the expansion semantics in the
-//! spec.
+//! §Import semantics. Only representable UTC/IANA times, all-day dates, basic
+//! event metadata, and supported UTC recurrence are accepted. Floating times,
+//! custom timezone definitions, recurrence overrides, and unsupported event
+//! fields are reported instead of flattened. File, event, property, RRULE, and
+//! parse-time limits are enforced before import work is queued.
 
 use std::collections::HashMap;
 
-use chrono::{
-    DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
-    Weekday,
-};
+use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use icalendar::parser::{read_components, Component, Property};
 use rustshare_core::domain::{CalendarEvent, CalendarImportJob};
 use rustshare_storage::{MetadataStore, OutboxStore};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct ImportPreviewEvent {
+    pub uid: Option<String>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub location: Option<String>,
+    pub starts_at: Option<DateTime<Utc>>,
+    pub ends_at: Option<DateTime<Utc>>,
+    pub all_day: bool,
+    pub timezone: Option<String>,
+    pub recurrence: bool,
+    pub rrule: Option<String>,
+    pub status: Option<String>,
+    pub outcome: &'static str,
+    pub diagnostic: Option<String>,
+}
+
+pub fn preview_import(bytes: &[u8]) -> Result<Vec<ImportPreviewEvent>, IcalImportError> {
+    let parsed = parse_file(bytes)?;
+    let mut seen = HashMap::<String, ParsedEvent>::new();
+    let mut preview = parsed
+        .events
+        .into_iter()
+        .map(|event| match event {
+            Ok(event) => {
+                let outcome = match seen.get(&event.external_uid) {
+                    Some(previous) if previous == &event => "duplicate",
+                    Some(_) => "conflict",
+                    None => "new",
+                };
+                seen.entry(event.external_uid.clone())
+                    .or_insert_with(|| event.clone());
+                ImportPreviewEvent {
+                    uid: Some(event.external_uid),
+                    title: Some(event.title),
+                    description: event.description,
+                    location: event.location,
+                    starts_at: Some(event.starts_at),
+                    ends_at: Some(event.ends_at),
+                    all_day: event.all_day,
+                    timezone: Some(event.timezone),
+                    recurrence: event.rrule.is_some(),
+                    rrule: event.rrule,
+                    status: Some(event.status),
+                    outcome,
+                    diagnostic: None,
+                }
+            }
+            Err(message) => ImportPreviewEvent {
+                uid: None,
+                title: None,
+                description: None,
+                location: None,
+                starts_at: None,
+                ends_at: None,
+                all_day: false,
+                timezone: None,
+                recurrence: false,
+                rrule: None,
+                status: None,
+                outcome: "unsupported",
+                diagnostic: Some(bounded_error(&message)),
+            },
+        })
+        .collect::<Vec<_>>();
+    preview.extend((0..parsed.skipped_components).map(|_| ImportPreviewEvent {
+        uid: None,
+        title: None,
+        description: None,
+        location: None,
+        starts_at: None,
+        ends_at: None,
+        all_day: false,
+        timezone: None,
+        recurrence: false,
+        rrule: None,
+        status: None,
+        outcome: "unsupported",
+        diagnostic: Some("VTODO, VJOURNAL, and VFREEBUSY components are not imported".into()),
+    }));
+    Ok(preview)
+}
+
 /// Cap on the `last_error` sample persisted on the job row.
 const MAX_LAST_ERROR_LEN: usize = 512;
 /// Maximum VEVENT components accepted in one uploaded calendar.
-const MAX_CALENDAR_IMPORT_EVENTS: usize = 10_000;
+const MAX_CALENDAR_IMPORT_EVENTS: usize = 1_000;
+const MAX_CALENDAR_IMPORT_SIZE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_ICAL_PROPERTY_BYTES: usize = 16 * 1024;
+const MAX_ICAL_RRULE_BYTES: usize = 1024;
 /// Heartbeat/progress flush interval in events.
 const PROGRESS_FLUSH_INTERVAL: usize = 25;
 
@@ -84,6 +158,7 @@ struct ParsedEvent {
     timezone: String,
     rrule: Option<String>,
     status: String,
+    dtstamp: Option<DateTime<Utc>>,
 }
 
 fn find_prop<'a>(component: &'a Component<'_>, name: &str) -> Option<&'a Property<'a>> {
@@ -108,12 +183,16 @@ fn unsupported_event_fields(component: &Component<'_>) -> Vec<&'static str> {
         "CATEGORIES",
         "CLASS",
         "CONFERENCE",
+        "CREATED",
         "EXDATE",
         "GEO",
+        "LAST-MODIFIED",
         "ORGANIZER",
         "RDATE",
         "RELATED-TO",
+        "RECURRENCE-ID",
         "RESOURCES",
+        "SEQUENCE",
         "TRANSP",
         "URL",
     ];
@@ -151,297 +230,6 @@ fn unsupported_event_fields(component: &Component<'_>) -> Vec<&'static str> {
         fields.push("RECURRENCE-ID RANGE");
     }
     fields
-}
-
-/// One `VTIMEZONE` definition extracted from the file, keyed by its `TZID`.
-#[derive(Debug, Clone)]
-struct VTimezoneDef {
-    tzid: String,
-    observances: Vec<Observance>,
-}
-
-/// A single STANDARD/DAYLIGHT observance inside a `VTIMEZONE`.
-#[derive(Debug, Clone)]
-struct Observance {
-    /// Offset that takes effect at the transition (`TZOFFSETTO`), seconds east.
-    offset_to: i32,
-    /// Offset in effect before the transition (`TZOFFSETFROM`), seconds east.
-    offset_from: i32,
-    dtstart: NaiveDateTime,
-    rule: Option<YearlyRule>,
-    rdates: Vec<NaiveDateTime>,
-}
-
-/// The subset of a yearly RRULE needed to place one observance in a year.
-#[derive(Debug, Clone)]
-struct YearlyRule {
-    month: u32,
-    by_day: Option<(i32, Weekday)>,
-    by_month_day: Option<u32>,
-}
-
-type VTimezoneIndex = HashMap<String, VTimezoneDef>;
-
-/// Parse an RFC 5545 UTC offset such as `+0200` or `-053000` into seconds east.
-fn parse_utc_offset(raw: &str) -> Result<i32, String> {
-    let raw = raw.trim();
-    let (sign, rest) = match raw.strip_prefix('-') {
-        Some(rest) => (-1i32, rest),
-        None => (1i32, raw.strip_prefix('+').unwrap_or(raw)),
-    };
-    // `rest` is sliced by byte offset below; a multi-byte code point would make
-    // that slice panic ("byte index N is not a char boundary"), so reject
-    // non-ASCII input before any indexing. ASCII guarantees the checked byte
-    // lengths also align with character boundaries.
-    if !rest.is_ascii() {
-        return Err(format!("invalid UTC offset '{raw}'"));
-    }
-    // Tolerate the `HH:MM[:SS]` separator form some exporters emit.
-    let digits: String = rest.chars().filter(|c| *c != ':').collect();
-    let (hours, minutes, seconds) = match digits.len() {
-        4 => (&digits[0..2], &digits[2..4], "00"),
-        6 => (&digits[0..2], &digits[2..4], &digits[4..6]),
-        _ => return Err(format!("invalid UTC offset '{raw}'")),
-    };
-    let hours: i32 = hours
-        .parse()
-        .map_err(|_| format!("invalid UTC offset '{raw}'"))?;
-    let minutes: i32 = minutes
-        .parse()
-        .map_err(|_| format!("invalid UTC offset '{raw}'"))?;
-    let seconds: i32 = seconds
-        .parse()
-        .map_err(|_| format!("invalid UTC offset '{raw}'"))?;
-    Ok(sign * (hours * 3600 + minutes * 60 + seconds))
-}
-
-/// Parse a floating (or `Z`-suffixed) DATE-TIME used inside a `VTIMEZONE`.
-fn parse_local_datetime(value: &str) -> Result<NaiveDateTime, String> {
-    let value = value.trim();
-    let naive = value.strip_suffix('Z').unwrap_or(value);
-    NaiveDateTime::parse_from_str(naive, "%Y%m%dT%H%M%S")
-        .map_err(|e| format!("invalid local DATE-TIME '{value}': {e}"))
-}
-
-fn parse_weekday(raw: &str) -> Option<Weekday> {
-    match raw.to_ascii_uppercase().as_str() {
-        "MO" => Some(Weekday::Mon),
-        "TU" => Some(Weekday::Tue),
-        "WE" => Some(Weekday::Wed),
-        "TH" => Some(Weekday::Thu),
-        "FR" => Some(Weekday::Fri),
-        "SA" => Some(Weekday::Sat),
-        "SU" => Some(Weekday::Sun),
-        _ => None,
-    }
-}
-
-/// Parse the yearly portion of a `VTIMEZONE` RRULE. Only `FREQ=YEARLY` with
-/// `BYMONTH` plus `BYDAY`/`BYMONTHDAY` (or the DTSTART day) is understood, which
-/// covers the forms Outlook, Google, and Apple emit. Anything else is ignored
-/// and the observance falls back to its DTSTART.
-fn parse_yearly_rule(raw: &str) -> Option<YearlyRule> {
-    let mut month = None;
-    let mut by_day = None;
-    let mut by_month_day = None;
-    for part in raw.split(';') {
-        let Some((key, value)) = part.split_once('=') else {
-            continue;
-        };
-        match key.trim().to_ascii_uppercase().as_str() {
-            "FREQ" => {
-                if !value.trim().eq_ignore_ascii_case("YEARLY") {
-                    return None;
-                }
-            }
-            "BYMONTH" => {
-                month = value.trim().split(',').next()?.parse::<u32>().ok();
-            }
-            "BYMONTHDAY" => {
-                by_month_day = value.trim().split(',').next()?.parse::<u32>().ok();
-            }
-            "BYDAY" => {
-                let token = value.trim().split(',').next()?;
-                let split = token
-                    .find(|c: char| c.is_ascii_alphabetic())
-                    .unwrap_or(token.len());
-                let (ordinal, weekday) = token.split_at(split);
-                // RFC 5545 allows at most an ordinal of ±53; anything else is
-                // an unparseable rule (and `i32::MIN` would overflow when the
-                // ordinal is negated while placing the occurrence).
-                let ordinal: i32 = if ordinal.is_empty() {
-                    1
-                } else {
-                    ordinal.parse().ok()?
-                };
-                if !(1..=53).contains(&ordinal) && !(-53..=-1).contains(&ordinal) {
-                    return None;
-                }
-                by_day = parse_weekday(weekday).map(|weekday| (ordinal, weekday));
-            }
-            _ => {}
-        }
-    }
-    Some(YearlyRule {
-        month: month?,
-        by_day,
-        by_month_day,
-    })
-}
-
-fn parse_observance(component: &Component<'_>) -> Option<Observance> {
-    let offset_to = parse_utc_offset(find_prop(component, "TZOFFSETTO")?.val.as_str()).ok()?;
-    let offset_from = find_prop(component, "TZOFFSETFROM")
-        .and_then(|prop| parse_utc_offset(prop.val.as_str()).ok())
-        .unwrap_or(offset_to);
-    let dtstart = parse_local_datetime(find_prop(component, "DTSTART")?.val.as_str()).ok()?;
-    let rule = find_prop(component, "RRULE").and_then(|prop| parse_yearly_rule(prop.val.as_str()));
-    let rdates = find_prop(component, "RDATE")
-        .map(|prop| {
-            prop.val
-                .as_str()
-                .split(',')
-                .filter_map(|value| parse_local_datetime(value).ok())
-                .collect()
-        })
-        .unwrap_or_default();
-    Some(Observance {
-        offset_to,
-        offset_from,
-        dtstart,
-        rule,
-        rdates,
-    })
-}
-
-fn parse_vtimezone(component: &Component<'_>) -> Option<VTimezoneDef> {
-    let tzid = find_prop(component, "TZID")?
-        .val
-        .as_str()
-        .trim()
-        .to_string();
-    if tzid.is_empty() {
-        return None;
-    }
-    let observances = component
-        .components
-        .iter()
-        .filter(|child| {
-            child.name.as_str().eq_ignore_ascii_case("STANDARD")
-                || child.name.as_str().eq_ignore_ascii_case("DAYLIGHT")
-        })
-        .filter_map(parse_observance)
-        .collect::<Vec<_>>();
-    if observances.is_empty() {
-        return None;
-    }
-    Some(VTimezoneDef { tzid, observances })
-}
-
-/// The n-th (or, for a negative ordinal, last-n) weekday of a month.
-fn nth_weekday_of_month(
-    year: i32,
-    month: u32,
-    ordinal: i32,
-    weekday: Weekday,
-) -> Option<NaiveDate> {
-    if ordinal > 0 {
-        let first = NaiveDate::from_ymd_opt(year, month, 1)?;
-        let delta =
-            (weekday.num_days_from_monday() + 7 - first.weekday().num_days_from_monday()) % 7;
-        NaiveDate::from_ymd_opt(year, month, 1 + delta + (ordinal as u32 - 1) * 7)
-    } else {
-        let next_month = if month == 12 {
-            NaiveDate::from_ymd_opt(year + 1, 1, 1)?
-        } else {
-            NaiveDate::from_ymd_opt(year, month + 1, 1)?
-        };
-        let last = next_month.pred_opt()?;
-        let delta =
-            (last.weekday().num_days_from_monday() + 7 - weekday.num_days_from_monday()) % 7;
-        let day = last.day() as i32 - delta as i32 - ((-ordinal) - 1) * 7;
-        NaiveDate::from_ymd_opt(year, month, day as u32)
-    }
-}
-
-/// Local transition instants for one observance in a given year.
-fn observance_occurrences(observance: &Observance, year: i32) -> Vec<NaiveDateTime> {
-    let time = observance.dtstart.time();
-    let mut occurrences = Vec::new();
-    if observance.dtstart.year() == year {
-        occurrences.push(observance.dtstart);
-    }
-    occurrences.extend(
-        observance
-            .rdates
-            .iter()
-            .filter(|date| date.year() == year)
-            .copied(),
-    );
-    if let Some(rule) = &observance.rule {
-        let date = if let Some((ordinal, weekday)) = rule.by_day {
-            nth_weekday_of_month(year, rule.month, ordinal, weekday)
-        } else if let Some(day) = rule.by_month_day {
-            NaiveDate::from_ymd_opt(year, rule.month, day)
-        } else {
-            NaiveDate::from_ymd_opt(year, rule.month, observance.dtstart.day())
-        };
-        if let Some(date) = date {
-            if let Some(instant) = date.and_hms_opt(time.hour(), time.minute(), time.second()) {
-                occurrences.push(instant);
-            }
-        }
-    }
-    occurrences
-}
-
-/// Resolve a local wall-clock time against an embedded `VTIMEZONE`, applying the
-/// observance transition rules. Overlaps (fall-back) keep the earliest
-/// occurrence and gaps (spring-forward) push forward to the transition instant.
-fn resolve_vtimezone(def: &VTimezoneDef, naive: NaiveDateTime) -> Result<DateTime<Utc>, String> {
-    let year = naive.year();
-    let mut transitions: Vec<(NaiveDateTime, i32, i32)> = Vec::new();
-    for observance in &def.observances {
-        for occurrence in observance_occurrences(observance, year - 1)
-            .into_iter()
-            .chain(observance_occurrences(observance, year))
-        {
-            transitions.push((occurrence, observance.offset_from, observance.offset_to));
-        }
-    }
-    transitions.sort_by_key(|(local, _, _)| *local);
-
-    if let Some(&(local, offset_from, offset_to)) = transitions
-        .iter()
-        .rev()
-        .find(|(local, _, _)| *local <= naive)
-    {
-        if offset_from < offset_to {
-            let gap = Duration::seconds((offset_to - offset_from) as i64);
-            if naive < local + gap {
-                // Nonexistent local time: the transition instant itself.
-                return Ok((local - Duration::seconds(offset_from as i64)).and_utc());
-            }
-        }
-        // Fall-back (`offset_from > offset_to`) has no branch here: its
-        // repeated wall times are `[local - overlap, local)`, i.e. *before*
-        // the selected transition, while the selection guarantees
-        // `local <= naive`. Such times are resolved when the preceding
-        // transition is selected instead, whose `offset_to` equals this
-        // transition's `offset_from` (the earlier occurrence). A guard here
-        // could only ever fire on the hour *after* the transition and would
-        // resolve it with the wrong offset.
-        return Ok((naive - Duration::seconds(offset_to as i64)).and_utc());
-    }
-
-    // Before the first known transition, use the earliest observance's starting
-    // offset (`TZOFFSETFROM`).
-    let earliest = def
-        .observances
-        .iter()
-        .min_by_key(|observance| observance.dtstart)
-        .ok_or_else(|| format!("VTIMEZONE '{}' has no observances", def.tzid))?;
-    Ok((naive - Duration::seconds(earliest.offset_from as i64)).and_utc())
 }
 
 /// Resolve a local wall-clock time in an IANA zone. Ambiguous times (fall-back
@@ -547,7 +335,6 @@ fn parse_duration(raw: &str) -> Result<Duration, String> {
 /// with `original_date` preserved.
 fn parse_date_time(
     prop: &Property<'_>,
-    timezones: &VTimezoneIndex,
 ) -> Result<(DateTime<Utc>, String, bool, Option<NaiveDate>), String> {
     let value = prop.val.as_str().trim();
     let tzid = find_param(prop, "TZID");
@@ -560,14 +347,23 @@ fn parse_date_time(
             .unwrap_or(false);
 
     if is_date {
+        if tzid.is_some() {
+            return Err("all-day DATE values must not include TZID".to_string());
+        }
         let date = NaiveDate::parse_from_str(value, "%Y%m%d")
             .map_err(|e| format!("invalid DATE value '{value}': {e}"))?;
         let midnight = date.and_hms_opt(0, 0, 0).ok_or("invalid DATE")?;
         return Ok((midnight.and_utc(), "UTC".to_string(), true, Some(date)));
     }
 
-    // A trailing Z marks a UTC instant; a bare value is floating time. Both
-    // are interpreted as UTC per the spec.
+    // Floating DATE-TIME has no defined instant. Assigning UTC here would
+    // silently change its meaning, so accept only UTC or an explicit IANA TZID.
+    if !value.ends_with('Z') && tzid.is_none() {
+        return Err("floating DATE-TIME has no timezone; add TZID or use UTC".to_string());
+    }
+    if value.ends_with('Z') && tzid.is_some() {
+        return Err("UTC DATE-TIME must not include TZID".to_string());
+    }
     let naive_value = value.strip_suffix('Z').unwrap_or(value);
     let naive = NaiveDateTime::parse_from_str(naive_value, "%Y%m%dT%H%M%S")
         .map_err(|e| format!("invalid DATE-TIME value '{value}': {e}"))?;
@@ -578,18 +374,7 @@ fn parse_date_time(
                 let start = resolve_iana_local(&tz, naive);
                 return Ok((start, tzid.to_string(), false, None));
             }
-            let definition = timezones
-                .get(tzid)
-                .or_else(|| {
-                    timezones
-                        .iter()
-                        .find(|(key, _)| key.eq_ignore_ascii_case(tzid))
-                        .map(|(_, value)| value)
-                })
-                .ok_or_else(|| format!("unknown TZID '{tzid}'"))?;
-            let start = resolve_vtimezone(definition, naive)
-                .map_err(|e| format!("cannot resolve TZID '{tzid}': {e}"))?;
-            Ok((start, tzid.to_string(), false, None))
+            Err(format!("unsupported TZID '{tzid}'; use an IANA timezone"))
         }
         None => Ok((naive.and_utc(), "UTC".to_string(), false, None)),
     }
@@ -602,10 +387,39 @@ fn text_value(prop: &Property<'_>) -> String {
     prop.val.as_str().to_owned()
 }
 
-fn map_vevent(
-    component: &Component<'_>,
-    timezones: &VTimezoneIndex,
-) -> Result<ParsedEvent, String> {
+fn map_vevent(component: &Component<'_>) -> Result<ParsedEvent, String> {
+    if let Some(property) = component
+        .properties
+        .iter()
+        .find(|property| property.val.as_str().len() > MAX_ICAL_PROPERTY_BYTES)
+    {
+        return Err(format!(
+            "{} exceeds the {MAX_ICAL_PROPERTY_BYTES}-byte property limit",
+            property.name
+        ));
+    }
+    for name in [
+        "UID",
+        "DTSTAMP",
+        "DTSTART",
+        "DTEND",
+        "DURATION",
+        "SUMMARY",
+        "DESCRIPTION",
+        "LOCATION",
+        "STATUS",
+        "RRULE",
+    ] {
+        if component
+            .properties
+            .iter()
+            .filter(|property| property.name.as_str().eq_ignore_ascii_case(name))
+            .count()
+            > 1
+        {
+            return Err(format!("VEVENT contains multiple {name} properties"));
+        }
+    }
     let unsupported_fields = unsupported_event_fields(component);
     if !unsupported_fields.is_empty() {
         return Err(format!(
@@ -620,10 +434,13 @@ fn map_vevent(
         .ok_or("VEVENT is missing UID")?;
 
     let dtstart_prop = find_prop(component, "DTSTART").ok_or("VEVENT is missing DTSTART")?;
-    let (starts_at, timezone, all_day, original_date) = parse_date_time(dtstart_prop, timezones)?;
+    if find_prop(component, "DTEND").is_some() && find_prop(component, "DURATION").is_some() {
+        return Err("VEVENT cannot contain both DTEND and DURATION".to_string());
+    }
+    let (starts_at, timezone, all_day, original_date) = parse_date_time(dtstart_prop)?;
 
-    let (ends_at, _, _, _) = match find_prop(component, "DTEND") {
-        Some(dtend) => parse_date_time(dtend, timezones)?,
+    let (ends_at, _, end_all_day, _) = match find_prop(component, "DTEND") {
+        Some(dtend) => parse_date_time(dtend)?,
         None => {
             // RFC 5545 makes DTEND optional in favour of DURATION. When neither
             // is present, default to a one-day span for all-day events and a
@@ -640,9 +457,20 @@ fn map_vevent(
             (ends_at, timezone.clone(), all_day, original_date)
         }
     };
+    if let Some(dtend) = find_prop(component, "DTEND") {
+        if all_day != end_all_day {
+            return Err("DTSTART and DTEND must both use DATE or DATE-TIME".to_string());
+        }
+        if find_param(dtstart_prop, "TZID") != find_param(dtend, "TZID") {
+            return Err("DTSTART and DTEND must use the same TZID".to_string());
+        }
+    }
+    if ends_at <= starts_at {
+        return Err("event end must be after its start".to_string());
+    }
 
     let recurrence_id = find_prop(component, "RECURRENCE-ID")
-        .map(|prop| parse_date_time(prop, timezones))
+        .map(|prop| parse_date_time(prop))
         .transpose()?
         .map(|(instant, _, _, _)| {
             // Stored in exactly the format range-expansion produces for
@@ -659,10 +487,34 @@ fn map_vevent(
     let rrule = find_prop(component, "RRULE")
         .map(|prop| prop.val.as_str().trim().to_string())
         .filter(|rrule| !rrule.is_empty());
+    if let Some(rule) = rrule.as_deref() {
+        if rule.len() > MAX_ICAL_RRULE_BYTES {
+            return Err(format!(
+                "RRULE exceeds the {MAX_ICAL_RRULE_BYTES}-byte limit"
+            ));
+        }
+        if timezone != "UTC" {
+            return Err("recurring events must use UTC to preserve export meaning".to_string());
+        }
+        if format!("DTSTART:20261001T000000Z\nRRULE:{rule}")
+            .parse::<rrule::RRuleSet>()
+            .is_err()
+        {
+            return Err("unsupported or invalid RRULE".to_string());
+        }
+    }
     let status = find_prop(component, "STATUS")
         .map(|prop| prop.val.as_str().trim().to_ascii_lowercase())
         .filter(|status| matches!(status.as_str(), "confirmed" | "tentative" | "cancelled"))
         .unwrap_or_else(|| "confirmed".to_string());
+    let dtstamp = find_prop(component, "DTSTAMP")
+        .map(|prop| {
+            if find_param(prop, "TZID").is_some() || !prop.val.as_str().trim().ends_with('Z') {
+                return Err("DTSTAMP must be a UTC DATE-TIME".to_string());
+            }
+            parse_date_time(prop).map(|(timestamp, _, _, _)| timestamp)
+        })
+        .transpose()?;
 
     Ok(ParsedEvent {
         external_uid: uid,
@@ -677,6 +529,7 @@ fn map_vevent(
         timezone,
         rrule,
         status,
+        dtstamp,
     })
 }
 
@@ -705,6 +558,11 @@ fn split_top_level_components(unfolded: &str) -> Result<Vec<String>, IcalImportE
     let mut event_count = 0;
     for line in unfolded.lines() {
         let line = line.trim_end_matches('\r');
+        if line.len() > MAX_ICAL_PROPERTY_BYTES {
+            return Err(IcalImportError::Unparseable(format!(
+                "calendar property exceeds the {MAX_ICAL_PROPERTY_BYTES}-byte limit"
+            )));
+        }
         let trimmed = line.trim_start();
         if trimmed.eq_ignore_ascii_case("BEGIN:VEVENT") {
             event_count += 1;
@@ -745,8 +603,14 @@ fn split_top_level_components(unfolded: &str) -> Result<Vec<String>, IcalImportE
 /// (fails the job); malformed individual components come back as `Err`
 /// entries inside `events`.
 fn parse_file(bytes: &[u8]) -> Result<ParsedFile, IcalImportError> {
-    let text = String::from_utf8_lossy(bytes);
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    if bytes.len() > MAX_CALENDAR_IMPORT_SIZE_BYTES {
+        return Err(IcalImportError::Unparseable(
+            "calendar file exceeds the 10 MiB import limit".to_string(),
+        ));
+    }
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| IcalImportError::Unparseable("calendar file must be valid UTF-8".into()))?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let unfolded = icalendar::parser::unfold(text);
 
     let blocks = split_top_level_components(&unfolded)?;
@@ -758,7 +622,6 @@ fn parse_file(bytes: &[u8]) -> Result<ParsedFile, IcalImportError> {
 
     let mut events = Vec::new();
     let mut skipped_components = 0i32;
-    let mut ignored_components = 0i32;
 
     for block in &blocks {
         let roots =
@@ -773,15 +636,6 @@ fn parse_file(bytes: &[u8]) -> Result<ParsedFile, IcalImportError> {
 
             // VTIMEZONE may appear after the VEVENTs that reference it, so
             // collect the definitions for this calendar first.
-            let mut timezones: VTimezoneIndex = HashMap::new();
-            for child in &children {
-                if child.name.as_str().eq_ignore_ascii_case("VTIMEZONE") {
-                    if let Some(definition) = parse_vtimezone(child) {
-                        timezones.insert(definition.tzid.clone(), definition);
-                    }
-                }
-            }
-
             // Our single-event exporter uses UTC DATE-TIME properties and
             // carries the stored display timezone on VCALENDAR.
             let calendar_timezone = find_prop(root, "X-WR-TIMEZONE")
@@ -791,7 +645,7 @@ fn parse_file(bytes: &[u8]) -> Result<ParsedFile, IcalImportError> {
 
             for child in &children {
                 if child.name.as_str().eq_ignore_ascii_case("VEVENT") {
-                    events.push(map_vevent(child, &timezones).map(|mut event| {
+                    events.push(map_vevent(child).map(|mut event| {
                         let utc_start_without_tzid =
                             find_prop(child, "DTSTART").is_some_and(|start| {
                                 find_param(start, "TZID").is_none()
@@ -811,15 +665,14 @@ fn parse_file(bytes: &[u8]) -> Result<ParsedFile, IcalImportError> {
                 } else if is_counted_skip(child.name.as_str()) {
                     skipped_components += 1;
                 } else {
-                    // VTIMEZONE, VALARM, and unknown components are ignored
-                    // silently (and are not counted as skipped).
-                    ignored_components += 1;
+                    // VTIMEZONE and calendar-level metadata are ignored; no
+                    // arbitrary component URLs or attachments are dereferenced.
                 }
             }
         }
     }
 
-    if events.is_empty() && skipped_components == 0 && ignored_components == 0 {
+    if events.is_empty() && skipped_components == 0 {
         return Err(IcalImportError::Unparseable(
             "file contains no calendar components".to_string(),
         ));
@@ -855,7 +708,7 @@ fn to_event(job: &CalendarImportJob, parsed: &ParsedEvent) -> CalendarEvent {
         raw: None,
         deleted_at: None,
         created_at: now,
-        updated_at: now,
+        updated_at: parsed.dtstamp.unwrap_or(now),
     }
 }
 
@@ -1054,6 +907,90 @@ END:VCALENDAR
     }
 
     #[test]
+    fn preserves_utc_dtstamp_for_export_round_trip() {
+        let ics = b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:stamped\nDTSTAMP:20261118T120000Z\nDTSTART:20261119T090000Z\nDTEND:20261119T100000Z\nEND:VEVENT\nEND:VCALENDAR\n";
+        let event = parse_file(ics).unwrap().events.remove(0).unwrap();
+        assert_eq!(
+            event.dtstamp.unwrap().to_rfc3339(),
+            "2026-11-18T12:00:00+00:00"
+        );
+    }
+
+    #[test]
+    fn rejects_floating_times_and_custom_timezones() {
+        let floating = b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:floating\nDTSTART:20261119T090000\nDTEND:20261119T100000\nEND:VEVENT\nEND:VCALENDAR\n";
+        assert!(parse_file(floating).unwrap().events[0]
+            .as_ref()
+            .unwrap_err()
+            .contains("floating DATE-TIME"));
+
+        let custom = b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:custom-zone\nDTSTART;TZID=Custom/Zone:20261119T090000\nDTEND;TZID=Custom/Zone:20261119T100000\nEND:VEVENT\nEND:VCALENDAR\n";
+        assert!(parse_file(custom).unwrap().events[0]
+            .as_ref()
+            .unwrap_err()
+            .contains("unsupported TZID"));
+    }
+
+    #[test]
+    fn rejects_conflicting_timezone_value_forms() {
+        let utc_with_tzid = b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:bad-utc-zone\nDTSTART;TZID=Europe/Berlin:20261119T090000Z\nDTEND;TZID=Europe/Berlin:20261119T100000Z\nEND:VEVENT\nEND:VCALENDAR\n";
+        assert!(parse_file(utc_with_tzid).unwrap().events[0]
+            .as_ref()
+            .unwrap_err()
+            .contains("UTC DATE-TIME must not include TZID"));
+
+        let date_with_tzid = b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:bad-date-zone\nDTSTART;VALUE=DATE;TZID=Europe/Berlin:20261119\nDTEND;VALUE=DATE;TZID=Europe/Berlin:20261120\nEND:VEVENT\nEND:VCALENDAR\n";
+        assert!(parse_file(date_with_tzid).unwrap().events[0]
+            .as_ref()
+            .unwrap_err()
+            .contains("all-day DATE values must not include TZID"));
+    }
+
+    #[test]
+    fn rejects_ambiguous_time_and_identity_properties() {
+        let both_ends = b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:both-ends\nDTSTART:20261119T090000Z\nDTEND:20261119T100000Z\nDURATION:PT1H\nEND:VEVENT\nEND:VCALENDAR\n";
+        assert!(parse_file(both_ends).unwrap().events[0]
+            .as_ref()
+            .unwrap_err()
+            .contains("both DTEND and DURATION"));
+
+        let duplicate_uid = b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:first\nUID:second\nDTSTART:20261119T090000Z\nDTEND:20261119T100000Z\nEND:VEVENT\nEND:VCALENDAR\n";
+        assert!(parse_file(duplicate_uid).unwrap().events[0]
+            .as_ref()
+            .unwrap_err()
+            .contains("multiple UID"));
+    }
+
+    #[test]
+    fn rejects_recurrence_overrides_and_long_properties() {
+        let override_event = b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:override\nDTSTART:20261119T090000Z\nDTEND:20261119T100000Z\nRECURRENCE-ID:20261119T090000Z\nEND:VEVENT\nEND:VCALENDAR\n";
+        assert!(parse_file(override_event).unwrap().events[0]
+            .as_ref()
+            .unwrap_err()
+            .contains("RECURRENCE-ID"));
+
+        let long = format!(
+            "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:long\nSUMMARY:{}\nDTSTART:20261119T090000Z\nDTEND:20261119T100000Z\nEND:VEVENT\nEND:VCALENDAR\n",
+            "x".repeat(MAX_ICAL_PROPERTY_BYTES + 1)
+        );
+        assert!(parse_file(long.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn conflicting_duplicate_uids_are_not_confirmable() {
+        let repeated = b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:same\nDTSTART:20261119T090000Z\nDTEND:20261119T100000Z\nSUMMARY:Same\nEND:VEVENT\nBEGIN:VEVENT\nUID:same\nDTSTART:20261119T090000Z\nDTEND:20261119T100000Z\nSUMMARY:Same\nEND:VEVENT\nEND:VCALENDAR\n";
+        assert_eq!(preview_import(repeated).unwrap()[1].outcome, "duplicate");
+
+        let conflicting = b"BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:same\nDTSTART:20261119T090000Z\nDTEND:20261119T100000Z\nSUMMARY:First\nEND:VEVENT\nBEGIN:VEVENT\nUID:same\nDTSTART:20261119T090000Z\nDTEND:20261119T100000Z\nSUMMARY:Second\nEND:VEVENT\nEND:VCALENDAR\n";
+        assert_eq!(preview_import(conflicting).unwrap()[1].outcome, "conflict");
+    }
+
+    #[test]
+    fn rejects_non_utf8_calendar_input() {
+        assert!(parse_file(b"BEGIN:VCALENDAR\n\xff\nEND:VCALENDAR\n").is_err());
+    }
+
+    #[test]
     fn preserves_uid_text_whitespace_and_escapes() {
         let ics = "\
 BEGIN:VCALENDAR
@@ -1193,7 +1130,7 @@ END:VCALENDAR
     }
 
     #[test]
-    fn parses_rrule_master_and_recurrence_override() {
+    fn rejects_recurrence_overrides_in_supported_imports() {
         let ics = "\
 BEGIN:VCALENDAR
 BEGIN:VEVENT
@@ -1212,20 +1149,15 @@ SUMMARY:Weekly moved
 END:VEVENT
 END:VCALENDAR
 ";
-        let parsed = parse_file(ics.as_bytes()).expect("parses");
+        let parsed = parse_file(ics.as_bytes()).expect("calendar parses");
         assert_eq!(parsed.events.len(), 2);
         let master = parsed.events[0].as_ref().expect("master maps");
         assert_eq!(master.rrule.as_deref(), Some("FREQ=WEEKLY;BYDAY=MO"));
         assert!(master.recurrence_id.is_none());
-        let override_event = parsed.events[1].as_ref().expect("override maps");
-        assert_eq!(
-            override_event.recurrence_id.as_deref(),
-            Some("2026-10-12T14:00:00Z")
-        );
-        assert_eq!(
-            override_event.starts_at.to_rfc3339(),
-            "2026-10-12T16:00:00+00:00"
-        );
+        assert!(parsed.events[1]
+            .as_ref()
+            .unwrap_err()
+            .contains("RECURRENCE-ID"));
     }
 
     #[test]
@@ -1434,54 +1366,6 @@ END:VCALENDAR
         assert_eq!(event.title, "Byte order mark");
     }
 
-    const OUTLOOK_TZID_ICS: &str = "\
-BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN
-BEGIN:VTIMEZONE
-TZID:W. Europe Standard Time
-BEGIN:STANDARD
-DTSTART:16011028T030000
-TZOFFSETFROM:+0200
-TZOFFSETTO:+0100
-RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
-END:STANDARD
-BEGIN:DAYLIGHT
-DTSTART:16010325T020000
-TZOFFSETFROM:+0100
-TZOFFSETTO:+0200
-RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU
-END:DAYLIGHT
-END:VTIMEZONE
-BEGIN:VEVENT
-UID:outlook-summer-1
-DTSTART;TZID=W. Europe Standard Time:20260715T140000
-DTEND;TZID=W. Europe Standard Time:20260715T150000
-SUMMARY:Summer meeting
-END:VEVENT
-BEGIN:VEVENT
-UID:outlook-winter-1
-DTSTART;TZID=W. Europe Standard Time:20260115T140000
-DTEND;TZID=W. Europe Standard Time:20260115T150000
-SUMMARY:Winter meeting
-END:VEVENT
-END:VCALENDAR
-";
-
-    #[test]
-    fn outlook_windows_tzid_resolved_from_embedded_vtimezone() {
-        let parsed = parse_file(OUTLOOK_TZID_ICS.as_bytes()).expect("parses");
-        assert_eq!(parsed.skipped_components, 0);
-        assert_eq!(parsed.events.len(), 2);
-        let summer = parsed.events[0].as_ref().expect("summer maps");
-        // 2026-07-15 is CEST (UTC+2).
-        assert_eq!(summer.starts_at.to_rfc3339(), "2026-07-15T12:00:00+00:00");
-        assert_eq!(summer.timezone, "W. Europe Standard Time");
-        let winter = parsed.events[1].as_ref().expect("winter maps");
-        // 2026-01-15 is CET (UTC+1).
-        assert_eq!(winter.starts_at.to_rfc3339(), "2026-01-15T13:00:00+00:00");
-    }
-
     #[test]
     fn unknown_tzid_without_vtimezone_is_a_component_failure() {
         let ics = "\
@@ -1496,55 +1380,10 @@ END:VCALENDAR
 ";
         let parsed = parse_file(ics.as_bytes()).expect("parses");
         let error = parsed.events[0].as_ref().unwrap_err();
-        assert!(error.contains("unknown TZID"), "unexpected error: {error}");
-    }
-
-    #[test]
-    fn parse_utc_offset_accepts_standard_forms() {
-        assert_eq!(parse_utc_offset("+0200").unwrap(), 7_200);
-        assert_eq!(parse_utc_offset("-0530").unwrap(), -19_800);
-        assert_eq!(parse_utc_offset("+053000").unwrap(), 19_800);
-        assert_eq!(parse_utc_offset("+02:00").unwrap(), 7_200);
-        assert_eq!(parse_utc_offset("-05:30:00").unwrap(), -19_800);
-        assert!(parse_utc_offset("+02").is_err());
-        assert!(parse_utc_offset("").is_err());
-    }
-
-    #[test]
-    fn parse_utc_offset_rejects_non_ascii_without_panicking() {
-        // Byte-length checks used to accept these and then panic slicing a
-        // multi-byte code point ("byte index N is not a char boundary").
-        assert!(parse_utc_offset("€a").is_err());
-        assert!(parse_utc_offset("+€a").is_err());
-        assert!(parse_utc_offset("-€ab").is_err());
-    }
-
-    #[test]
-    fn non_ascii_offset_is_a_component_failure_not_a_panic() {
-        let ics = "\
-BEGIN:VCALENDAR
-VERSION:2.0
-BEGIN:VTIMEZONE
-TZID:Broken Zone
-BEGIN:STANDARD
-DTSTART:16011028T030000
-TZOFFSETFROM:+0200
-TZOFFSETTO:€a
-END:STANDARD
-END:VTIMEZONE
-BEGIN:VEVENT
-UID:nonascii-offset-1
-DTSTART;TZID=Broken Zone:20261005T140000
-DTEND;TZID=Broken Zone:20261005T150000
-SUMMARY:Broken offset
-END:VEVENT
-END:VCALENDAR
-";
-        // The malformed VTIMEZONE is dropped and the event fails as an unknown
-        // TZID — the component path returns an error instead of unwinding.
-        let parsed = parse_file(ics.as_bytes()).expect("parses");
-        let error = parsed.events[0].as_ref().unwrap_err();
-        assert!(error.contains("unknown TZID"), "unexpected error: {error}");
+        assert!(
+            error.contains("unsupported TZID"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
@@ -1683,97 +1522,5 @@ END:VCALENDAR
         let parsed = parse_file(ics.as_bytes()).expect("parses");
         let error = parsed.events[0].as_ref().unwrap_err();
         assert!(error.contains("out of range"), "unexpected error: {error}");
-    }
-
-    #[test]
-    fn out_of_range_byday_ordinal_is_unparseable() {
-        assert!(parse_yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU").is_some());
-        // Zero and out-of-range ordinals must be rejected, not overflow.
-        assert!(parse_yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=0SU").is_none());
-        assert!(parse_yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=54SU").is_none());
-        assert!(parse_yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=-54SU").is_none());
-        assert!(parse_yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=-2147483648SU").is_none());
-        // Ordinal-less BYDAY defaults to the first occurrence.
-        assert_eq!(
-            parse_yearly_rule("FREQ=YEARLY;BYMONTH=10;BYDAY=SU").and_then(|rule| rule.by_day),
-            Some((1, Weekday::Sun))
-        );
-    }
-
-    const OUTLOOK_DST_BOUNDARY_ICS: &str = "\
-BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN
-BEGIN:VTIMEZONE
-TZID:W. Europe Standard Time
-BEGIN:STANDARD
-DTSTART:16011028T030000
-TZOFFSETFROM:+0200
-TZOFFSETTO:+0100
-RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
-END:STANDARD
-BEGIN:DAYLIGHT
-DTSTART:16010325T020000
-TZOFFSETFROM:+0100
-TZOFFSETTO:+0200
-RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU
-END:DAYLIGHT
-END:VTIMEZONE
-BEGIN:VEVENT
-UID:spring-gap-1
-DTSTART;TZID=W. Europe Standard Time:20260329T023000
-DTEND;TZID=W. Europe Standard Time:20260329T033000
-SUMMARY:Spring gap
-END:VEVENT
-BEGIN:VEVENT
-UID:spring-after-1
-DTSTART;TZID=W. Europe Standard Time:20260329T033000
-DTEND;TZID=W. Europe Standard Time:20260329T043000
-SUMMARY:Spring after
-END:VEVENT
-BEGIN:VEVENT
-UID:fall-ambiguous-1
-DTSTART;TZID=W. Europe Standard Time:20261025T023000
-DTEND;TZID=W. Europe Standard Time:20261025T033000
-SUMMARY:Fall ambiguous
-END:VEVENT
-BEGIN:VEVENT
-UID:fall-transition-1
-DTSTART;TZID=W. Europe Standard Time:20261025T030000
-DTEND;TZID=W. Europe Standard Time:20261025T040000
-SUMMARY:Fall transition
-END:VEVENT
-BEGIN:VEVENT
-UID:fall-after-1
-DTSTART;TZID=W. Europe Standard Time:20261025T033000
-DTEND;TZID=W. Europe Standard Time:20261025T043000
-SUMMARY:Fall after
-END:VEVENT
-END:VCALENDAR
-";
-
-    #[test]
-    fn vtimezone_dst_transitions_resolve_correctly() {
-        let parsed = parse_file(OUTLOOK_DST_BOUNDARY_ICS.as_bytes()).expect("parses");
-        let starts: Vec<String> = parsed
-            .events
-            .iter()
-            .map(|event| event.as_ref().expect("event maps").starts_at.to_rfc3339())
-            .collect();
-        assert_eq!(
-            starts,
-            vec![
-                // Spring-forward gap pushes to the transition instant (CEST).
-                "2026-03-29T01:00:00+00:00",
-                // Hour after the spring transition (CEST).
-                "2026-03-29T01:30:00+00:00",
-                // Ambiguous hour before the fall transition: first pass (CEST).
-                "2026-10-25T00:30:00+00:00",
-                // Transition wall time itself (CET).
-                "2026-10-25T02:00:00+00:00",
-                // Hour after the fall transition (CET), not one hour early.
-                "2026-10-25T02:30:00+00:00",
-            ]
-        );
     }
 }

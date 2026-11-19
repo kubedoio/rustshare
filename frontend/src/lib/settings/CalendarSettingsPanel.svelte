@@ -3,6 +3,7 @@
 	import { replaceState } from '$app/navigation';
 	import {
 		calendarApi,
+		type CalendarImportPreview,
 		type CalendarProviderStatus,
 		type CalendarSource,
 		type CalendarSourceKind
@@ -33,6 +34,11 @@
 
 	let importInput: HTMLInputElement | null = $state(null);
 	let uploading = $state(false);
+	let importPreview: CalendarImportPreview | null = $state(null);
+	let importFile: File | null = $state(null);
+	let selectedImportSourceId = $state('');
+	let destinationName = $state('Imported calendar');
+	let creatingDestination = $state(false);
 	let connecting: CalendarSourceKind | null = $state(null);
 	let unconfigured: CalendarSourceKind[] = $state([]);
 	let confirmDisconnectId: string | null = $state(null);
@@ -108,6 +114,9 @@
 
 	const sources = $derived($sourcesQuery.data ?? []);
 	const importJobs = $derived(($importJobsQuery.data ?? []).slice(0, 10));
+	const importSources = $derived(
+		sources.filter((source) => source.kind === 'ical_import' && source.is_enabled)
+	);
 	const internalSource = $derived(sources.find((source) => source.kind === 'internal') ?? null);
 	const providerStatuses = $derived($providersQuery.data?.providers ?? []);
 
@@ -206,19 +215,57 @@
 		const input = event.target as HTMLInputElement;
 		const file = input.files?.[0];
 		input.value = '';
-		if (!file) return;
+		if (!file || !selectedImportSourceId) {
+			toastStore.show('Choose an import destination first.', 'error');
+			return;
+		}
 		uploading = true;
 		try {
-			const result = await calendarApi.uploadIcs(file);
-			toastStore.show(`Import queued for ${file.name} (${result.status})`, 'success');
-			await queryClient.invalidateQueries({ queryKey: ['calendar-import-jobs'] });
-			await queryClient.invalidateQueries({ queryKey: ['calendar-sources'] });
-			await queryClient.invalidateQueries({ queryKey: ['calendar-events'] });
+			importFile = file;
+			importPreview = await calendarApi.previewIcs(file, selectedImportSourceId);
 		} catch (error) {
 			console.debug('calendar .ics import failed', error);
-			toastStore.show('Import failed. Try again.', 'error');
+			toastStore.show('Preview failed. Check the file and destination, then try again.', 'error');
 		} finally {
 			uploading = false;
+		}
+	}
+
+	async function confirmImport() {
+		if (!importFile || !importPreview) return;
+		uploading = true;
+		try {
+			const result = await calendarApi.uploadIcs(
+				importFile,
+				importPreview.source_id,
+				importPreview.digest
+			);
+			toastStore.show(`Import queued (${result.status})`, 'success');
+			importFile = null;
+			importPreview = null;
+			await queryClient.invalidateQueries({ queryKey: ['calendar-import-jobs'] });
+			await queryClient.invalidateQueries({ queryKey: ['calendar-events'] });
+		} catch (error) {
+			console.debug('calendar .ics import confirmation failed', error);
+			toastStore.show('Import confirmation failed. Preview the file again.', 'error');
+			importPreview = null;
+		} finally {
+			uploading = false;
+		}
+	}
+
+	async function createImportDestination() {
+		if (!destinationName.trim()) return;
+		creatingDestination = true;
+		try {
+			const source = await calendarApi.createIcsSource(destinationName.trim());
+			selectedImportSourceId = source.id;
+			await queryClient.invalidateQueries({ queryKey: ['calendar-sources'] });
+		} catch (error) {
+			console.debug('calendar import destination creation failed', error);
+			toastStore.show('Could not create an import destination.', 'error');
+		} finally {
+			creatingDestination = false;
 		}
 	}
 </script>
@@ -352,11 +399,42 @@
 			<div class="border-b border-[var(--rs-border)] px-4 py-3">
 				<h3 class="text-sm font-semibold text-base-content">Import .ics file</h3>
 				<p class="mt-0.5 text-xs text-base-content/55">
-					Upload an iCalendar export. Events are parsed and added in the background; re-importing
-					the same file updates in place.
+					Choose a destination, preview event changes, then confirm the import.
 				</p>
 			</div>
 			<div class="p-4">
+				<label class="mb-3 block text-xs font-medium" for="calendar-import-destination">
+					Destination calendar
+				</label>
+				<select
+					id="calendar-import-destination"
+					class="select-bordered select mb-3 w-full select-sm"
+					value={selectedImportSourceId}
+					onchange={(event) => {
+						selectedImportSourceId = event.currentTarget.value;
+						importPreview = null;
+					}}
+				>
+					<option value="">Choose an import destination</option>
+					{#each importSources as source}
+						<option value={source.id}>{source.display_name}</option>
+					{/each}
+				</select>
+				<div class="mb-4 flex gap-2">
+					<input
+						class="input-bordered input min-w-0 flex-1 input-sm"
+						bind:value={destinationName}
+						aria-label="New destination name"
+					/>
+					<button
+						class="btn btn-ghost btn-sm"
+						type="button"
+						disabled={creatingDestination || !destinationName.trim()}
+						onclick={createImportDestination}
+					>
+						{creatingDestination ? 'Creating…' : 'Create destination'}
+					</button>
+				</div>
 				<input
 					type="file"
 					accept=".ics,text/calendar"
@@ -374,6 +452,33 @@
 					{#if uploading}<span class="loading loading-xs loading-spinner"></span>{/if}
 					<Upload size={14} /> Choose .ics file
 				</button>
+				{#if importPreview}
+					<div class="mt-4 rounded border border-[var(--rs-border)] p-3" aria-live="polite">
+						<p class="text-sm font-medium">Preview: {importFile?.name}</p>
+						<p class="my-2 text-xs text-base-content/70">
+							{importPreview.new_events} new · {importPreview.duplicates} unchanged · {importPreview.conflicts}
+							changed · {importPreview.unsupported} unsupported
+						</p>
+						<ul class="max-h-64 divide-y divide-[var(--rs-border)] overflow-auto text-xs">
+							{#each importPreview.events as event}
+								<li class="py-2">
+									<strong>{event.title ?? event.uid ?? 'Unsupported event'}</strong>
+									<span class="ml-2 badge badge-ghost badge-sm">{event.outcome}</span>
+									{#if event.starts_at}<span class="ml-2">{event.starts_at}</span>{/if}
+									{#if event.diagnostic}<p class="mt-1 text-warning">{event.diagnostic}</p>{/if}
+								</li>
+							{/each}
+						</ul>
+						<button
+							class="btn mt-3 btn-primary btn-sm"
+							type="button"
+							disabled={uploading || importPreview.unsupported === importPreview.events.length}
+							onclick={confirmImport}
+						>
+							{uploading ? 'Importing…' : 'Confirm import'}
+						</button>
+					</div>
+				{/if}
 
 				{#if importJobs.length > 0}
 					<ul class="mt-4 flex flex-col gap-1.5">
@@ -382,8 +487,11 @@
 								<span class="truncate">{job.filename}</span>
 								<span class="badge badge-ghost badge-sm">{job.status}</span>
 								<span class="text-base-content/50">
-									{job.processed_events}/{job.total_events} events
+									{job.processed_events} processed · {job.failed_events} failed of {job.total_events}
 								</span>
+								{#if job.last_error}
+									<span class="text-warning" role="status">{job.last_error}</span>
+								{/if}
 							</li>
 						{/each}
 					</ul>
