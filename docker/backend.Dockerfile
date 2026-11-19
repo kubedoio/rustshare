@@ -79,12 +79,12 @@ RUN mkdir -p target/release \
 
 # The backend needs libgcc_s for Rust unwinding. Source it from the same
 # official Debian 13 runtime family without inheriting cc's vulnerable zlib.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cc66d222f0a7ec996b78a99fe76a969bc80b539a5016ad866c14d1949bc6d0ab AS runtime-libraries
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:cb87acc574abe719b6e5c547384defa2f7b1f24af9605d3f618cf852495d8be2 AS runtime-libraries
 
 # =============================================================================
 # Stage 3: Runtime Image
 # =============================================================================
-FROM gcr.io/distroless/base-nossl-debian13:nonroot@sha256:e6b0f82595aa1edde72c8054de7a9dca30f0f8f54820c37a167c0ddfc21c5c67
+FROM gcr.io/distroless/base-nossl-debian13:nonroot@sha256:89815d620ac01d8de13cdaf04d19ed874447ca2296d4985b14b818f6e5e47854
 
 # Copy binaries and frontend build
 COPY --from=builder /app/target/release/rustshare-server /usr/local/bin/
