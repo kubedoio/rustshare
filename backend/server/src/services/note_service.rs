@@ -1721,6 +1721,48 @@ impl NoteService {
         self.reconcile_note(file_id, user_id, tenant_id).await
     }
 
+    /// Read a Notes resource without reconciling or mutating its source files.
+    pub async fn get_note_for_resource(
+        &self,
+        file_id: Uuid,
+        user_id: UserId,
+        tenant_id: Uuid,
+    ) -> Result<Note, NoteError> {
+        let file = self.file_service.get_file(file_id, user_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
+        let workspace_prefix = format!("/{}/{}/", self.workspace_name, self.folder_name);
+        let folder_prefix = format!("/{}/", self.folder_name);
+        if !(file.path.starts_with(&workspace_prefix) || file.path.starts_with(&folder_prefix)) {
+            return Err(NoteError::NotFound(file_id));
+        }
+        let metadata = match self
+            .load_metadata(file_id, file.owner_id, tenant_id)
+            .await?
+        {
+            Some(metadata) if metadata.kind == "note" => metadata,
+            Some(_) => return Err(NoteError::NotFound(file_id)),
+            None => {
+                let mut metadata = NoteMetadata::new(file.name.trim_end_matches(".md"));
+                metadata.created_at = file.created_at;
+                metadata.updated_at = file.modified_at;
+                metadata
+            }
+        };
+        let content = self
+            .object_store
+            .get(&file.storage_key())
+            .await
+            .map_err(|error| NoteError::Storage(error.to_string()))?;
+        Ok(self.build_note(
+            file,
+            metadata,
+            String::from_utf8_lossy(&content).into_owned(),
+            None,
+        ))
+    }
+
     /// Reconcile external edits to an OKF-native note.
     ///
     /// Compares the note.md frontmatter, sidecar metadata, manifest, and bundle

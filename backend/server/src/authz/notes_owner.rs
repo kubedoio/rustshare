@@ -58,7 +58,7 @@ impl NotesResourceOwner {
             .user_authority_id;
         let note_id = Uuid::parse_str(&resource.resource_id).map_err(|_| SourceError::NotFound)?;
         self.notes
-            .get_note(note_id, user_id.0, ctx.tenant_id.0)
+            .get_note_for_resource(note_id, user_id.0, ctx.tenant_id.0)
             .await
             .map_err(map_note_error)
     }

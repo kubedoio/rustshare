@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use bytes::Bytes;
 use rustshare_core::domain::{
     ApplicationId, ApplicationRegistry, PrincipalId, TenantId, WorkspaceId,
 };
@@ -40,6 +41,34 @@ async fn note_refs_follow_current_file_authorization_and_revoke_immediately() {
         )
         .await
         .expect("create note fixture");
+    state
+        .file_service
+        .edit_file(
+            note.id,
+            owner.id,
+            Bytes::from_static(b"plain note contents"),
+            "overwrite",
+            None,
+        )
+        .await
+        .expect("make note content require reconciliation on a normal Notes read");
+    let note_version = state
+        .file_service
+        .get_file(note.id, owner.id)
+        .await
+        .expect("read note file");
+    let ordinary_file = state
+        .file_service
+        .upload_file(
+            owner.id,
+            "ordinary.md".into(),
+            None,
+            Bytes::from_static(b"plain file contents"),
+            "text/markdown".into(),
+            tenant_id,
+        )
+        .await
+        .expect("create ordinary Markdown file outside Notes");
 
     let registry = ApplicationRegistry::first_party().expect("first-party applications");
     let mut owners = ResourceOwnerRegistry::new();
@@ -75,6 +104,31 @@ async fn note_refs_follow_current_file_authorization_and_revoke_immediately() {
         .expect("owner can resolve their note");
     assert!(own.available);
     assert_eq!(own.display_name, "Linked note");
+    assert_eq!(
+        state
+            .file_service
+            .get_file(note.id, owner.id)
+            .await
+            .expect("re-read note file")
+            .current_version,
+        note_version.current_version,
+        "read-only resource resolution must not reconcile or edit the note"
+    );
+    let ordinary_ref = ResourceRef::new(
+        ApplicationId::new("io.elembra.notes"),
+        "notes.resource",
+        ordinary_file.id.to_string(),
+    );
+    assert!(matches!(
+        authorizer
+            .resolve(
+                &principal(owner.id, tenant_id),
+                &ordinary_ref,
+                Purpose::UserOpen,
+            )
+            .await,
+        Err(rustshare_resource_auth::SourceError::NotFound)
+    ));
 
     sqlx::query(
         "INSERT INTO shares (id, file_id, share_token, created_by, permissions, recipient_user_id, tenant_id)
