@@ -1104,7 +1104,7 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
         serde_json::json!({"archived":false}),
     )
     .await;
-    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
     let (status, restored_group) = send_json(
         &app,
         "PATCH",
