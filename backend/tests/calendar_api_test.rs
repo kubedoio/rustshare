@@ -149,9 +149,20 @@ async fn event_note_is_idempotent_durable_and_survives_event_deletion() {
                 .unwrap(),
         )
     };
-    let response = open_note().await.unwrap();
-    let (status, first) = response_json(response).await;
-    assert_eq!(status, StatusCode::CREATED);
+    let (first_response, concurrent_response) = tokio::join!(open_note(), open_note());
+    let (first_status, first_payload) = response_json(first_response.unwrap()).await;
+    let (concurrent_status, concurrent) = response_json(concurrent_response.unwrap()).await;
+    assert_ne!(first_status, concurrent_status);
+    assert!(
+        [first_status, concurrent_status].contains(&StatusCode::CREATED)
+            && [first_status, concurrent_status].contains(&StatusCode::OK)
+    );
+    assert_eq!(concurrent["note_id"], first_payload["note_id"]);
+    let first = if first_status == StatusCode::CREATED {
+        first_payload
+    } else {
+        concurrent.clone()
+    };
     assert_eq!(first["resource"]["application"], "io.elembra.notes");
     assert_eq!(first["resource"]["resourceType"], "notes.resource");
 
@@ -248,6 +259,29 @@ async fn event_note_is_idempotent_durable_and_survives_event_deletion() {
     assert!(note.content.contains("Weekly sync"));
 
     restarted_state
+        .note_service
+        .delete_note(note_id, user.id, tenant_id)
+        .await
+        .expect("delete linked Note");
+    let response = restarted_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}/notes"))
+                .method("POST")
+                .header("Authorization", format!("Bearer {restarted_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, replacement_note) = response_json(response).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let replacement_note_id =
+        Uuid::parse_str(replacement_note["note_id"].as_str().unwrap()).unwrap();
+    assert_ne!(replacement_note_id, note_id);
+
+    restarted_state
         .calendar_service
         .delete_event(tenant_id, user.id, Uuid::parse_str(event_id).unwrap())
         .await
@@ -268,7 +302,7 @@ async fn event_note_is_idempotent_durable_and_survives_event_deletion() {
     assert!(remaining_link.is_none());
     restarted_state
         .note_service
-        .get_note(note_id, user.id, tenant_id)
+        .get_note(replacement_note_id, user.id, tenant_id)
         .await
         .expect("deleting an event preserves its independent Note");
 

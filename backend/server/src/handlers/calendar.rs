@@ -645,15 +645,73 @@ pub async fn open_calendar_event_note(
         ));
     }
 
-    let mut tx =
-        state.metadata_store.pool().begin().await.map_err(|error| {
+    let existing = sqlx::query_scalar::<_, Uuid>(
+        "SELECT note_id FROM calendar_event_note_links
+         WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3",
+    )
+    .bind(auth.tenant_id)
+    .bind(auth.user_id)
+    .bind(event.id)
+    .fetch_optional(state.metadata_store.pool())
+    .await
+    .map_err(|error| AppError::internal(format!("Could not read meeting Note link: {error}")))?;
+    if let Some(note_id) = existing {
+        let resource = note_resource_ref(note_id);
+        match state
+            .source_authorizer
+            .resolve(&principal_context(&auth), &resource, Purpose::UserOpen)
+            .await
+        {
+            Ok(_) => {
+                return Ok((
+                    StatusCode::OK,
+                    Json(CalendarEventNoteResponse {
+                        event_id: event.id,
+                        note_id,
+                        resource,
+                    }),
+                ));
+            }
+            Err(SourceError::NotFound) => {
+                sqlx::query(
+                    "DELETE FROM calendar_event_note_links
+                     WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3 AND note_id = $4",
+                )
+                .bind(auth.tenant_id)
+                .bind(auth.user_id)
+                .bind(event.id)
+                .bind(note_id)
+                .execute(state.metadata_store.pool())
+                .await
+                .map_err(|error| {
+                    AppError::internal(format!("Could not clear unavailable meeting Note: {error}"))
+                })?;
+            }
+            Err(error) => return Err(calendar_note_source_error(error)),
+        }
+    }
+
+    let lock_key = format!("{}:{}:{}", auth.tenant_id, auth.user_id, event.id);
+    let mut tx = loop {
+        let mut tx = state.metadata_store.pool().begin().await.map_err(|error| {
             AppError::internal(format!("Could not reserve meeting Note: {error}"))
         })?;
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-        .bind(format!("{}:{}:{}", auth.tenant_id, auth.user_id, event.id))
+        let acquired = sqlx::query_scalar::<_, bool>(
+            "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))",
+        )
+        .bind(&lock_key)
         .fetch_one(&mut *tx)
         .await
         .map_err(|error| AppError::internal(format!("Could not reserve meeting Note: {error}")))?;
+        if acquired {
+            break tx;
+        }
+        // Release the connection between attempts so lock waiters do not starve NoteService.
+        tx.rollback().await.map_err(|error| {
+            AppError::internal(format!("Could not release meeting Note lock: {error}"))
+        })?;
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    };
     let event_exists = sqlx::query_scalar::<_, Uuid>(
         "SELECT id FROM calendar_events
          WHERE tenant_id = $1 AND owner_id = $2 AND id = $3 AND deleted_at IS NULL
@@ -729,11 +787,30 @@ pub async fn open_calendar_event_note(
     }
 
     let resource = note_resource_ref(note_id);
-    state
+    if let Err(error) = state
         .source_authorizer
         .resolve(&principal_context(&auth), &resource, Purpose::UserOpen)
         .await
-        .map_err(calendar_note_source_error)?;
+    {
+        if matches!(error, SourceError::NotFound) {
+            sqlx::query(
+                "DELETE FROM calendar_event_note_links
+                 WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3 AND note_id = $4",
+            )
+            .bind(auth.tenant_id)
+            .bind(auth.user_id)
+            .bind(event.id)
+            .bind(note_id)
+            .execute(state.metadata_store.pool())
+            .await
+            .map_err(|delete_error| {
+                AppError::internal(format!(
+                    "Could not clear unavailable meeting Note: {delete_error}"
+                ))
+            })?;
+        }
+        return Err(calendar_note_source_error(error));
+    }
     Ok((
         status,
         Json(CalendarEventNoteResponse {
