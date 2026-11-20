@@ -187,6 +187,10 @@ name = "notes_test"
 path = "../tests/notes_test.rs"
 
 [[test]]
+name = "notes_resource_owner_test"
+path = "../tests/notes_resource_owner_test.rs"
+
+[[test]]
 name = "note_visibility_http_test"
 path = "../tests/note_visibility_http_test.rs"
 
