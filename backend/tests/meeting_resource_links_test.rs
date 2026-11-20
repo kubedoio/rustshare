@@ -51,6 +51,14 @@ fn install_files_authorizer(state: &mut rustshare_server::state::AppState) {
             &registry,
         )
         .expect("register Files resource owner");
+    owners
+        .register(
+            Arc::new(rustshare_server::authz::NotesResourceOwner::new(
+                state.note_service.clone(),
+            )),
+            &registry,
+        )
+        .expect("register Notes resource owner");
     state.source_authorizer = Arc::new(SourceAuthorizer::new(owners));
 }
 
@@ -147,6 +155,10 @@ fn resource_ref(file_id: Uuid) -> String {
     format!("elembra://io.elembra.files/file/{file_id}")
 }
 
+fn note_resource_ref(note_id: Uuid) -> String {
+    format!("elembra://io.elembra.notes/notes.resource/{note_id}")
+}
+
 async fn cleanup_tenant_with_versions(pool: &PgPool, tenant_id: Uuid) {
     sqlx::query("DELETE FROM shares WHERE tenant_id = $1")
         .bind(tenant_id)
@@ -237,10 +249,11 @@ async fn direct_links_are_idempotent_permission_aware_persistent_and_non_destruc
         &token,
         "POST",
         &uri,
-        Some(json!({"resource_ref": resource_ref(note.id)})),
+        Some(json!({"resource_ref": note_resource_ref(note.id)})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{linked_note}");
+    assert_eq!(linked_note["resource_ref"], note_resource_ref(note.id));
     assert_eq!(linked_note["resource_kind"], "note");
     assert_eq!(linked_note["open_url"], format!("/apps/notes/{}", note.id));
     let (status, note_read) = request_json(
@@ -491,6 +504,106 @@ async fn direct_links_are_idempotent_permission_aware_persistent_and_non_destruc
         .await
         .expect("unlink leaves target content intact");
     assert_eq!(stored_content.as_ref(), b"meeting resource content");
+
+    cleanup_tenant_with_versions(&state.db_pool, foreign_tenant).await;
+    cleanup_tenant_with_versions(&state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires the guarded disposable PostgreSQL and object-store services"]
+async fn notes_resource_links_use_current_notes_authorization() {
+    let _guard = SERIAL.lock().await;
+    let mut state = setup_test_env().await;
+    install_files_authorizer(&mut state);
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let foreign_tenant = create_test_tenant(&state.db_pool).await;
+    let owner = create_test_user(&state, "meeting_notes_resource_owner", tenant_id).await;
+    let attendee = create_test_user(&state, "meeting_notes_resource_attendee", tenant_id).await;
+    let foreign = create_test_user(&state, "meeting_notes_resource_foreign", foreign_tenant).await;
+    let note = state
+        .note_service
+        .create_note(
+            owner.id,
+            tenant_id,
+            Some("Shared meeting notes".into()),
+            None,
+            Some("Sensitive meeting contents".into()),
+        )
+        .await
+        .expect("create shared Note");
+    let meeting_id = create_meeting(&state, attendee.id, tenant_id).await;
+    let token = create_auth_token(&state, attendee.id, tenant_id);
+    let api = app(state.clone());
+    let uri = format!("/api/v1/meetings/{meeting_id}/resources");
+    let payload = json!({"resource_ref": note_resource_ref(note.id)});
+
+    let (status, _) = request_json(&api, &token, "POST", &uri, Some(payload.clone())).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "private Notes cannot be linked"
+    );
+
+    let foreign_note = state
+        .note_service
+        .create_note(
+            foreign.id,
+            foreign_tenant,
+            Some("Foreign meeting notes".into()),
+            None,
+            Some("Foreign contents".into()),
+        )
+        .await
+        .expect("create foreign Note");
+    let (status, _) = request_json(
+        &api,
+        &token,
+        "POST",
+        &uri,
+        Some(json!({"resource_ref": note_resource_ref(foreign_note.id)})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "foreign Notes are concealed");
+
+    grant_direct(&state.db_pool, note.id, owner.id, attendee.id, tenant_id).await;
+    let (status, first) = request_json(&api, &token, "POST", &uri, Some(payload.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["resource_ref"], note_resource_ref(note.id));
+    assert_eq!(first["resource_kind"], "note");
+    assert_eq!(first["display_name"], "Shared meeting notes");
+    assert_eq!(first["open_url"], format!("/apps/notes/{}", note.id));
+    let (status, retry) = request_json(&api, &token, "POST", &uri, Some(payload)).await;
+    assert_eq!(status, StatusCode::OK, "{retry}");
+    assert_eq!(retry["id"], first["id"], "link creation is idempotent");
+    let (status, note_view) = request_json(
+        &api,
+        &token,
+        "GET",
+        &format!("/api/v1/notes/{}", note.id),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{note_view}");
+
+    sqlx::query("DELETE FROM shares WHERE file_id = $1 AND recipient_user_id = $2")
+        .bind(note.id)
+        .bind(attendee.id)
+        .execute(&state.db_pool)
+        .await
+        .expect("revoke current Files permission");
+    let (status, page) = request_json(&api, &token, "GET", &uri, None).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let unavailable = page["items"]
+        .as_array()
+        .expect("resource list")
+        .iter()
+        .find(|item| item["id"] == first["id"])
+        .expect("linked Note remains attributable");
+    assert_eq!(unavailable["available"], false);
+    for field in ["display_name", "open_url", "resource_ref"] {
+        assert!(unavailable.get(field).is_none());
+    }
+    assert!(!page.to_string().contains("Sensitive meeting contents"));
 
     cleanup_tenant_with_versions(&state.db_pool, foreign_tenant).await;
     cleanup_tenant_with_versions(&state.db_pool, tenant_id).await;

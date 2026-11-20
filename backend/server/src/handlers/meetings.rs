@@ -59,12 +59,16 @@ pub(crate) fn principal(auth: &AuthenticatedUser) -> PrincipalContext {
 fn parse_meeting_resource_ref(uri: &str) -> Result<ResourceRef, AppError> {
     let mut resource = ResourceRef::from_uri(uri)
         .map_err(|_| AppError::bad_request("Invalid resource reference"))?;
-    if resource.application.0 != "io.elembra.files"
-        || resource.resource_type != "file"
-        || resource.version.is_some()
+    if !matches!(
+        (
+            resource.application.0.as_str(),
+            resource.resource_type.as_str()
+        ),
+        ("io.elembra.files", "file") | ("io.elembra.notes", "notes.resource")
+    ) || resource.version.is_some()
     {
         return Err(AppError::bad_request(
-            "Meeting links require a current Files file reference",
+            "Meeting links require a current Files or Notes reference",
         ));
     }
     resource.resource_id = Uuid::parse_str(&resource.resource_id)
@@ -120,6 +124,19 @@ async fn meeting_resource_view(
         Err(SourceError::Internal(_)) => return Err(AppError::internal("Resource access failed")),
         Err(_) => return Ok(unavailable()),
     };
+
+    if resource.application.0 == "io.elembra.notes" {
+        return Ok(MeetingResourceLinkView {
+            id,
+            available: true,
+            created_at,
+            resource_ref: Some(resource.to_uri()),
+            display_name: Some(resolved.display_name),
+            media_type: resolved.media_type,
+            resource_kind: Some("note".into()),
+            open_url: Some(format!("/apps/notes/{}", resource.resource_id)),
+        });
+    }
 
     // The canonical Notes resources are file-backed. Keep their Files ResourceRef,
     // and derive the owning UI route only after the Files owner reauthorizes access.
