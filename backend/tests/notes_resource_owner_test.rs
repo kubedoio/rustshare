@@ -180,6 +180,11 @@ async fn note_refs_follow_current_file_authorization_and_revoke_immediately() {
         .delete_note(note.id, owner.id, tenant_id)
         .await
         .expect("clean up note fixture");
+    sqlx::query("DELETE FROM file_versions WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&state.db_pool)
+        .await
+        .expect("clean up note file versions");
     cleanup_tenant(&state.db_pool, tenant_id).await;
     cleanup_tenant(&state.db_pool, foreign_tenant_id).await;
 }
