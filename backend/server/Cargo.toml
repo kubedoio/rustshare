@@ -17,6 +17,10 @@ path = "../tests/upstream_publisher_contract.rs"
 name = "meeting_decisions_test"
 path = "../tests/meeting_decisions_test.rs"
 
+[[test]]
+name = "folder_metadata_error_test"
+path = "../tests/folder_metadata_error_test.rs"
+
 [features]
 test-recording-provider = []
 # Non-distributable debug acceptance build. Fixture code is also gated on

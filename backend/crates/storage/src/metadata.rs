@@ -8546,8 +8546,22 @@ impl rustshare_core::services::FolderMetadataStoreOps for MetadataStore {
         &self,
         tx: &mut Self::Tx,
         folder: &rustshare_core::domain::Folder,
-    ) -> anyhow::Result<()> {
-        self.create_folder_in_tx(tx, folder).await
+    ) -> std::result::Result<(), rustshare_core::services::FolderMetadataError> {
+        match self.create_folder_in_tx(tx, folder).await {
+            Ok(()) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<sqlx::Error>(),
+                    Some(sqlx::Error::Database(database_error))
+                        if database_error.constraint() == Some("idx_folders_unique_name")
+                ) =>
+            {
+                Err(rustshare_core::services::FolderMetadataError::DuplicateName)
+            }
+            Err(error) => Err(rustshare_core::services::FolderMetadataError::Failed(
+                error.to_string(),
+            )),
+        }
     }
 
     async fn find_folder_by_id(

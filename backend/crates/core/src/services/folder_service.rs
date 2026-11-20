@@ -41,6 +41,17 @@ pub trait EventStoreOps: Send + Sync {
     async fn append_in_tx(&self, tx: &mut Self::Tx, event: &Event) -> Result<()>;
 }
 
+/// Storage outcomes for creating a folder inside a transaction.
+#[derive(Debug, thiserror::Error)]
+pub enum FolderMetadataError {
+    /// A folder with the same name already exists under the parent.
+    #[error("folder name already exists")]
+    DuplicateName,
+    /// Any other metadata write failure.
+    #[error("{0}")]
+    Failed(String),
+}
+
 /// Trait for metadata store operations needed by FolderService.
 ///
 /// This trait abstracts the metadata store to allow for testing without database dependencies.
@@ -53,7 +64,11 @@ pub trait MetadataStoreOps: Send + Sync {
     async fn create_folder(&self, folder: &Folder) -> Result<()>;
 
     /// Create a folder in the metadata store inside a transaction.
-    async fn create_folder_in_tx(&self, tx: &mut Self::Tx, folder: &Folder) -> Result<()>;
+    async fn create_folder_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        folder: &Folder,
+    ) -> std::result::Result<(), FolderMetadataError>;
 
     /// Find a folder by ID.
     async fn find_folder_by_id(&self, id: FolderId, owner_id: UserId) -> Result<Option<Folder>>;
@@ -276,20 +291,18 @@ where
             .append_in_tx(&mut tx, &event)
             .await
             .map_err(|e| FolderError::Database(format!("Failed to append event: {}", e)))?;
-        if let Err(e) = self
+        if let Err(error) = self
             .metadata_store
             .create_folder_in_tx(&mut tx, &folder)
             .await
         {
-            if let Some(sqlx::Error::Database(ref db_err)) = e.downcast_ref::<sqlx::Error>() {
-                if db_err.constraint() == Some("idx_folders_unique_name") {
-                    return Err(FolderError::DuplicateName {
-                        name: folder.name.clone(),
-                        parent_id: folder.parent_folder_id.unwrap_or(folder.id),
-                    });
-                }
+            if matches!(error, FolderMetadataError::DuplicateName) {
+                return Err(FolderError::DuplicateName {
+                    name: folder.name.clone(),
+                    parent_id: folder.parent_folder_id.unwrap_or(folder.id),
+                });
             }
-            return Err(FolderError::Database(e.to_string()));
+            return Err(FolderError::Database(error.to_string()));
         }
         self.event_store
             .commit_transaction(tx)
@@ -952,6 +965,7 @@ mod tests {
     struct MockMetadataStore {
         folders: Mutex<HashMap<FolderId, Folder>>,
         files: Mutex<HashMap<FolderId, Vec<File>>>,
+        duplicate_on_create: Mutex<Option<Folder>>,
     }
 
     impl MockMetadataStore {
@@ -959,6 +973,7 @@ mod tests {
             Self {
                 folders: Mutex::new(HashMap::new()),
                 files: Mutex::new(HashMap::new()),
+                duplicate_on_create: Mutex::new(None),
             }
         }
     }
@@ -974,7 +989,18 @@ mod tests {
             Ok(())
         }
 
-        async fn create_folder_in_tx(&self, _tx: &mut Self::Tx, folder: &Folder) -> Result<()> {
+        async fn create_folder_in_tx(
+            &self,
+            _tx: &mut Self::Tx,
+            folder: &Folder,
+        ) -> std::result::Result<(), FolderMetadataError> {
+            if let Some(concurrent_folder) = self.duplicate_on_create.lock().unwrap().take() {
+                self.folders
+                    .lock()
+                    .unwrap()
+                    .insert(concurrent_folder.id, concurrent_folder);
+                return Err(FolderMetadataError::DuplicateName);
+            }
             self.folders
                 .lock()
                 .unwrap()
@@ -2541,6 +2567,34 @@ mod tests {
         // No new event should be emitted
         let events = event_store.events.lock().unwrap();
         assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_create_folder_or_get_returns_concurrent_folder_after_duplicate() {
+        let event_store = Arc::new(MockEventStore::new());
+        let metadata_store = Arc::new(MockMetadataStore::new());
+        let service = FolderService::new(
+            event_store,
+            metadata_store.clone(),
+            Arc::new(EventBroadcaster::new(100)),
+            Arc::new(PermissionResolver::new(Arc::new(
+                MockPermissionOps::with_store(metadata_store.clone()),
+            ))),
+        );
+
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let concurrent_folder =
+            Folder::new_root_with_name("Workspace".to_string(), owner_id, tenant_id);
+        *metadata_store.duplicate_on_create.lock().unwrap() = Some(concurrent_folder.clone());
+
+        let folder = service
+            .create_folder_or_get("Workspace".to_string(), None, owner_id, tenant_id)
+            .await
+            .unwrap();
+
+        assert_eq!(folder.id, concurrent_folder.id);
+        assert_eq!(folder.name, "Workspace");
     }
 
     #[tokio::test]

@@ -45,7 +45,8 @@ pub use file_service::{
     MetadataStoreOps as FileMetadataStoreOps, ObjectStoreOps,
 };
 pub use folder_service::{
-    EventStoreOps as FolderEventStoreOps, FolderService, MetadataStoreOps as FolderMetadataStoreOps,
+    EventStoreOps as FolderEventStoreOps, FolderMetadataError, FolderService,
+    MetadataStoreOps as FolderMetadataStoreOps,
 };
 pub use keyword_index::KeywordIndexer;
 pub use notification_errors::NotificationError;

@@ -86,6 +86,16 @@ def violations(
         for name, source in sources.items()
         if reads_process_configuration(source)
     )
+    folder_service = next(
+        (
+            source
+            for name, source in sources.items()
+            if name.replace("\\", "/").endswith("backend/crates/core/src/services/folder_service.rs")
+        ),
+        "",
+    )
+    if re.search(r"\bsqlx\s*::\s*Error\b|\bidx_folders_unique_name\b", folder_service):
+        errors.append("FolderService contains SQLx-specific duplicate-name handling")
     return errors
 
 
@@ -134,6 +144,18 @@ def self_test() -> None:
         '[workspace.dependencies]\nclock = { package = "chrono", version = "0.4" }\n'
         'parser = { package = "mailparse", version = "0.17" }\n',
     ) == []
+    folder_service = "backend/crates/core/src/services/folder_service.rs"
+    assert violations(
+        '[dependencies]\nchrono = "1"\n',
+        {folder_service: "FolderMetadataError::DuplicateName"},
+    ) == []
+    for source in (
+        "sqlx::Error::Database(error)",
+        'database_error.constraint() == Some("idx_folders_unique_name")',
+    ):
+        assert violations('[dependencies]\nchrono = "1"\n', {folder_service: source}) == [
+            "FolderService contains SQLx-specific duplicate-name handling"
+        ], source
     for source in (
         'std::env::var("RUSTSHARE_SETTING")',
         'use std::env; env::var_os("RUSTSHARE_SETTING")',
