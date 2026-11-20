@@ -155,6 +155,39 @@ async fn event_note_is_idempotent_durable_and_survives_event_deletion() {
     assert_eq!(first["resource"]["application"], "io.elembra.notes");
     assert_eq!(first["resource"]["resourceType"], "notes.resource");
 
+    let other_tenant_id = create_test_tenant(&state.db_pool).await;
+    let other_user = create_test_user(&state, "calendar_event_note_other", other_tenant_id).await;
+    configure_calendar(&state, other_tenant_id, other_user.id, true).await;
+    let other_token = create_auth_token(&state, other_user.id, other_tenant_id);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}/notes"))
+                .method("POST")
+                .header("Authorization", format!("Bearer {other_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/calendar/notes/{}/event",
+                    first["note_id"].as_str().unwrap()
+                ))
+                .header("Authorization", format!("Bearer {other_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
     let response = open_note().await.unwrap();
     let (status, repeated) = response_json(response).await;
     assert_eq!(status, StatusCode::OK);
@@ -239,6 +272,7 @@ async fn event_note_is_idempotent_durable_and_survives_event_deletion() {
         .await
         .expect("deleting an event preserves its independent Note");
 
+    cleanup_tenant(&restarted_state.db_pool, other_tenant_id).await;
     cleanup_tenant(&restarted_state.db_pool, tenant_id).await;
 }
 

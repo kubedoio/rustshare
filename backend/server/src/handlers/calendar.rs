@@ -698,7 +698,7 @@ pub async fn open_calendar_event_note(
             .map_err(|error| {
                 AppError::internal(format!("Could not create meeting Note: {error}"))
             })?;
-        sqlx::query(
+        if let Err(error) = sqlx::query(
             "INSERT INTO calendar_event_note_links (tenant_id, owner_id, event_id, note_id)
              VALUES ($1, $2, $3, $4)",
         )
@@ -708,12 +708,55 @@ pub async fn open_calendar_event_note(
         .bind(note.id)
         .execute(&mut *tx)
         .await
-        .map_err(|error| AppError::internal(format!("Could not link meeting Note: {error}")))?;
+        {
+            let _ = tx.rollback().await;
+            if let Err(cleanup_error) = state
+                .note_service
+                .delete_note(note.id, auth.user_id, auth.tenant_id)
+                .await
+            {
+                tracing::error!(%cleanup_error, note_id = %note.id, "Could not remove unlinked meeting Note");
+            }
+            return Err(AppError::internal(format!(
+                "Could not link meeting Note: {error}"
+            )));
+        }
         (note.id, StatusCode::CREATED)
     };
-    tx.commit().await.map_err(|error| {
-        AppError::internal(format!("Could not save meeting Note link: {error}"))
-    })?;
+    if let Err(error) = tx.commit().await {
+        if status == StatusCode::CREATED {
+            match sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (
+                    SELECT 1 FROM calendar_event_note_links
+                    WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3 AND note_id = $4
+                )",
+            )
+            .bind(auth.tenant_id)
+            .bind(auth.user_id)
+            .bind(event.id)
+            .bind(note_id)
+            .fetch_one(state.metadata_store.pool())
+            .await
+            {
+                Ok(false) => {
+                    if let Err(cleanup_error) = state
+                        .note_service
+                        .delete_note(note_id, auth.user_id, auth.tenant_id)
+                        .await
+                    {
+                        tracing::error!(%cleanup_error, note_id = %note_id, "Could not remove unlinked meeting Note");
+                    }
+                }
+                Ok(true) => {}
+                Err(check_error) => {
+                    tracing::error!(%check_error, note_id = %note_id, "Could not verify meeting Note link after commit failure");
+                }
+            }
+        }
+        return Err(AppError::internal(format!(
+            "Could not save meeting Note link: {error}"
+        )));
+    }
 
     let resource = note_resource_ref(note_id);
     state
