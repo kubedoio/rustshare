@@ -568,12 +568,14 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     let operator = create_user(&pool, tenant, true).await;
     let org_admin = create_user(&pool, tenant, false).await;
     let member = create_user(&pool, tenant, false).await;
+    let ordinary_user = create_user(&pool, tenant, false).await;
     let foreign = create_user(&pool, foreign_tenant, false).await;
     let nil_admin = create_user(&pool, Uuid::nil(), false).await;
     let nil_member = create_user(&pool, Uuid::nil(), false).await;
     let op_token = create_auth_token(&state, operator, tenant);
     let org_token = create_auth_token(&state, org_admin, tenant);
     let member_token = create_auth_token(&state, member, tenant);
+    let ordinary_user_token = create_auth_token(&state, ordinary_user, tenant);
     let foreign_token = create_auth_token(&state, foreign, foreign_tenant);
     let nil_token = create_auth_token(&state, nil_admin, Uuid::nil());
     state.default_tenant_config = rustshare_server::config::DefaultTenantConfig::Set(tenant);
@@ -1036,7 +1038,7 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
         &app,
         "GET",
         &format!("/api/v1/organization-admin/groups/{group_id}?search={roster_search}"),
-        &member_token,
+        &ordinary_user_token,
         None,
     )
     .await;
