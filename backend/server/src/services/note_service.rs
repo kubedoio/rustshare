@@ -1829,7 +1829,7 @@ impl NoteService {
             })?;
             let bundle_folder = self
                 .metadata_store
-                .find_folder_by_id(parent_folder_id, user_id)
+                .find_folder_by_id(parent_folder_id, file.owner_id)
                 .await
                 .map_err(|e| NoteError::Database(e.to_string()))?
                 .ok_or(NoteError::NotFound(parent_folder_id))?;
@@ -1837,14 +1837,14 @@ impl NoteService {
             let yaml_title = fm.title.clone().unwrap_or_default();
             let folder_name = bundle_folder.name.clone();
             let manifest_title = self
-                .load_manifest_title(Some(parent_folder_id), user_id, tenant_id)
+                .load_manifest_title(Some(parent_folder_id), file.owner_id, tenant_id)
                 .await
                 .unwrap_or_else(|| meta.title.clone());
 
             let yaml_mtime = file.modified_at;
             let folder_mtime = bundle_folder.updated_at;
             let manifest_mtime = self
-                .load_manifest(Some(parent_folder_id), user_id, tenant_id)
+                .load_manifest(Some(parent_folder_id), file.owner_id, tenant_id)
                 .await
                 .map(|(mf, _)| mf.modified_at)
                 .unwrap_or(meta.updated_at);
