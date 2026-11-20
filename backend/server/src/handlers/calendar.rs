@@ -720,34 +720,8 @@ pub async fn open_calendar_event_note(
     };
     if let Err(error) = tx.commit().await {
         if status == StatusCode::CREATED {
-            let check = async {
-                let mut verify_tx = state.metadata_store.pool().begin().await?;
-                sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-                    .bind(format!("{}:{}:{}", auth.tenant_id, auth.user_id, event.id))
-                    .fetch_one(&mut *verify_tx)
-                    .await?;
-                let linked = sqlx::query_scalar::<_, bool>(
-                    "SELECT EXISTS (
-                        SELECT 1 FROM calendar_event_note_links
-                        WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3 AND note_id = $4
-                    )",
-                )
-                .bind(auth.tenant_id)
-                .bind(auth.user_id)
-                .bind(event.id)
-                .bind(note_id)
-                .fetch_one(&mut *verify_tx)
-                .await?;
-                if !linked {
-                    cleanup_unlinked_meeting_note(&state, note_id, auth.user_id, auth.tenant_id)
-                        .await;
-                }
-                verify_tx.commit().await
-            }
-            .await;
-            if let Err(check_error) = check {
-                tracing::error!(%check_error, note_id = %note_id, "Could not verify meeting Note link after commit failure");
-            }
+            // shortcut: an ambiguous commit may orphan a Note; use a durable create intent for automated recovery.
+            tracing::error!(%note_id, "Could not confirm meeting Note link commit; preserving Note");
         }
         return Err(AppError::internal(format!(
             "Could not save meeting Note link: {error}"
