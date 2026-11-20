@@ -42,10 +42,18 @@ test('Calendar opens the same durable meeting note on repeat', async ({ page }) 
 	try {
 		await page.goto(`/apps/calendar?event_id=${calendarEvent.id}`);
 		await expect(page.getByRole('dialog', { name: 'Event details' })).toBeVisible();
+		const openResponse = page.waitForResponse(
+			(response) =>
+				response.url().endsWith(`/api/v1/calendar/events/${calendarEvent.id}/meeting`) &&
+				response.request().method() === 'POST'
+		);
 		await page.getByRole('button', { name: 'Open meeting note' }).click();
+		const opened = await openResponse;
+		expect(opened.ok()).toBeTruthy();
+		meetingId = (await opened.json()).id;
 		await page.waitForURL(/\/apps\/meetings\/[^/]+$/);
-		meetingId = page.url().split('/').at(-1);
 		expect(meetingId).toBeTruthy();
+		expect(new URL(page.url()).pathname).toBe(`/apps/meetings/${meetingId}`);
 
 		const reopened = await api.post(`/api/v1/calendar/events/${calendarEvent.id}/meeting`, {
 			headers
