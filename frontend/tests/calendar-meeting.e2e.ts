@@ -64,9 +64,16 @@ test('Calendar opens the same durable meeting note on repeat', async ({ page }) 
 		expect(note.ok()).toBeTruthy();
 		expect((await note.json()).content).toContain('Browser acceptance agenda');
 	} finally {
-		if (meetingId) {
-			await api.delete(`/api/v1/meetings/${meetingId}`, { headers });
+		try {
+			if (meetingId) {
+				const deletedMeeting = await api.delete(`/api/v1/meetings/${meetingId}`, { headers });
+				expect(deletedMeeting.ok()).toBeTruthy();
+			}
+		} finally {
+			const deletedEvent = await api.delete(`/api/v1/calendar/events/${calendarEvent.id}`, {
+				headers
+			});
+			expect(deletedEvent.ok()).toBeTruthy();
 		}
-		await api.delete(`/api/v1/calendar/events/${calendarEvent.id}`, { headers });
 	}
 });
