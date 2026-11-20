@@ -118,7 +118,10 @@ export const offboardOrganizationUsers = (user_ids: string[], dry_run: boolean) 
 export const listOrganizationGroups = (params: { page?: number; per_page?: number }) =>
 	apiClient.get<Page<OrgGroup>>(`${root}/groups${query(params)}`);
 
-export const getOrganizationGroup = (id: string, params: { page?: number; per_page?: number }) =>
+export const getOrganizationGroup = (
+	id: string,
+	params: { page?: number; per_page?: number; search?: string }
+) =>
 	apiClient.get<{
 		id: string;
 		name: string;
@@ -150,7 +153,7 @@ export const deleteOrganizationGroup = (id: string) =>
 
 export const listOrganizationGroupMembers = (
 	id: string,
-	params: { page?: number; per_page?: number }
+	params: { page?: number; per_page?: number; search?: string }
 ) =>
 	apiClient.get<Page<OrgMember>>(
 		`${root}/groups/${encodeURIComponent(id)}/members${query(params)}`
