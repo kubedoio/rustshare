@@ -23,7 +23,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::get;
 use chrono::{DateTime, Utc};
-use rustshare_core::domain::{MailMessage, MailSourceMode};
+use rustshare_core::domain::{ApplicationRegistry, MailMessage, MailSourceMode};
+use rustshare_resource_auth::{ResourceOwnerRegistry, SourceAuthorizer};
 use rustshare_server::services::calendar_service::CalendarError;
 use rustshare_server::services::google_calendar::{
     CalendarSyncConfig, GoogleCalendarClient, SyncOutcome,
@@ -115,7 +116,18 @@ async fn create_accepts_the_minimal_ui_payload() {
 #[ignore = "requires DATABASE_URL and migrations applied"]
 async fn event_note_is_idempotent_durable_and_survives_event_deletion() {
     let _guard = SERIAL.lock().await;
-    let state = setup_test_env().await;
+    let mut state = setup_test_env().await;
+    let applications = ApplicationRegistry::first_party().expect("first-party applications");
+    let mut owners = ResourceOwnerRegistry::new();
+    owners
+        .register(
+            Arc::new(rustshare_server::authz::NotesResourceOwner::new(
+                state.note_service.clone(),
+            )),
+            &applications,
+        )
+        .expect("register Notes owner");
+    state.source_authorizer = Arc::new(SourceAuthorizer::new(owners));
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let user = create_test_user(&state, "calendar_event_note", tenant_id).await;
     configure_calendar(&state, tenant_id, user.id, true).await;
@@ -152,7 +164,10 @@ async fn event_note_is_idempotent_durable_and_survives_event_deletion() {
     let (first_response, concurrent_response) = tokio::join!(open_note(), open_note());
     let (first_status, first_payload) = response_json(first_response.unwrap()).await;
     let (concurrent_status, concurrent) = response_json(concurrent_response.unwrap()).await;
-    assert_ne!(first_status, concurrent_status);
+    assert_ne!(
+        first_status, concurrent_status,
+        "first response: {first_payload:?}; concurrent response: {concurrent:?}"
+    );
     assert!(
         [first_status, concurrent_status].contains(&StatusCode::CREATED)
             && [first_status, concurrent_status].contains(&StatusCode::OK)
