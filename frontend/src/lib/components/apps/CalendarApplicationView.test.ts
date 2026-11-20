@@ -543,6 +543,24 @@ describe('CalendarApplicationView', () => {
 		expect(mocks.goto).toHaveBeenCalledWith('/apps/meetings/meeting-1');
 	});
 
+	it('does not attach meeting notes from an occurrence to its series', async () => {
+		const date = dayFromToday(1);
+		mocks.listEvents.mockResolvedValue([
+			eventAt(date, {
+				id: 'series',
+				title: 'Recurring event',
+				rrule: 'FREQ=DAILY',
+				instance_start: `${date}T14:00:00`
+			})
+		]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Recurring event/));
+		expect(screen.queryByRole('button', { name: 'Open meeting note' })).toBeNull();
+		expect(screen.getByText(/occurrence-specific notes are not available yet/)).toBeTruthy();
+		expect(mocks.openEventMeeting).not.toHaveBeenCalled();
+	});
+
 	it('opens a historical event from its event id in the calendar URL', async () => {
 		mocks.pageUrl = 'http://localhost/apps/calendar?event_id=old-event';
 		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(-60), { id: 'old-event' }));
