@@ -19,6 +19,7 @@ use crate::services::application_service::ApplicationError;
 use crate::services::calendar_service::{
     CalendarError, CalendarEventOccurrence, CalendarEventPatch, NewCalendarEvent,
 };
+use crate::services::note_service::NoteError;
 use crate::state::AppState;
 
 const CALENDAR_APPLICATION_ID: &str = "io.elembra.calendar";
@@ -710,13 +711,7 @@ pub async fn open_calendar_event_note(
         .await
         {
             let _ = tx.rollback().await;
-            if let Err(cleanup_error) = state
-                .note_service
-                .delete_note(note.id, auth.user_id, auth.tenant_id)
-                .await
-            {
-                tracing::error!(%cleanup_error, note_id = %note.id, "Could not remove unlinked meeting Note");
-            }
+            cleanup_unlinked_meeting_note(&state, note.id, auth.user_id, auth.tenant_id).await;
             return Err(AppError::internal(format!(
                 "Could not link meeting Note: {error}"
             )));
@@ -739,13 +734,8 @@ pub async fn open_calendar_event_note(
             .await
             {
                 Ok(false) => {
-                    if let Err(cleanup_error) = state
-                        .note_service
-                        .delete_note(note_id, auth.user_id, auth.tenant_id)
-                        .await
-                    {
-                        tracing::error!(%cleanup_error, note_id = %note_id, "Could not remove unlinked meeting Note");
-                    }
+                    cleanup_unlinked_meeting_note(&state, note_id, auth.user_id, auth.tenant_id)
+                        .await;
                 }
                 Ok(true) => {}
                 Err(check_error) => {
@@ -772,6 +762,33 @@ pub async fn open_calendar_event_note(
             resource,
         }),
     ))
+}
+
+async fn cleanup_unlinked_meeting_note(
+    state: &AppState,
+    note_id: Uuid,
+    user_id: Uuid,
+    tenant_id: Uuid,
+) {
+    if let Err(error) = state
+        .note_service
+        .delete_note(note_id, user_id, tenant_id)
+        .await
+    {
+        tracing::error!(%error, %note_id, "Could not remove unlinked meeting Note");
+        return;
+    }
+    match state
+        .note_service
+        .get_note(note_id, user_id, tenant_id)
+        .await
+    {
+        Ok(_) => tracing::error!(%note_id, "Unlinked meeting Note remains after cleanup"),
+        Err(NoteError::NotFound(_)) => {}
+        Err(error) => {
+            tracing::error!(%error, %note_id, "Could not verify unlinked meeting Note cleanup")
+        }
+    }
 }
 
 #[utoipa::path(
