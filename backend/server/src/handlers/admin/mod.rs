@@ -10,6 +10,8 @@ pub mod users;
 pub mod webhooks;
 pub mod workflows;
 
+pub use crate::services::organization_administrators::insert_scoped_admin_action;
+
 use axum::http::HeaderMap;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
@@ -84,37 +86,6 @@ pub async fn insert_admin_action(
     .execute(&mut **tx)
     .await?;
 
-    Ok(())
-}
-
-/// Insert a tenant-attributable success record with the mutation in one transaction.
-#[allow(clippy::too_many_arguments)]
-pub async fn insert_scoped_admin_action(
-    tx: &mut Transaction<'_, Postgres>,
-    tenant_id: Uuid,
-    actor_id: Uuid,
-    action_type: &str,
-    target_type: Option<&str>,
-    target_id: Option<Uuid>,
-    detail: serde_json::Value,
-    correlation_id: Option<&str>,
-) -> Result<(), sqlx::Error> {
-    let detail = audit::project_audit_detail("admin_action", action_type, &detail);
-    sqlx::query(
-        "INSERT INTO admin_actions
-            (tenant_id, actor_id, actor_principal_id, action_type, target_type, target_id,
-             detail, correlation_id, outcome)
-         VALUES ($1, $2, $2, $3, $4, $5, $6, $7, 'success')",
-    )
-    .bind(tenant_id)
-    .bind(actor_id)
-    .bind(action_type)
-    .bind(target_type)
-    .bind(target_id)
-    .bind(detail)
-    .bind(correlation_id)
-    .execute(&mut **tx)
-    .await?;
     Ok(())
 }
 
