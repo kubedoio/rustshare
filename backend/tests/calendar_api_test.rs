@@ -326,6 +326,19 @@ async fn event_note_is_idempotent_durable_and_survives_event_deletion() {
         .await
         .expect("deleting an event preserves its independent Note");
 
+    for note_id in [first_note_id, replacement_note_id] {
+        restarted_state
+            .note_service
+            .delete_note(note_id, user.id, tenant_id)
+            .await
+            .expect("clean up preserved test Note");
+    }
+    sqlx::query("DELETE FROM file_versions WHERE tenant_id = $1")
+        .bind(tenant_id)
+        .execute(&restarted_state.db_pool)
+        .await
+        .expect("clean up test Note versions");
+
     cleanup_tenant(&restarted_state.db_pool, other_tenant_id).await;
     cleanup_tenant(&restarted_state.db_pool, tenant_id).await;
 }
