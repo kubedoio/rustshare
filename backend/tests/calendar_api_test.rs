@@ -39,6 +39,20 @@ mod support;
 
 use support::calendar_harness::*;
 
+fn install_notes_authorizer(state: &mut AppState) {
+    let applications = ApplicationRegistry::first_party().expect("first-party applications");
+    let mut owners = ResourceOwnerRegistry::new();
+    owners
+        .register(
+            Arc::new(rustshare_server::authz::NotesResourceOwner::new(
+                state.note_service.clone(),
+            )),
+            &applications,
+        )
+        .expect("register Notes owner");
+    state.source_authorizer = Arc::new(SourceAuthorizer::new(owners));
+}
+
 async fn meeting_modified_event_count(pool: &PgPool, meeting_id: Uuid) -> i64 {
     sqlx::query_scalar(
         "SELECT count(*)::bigint FROM events
@@ -117,17 +131,7 @@ async fn create_accepts_the_minimal_ui_payload() {
 async fn event_note_is_idempotent_durable_and_survives_event_deletion() {
     let _guard = SERIAL.lock().await;
     let mut state = setup_test_env().await;
-    let applications = ApplicationRegistry::first_party().expect("first-party applications");
-    let mut owners = ResourceOwnerRegistry::new();
-    owners
-        .register(
-            Arc::new(rustshare_server::authz::NotesResourceOwner::new(
-                state.note_service.clone(),
-            )),
-            &applications,
-        )
-        .expect("register Notes owner");
-    state.source_authorizer = Arc::new(SourceAuthorizer::new(owners));
+    install_notes_authorizer(&mut state);
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let user = create_test_user(&state, "calendar_event_note", tenant_id).await;
     configure_calendar(&state, tenant_id, user.id, true).await;
@@ -245,7 +249,8 @@ async fn event_note_is_idempotent_durable_and_survives_event_deletion() {
         .await
         .expect("unlinking preserves the independent Note");
 
-    let restarted_state = setup_test_env().await;
+    let mut restarted_state = setup_test_env().await;
+    install_notes_authorizer(&mut restarted_state);
     let restarted_token = create_auth_token(&restarted_state, user.id, tenant_id);
     let restarted_app = build_app(restarted_state.clone());
     let response = restarted_app
