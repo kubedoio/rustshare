@@ -1,0 +1,137 @@
+//! Tenant-scoped organization-administrator grant persistence.
+
+use crate::services::admin_audit_projection::project_audit_detail;
+use serde_json::json;
+use sqlx::{Postgres, Transaction};
+use uuid::Uuid;
+
+/// Insert a tenant-attributable success record with the mutation in one transaction.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_scoped_admin_action(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    actor_id: Uuid,
+    action_type: &str,
+    target_type: Option<&str>,
+    target_id: Option<Uuid>,
+    detail: serde_json::Value,
+    correlation_id: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    let detail = project_audit_detail("admin_action", action_type, &detail);
+    sqlx::query(
+        "INSERT INTO admin_actions
+            (tenant_id, actor_id, actor_principal_id, action_type, target_type, target_id,
+             detail, correlation_id, outcome)
+         VALUES ($1, $2, $2, $3, $4, $5, $6, $7, 'success')",
+    )
+    .bind(tenant_id)
+    .bind(actor_id)
+    .bind(action_type)
+    .bind(target_type)
+    .bind(target_id)
+    .bind(detail)
+    .bind(correlation_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn removal_would_leave_no_enabled_admin(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"SELECT EXISTS(
+               SELECT 1 FROM organization_administrators target
+               JOIN users target_user
+                 ON target_user.id = target.user_id AND target_user.tenant_id = target.tenant_id
+               WHERE target.tenant_id = $1 AND target.user_id = $2
+                 AND target.revoked_at IS NULL AND target_user.disabled_at IS NULL
+           )
+           AND NOT EXISTS(
+               SELECT 1 FROM organization_administrators successor
+               JOIN users successor_user
+                 ON successor_user.id = successor.user_id AND successor_user.tenant_id = successor.tenant_id
+               WHERE successor.tenant_id = $1 AND successor.user_id <> $2
+                 AND successor.revoked_at IS NULL AND successor_user.disabled_at IS NULL
+           )"#,
+    )
+    .bind(tenant_id)
+    .bind(user_id)
+    .fetch_one(&mut **tx)
+    .await
+}
+
+pub(crate) async fn lock_tenant_admin_grants(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+        .bind(tenant_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Revoke grants when the installation operator disables or deletes the principal.
+pub(crate) async fn revoke_for_lifecycle(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    actor_id: Option<Uuid>,
+    user_id: Uuid,
+    source: &str,
+    correlation_id: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    let ids = sqlx::query_scalar::<_, Uuid>(
+        "UPDATE organization_administrators
+         SET revoked_by = $3, revoked_at = NOW(), revocation_source = $4
+         WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL RETURNING id",
+    )
+    .bind(tenant_id)
+    .bind(user_id)
+    .bind(actor_id)
+    .bind(source)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    for grant_id in ids {
+        if let Some(actor_id) = actor_id {
+            insert_scoped_admin_action(
+                tx,
+                tenant_id,
+                actor_id,
+                "organization_admin.revoked",
+                Some("organization_administrator"),
+                Some(user_id),
+                json!({ "grant_id": grant_id }),
+                correlation_id,
+            )
+            .await?;
+        } else {
+            sqlx::query(
+                "INSERT INTO admin_actions
+                    (tenant_id, actor_id, actor_principal_id, action_type, target_type,
+                     target_id, detail, correlation_id, outcome)
+                 VALUES ($1, NULL, NULL, 'organization_admin.revoked',
+                         'organization_administrator', $2, $3, $4, 'success')",
+            )
+            .bind(tenant_id)
+            .bind(user_id)
+            .bind(json!({ "actor_kind": source, "grant_id": grant_id }))
+            .bind(correlation_id)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn revoke_for_scim_lifecycle(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    user_id: Uuid,
+    correlation_id: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    revoke_for_lifecycle(tx, tenant_id, None, user_id, "scim", correlation_id).await
+}
