@@ -676,7 +676,7 @@
 	}
 
 	async function openMeeting(event: CalendarEvent) {
-		if (openingMeeting) return;
+		if (openingMeeting || isOccurrence(event)) return;
 		openingMeeting = true;
 		try {
 			const meeting = await calendarApi.openEventMeeting(event.id);
@@ -1164,14 +1164,20 @@
 				{:else if relatedMailUnavailable}
 					<span class="text-xs text-base-content/60" role="status">Related Mail unavailable</span>
 				{/if}
-				<button
-					type="button"
-					class="btn btn-outline btn-sm"
-					disabled={openingMeeting}
-					onclick={() => openMeeting(selectedEvent!)}
-				>
-					{openingMeeting ? 'Opening…' : 'Open meeting note'}
-				</button>
+				{#if isOccurrence(selectedEvent)}
+					<span class="text-xs text-base-content/60" role="status">
+						Meeting notes are linked to the series; occurrence-specific notes are not available yet.
+					</span>
+				{:else}
+					<button
+						type="button"
+						class="btn btn-outline btn-sm"
+						disabled={openingMeeting}
+						onclick={() => openMeeting(selectedEvent!)}
+					>
+						{openingMeeting ? 'Opening…' : 'Open meeting note'}
+					</button>
+				{/if}
 				{#if !selectedEvent.read_only}
 					{#if isOccurrence(selectedEvent)}
 						<button
