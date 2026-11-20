@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 	getEvent: vi.fn(),
 	getEventMailLink: vi.fn(),
 	openEventMeeting: vi.fn(),
+	openEventNote: vi.fn(),
 	goto: vi.fn(),
 	createEvent: vi.fn(),
 	updateEvent: vi.fn(),
@@ -33,7 +34,9 @@ vi.mock('$lib/api/calendar', () => ({
 }));
 
 vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
-vi.mock('$lib/editor/adapter/export', () => ({ downloadTextFile: mocks.downloadTextFile }));
+vi.mock('$lib/editor/adapter/export', () => ({
+	downloadTextFile: mocks.downloadTextFile
+}));
 
 vi.mock('$lib/kit/page', () => ({
 	page: {
@@ -54,7 +57,12 @@ const testModule = {
 	icon: 'calendar-days',
 	enabled: true,
 	dashboard: { enabled: false },
-	page: { enabled: true, route: '/apps/calendar', renderer: 'calendar', layout: 'list-grid' },
+	page: {
+		enabled: true,
+		route: '/apps/calendar',
+		renderer: 'calendar',
+		layout: 'list-grid'
+	},
 	aiIndexing: { enabled: false },
 	audit: { enabled: true }
 } as unknown as ApplicationDefinition;
@@ -141,6 +149,7 @@ describe('CalendarApplicationView', () => {
 		mocks.getEvent.mockResolvedValue(eventAt(dayFromToday(1)));
 		mocks.getEventMailLink.mockRejectedValue(new Error('Related Mail unavailable'));
 		mocks.openEventMeeting.mockResolvedValue({ id: 'meeting-1' });
+		mocks.openEventNote.mockResolvedValue({ note_id: 'note-1' });
 		mocks.createEvent.mockResolvedValue(eventAt(dayFromToday(1)));
 		mocks.updateEvent.mockResolvedValue(eventAt(dayFromToday(1)));
 		mocks.deleteEvent.mockResolvedValue(undefined);
@@ -359,7 +368,9 @@ describe('CalendarApplicationView', () => {
 			const eventCard = await screen.findByText(/Sprint review/);
 			await fireEvent.click(eventCard);
 			await fireEvent.click(await screen.findByRole('button', { name: /Move \/ reschedule/ }));
-			await fireEvent.input(screen.getByLabelText('New date'), { target: { value: '2026-03-30' } });
+			await fireEvent.input(screen.getByLabelText('New date'), {
+				target: { value: '2026-03-30' }
+			});
 			await fireEvent.input(screen.getByLabelText('New start time'), {
 				target: { value: '11:15' }
 			});
@@ -414,7 +425,9 @@ describe('CalendarApplicationView', () => {
 		mocks.listEvents.mockResolvedValue([eventAt(dayFromToday(1))]);
 		render(CalendarApplicationView, { module: testModule });
 		await fireEvent.click(await screen.findByText(/Sprint review/));
-		const move = await screen.findByRole('button', { name: /Move \/ reschedule/ });
+		const move = await screen.findByRole('button', {
+			name: /Move \/ reschedule/
+		});
 		move.focus();
 		expect(document.activeElement).toBe(move);
 		await fireEvent.click(move);
@@ -428,7 +441,9 @@ describe('CalendarApplicationView', () => {
 		mocks.listEvents.mockResolvedValue([eventAt(dayFromToday(1))]);
 		render(CalendarApplicationView, { module: testModule });
 		await fireEvent.click(await screen.findByText(/Sprint review/));
-		const move = await screen.findByRole('button', { name: /Move \/ reschedule/ });
+		const move = await screen.findByRole('button', {
+			name: /Move \/ reschedule/
+		});
 		await fireEvent.click(move);
 		await screen.findByRole('dialog', { name: 'Move event' });
 
@@ -521,7 +536,11 @@ describe('CalendarApplicationView', () => {
 				rrule: 'FREQ=DAILY',
 				instance_start: `${recurringDay}T14:00:00`
 			}),
-			eventAt(dayFromToday(3), { id: 'all-day', title: 'All-day event', all_day: true })
+			eventAt(dayFromToday(3), {
+				id: 'all-day',
+				title: 'All-day event',
+				all_day: true
+			})
 		]);
 		render(CalendarApplicationView, { module: testModule });
 		for (const title of ['Provider event', 'Recurring event', 'All-day event']) {
@@ -537,10 +556,24 @@ describe('CalendarApplicationView', () => {
 		render(CalendarApplicationView, { module: testModule });
 
 		await fireEvent.click(await screen.findByText(/Sprint review/));
-		await fireEvent.click(screen.getByRole('button', { name: 'Open meeting note' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Open meeting workspace' }));
 
 		await waitFor(() => expect(mocks.openEventMeeting).toHaveBeenCalledWith(expect.any(String)));
 		expect(mocks.goto).toHaveBeenCalledWith('/apps/meetings/meeting-1');
+	});
+
+	it('creates or opens Notes from an event and includes a return path', async () => {
+		const event = eventAt(dayFromToday(1));
+		mocks.listEvents.mockResolvedValue([event]);
+		render(CalendarApplicationView, { module: testModule });
+
+		await fireEvent.click(await screen.findByText(/Sprint review/));
+		await fireEvent.click(screen.getByRole('button', { name: 'Create/Open Meeting Notes' }));
+
+		await waitFor(() => expect(mocks.openEventNote).toHaveBeenCalledWith(event.id));
+		expect(mocks.goto).toHaveBeenCalledWith(
+			`/apps/notes/note-1?returnTo=${encodeURIComponent(`/apps/calendar?event_id=${event.id}`)}`
+		);
 	});
 
 	it('does not attach meeting notes from an occurrence to its series', async () => {
@@ -556,7 +589,8 @@ describe('CalendarApplicationView', () => {
 		render(CalendarApplicationView, { module: testModule });
 
 		await fireEvent.click(await screen.findByText(/Recurring event/));
-		expect(screen.queryByRole('button', { name: 'Open meeting note' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Open meeting workspace' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Create/Open Meeting Notes' })).toBeNull();
 		expect(screen.getByText(/occurrence-specific notes are not available yet/)).toBeTruthy();
 		expect(mocks.openEventMeeting).not.toHaveBeenCalled();
 	});
@@ -623,7 +657,9 @@ describe('CalendarApplicationView', () => {
 	it('clears the source filter on a second toggle', async () => {
 		mocks.listEvents.mockResolvedValue([]);
 		render(CalendarApplicationView, { module: testModule });
-		const chip = (await screen.findByRole('button', { name: /Work Google/ })) as HTMLButtonElement;
+		const chip = (await screen.findByRole('button', {
+			name: /Work Google/
+		})) as HTMLButtonElement;
 
 		await fireEvent.click(chip);
 		await waitFor(() =>
@@ -635,9 +671,11 @@ describe('CalendarApplicationView', () => {
 		await fireEvent.click(await screen.findByRole('button', { name: /Work Google/ }));
 		await waitFor(() =>
 			expect(
-				(screen.getByRole('button', { name: /Work Google/ }) as HTMLButtonElement).getAttribute(
-					'aria-pressed'
-				)
+				(
+					screen.getByRole('button', {
+						name: /Work Google/
+					}) as HTMLButtonElement
+				).getAttribute('aria-pressed')
 			).toBe('false')
 		);
 	});
@@ -646,7 +684,9 @@ describe('CalendarApplicationView', () => {
 		render(CalendarApplicationView, { module: testModule });
 		await fireEvent.click(await screen.findByRole('button', { name: /New event/ }));
 
-		await fireEvent.input(screen.getByLabelText('Event title'), { target: { value: 'Dentist' } });
+		await fireEvent.input(screen.getByLabelText('Event title'), {
+			target: { value: 'Dentist' }
+		});
 		await fireEvent.input(screen.getByLabelText('Date'), {
 			target: { value: dayFromToday(1) }
 		});
@@ -687,9 +727,9 @@ describe('CalendarApplicationView', () => {
 	});
 
 	it('falls back to UTC when the browser reports no timezone', async () => {
-		const spy = vi
-			.spyOn(Intl, 'DateTimeFormat')
-			.mockReturnValue({ resolvedOptions: () => ({}) } as unknown as Intl.DateTimeFormat);
+		const spy = vi.spyOn(Intl, 'DateTimeFormat').mockReturnValue({
+			resolvedOptions: () => ({})
+		} as unknown as Intl.DateTimeFormat);
 		try {
 			render(CalendarApplicationView, { module: testModule });
 			await fireEvent.click(await screen.findByRole('button', { name: /New event/i }));
@@ -1008,8 +1048,12 @@ describe('CalendarApplicationView', () => {
 
 		await fireEvent.click(await screen.findByText(/Dentist/));
 		await fireEvent.click(await screen.findByRole('button', { name: /Edit event/ }));
-		await fireEvent.input(screen.getByLabelText('Location'), { target: { value: '' } });
-		await fireEvent.input(screen.getByLabelText('Description'), { target: { value: '' } });
+		await fireEvent.input(screen.getByLabelText('Location'), {
+			target: { value: '' }
+		});
+		await fireEvent.input(screen.getByLabelText('Description'), {
+			target: { value: '' }
+		});
 		await fireEvent.submit(screen.getByRole('form', { name: 'Edit event' }));
 
 		await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1));
@@ -1086,7 +1130,10 @@ describe('CalendarApplicationView', () => {
 	});
 
 	function lastEventQuery(): { from: string; to: string } {
-		return mocks.listEvents.mock.calls.at(-1)?.[0] as { from: string; to: string };
+		return mocks.listEvents.mock.calls.at(-1)?.[0] as {
+			from: string;
+			to: string;
+		};
 	}
 
 	function localInputDate(date: Date): string {
@@ -1236,7 +1283,9 @@ describe('CalendarApplicationView', () => {
 			today.getDate()
 		).toLocaleDateString();
 		await fireEvent.click(
-			await screen.findByRole('button', { name: `Create event on ${todayLabel} at 14:00` })
+			await screen.findByRole('button', {
+				name: `Create event on ${todayLabel} at 14:00`
+			})
 		);
 		expect((screen.getByLabelText('Date') as HTMLInputElement).value).toBe(
 			localInputDate(new Date(today.getFullYear(), today.getMonth(), today.getDate()))
@@ -1250,7 +1299,10 @@ describe('CalendarApplicationView', () => {
 		try {
 			const day = dayFromToday(0);
 			mocks.listEvents.mockResolvedValue([
-				utcEventAt(new Date(`${day}T10:00:00Z`), { id: 'evt-timed', title: 'Standup' })
+				utcEventAt(new Date(`${day}T10:00:00Z`), {
+					id: 'evt-timed',
+					title: 'Standup'
+				})
 			]);
 			render(CalendarApplicationView, { module: testModule });
 			await screen.findByLabelText('Filter by source');
@@ -1282,7 +1334,9 @@ describe('CalendarApplicationView', () => {
 			await screen.findByLabelText('Filter by source');
 			await fireEvent.click(screen.getByRole('button', { name: 'Day' }));
 
-			const chip = await screen.findByRole('button', { name: /After the jump/ });
+			const chip = await screen.findByRole('button', {
+				name: /After the jump/
+			});
 			// 03:00 wall clock -> the 180-minute row, not the 120-minute elapsed row.
 			expect(parseFloat(chip.style.top)).toBeCloseTo((180 / 1440) * 100, 1);
 		} finally {
@@ -1309,7 +1363,9 @@ describe('CalendarApplicationView', () => {
 			await screen.findByLabelText('Filter by source');
 			await fireEvent.click(screen.getByRole('button', { name: 'Day' }));
 
-			const chip = await screen.findByRole('button', { name: /Overnight deploy/ });
+			const chip = await screen.findByRole('button', {
+				name: /Overnight deploy/
+			});
 			const top = parseFloat(chip.style.top);
 			const height = parseFloat(chip.style.height);
 			expect(top).toBeCloseTo((22 / 24) * 100, 1);

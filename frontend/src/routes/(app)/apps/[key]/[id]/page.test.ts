@@ -1,41 +1,48 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { readable, writable } from 'svelte/store';
 import Page from './+page.svelte';
 
-const { markdownDocumentPageMock, mockEditorMethods, mockPageStore, mockMutateAsync } = vi.hoisted(
-	() => {
-		type PageValue = { params: { key: string; id: string }; url: URL };
-		let value: PageValue = {
-			params: { key: 'notes', id: 'note-1' },
-			url: new URL('http://localhost/apps/notes/note-1')
-		};
-		const subscribers = new Set<(value: PageValue) => void>();
-		const mockEditorMethods = {
-			flush: vi.fn(),
-			markSaved: vi.fn(),
-			markSaveError: vi.fn(),
-			insertAttachment: vi.fn()
-		};
+const {
+	markdownDocumentPageMock,
+	mockEditorMethods,
+	mockPageStore,
+	mockMutateAsync,
+	getEventForNote,
+	unlinkEventNote
+} = vi.hoisted(() => {
+	type PageValue = { params: { key: string; id: string }; url: URL };
+	let value: PageValue = {
+		params: { key: 'notes', id: 'note-1' },
+		url: new URL('http://localhost/apps/notes/note-1')
+	};
+	const subscribers = new Set<(value: PageValue) => void>();
+	const mockEditorMethods = {
+		flush: vi.fn(),
+		markSaved: vi.fn(),
+		markSaveError: vi.fn(),
+		insertAttachment: vi.fn()
+	};
 
-		return {
-			markdownDocumentPageMock: vi.fn((..._args: unknown[]) => mockEditorMethods),
-			mockEditorMethods,
-			mockMutateAsync: vi.fn(),
-			mockPageStore: {
-				subscribe(run: (value: PageValue) => void) {
-					subscribers.add(run);
-					run(value);
-					return () => subscribers.delete(run);
-				},
-				set(next: PageValue) {
-					value = next;
-					for (const run of subscribers) run(value);
-				}
+	return {
+		markdownDocumentPageMock: vi.fn((..._args: unknown[]) => mockEditorMethods),
+		mockEditorMethods,
+		mockMutateAsync: vi.fn(),
+		getEventForNote: vi.fn(),
+		unlinkEventNote: vi.fn(),
+		mockPageStore: {
+			subscribe(run: (value: PageValue) => void) {
+				subscribers.add(run);
+				run(value);
+				return () => subscribers.delete(run);
+			},
+			set(next: PageValue) {
+				value = next;
+				for (const run of subscribers) run(value);
 			}
-		};
-	}
-);
+		}
+	};
+});
 
 function editorProps() {
 	const call = markdownDocumentPageMock.mock.calls.at(-1) ?? [];
@@ -85,7 +92,11 @@ function navigateToNote(query: MockQuery, id: string, fileIds: string[] = []) {
 		params: { key: 'notes', id },
 		url: new URL(`http://localhost/apps/notes/${id}`)
 	});
-	query.setData({ routeKey: 'notes', routeId: id, item: noteItem(id, fileIds) });
+	query.setData({
+		routeKey: 'notes',
+		routeId: id,
+		item: noteItem(id, fileIds)
+	});
 }
 
 vi.mock('$app/env', () => ({ browser: true }));
@@ -160,6 +171,10 @@ vi.mock('$lib/api/notes', () => ({
 	resolveConflict: vi.fn()
 }));
 
+vi.mock('$lib/api/calendar', () => ({
+	calendarApi: { getEventForNote, unlinkEventNote }
+}));
+
 vi.mock('$lib/api/files', () => ({
 	uploadFile: vi.fn(),
 	deleteFile: vi.fn()
@@ -210,7 +225,8 @@ vi.mock('lucide-svelte', () => ({
 	Share2: vi.fn(() => null),
 	Pencil: vi.fn(() => null),
 	AlertTriangle: vi.fn(() => null),
-	X: vi.fn(() => null)
+	X: vi.fn(() => null),
+	CalendarDays: vi.fn(() => null)
 }));
 
 beforeEach(() => {
@@ -223,19 +239,64 @@ beforeEach(() => {
 });
 
 describe('Note detail page conflict banner', () => {
+	beforeEach(() => {
+		getEventForNote.mockRejectedValue(new Error('No linked event'));
+		unlinkEventNote.mockResolvedValue(undefined);
+	});
+
+	it('links a meeting Note back to its authorized Calendar event', async () => {
+		const { createQuery } = await import('$lib/query-compat');
+		getEventForNote.mockResolvedValue({ event_id: 'event-1' });
+		vi.mocked(createQuery).mockReturnValue(
+			createMockQuery({ id: 'note-1', name: 'note.md', content: '# Review' })
+		);
+		render(Page);
+
+		const link = await screen.findByRole('button', {
+			name: 'Back to calendar event'
+		});
+		expect(getEventForNote).toHaveBeenCalledWith('note-1');
+		await fireEvent.click(link);
+		expect((await import('$app/navigation')).goto).toHaveBeenCalledWith(
+			'/apps/calendar?event_id=event-1'
+		);
+	});
+
+	it('unlinks the Calendar association without deleting the Note', async () => {
+		const { createQuery } = await import('$lib/query-compat');
+		getEventForNote.mockResolvedValue({ event_id: 'event-1' });
+		vi.mocked(createQuery).mockReturnValue(
+			createMockQuery({ id: 'note-1', name: 'note.md', content: '# Review' })
+		);
+		render(Page);
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Unlink calendar event' }));
+		await waitFor(() => expect(unlinkEventNote).toHaveBeenCalledWith('event-1'));
+		expect(screen.queryByRole('button', { name: 'Back to calendar event' })).toBeNull();
+	});
+
 	it('updates the query and attachment state when the application route changes', async () => {
 		const { createQuery } = await import('$lib/query-compat');
-		const query = createMockQuery({ id: 'note-1', name: 'Note', content: 'Body', metadata: {} });
+		const query = createMockQuery({
+			id: 'note-1',
+			name: 'Note',
+			content: 'Body',
+			metadata: {}
+		});
 		vi.mocked(createQuery).mockReturnValue(query);
 
 		render(Page);
 		await waitFor(() => {
 			expect(query.setOptions).toHaveBeenLastCalledWith(
-				expect.objectContaining({ queryKey: ['module-item', 'notes', 'note-1'] })
+				expect.objectContaining({
+					queryKey: ['module-item', 'notes', 'note-1']
+				})
 			);
 		});
 		const initialProps = (markdownDocumentPageMock.mock.calls.at(-1)?.[1] ??
-			markdownDocumentPageMock.mock.calls.at(-1)?.[0]) as unknown as { mode: string };
+			markdownDocumentPageMock.mock.calls.at(-1)?.[0]) as unknown as {
+			mode: string;
+		};
 		expect(initialProps.mode).toBe('edit');
 
 		const callsBeforeRouteChange = markdownDocumentPageMock.mock.calls.length;
@@ -246,7 +307,9 @@ describe('Note detail page conflict banner', () => {
 
 		await waitFor(() => {
 			expect(query.setOptions).toHaveBeenLastCalledWith(
-				expect.objectContaining({ queryKey: ['module-item', 'meetings', 'note-1'] })
+				expect.objectContaining({
+					queryKey: ['module-item', 'meetings', 'note-1']
+				})
 			);
 		});
 		expect(markdownDocumentPageMock).toHaveBeenCalledTimes(callsBeforeRouteChange);
@@ -282,7 +345,9 @@ describe('Note detail page conflict banner', () => {
 		render(Page);
 		const editorCall = markdownDocumentPageMock.mock.calls.at(-1) ?? [];
 		const editorProps = (editorCall[1] ?? editorCall[0]) as unknown as {
-			$$events: { save: (event: CustomEvent<{ content: string }>) => Promise<void> };
+			$$events: {
+				save: (event: CustomEvent<{ content: string }>) => Promise<void>;
+			};
 		};
 		const save = editorProps.$$events.save(
 			new CustomEvent('save', { detail: { content: 'Saved old body' } })
@@ -294,7 +359,9 @@ describe('Note detail page conflict banner', () => {
 		});
 		await waitFor(() =>
 			expect(query.setOptions).toHaveBeenLastCalledWith(
-				expect.objectContaining({ queryKey: ['module-item', 'meetings', 'note-1'] })
+				expect.objectContaining({
+					queryKey: ['module-item', 'meetings', 'note-1']
+				})
 			)
 		);
 		const newEditorProps = (markdownDocumentPageMock.mock.calls.at(-1)?.[1] ?? {}) as unknown as {
@@ -328,7 +395,9 @@ describe('Note detail page conflict banner', () => {
 		);
 		await editorProps().$$events.save(new CustomEvent('save', { detail: { content: 'Saved' } }));
 		expect(mockMutateAsync).toHaveBeenLastCalledWith(
-			expect.objectContaining({ noteAttachments: [noteAttachment('destination-file')] })
+			expect.objectContaining({
+				noteAttachments: [noteAttachment('destination-file')]
+			})
 		);
 		const { queryClient } = await import('$lib/query-client');
 		expect(queryClient.setQueryData).toHaveBeenCalledWith(
@@ -353,7 +422,10 @@ describe('Note detail page conflict banner', () => {
 		const { queryClient } = await import('$lib/query-client');
 		expect(queryClient.setQueryData).not.toHaveBeenCalled();
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith(
-			expect.objectContaining({ queryKey: ['module-item', 'notes', 'note-1'], refetchType: 'none' })
+			expect.objectContaining({
+				queryKey: ['module-item', 'notes', 'note-1'],
+				refetchType: 'none'
+			})
 		);
 		expect(mockEditorMethods.markSaved).not.toHaveBeenCalled();
 	});
@@ -377,13 +449,17 @@ describe('Note detail page conflict banner', () => {
 			navigateToNote(query, 'note-2');
 			await waitFor(() =>
 				expect(query.setOptions).toHaveBeenLastCalledWith(
-					expect.objectContaining({ queryKey: ['module-item', 'notes', 'note-2'] })
+					expect.objectContaining({
+						queryKey: ['module-item', 'notes', 'note-2']
+					})
 				)
 			);
 			navigateToNote(query, 'note-1');
 			await waitFor(() =>
 				expect(query.setOptions).toHaveBeenLastCalledWith(
-					expect.objectContaining({ queryKey: ['module-item', 'notes', 'note-1'] })
+					expect.objectContaining({
+						queryKey: ['module-item', 'notes', 'note-1']
+					})
 				)
 			);
 			const savingNew = editorProps().$$events.save(
@@ -417,7 +493,10 @@ describe('Note detail page conflict banner', () => {
 			vi.mocked(createQuery).mockReturnValue(query);
 			vi.mocked(getFolderContents).mockResolvedValue({
 				folders: [
-					{ id: 'attachment-folder', name: kind === 'upload' ? 'attachments' : 'drawings' }
+					{
+						id: 'attachment-folder',
+						name: kind === 'upload' ? 'attachments' : 'drawings'
+					}
 				],
 				files: []
 			} as never);
@@ -429,7 +508,9 @@ describe('Note detail page conflict banner', () => {
 				editorProps().$$events.upload(new CustomEvent('upload', { detail: { files: [file] } }));
 			else
 				editorProps().$$events.sketch(
-					new CustomEvent('sketch', { detail: { blob: file, filename: file.name } })
+					new CustomEvent('sketch', {
+						detail: { blob: file, filename: file.name }
+					})
 				);
 			await waitFor(() => expect(uploadFile).toHaveBeenCalledOnce());
 
@@ -458,7 +539,10 @@ describe('Note detail page conflict banner', () => {
 		const { getFolderContents } = await import('$lib/api/folders');
 		const query = createMockQuery(noteItem('note-1', ['server-file']));
 		vi.mocked(createQuery).mockReturnValue(query);
-		vi.mocked(getFolderContents).mockResolvedValue({ folders: [], files: [] } as never);
+		vi.mocked(getFolderContents).mockResolvedValue({
+			folders: [],
+			files: []
+		} as never);
 		vi.mocked(uploadFile).mockResolvedValueOnce({
 			id: 'local-file',
 			name: 'local.png',
@@ -469,7 +553,9 @@ describe('Note detail page conflict banner', () => {
 		render(Page);
 		editorProps().$$events.upload(
 			new CustomEvent('upload', {
-				detail: { files: [new File(['image'], 'local.png', { type: 'image/png' })] }
+				detail: {
+					files: [new File(['image'], 'local.png', { type: 'image/png' })]
+				}
 			})
 		);
 		await waitFor(() =>

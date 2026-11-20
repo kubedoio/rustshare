@@ -4796,6 +4796,77 @@
         }
       }
     },
+    "/api/v1/calendar/events/{id}/notes": {
+      "post": {
+        "tags": [
+          "Calendar"
+        ],
+        "operationId": "open_calendar_event_note",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Calendar event id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Existing linked Note",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarEventNoteResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created linked Note",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarEventNoteResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Linked Note access denied"
+          },
+          "404": {
+            "description": "Calendar event or linked Note unavailable"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Calendar"
+        ],
+        "operationId": "unlink_calendar_event_note",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Calendar event id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Link removed; Note preserved"
+          }
+        }
+      }
+    },
     "/api/v1/calendar/import": {
       "post": {
         "tags": [
@@ -4946,6 +5017,44 @@
             "bearer_auth": []
           }
         ]
+      }
+    },
+    "/api/v1/calendar/notes/{note_id}/event": {
+      "get": {
+        "tags": [
+          "Calendar"
+        ],
+        "operationId": "get_calendar_event_for_note",
+        "parameters": [
+          {
+            "name": "note_id",
+            "in": "path",
+            "description": "Notes Application resource id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized linked Calendar event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarLinkedEventResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Linked event access denied"
+          },
+          "404": {
+            "description": "Link unavailable"
+          }
+        }
       }
     },
     "/api/v1/decisions": {
@@ -17766,6 +17875,27 @@
           }
         }
       },
+      "CalendarEventNoteResponse": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "note_id",
+          "resource"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "note_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/ResourceRef"
+          }
+        }
+      },
       "CalendarImportAcceptedResponse": {
         "type": "object",
         "description": "`202` body for `POST /api/v1/calendar/import`.",
@@ -17829,6 +17959,18 @@
           "unsupported": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "CalendarLinkedEventResponse": {
+        "type": "object",
+        "required": [
+          "event_id"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },

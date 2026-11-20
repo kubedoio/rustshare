@@ -268,12 +268,16 @@ impl MeetingService {
     ) -> Result<MeetingResourceLink, MeetingError> {
         let mut resource = rustshare_resource_auth::ResourceRef::from_uri(&resource_ref_uri)
             .map_err(|error| MeetingError::InvalidData(error.to_string()))?;
-        if resource.application.0 != "io.elembra.files"
-            || resource.resource_type != "file"
-            || resource.version.is_some()
+        if !matches!(
+            (
+                resource.application.0.as_str(),
+                resource.resource_type.as_str()
+            ),
+            ("io.elembra.files", "file") | ("io.elembra.notes", "notes.resource")
+        ) || resource.version.is_some()
         {
             return Err(MeetingError::InvalidData(
-                "meeting links require a current Files file reference".into(),
+                "meeting links require a current Files or Notes reference".into(),
             ));
         }
         resource.resource_id = Uuid::parse_str(&resource.resource_id)

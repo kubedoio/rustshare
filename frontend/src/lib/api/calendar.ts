@@ -29,6 +29,17 @@ export interface CalendarEvent {
 	updated_at: string;
 }
 
+export interface CalendarEventNote {
+	event_id: string;
+	note_id: string;
+	resource: {
+		application: string;
+		resourceType: string;
+		resourceId: string;
+		version?: string | null;
+	};
+}
+
 export interface CalendarSource {
 	id: string;
 	kind: CalendarSourceKind;
@@ -168,6 +179,18 @@ export const calendarApi = {
 
 	openEventMeeting: async (eventId: string): Promise<MeetingNote> => {
 		return apiClient.post<MeetingNote>(`/calendar/events/${eventId}/meeting`);
+	},
+
+	openEventNote: async (eventId: string): Promise<CalendarEventNote> => {
+		return apiClient.post<CalendarEventNote>(`/calendar/events/${eventId}/notes`);
+	},
+
+	unlinkEventNote: async (eventId: string): Promise<void> => {
+		await apiClient.delete(`/calendar/events/${eventId}/notes`);
+	},
+
+	getEventForNote: async (noteId: string): Promise<{ event_id: string }> => {
+		return apiClient.get(`/calendar/notes/${noteId}/event`);
 	},
 
 	listEvents: async (params: ListCalendarEventsParams): Promise<CalendarEvent[]> => {
