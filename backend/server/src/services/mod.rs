@@ -1,3 +1,4 @@
+pub mod admin_audit_projection;
 pub mod brainstorming_service;
 pub mod decision_service;
 pub mod email_service;
@@ -22,7 +23,9 @@ pub mod meeting_decisions;
 pub mod meeting_service;
 pub mod note_index_sink;
 pub mod note_service;
+pub mod organization_administrators;
 pub mod outlook_calendar;
+pub mod scim_repository;
 pub mod standup_service;
 pub mod template_service;
 pub mod thumbnail_renderer;
