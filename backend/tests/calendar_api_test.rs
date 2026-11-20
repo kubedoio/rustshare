@@ -113,6 +113,137 @@ async fn create_accepts_the_minimal_ui_payload() {
 
 #[tokio::test]
 #[ignore = "requires DATABASE_URL and migrations applied"]
+async fn event_note_is_idempotent_durable_and_survives_event_deletion() {
+    let _guard = SERIAL.lock().await;
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "calendar_event_note", tenant_id).await;
+    configure_calendar(&state, tenant_id, user.id, true).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    let app = build_app(state.clone());
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/calendar/events")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(create_event_body().to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, created_event) = response_json(response).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let event_id = created_event["id"].as_str().unwrap();
+
+    let open_note = || {
+        app.clone().oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}/notes"))
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+    };
+    let response = open_note().await.unwrap();
+    let (status, first) = response_json(response).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(first["resource"]["application"], "io.elembra.notes");
+    assert_eq!(first["resource"]["resourceType"], "notes.resource");
+
+    let response = open_note().await.unwrap();
+    let (status, repeated) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(repeated["note_id"], first["note_id"]);
+
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/calendar/events/{event_id}/notes"))
+                    .method("DELETE")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+    let response = open_note().await.unwrap();
+    let (status, after_unlink) = response_json(response).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_ne!(after_unlink["note_id"], first["note_id"]);
+    let first_note_id = Uuid::parse_str(first["note_id"].as_str().unwrap()).unwrap();
+    state
+        .note_service
+        .get_note(first_note_id, user.id, tenant_id)
+        .await
+        .expect("unlinking preserves the independent Note");
+
+    let restarted_state = setup_test_env().await;
+    let restarted_token = create_auth_token(&restarted_state, user.id, tenant_id);
+    let restarted_app = build_app(restarted_state.clone());
+    let response = restarted_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/calendar/events/{event_id}/notes"))
+                .method("POST")
+                .header("Authorization", format!("Bearer {restarted_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let (status, after_restart) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after_restart["note_id"], after_unlink["note_id"]);
+
+    let note_id = Uuid::parse_str(after_unlink["note_id"].as_str().unwrap()).unwrap();
+    let note = restarted_state
+        .note_service
+        .get_note(note_id, user.id, tenant_id)
+        .await
+        .expect("linked Notes Application note persists");
+    assert!(note.content.contains("## Agenda"));
+    assert!(note.content.contains("Weekly sync"));
+
+    restarted_state
+        .calendar_service
+        .delete_event(tenant_id, user.id, Uuid::parse_str(event_id).unwrap())
+        .await
+        .expect("delete Calendar event");
+    restarted_state
+        .calendar_service
+        .delete_event(tenant_id, user.id, Uuid::parse_str(event_id).unwrap())
+        .await
+        .expect("repeated event deletion is idempotent");
+    let remaining_link: Option<Uuid> = sqlx::query_scalar(
+        "SELECT note_id FROM calendar_event_note_links WHERE tenant_id = $1 AND event_id = $2",
+    )
+    .bind(tenant_id)
+    .bind(Uuid::parse_str(event_id).unwrap())
+    .fetch_optional(&restarted_state.db_pool)
+    .await
+    .expect("event link is removed with the event");
+    assert!(remaining_link.is_none());
+    restarted_state
+        .note_service
+        .get_note(note_id, user.id, tenant_id)
+        .await
+        .expect("deleting an event preserves its independent Note");
+
+    cleanup_tenant(&restarted_state.db_pool, tenant_id).await;
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and migrations applied"]
 async fn mail_calendar_link_reauthorizes_and_is_idempotent() {
     let _guard = SERIAL.lock().await;
     let state = setup_test_env().await;

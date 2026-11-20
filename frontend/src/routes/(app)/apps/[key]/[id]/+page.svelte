@@ -15,12 +15,13 @@
 	import { decisionsApi } from '$lib/api/decisions';
 	import { meetingsApi } from '$lib/api/meetings';
 	import { askHref } from '$lib/api/ask';
+	import { calendarApi } from '$lib/api/calendar';
 	import { standupsApi } from '$lib/api/standups';
 	import { uploadFile, deleteFile } from '$lib/api/files';
 	import { getFolderContents } from '$lib/api/folders';
 	import { applicationsStore } from '$lib/applications/registry';
 	import { goto, beforeNavigate } from '$app/navigation';
-	import { Folder, Share2, Pencil, AlertTriangle, X } from 'lucide-svelte';
+	import { Folder, Share2, Pencil, AlertTriangle, X, CalendarDays } from 'lucide-svelte';
 	import MarkdownDocumentPage from '$lib/editor/components/MarkdownDocumentPage.svelte';
 	import MeetingResourceLinks from '$lib/components/apps/MeetingResourceLinks.svelte';
 	import MeetingDecisions from '$lib/components/apps/MeetingDecisions.svelte';
@@ -112,12 +113,46 @@
 	$effect(() => {
 		query.setOptions({
 			queryKey: ['module-item', key, id],
-			queryFn: async () => ({ routeKey: key, routeId: id, item: await api?.get(id) }),
+			queryFn: async () => ({
+				routeKey: key,
+				routeId: id,
+				item: await api?.get(id)
+			}),
 			enabled: !!api && !!id
 		});
 	});
 
 	let dismissedConflict = $state(false);
+	let linkedCalendarEventId = $state<string | null>(null);
+
+	$effect(() => {
+		const noteId = key === 'notes' && item?.id === id ? id : null;
+		linkedCalendarEventId = null;
+		if (!noteId) return;
+		let cancelled = false;
+		void calendarApi
+			.getEventForNote(noteId)
+			.then(({ event_id }) => {
+				if (!cancelled) linkedCalendarEventId = event_id;
+			})
+			.catch(() => {
+				if (!cancelled) linkedCalendarEventId = null;
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	async function unlinkCalendarEvent() {
+		if (!linkedCalendarEventId) return;
+		try {
+			await calendarApi.unlinkEventNote(linkedCalendarEventId);
+			linkedCalendarEventId = null;
+			toastStore.show('Note unlinked; the Note remains in Notes', 'success');
+		} catch {
+			toastStore.show('Could not unlink this Note from its calendar event.', 'error');
+		}
+	}
 
 	// TanStack keeps the previous query's data while a new key starts fetching.
 	// Never render that stale note under the new route id.
@@ -297,11 +332,20 @@
 						attachments: noteAttachments ?? []
 					});
 				case 'decisions':
-					return decisionsApi.update(itemId, { title: data.title, content: data.content });
+					return decisionsApi.update(itemId, {
+						title: data.title,
+						content: data.content
+					});
 				case 'meetings':
-					return meetingsApi.update(itemId, { title: data.title, content: data.content });
+					return meetingsApi.update(itemId, {
+						title: data.title,
+						content: data.content
+					});
 				case 'standups':
-					return standupsApi.update(itemId, { title: data.title, content: data.content });
+					return standupsApi.update(itemId, {
+						title: data.title,
+						content: data.content
+					});
 				default:
 					return Promise.reject(new Error(`Invalid module: ${key}`));
 			}
@@ -325,7 +369,11 @@
 	});
 
 	async function handleSave(
-		event: CustomEvent<{ content: string; docId?: string; color?: string | null }>
+		event: CustomEvent<{
+			content: string;
+			docId?: string;
+			color?: string | null;
+		}>
 	) {
 		if (event.detail.docId && event.detail.docId !== id) {
 			return;
@@ -364,7 +412,12 @@
 					['module-item', routeKey, routeId],
 					(
 						previous:
-							{ routeKey: string; routeId: string; item: ApplicationItemQueryData } | undefined
+							| {
+									routeKey: string;
+									routeId: string;
+									item: ApplicationItemQueryData;
+							  }
+							| undefined
 					) => {
 						if (!previous?.item) return previous;
 						return {
@@ -564,7 +617,9 @@
 					if (generation !== routeGeneration) return;
 					const existingNames = folderContents.files?.map((f: ApiFile) => f.name) || [];
 					const uploadName = generateUniqueFilename(event.detail.filename, existingNames);
-					const sketchFile = new File([event.detail.blob], uploadName, { type: 'image/png' });
+					const sketchFile = new File([event.detail.blob], uploadName, {
+						type: 'image/png'
+					});
 					const uploaded = await uploadFile(drawingsFolder.id, sketchFile, undefined, uploadName);
 					if (generation !== routeGeneration) return;
 					const attachment: RichMarkdownAttachment = {
@@ -727,6 +782,21 @@
 			<button class="btn mt-4 btn-ghost" onclick={() => $query.refetch()}>Retry</button>
 		</div>
 	{:else if item}
+		{#if key === 'notes' && linkedCalendarEventId}
+			<div class="mb-2 flex gap-2">
+				<button
+					class="btn btn-ghost btn-sm"
+					onclick={() =>
+						goto(`/apps/calendar?event_id=${encodeURIComponent(linkedCalendarEventId!)}`)}
+				>
+					<CalendarDays size={16} />
+					Back to calendar event
+				</button>
+				<button class="btn btn-ghost btn-sm" onclick={unlinkCalendarEvent}>
+					Unlink calendar event
+				</button>
+			</div>
+		{/if}
 		{#if conflict}
 			<div class="mb-2 alert rounded-lg alert-warning" role="alert">
 				<AlertTriangle size={18} />

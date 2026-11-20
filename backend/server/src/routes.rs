@@ -488,6 +488,15 @@ pub fn calendar_routes() -> Router<AppState> {
             post(crate::handlers::calendar::create_calendar_event_meeting),
         )
         .route(
+            "/api/v1/calendar/events/{id}/notes",
+            post(crate::handlers::calendar::open_calendar_event_note)
+                .delete(crate::handlers::calendar::unlink_calendar_event_note),
+        )
+        .route(
+            "/api/v1/calendar/notes/{note_id}/event",
+            get(crate::handlers::calendar::get_calendar_event_for_note),
+        )
+        .route(
             "/api/v1/calendar/events/{id}/mail-link",
             get(crate::handlers::calendar::get_calendar_event_mail_link),
         )

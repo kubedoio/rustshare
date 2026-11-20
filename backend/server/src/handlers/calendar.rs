@@ -8,8 +8,9 @@ use axum_extra::extract::Query;
 use chrono::{DateTime, Utc};
 use rustshare_core::domain::{
     ApplicationId, CalendarEvent, CalendarImportJob, CalendarSource, CalendarSourceKind,
+    PrincipalId, TenantId, WorkspaceId,
 };
-use rustshare_resource_auth::resource_ref::ResourceRef;
+use rustshare_resource_auth::{resource_ref::ResourceRef, PrincipalContext, Purpose, SourceError};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -606,6 +607,237 @@ pub async fn create_calendar_event_meeting(
             .await?;
     }
     Ok(Json(opened.note))
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarEventNoteResponse {
+    pub event_id: Uuid,
+    pub note_id: Uuid,
+    pub resource: ResourceRef,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/calendar/events/{id}/notes",
+    tag = "Calendar",
+    params(("id" = Uuid, Path, description = "Calendar event id")),
+    responses(
+        (status = 200, description = "Existing linked Note", body = CalendarEventNoteResponse),
+        (status = 201, description = "Created linked Note", body = CalendarEventNoteResponse),
+        (status = 403, description = "Linked Note access denied"),
+        (status = 404, description = "Calendar event or linked Note unavailable")
+    )
+)]
+pub async fn open_calendar_event_note(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(event_id): Path<Uuid>,
+) -> Result<(StatusCode, Json<CalendarEventNoteResponse>), AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    let event = state
+        .calendar_service
+        .get_event(auth.tenant_id, auth.user_id, event_id)
+        .await?;
+    if event.recurrence_id.is_some() {
+        return Err(AppError::bad_request(
+            "meeting Notes can only be linked to a calendar series or single event",
+        ));
+    }
+
+    let mut tx =
+        state.metadata_store.pool().begin().await.map_err(|error| {
+            AppError::internal(format!("Could not reserve meeting Note: {error}"))
+        })?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("{}:{}:{}", auth.tenant_id, auth.user_id, event.id))
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| AppError::internal(format!("Could not reserve meeting Note: {error}")))?;
+    let event_exists = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM calendar_events
+         WHERE tenant_id = $1 AND owner_id = $2 AND id = $3 AND deleted_at IS NULL
+         FOR UPDATE",
+    )
+    .bind(auth.tenant_id)
+    .bind(auth.user_id)
+    .bind(event.id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|error| AppError::internal(format!("Could not lock Calendar event: {error}")))?;
+    if event_exists.is_none() {
+        return Err(AppError::not_found("Calendar event not found"));
+    }
+    let existing = sqlx::query_scalar::<_, Uuid>(
+        "SELECT note_id FROM calendar_event_note_links
+         WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3",
+    )
+    .bind(auth.tenant_id)
+    .bind(auth.user_id)
+    .bind(event.id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|error| AppError::internal(format!("Could not read meeting Note link: {error}")))?;
+
+    let (note_id, status) = if let Some(note_id) = existing {
+        (note_id, StatusCode::OK)
+    } else {
+        let content = format!(
+            "## Agenda\n\n{}\n\n## Meeting Notes\n\n",
+            event.description.as_deref().unwrap_or("")
+        );
+        let note = state
+            .note_service
+            .create_note(
+                auth.user_id,
+                auth.tenant_id,
+                Some(event.title.clone()),
+                None,
+                Some(content),
+            )
+            .await
+            .map_err(|error| {
+                AppError::internal(format!("Could not create meeting Note: {error}"))
+            })?;
+        sqlx::query(
+            "INSERT INTO calendar_event_note_links (tenant_id, owner_id, event_id, note_id)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(auth.tenant_id)
+        .bind(auth.user_id)
+        .bind(event.id)
+        .bind(note.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| AppError::internal(format!("Could not link meeting Note: {error}")))?;
+        (note.id, StatusCode::CREATED)
+    };
+    tx.commit().await.map_err(|error| {
+        AppError::internal(format!("Could not save meeting Note link: {error}"))
+    })?;
+
+    let resource = note_resource_ref(note_id);
+    state
+        .source_authorizer
+        .resolve(&principal_context(&auth), &resource, Purpose::UserOpen)
+        .await
+        .map_err(calendar_note_source_error)?;
+    Ok((
+        status,
+        Json(CalendarEventNoteResponse {
+            event_id: event.id,
+            note_id,
+            resource,
+        }),
+    ))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/calendar/events/{id}/notes",
+    tag = "Calendar",
+    params(("id" = Uuid, Path, description = "Calendar event id")),
+    responses((status = 204, description = "Link removed; Note preserved"))
+)]
+pub async fn unlink_calendar_event_note(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(event_id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    let event = state
+        .calendar_service
+        .get_event(auth.tenant_id, auth.user_id, event_id)
+        .await?;
+    if event.recurrence_id.is_some() {
+        return Err(AppError::bad_request(
+            "meeting Notes can only be linked to a calendar series or single event",
+        ));
+    }
+    sqlx::query(
+        "DELETE FROM calendar_event_note_links
+         WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3",
+    )
+    .bind(auth.tenant_id)
+    .bind(auth.user_id)
+    .bind(event.id)
+    .execute(state.metadata_store.pool())
+    .await
+    .map_err(|error| AppError::internal(format!("Could not unlink meeting Note: {error}")))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CalendarLinkedEventResponse {
+    pub event_id: Uuid,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/calendar/notes/{note_id}/event",
+    tag = "Calendar",
+    params(("note_id" = Uuid, Path, description = "Notes Application resource id")),
+    responses(
+        (status = 200, description = "Authorized linked Calendar event", body = CalendarLinkedEventResponse),
+        (status = 403, description = "Linked event access denied"),
+        (status = 404, description = "Link unavailable")
+    )
+)]
+pub async fn get_calendar_event_for_note(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+    Path(note_id): Path<Uuid>,
+) -> Result<Json<CalendarLinkedEventResponse>, AppError> {
+    require_calendar_enabled(&state, auth.tenant_id).await?;
+    let resource = note_resource_ref(note_id);
+    state
+        .source_authorizer
+        .resolve(&principal_context(&auth), &resource, Purpose::UserOpen)
+        .await
+        .map_err(calendar_note_source_error)?;
+    let event_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT event_id FROM calendar_event_note_links
+         WHERE tenant_id = $1 AND owner_id = $2 AND note_id = $3",
+    )
+    .bind(auth.tenant_id)
+    .bind(auth.user_id)
+    .bind(note_id)
+    .fetch_optional(state.metadata_store.pool())
+    .await
+    .map_err(|error| AppError::internal(format!("Could not read Calendar link: {error}")))?
+    .ok_or_else(|| AppError::not_found("linked Calendar event unavailable"))?;
+    state
+        .calendar_service
+        .get_event(auth.tenant_id, auth.user_id, event_id)
+        .await?;
+    Ok(Json(CalendarLinkedEventResponse { event_id }))
+}
+
+fn note_resource_ref(note_id: Uuid) -> ResourceRef {
+    ResourceRef::new(
+        ApplicationId::new("io.elembra.notes"),
+        "notes.resource",
+        note_id.to_string(),
+    )
+}
+
+fn principal_context(auth: &AuthenticatedUser) -> PrincipalContext {
+    PrincipalContext::user(
+        PrincipalId(auth.user_id),
+        TenantId(auth.tenant_id),
+        WorkspaceId(auth.tenant_id),
+    )
+}
+
+fn calendar_note_source_error(error: SourceError) -> AppError {
+    tracing::debug!(%error, "Calendar linked Note unavailable");
+    match error {
+        SourceError::OwnerUnavailable => AppError::service_unavailable("Note owner unavailable"),
+        SourceError::Internal(_) => AppError::internal("Note owner failure"),
+        SourceError::Unauthorized | SourceError::Delegation(_) | SourceError::WorkspaceMismatch => {
+            AppError::forbidden("linked Note access denied")
+        }
+        _ => AppError::not_found("linked Note unavailable"),
+    }
 }
 
 /// `GET /api/v1/calendar/events/{id}/export` — export one caller-owned event

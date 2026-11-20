@@ -53,6 +53,7 @@
 	let relatedMailMessageId = $state<string | null>(null);
 	let relatedMailUnavailable = $state(false);
 	let openingMeeting = $state(false);
+	let openingNotes = $state(false);
 	let editorOpen = $state(false);
 	let editingEvent = $state<CalendarEvent | null>(null);
 	let formTitle = $state('');
@@ -272,7 +273,11 @@
 			starts_at: string;
 			ends_at: string;
 		}) => {
-			return calendarApi.updateEvent(event.id, { starts_at, ends_at, timezone: event.timezone });
+			return calendarApi.updateEvent(event.id, {
+				starts_at,
+				ends_at,
+				timezone: event.timezone
+			});
 		},
 		onSuccess: async (_updated, { event, starts_at, ends_at }) => {
 			if (selectedEvent?.id === event.id) selectedEvent = { ...selectedEvent, starts_at, ends_at };
@@ -447,7 +452,10 @@
 	}
 
 	function formatTime(iso: string): string {
-		return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+		return new Date(iso).toLocaleTimeString(undefined, {
+			hour: '2-digit',
+			minute: '2-digit'
+		});
 	}
 
 	function formatEventTime(iso: string, event: CalendarEvent): string {
@@ -491,14 +499,18 @@
 	function eventDetailDateLabel(event: CalendarEvent): string {
 		if (event.all_day) {
 			const key = (event.instance_start ?? event.original_date ?? event.starts_at).slice(0, 10);
-			return new Date(`${key}T12:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC' });
+			return new Date(`${key}T12:00:00Z`).toLocaleDateString(undefined, {
+				timeZone: 'UTC'
+			});
 		}
 		const start = occurrenceStart(event);
 		const timeZone = supportedEventTimeZone(event);
 		const key = timeZone
 			? localDateTime(start.toISOString(), timeZone).date
 			: toLocalInputDate(start);
-		return new Date(`${key}T12:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC' });
+		return new Date(`${key}T12:00:00Z`).toLocaleDateString(undefined, {
+			timeZone: 'UTC'
+		});
 	}
 
 	function eventTimeLabel(event: CalendarEvent): string {
@@ -687,6 +699,27 @@
 			toastStore.show('Could not open meeting note. It may be unavailable.', 'error');
 		} finally {
 			openingMeeting = false;
+		}
+	}
+
+	async function openMeetingNotes(event: CalendarEvent) {
+		if (openingNotes || isOccurrence(event)) return;
+		openingNotes = true;
+		try {
+			const linked = await calendarApi.openEventNote(event.id);
+			if (selectedEvent?.id !== event.id) return;
+			selectedEvent = null;
+			const returnTo = `/apps/calendar?event_id=${encodeURIComponent(event.id)}`;
+			await goto(`/apps/notes/${linked.note_id}?returnTo=${encodeURIComponent(returnTo)}`);
+		} catch (error) {
+			toastStore.show(
+				error instanceof ApiError && error.status === 403
+					? 'You no longer have access to this meeting Note.'
+					: 'Could not open meeting Notes. They may be unavailable.',
+				'error'
+			);
+		} finally {
+			openingNotes = false;
 		}
 	}
 
@@ -884,7 +917,9 @@
 								<div class="text-2xs font-semibold text-base-content/50">
 									{WEEKDAY_LABELS[cell.date.getDay()]}
 								</div>
-								<div class="text-sm font-semibold text-base-content">{cell.date.getDate()}</div>
+								<div class="text-sm font-semibold text-base-content">
+									{cell.date.getDate()}
+								</div>
 							</div>
 						{/each}
 					</div>
@@ -1111,7 +1146,9 @@
 			aria-label="Event details"
 		>
 			<div class="flex items-start justify-between gap-3">
-				<h3 class="text-base font-semibold text-base-content">{selectedEvent.title}</h3>
+				<h3 class="text-base font-semibold text-base-content">
+					{selectedEvent.title}
+				</h3>
 				<button
 					type="button"
 					class="btn btn-ghost btn-xs"
@@ -1133,7 +1170,9 @@
 				{/if}
 			</p>
 			{#if selectedEvent.location}
-				<p class="mt-1 text-sm text-base-content/70">{selectedEvent.location}</p>
+				<p class="mt-1 text-sm text-base-content/70">
+					{selectedEvent.location}
+				</p>
 			{/if}
 			{#if selectedEvent.description}
 				<p class="mt-2 text-sm whitespace-pre-wrap text-base-content/80">
@@ -1141,7 +1180,9 @@
 				</p>
 			{/if}
 			{#if selectedEvent.read_only}
-				<p class="mt-3 text-xs text-base-content/50">{sourceAttribution(selectedEvent)}</p>
+				<p class="mt-3 text-xs text-base-content/50">
+					{sourceAttribution(selectedEvent)}
+				</p>
 			{/if}
 			<div class="mt-4 flex flex-wrap items-center justify-end gap-2">
 				{#if canExportEvent(selectedEvent)}
@@ -1175,7 +1216,15 @@
 						disabled={openingMeeting}
 						onclick={() => openMeeting(selectedEvent!)}
 					>
-						{openingMeeting ? 'Opening…' : 'Open meeting note'}
+						{openingMeeting ? 'Opening…' : 'Open meeting workspace'}
+					</button>
+					<button
+						type="button"
+						class="btn btn-outline btn-sm"
+						disabled={openingNotes}
+						onclick={() => openMeetingNotes(selectedEvent!)}
+					>
+						{openingNotes ? 'Opening…' : 'Create/Open Meeting Notes'}
 					</button>
 				{/if}
 				{#if !selectedEvent.read_only}
@@ -1264,7 +1313,9 @@
 			<h3 id="cal-move-title" class="text-base font-semibold text-base-content">
 				Move {moveEvent.title}
 			</h3>
-			<p class="text-xs text-base-content/70">Event time zone: {moveEvent.timezone}</p>
+			<p class="text-xs text-base-content/70">
+				Event time zone: {moveEvent.timezone}
+			</p>
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 				<div class="form-control">
 					<label class="label py-1 text-xs font-semibold" for="cal-move-date">New date</label>
@@ -1303,7 +1354,9 @@
 				Preview: {moveDate} at {moveTime}; event duration stays the same. Nonexistent
 				daylight-saving times are rejected; repeated times use the earlier occurrence.
 			</p>
-			{#if moveError}<p class="text-sm text-error" role="alert">{moveError}</p>{/if}
+			{#if moveError}<p class="text-sm text-error" role="alert">
+					{moveError}
+				</p>{/if}
 			<div class="flex justify-end gap-2">
 				<button
 					type="button"

@@ -1250,6 +1250,16 @@ impl CalendarService {
                         .await
                         .map_err(db_error)?;
                     if deleted {
+                        sqlx::query(
+                            "DELETE FROM calendar_event_note_links
+                             WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3",
+                        )
+                        .bind(tenant_id)
+                        .bind(owner_id)
+                        .bind(event_id)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(tx_error)?;
                         let envelope = build_event_envelope(
                             tenant_id,
                             owner_id,
@@ -1267,6 +1277,16 @@ impl CalendarService {
                         .soft_delete_calendar_event(tenant_id, owner_id, event_id)
                         .await
                         .map_err(db_error)?;
+                    sqlx::query(
+                        "DELETE FROM calendar_event_note_links
+                         WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3",
+                    )
+                    .bind(tenant_id)
+                    .bind(owner_id)
+                    .bind(event_id)
+                    .execute(self.metadata_store.pool())
+                    .await
+                    .map_err(tx_error)?;
                 }
                 Ok(())
             }
@@ -1279,6 +1299,16 @@ impl CalendarService {
                 {
                     return Err(CalendarError::NotFound(event_id));
                 }
+                sqlx::query(
+                    "DELETE FROM calendar_event_note_links
+                     WHERE tenant_id = $1 AND owner_id = $2 AND event_id = $3",
+                )
+                .bind(tenant_id)
+                .bind(owner_id)
+                .bind(event_id)
+                .execute(self.metadata_store.pool())
+                .await
+                .map_err(tx_error)?;
                 Ok(())
             }
         }
