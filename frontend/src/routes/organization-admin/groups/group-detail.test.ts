@@ -95,4 +95,48 @@ describe('organization group detail', () => {
 			expect(mocks.getGroup).toHaveBeenLastCalledWith('group-b', { page: 1, per_page: 50 })
 		);
 	});
+
+	it('filters the current roster and resets its pagination', async () => {
+		mocks.getGroup.mockImplementation((id: string, params: { page: number; search?: string }) =>
+			Promise.resolve({
+				id,
+				name: 'Group A',
+				description: null,
+				archived_at: null,
+				members: params.search
+					? [
+							{
+								user_id: 'user-1',
+								username: 'alex',
+								email: 'alex@example.test',
+								added_at: '2026-01-01T00:00:00Z'
+							}
+						]
+					: [],
+				total: params.search ? 1 : 60,
+				page: params.page,
+				per_page: 50
+			})
+		);
+		render(GroupDetailPage);
+		await screen.findByText('Page 1 of 2');
+		await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+		await screen.findByText('Page 2 of 2');
+
+		await fireEvent.input(screen.getByLabelText('Filter current group members'), {
+			target: { value: 'alex@example.test' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Filter members' }));
+		await screen.findByText('Page 1 of 1');
+		await screen.findByText('alex');
+		expect(mocks.getGroup).toHaveBeenLastCalledWith('group-a', {
+			page: 1,
+			per_page: 50,
+			search: 'alex@example.test'
+		});
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }));
+		await screen.findByText('Page 1 of 2');
+		expect(mocks.getGroup).toHaveBeenLastCalledWith('group-a', { page: 1, per_page: 50 });
+	});
 });

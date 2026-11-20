@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Search the paginated membership roster of an organization group by username or email.
 - Archive organization groups to suspend their derived access while retaining memberships and shares for audited restoration.
 - Import bounded iCalendar files into an explicitly selected Calendar source after previewing new, unchanged, changed, and unsupported events; preserve supported UTC timestamps, all-day dates, IANA event times, and UTC recurrence while rejecting lossy timezone and recurrence forms.
 - Load Application settings contributions reactively so direct navigation works while the shell registry is still loading.

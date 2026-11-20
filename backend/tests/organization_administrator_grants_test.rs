@@ -969,6 +969,14 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+    let roster_search = format!("rosterNeedle{}", member.simple());
+    sqlx::query("UPDATE users SET username = $1, email = $2 WHERE id = $3")
+        .bind(&roster_search)
+        .bind(format!("{roster_search}@test.local"))
+        .bind(member)
+        .execute(&pool)
+        .await
+        .unwrap();
     let (status, group_detail) = send(
         &app,
         "GET",
@@ -979,6 +987,27 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     .await;
     assert_eq!(status, axum::http::StatusCode::OK);
     assert_eq!(group_detail["members"].as_array().unwrap().len(), 1);
+    let (status, filtered_detail) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/organization-admin/groups/{group_id}?search={roster_search}"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(filtered_detail["total"], 1);
+    assert_eq!(filtered_detail["members"][0]["user_id"], member.to_string());
+    let (status, no_matches) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/organization-admin/groups/{group_id}/members?search=not-a-member"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(no_matches["total"], 0);
     let (status, members_page) = send(
         &app,
         "GET",
@@ -989,6 +1018,48 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     .await;
     assert_eq!(status, axum::http::StatusCode::OK);
     assert_eq!(members_page["members"].as_array().unwrap().len(), 1);
+    let (status, filtered_members) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/organization-admin/groups/{group_id}/members?search={roster_search}"),
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(filtered_members["total"], 1);
+    assert_eq!(
+        filtered_members["members"][0]["user_id"],
+        member.to_string()
+    );
+    let (status, _) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/organization-admin/groups/{group_id}?search={roster_search}"),
+        &member_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+    let (status, _) = send_json(
+        &app,
+        "POST",
+        &format!("/api/v1/admin/organizations/{foreign_tenant}/administrators/{foreign}"),
+        &op_token,
+        None,
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    let (status, _) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/organization-admin/groups/{group_id}?search={roster_search}"),
+        &foreign_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
     let (status, archived_group) = send_json(
         &app,
         "PATCH",
