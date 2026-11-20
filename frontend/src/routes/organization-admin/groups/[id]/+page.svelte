@@ -26,21 +26,29 @@
 	let error = $state('');
 	let name = $state('');
 	let description = $state('');
+	let memberRosterSearch = $state('');
+	let appliedMemberSearch = $state('');
 	let memberSearch = $state('');
 	let matches = $state<OrgUser[]>([]);
 	let selectedUser = $state('');
 	let loadVersion = 0;
 	let loadedGroupId = '';
 
-	async function load(requestedGroupId = groupId, requestedPage = page) {
+	async function load(
+		requestedGroupId = groupId,
+		requestedPage = page,
+		requestedSearch = appliedMemberSearch
+	) {
 		const requestVersion = ++loadVersion;
 		loading = true;
 		error = '';
 		try {
-			const result = await getOrganizationGroup(requestedGroupId, {
+			const params: { page: number; per_page: number; search?: string } = {
 				page: requestedPage,
 				per_page: perPage
-			});
+			};
+			if (requestedSearch) params.search = requestedSearch;
+			const result = await getOrganizationGroup(requestedGroupId, params);
 			if (requestVersion !== loadVersion || requestedGroupId !== groupId) return;
 			group = result;
 			name = result.name;
@@ -57,15 +65,30 @@
 
 	$effect(() => {
 		const requestedGroupId = groupId;
+		const requestedSearch = appliedMemberSearch;
 		if (!requestedGroupId) return;
 		if (requestedGroupId !== loadedGroupId) {
 			loadedGroupId = requestedGroupId;
 			page = 1;
-			void load(requestedGroupId, 1);
+			memberRosterSearch = '';
+			appliedMemberSearch = '';
+			void load(requestedGroupId, 1, '');
 		} else {
-			void load(requestedGroupId, page);
+			void load(requestedGroupId, page, requestedSearch);
 		}
 	});
+
+	function filterMembers(event: SubmitEvent) {
+		event.preventDefault();
+		appliedMemberSearch = memberRosterSearch.trim();
+		page = 1;
+	}
+
+	function clearMemberFilter() {
+		memberRosterSearch = '';
+		appliedMemberSearch = '';
+		page = 1;
+	}
 
 	async function saveGroup(event: SubmitEvent) {
 		event.preventDefault();
@@ -172,6 +195,22 @@
 		</form>
 		<section aria-labelledby="members-title" class="space-y-3">
 			<h3 id="members-title" class="text-xl font-semibold">Members ({total})</h3>
+			<form class="flex flex-wrap gap-2" onsubmit={filterMembers} role="search">
+				<label class="sr-only" for="member-roster-search">Filter current group members</label>
+				<input
+					id="member-roster-search"
+					class="input-bordered input input-sm"
+					bind:value={memberRosterSearch}
+					placeholder="Filter members by username or email"
+				/>
+				<button class="btn btn-sm" disabled={busy}>Filter members</button>
+				<button
+					class="btn btn-ghost btn-sm"
+					type="button"
+					disabled={busy || !appliedMemberSearch}
+					onclick={clearMemberFilter}>Clear filter</button
+				>
+			</form>
 			<form class="flex flex-wrap gap-2" onsubmit={searchMembers} role="search">
 				<label class="sr-only" for="member-search">Search organization users</label>
 				<input
