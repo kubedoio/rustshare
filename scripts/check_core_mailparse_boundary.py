@@ -111,6 +111,23 @@ def violations(
     )
     if notification_repo and re.search(r"\bsqlx\s*::\s*Error\b", notification_repo.group()):
         errors.append("ShareNotificationRepo exposes a SQLx-specific error")
+    scim_v2_service = next(
+        (
+            source
+            for name, source in sources.items()
+            if name.replace("\\", "/").endswith(
+                "backend/crates/core/src/services/scim_v2_service.rs"
+            )
+        ),
+        "",
+    )
+    for record_name in ("ScimV2GroupRecord", "ScimV2UserRecord"):
+        record = re.search(
+            rf"#\[derive\(([^]]*)\)\]\s*pub struct {record_name}\b",
+            scim_v2_service,
+        )
+        if record and re.search(r"\bsqlx\s*::\s*FromRow\b", record.group(1)):
+            errors.append(f"{record_name} derives the SQLx row decoder in Core")
     return errors
 
 
@@ -190,6 +207,25 @@ def self_test() -> None:
             )
         },
     ) == ["ShareNotificationRepo exposes a SQLx-specific error"]
+    scim_v2_service = "backend/crates/core/src/services/scim_v2_service.rs"
+    for record_name in ("ScimV2GroupRecord", "ScimV2UserRecord"):
+        assert violations(
+            '[dependencies]\nchrono = "1"\n',
+            {
+                scim_v2_service: (
+                    f"#[derive(Debug, Clone)] pub struct {record_name} {{ field: String }}"
+                )
+            },
+        ) == []
+        assert violations(
+            '[dependencies]\nchrono = "1"\n',
+            {
+                scim_v2_service: (
+                    "#[derive(Debug, Clone, sqlx::FromRow)] "
+                    f"pub struct {record_name} {{ field: String }}"
+                )
+            },
+        ) == [f"{record_name} derives the SQLx row decoder in Core"]
     for source in (
         'std::env::var("RUSTSHARE_SETTING")',
         'use std::env; env::var_os("RUSTSHARE_SETTING")',
