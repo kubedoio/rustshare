@@ -900,7 +900,7 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::OK);
-    assert_eq!(local_groups["total"], 2);
+    assert_eq!(local_groups["total"], 1);
     assert!(local_groups["groups"]
         .as_array()
         .unwrap()
