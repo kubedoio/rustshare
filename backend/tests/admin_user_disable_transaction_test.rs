@@ -1298,11 +1298,11 @@ async fn group_membership_changes_and_audits_commit_or_roll_back_together() -> T
              ) AND NOT EXISTS (
                  SELECT 1 FROM admin_actions
                  WHERE action_type = 'group.member_added' AND target_id = $1
-                   AND detail->>'user_id' = $2
+                   AND detail->>'user_id' = $2::text
              )",
         )
         .bind(group_id)
-        .bind(foreign_member_id.to_string())
+        .bind(foreign_member_id)
         .fetch_one(&pool)
         .await?;
         assert!(
