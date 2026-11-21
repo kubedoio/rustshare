@@ -158,6 +158,22 @@ def violations(
         scim_v2_service,
     ):
         errors.append("ScimV2 Core contract exposes SQLx errors")
+    scim_service = next(
+        (
+            source
+            for name, source in sources.items()
+            if name.replace("\\", "/").endswith(
+                "backend/crates/core/src/services/scim_service.rs"
+            )
+        ),
+        "",
+    )
+    if re.search(
+        r"\buse\b[^;]*\bsqlx\b|\bextern\s+crate\s+(?:r#)?sqlx\b|"
+        r"\bsqlx\s*::\s*Error\b|\b23505\b",
+        scim_service,
+    ):
+        errors.append("SCIM Core contract exposes SQLx errors")
     return errors
 
 
@@ -297,6 +313,19 @@ def self_test() -> None:
         '[dependencies]\nchrono = "1"\n',
         {scim_v2_service: "use sqlx as db; type DatabaseError = db::Error;"},
     ) == ["ScimV2 Core contract exposes SQLx errors"]
+    scim_service = "backend/crates/core/src/services/scim_service.rs"
+    assert violations(
+        '[dependencies]\nchrono = "1"\n',
+        {scim_service: "pub trait ScimRepository { async fn find() -> Result<User, ScimRepositoryError>; }"},
+    ) == []
+    for source in (
+        "pub trait ScimRepository { async fn find() -> Result<User, sqlx::Error>; }",
+        "use sqlx as db; type DatabaseError = db::Error;",
+        'let unique_violation = error.code() == Some("23505");',
+    ):
+        assert violations(
+            '[dependencies]\nchrono = "1"\n', {scim_service: source}
+        ) == ["SCIM Core contract exposes SQLx errors"], source
     for source in (
         'std::env::var("RUSTSHARE_SETTING")',
         'use std::env; env::var_os("RUSTSHARE_SETTING")',

@@ -19,11 +19,29 @@ pub enum ScimError {
     #[error("Group not found: {0}")]
     GroupNotFound(String),
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
     #[error("Conflict: {0}")]
     Conflict(String),
+}
+
+/// Errors returned by the SCIM repository port.
+#[derive(Debug, Error)]
+pub enum ScimRepositoryError {
+    #[error("Database error: {0}")]
+    Database(String),
+    #[error("Conflict: {0}")]
+    Conflict(String),
+}
+
+impl From<ScimRepositoryError> for ScimError {
+    fn from(error: ScimRepositoryError) -> Self {
+        match error {
+            ScimRepositoryError::Database(detail) => Self::Database(detail),
+            ScimRepositoryError::Conflict(detail) => Self::Conflict(detail),
+        }
+    }
 }
 
 /// A SCIM group write failure tagged with whether any statement committed
@@ -90,12 +108,12 @@ impl From<ScimError> for ScimWriteError {
 /// `writes_committed: true` (see [`ScimWriteError::post_commit`]); a `?`
 /// added after a committing statement would silently default to
 /// `writes_committed: false` and wrongly skip post-failure refresh.
-impl From<sqlx::Error> for ScimWriteError {
+impl From<ScimRepositoryError> for ScimWriteError {
     // Conservative default: an unclassified error is treated as pre-write.
     // Only apply `?` via this conversion BEFORE the first committing
     // statement; errors after any committed write must be constructed
     // explicitly with writes_committed: true.
-    fn from(error: sqlx::Error) -> Self {
+    fn from(error: ScimRepositoryError) -> Self {
         Self::pre_write(error.into())
     }
 }
@@ -183,10 +201,10 @@ pub trait ScimRepository: Send + Sync {
         &self,
         tenant_id: Uuid,
         external_id: &str,
-    ) -> Result<Option<User>, sqlx::Error>;
+    ) -> Result<Option<User>, ScimRepositoryError>;
 
     /// Create a new user in the organization.
-    async fn create_user(&self, user: &User, external_id: &str) -> Result<(), sqlx::Error>;
+    async fn create_user(&self, user: &User, external_id: &str) -> Result<(), ScimRepositoryError>;
 
     /// Update an existing user within the organization.
     #[allow(clippy::too_many_arguments)]
@@ -199,7 +217,7 @@ pub trait ScimRepository: Send + Sync {
         name: Option<&str>,
         surname: Option<&str>,
         disabled_at: Option<DateTime<Utc>>,
-    ) -> Result<(), ScimError>;
+    ) -> Result<(), ScimRepositoryError>;
 
     /// Set user's disabled_at timestamp within the organization.
     async fn set_user_disabled(
@@ -207,14 +225,14 @@ pub trait ScimRepository: Send + Sync {
         tenant_id: Uuid,
         external_id: &str,
         disabled: bool,
-    ) -> Result<(), ScimError>;
+    ) -> Result<(), ScimRepositoryError>;
 
     /// Find group by external_id within the organization.
     async fn find_group_by_external_id(
         &self,
         tenant_id: Uuid,
         external_id: &str,
-    ) -> Result<Option<GroupRecord>, sqlx::Error>;
+    ) -> Result<Option<GroupRecord>, ScimRepositoryError>;
 
     /// Create a new group in the organization.
     async fn create_group(
@@ -222,7 +240,7 @@ pub trait ScimRepository: Send + Sync {
         tenant_id: Uuid,
         external_id: &str,
         display_name: &str,
-    ) -> Result<Uuid, sqlx::Error>;
+    ) -> Result<Uuid, ScimRepositoryError>;
 
     /// Update an existing group within the organization.
     async fn update_group(
@@ -230,24 +248,28 @@ pub trait ScimRepository: Send + Sync {
         tenant_id: Uuid,
         external_id: &str,
         display_name: &str,
-    ) -> Result<(), sqlx::Error>;
+    ) -> Result<(), ScimRepositoryError>;
 
     /// Delete a group within the organization.
-    async fn delete_group(&self, tenant_id: Uuid, external_id: &str) -> Result<(), sqlx::Error>;
+    async fn delete_group(
+        &self,
+        tenant_id: Uuid,
+        external_id: &str,
+    ) -> Result<(), ScimRepositoryError>;
 
     /// Find user ID by external_id within the organization.
     async fn find_user_id_by_external_id(
         &self,
         tenant_id: Uuid,
         external_id: &str,
-    ) -> Result<Option<Uuid>, sqlx::Error>;
+    ) -> Result<Option<Uuid>, ScimRepositoryError>;
 
     /// Get current group members within the organization.
     async fn get_group_members(
         &self,
         tenant_id: Uuid,
         group_id: Uuid,
-    ) -> Result<Vec<Uuid>, sqlx::Error>;
+    ) -> Result<Vec<Uuid>, ScimRepositoryError>;
 
     /// Add member to group; both must belong to the organization.
     async fn add_group_member(
@@ -255,7 +277,7 @@ pub trait ScimRepository: Send + Sync {
         tenant_id: Uuid,
         group_id: Uuid,
         user_id: Uuid,
-    ) -> Result<(), sqlx::Error>;
+    ) -> Result<(), ScimRepositoryError>;
 
     /// Remove member from group within the organization.
     async fn remove_group_member(
@@ -263,32 +285,14 @@ pub trait ScimRepository: Send + Sync {
         tenant_id: Uuid,
         group_id: Uuid,
         user_id: Uuid,
-    ) -> Result<(), sqlx::Error>;
+    ) -> Result<(), ScimRepositoryError>;
 
     /// Clear all members from a group within the organization.
-    async fn clear_group_members(&self, tenant_id: Uuid, group_id: Uuid)
-        -> Result<(), sqlx::Error>;
-}
-
-/// Map a collision with the installation-wide unique directory identifiers
-/// (SQLSTATE 23505) to a generic conflict that does not name the database
-/// constraint or reveal which organization owns the existing row.
-fn directory_conflict(resource: &str, e: sqlx::Error) -> ScimError {
-    if let sqlx::Error::Database(db) = &e {
-        if db.code().as_deref() == Some("23505") {
-            return ScimError::Conflict(format!(
-                "a {resource} with the same identifying value already exists in the directory"
-            ));
-        }
-    }
-    ScimError::Database(e)
-}
-
-fn identity_write_conflict(error: ScimError) -> ScimError {
-    match error {
-        ScimError::Database(error) => directory_conflict("user", error),
-        error => error,
-    }
+    async fn clear_group_members(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+    ) -> Result<(), ScimRepositoryError>;
 }
 
 /// Group record for SCIM operations.
@@ -405,8 +409,7 @@ impl<R: ScimRepository> ScimService<R> {
                         surname.as_deref(),
                         disabled_at,
                     )
-                    .await
-                    .map_err(identity_write_conflict)?;
+                    .await?;
 
                 Ok(ScimUserResult {
                     id: user.id,
@@ -435,8 +438,7 @@ impl<R: ScimRepository> ScimService<R> {
 
                 self.repository
                     .create_user(&user, &scim_user.external_id)
-                    .await
-                    .map_err(|e| directory_conflict("user", e))?;
+                    .await?;
 
                 // If user should be disabled, set that now
                 if !scim_user.active {
@@ -529,8 +531,7 @@ impl<R: ScimRepository> ScimService<R> {
                         &scim_group.external_id,
                         &scim_group.display_name,
                     )
-                    .await
-                    .map_err(|e| ScimWriteError::pre_write(directory_conflict("group", e)))?;
+                    .await?;
 
                 // The group INSERT is committed from here on.
                 if let Some(members) = scim_group.members {
