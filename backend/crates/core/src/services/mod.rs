@@ -66,8 +66,9 @@ pub use scim_v2_service::{
     ScimV2Address, ScimV2AuthScheme, ScimV2BulkConfig, ScimV2Email, ScimV2Error,
     ScimV2ErrorResponse, ScimV2FilterConfig, ScimV2Group, ScimV2GroupRecord, ScimV2GroupRef,
     ScimV2ListResponse, ScimV2Member, ScimV2Meta, ScimV2Name, ScimV2PhoneNumber, ScimV2Repository,
-    ScimV2ResourceType, ScimV2Schema, ScimV2SchemaAttribute, ScimV2SchemaExtension, ScimV2Service,
-    ScimV2ServiceProviderConfig, ScimV2SupportConfig, ScimV2User, ScimV2UserRecord,
+    ScimV2RepositoryError, ScimV2ResourceType, ScimV2Schema, ScimV2SchemaAttribute,
+    ScimV2SchemaExtension, ScimV2Service, ScimV2ServiceProviderConfig, ScimV2SupportConfig,
+    ScimV2User, ScimV2UserRecord,
 };
 pub use search_service::{SearchIndexRepository, SearchResult, SearchResultItem, SearchService};
 pub use share_errors::ShareError;

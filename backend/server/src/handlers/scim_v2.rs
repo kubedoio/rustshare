@@ -621,7 +621,7 @@ pub async fn delete_group(
     // the captured targets is dispatched only after a successful commit.
     let mut tx = match state.db_pool.begin().await {
         Ok(tx) => tx,
-        Err(error) => return scim_error_response(ScimV2Error::Database(error)),
+        Err(error) => return scim_error_response(ScimV2Error::Database(error.to_string())),
     };
     let locked = sqlx::query_scalar!(
         "SELECT id FROM user_groups WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
@@ -632,7 +632,7 @@ pub async fn delete_group(
     .await;
     let locked = match locked {
         Ok(locked) => locked,
-        Err(error) => return scim_error_response(ScimV2Error::Database(error)),
+        Err(error) => return scim_error_response(ScimV2Error::Database(error.to_string())),
     };
     if locked.is_none() {
         return scim_error_response(ScimV2Error::GroupNotFound(id.to_string()));
@@ -640,7 +640,7 @@ pub async fn delete_group(
     let targets =
         match crate::services::note_service::capture_group_share_targets(&mut tx, id).await {
             Ok(targets) => targets,
-            Err(error) => return scim_error_response(ScimV2Error::Database(error)),
+            Err(error) => return scim_error_response(ScimV2Error::Database(error.to_string())),
         };
     let delete_result = sqlx::query!(
         "DELETE FROM user_groups WHERE id = $1 AND tenant_id = $2",
@@ -650,10 +650,10 @@ pub async fn delete_group(
     .execute(&mut *tx)
     .await;
     if let Err(error) = delete_result {
-        return scim_error_response(ScimV2Error::Database(error));
+        return scim_error_response(ScimV2Error::Database(error.to_string()));
     }
     if let Err(error) = tx.commit().await {
-        return scim_error_response(ScimV2Error::Database(error));
+        return scim_error_response(ScimV2Error::Database(error.to_string()));
     }
 
     crate::services::note_service::dispatch_share_target_acl_refresh(
