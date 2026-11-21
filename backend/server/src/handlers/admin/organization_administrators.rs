@@ -15,7 +15,6 @@ use super::{
 };
 pub(crate) use crate::services::organization_administrators::{
     lock_tenant_admin_grants, removal_would_leave_no_enabled_admin, revoke_for_lifecycle,
-    revoke_for_scim_lifecycle,
 };
 use crate::{
     handlers::{AdminUser, AppError, PaginationQuery},

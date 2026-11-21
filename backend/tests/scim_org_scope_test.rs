@@ -1737,7 +1737,8 @@ async fn scim_membership_queries_enforce_both_scope_legs() {
             .expect("failed to seed cross-tenant membership");
     }
 
-    let v2_repo = rustshare_server::handlers::scim_v2::ScimV2RepositoryImpl::new(pool.clone());
+    let v2_repo =
+        rustshare_server::services::scim_v2_repository::ScimV2RepositoryImpl::new(pool.clone());
     let v1_repo = rustshare_server::handlers::scim::ScimRepositoryImpl::new(pool.clone());
 
     // v2 get_group_members: a cross-org GROUP with an in-scope user must not
