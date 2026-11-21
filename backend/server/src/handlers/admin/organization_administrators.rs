@@ -14,7 +14,8 @@ use super::{
     insert_scoped_admin_action, request_correlation_id,
 };
 pub(crate) use crate::services::organization_administrators::{
-    lock_tenant_admin_grants, removal_would_leave_no_enabled_admin, revoke_for_lifecycle,
+    list_active_for_tenant, lock_tenant_admin_grants, removal_would_leave_no_enabled_admin,
+    revoke_for_lifecycle, OrganizationAdministratorRow,
 };
 use crate::{
     handlers::{AdminUser, AppError, PaginationQuery},
@@ -56,18 +57,6 @@ pub struct OrganizationAdministratorGrantRequest {
     pub recovery_reason: Option<OrganizationAdministratorRecoveryReason>,
 }
 
-#[derive(sqlx::FromRow)]
-struct AdministratorRow {
-    grant_id: Uuid,
-    tenant_id: Uuid,
-    user_id: Uuid,
-    username: String,
-    display_name: String,
-    granted_by: Uuid,
-    granted_at: chrono::DateTime<chrono::Utc>,
-    disabled_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
 /// List current grants for one tenant. This endpoint remains installation-operator-only.
 #[utoipa::path(
     get,
@@ -88,29 +77,9 @@ pub async fn list_organization_administrators(
 ) -> Result<Json<PaginatedOrganizationAdministrators>, AppError> {
     let limit = pagination.limit();
     let offset = pagination.offset();
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM organization_administrators WHERE tenant_id = $1 AND revoked_at IS NULL",
-    )
-    .bind(tenant_id)
-    .fetch_one(&state.db_pool)
-    .await
-    .map_err(db_error)?;
-
-    let rows = sqlx::query_as::<_, AdministratorRow>(
-        r#"SELECT oa.id AS grant_id, oa.tenant_id, oa.user_id, u.username, u.display_name,
-                  oa.granted_by, oa.granted_at, u.disabled_at
-           FROM organization_administrators oa
-           JOIN users u ON u.id = oa.user_id AND u.tenant_id = oa.tenant_id
-           WHERE oa.tenant_id = $1 AND oa.revoked_at IS NULL
-           ORDER BY oa.granted_at DESC, oa.id DESC
-           LIMIT $2 OFFSET $3"#,
-    )
-    .bind(tenant_id)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.db_pool)
-    .await
-    .map_err(db_error)?;
+    let (total, rows) = list_active_for_tenant(&state.db_pool, tenant_id, limit, offset)
+        .await
+        .map_err(db_error)?;
 
     Ok(Json(PaginatedOrganizationAdministrators {
         administrators: rows.into_iter().map(Into::into).collect(),
@@ -120,8 +89,8 @@ pub async fn list_organization_administrators(
     }))
 }
 
-impl From<AdministratorRow> for OrganizationAdministrator {
-    fn from(row: AdministratorRow) -> Self {
+impl From<OrganizationAdministratorRow> for OrganizationAdministrator {
+    fn from(row: OrganizationAdministratorRow) -> Self {
         Self {
             grant_id: row.grant_id,
             tenant_id: row.tenant_id,
@@ -229,7 +198,7 @@ pub async fn grant_organization_administrator(
         ));
     }
 
-    let row = sqlx::query_as::<_, AdministratorRow>(
+    let row = sqlx::query_as::<_, OrganizationAdministratorRow>(
         r#"INSERT INTO organization_administrators (tenant_id, user_id, granted_by)
            VALUES ($1, $2, $3)
            RETURNING id AS grant_id, tenant_id, user_id,
