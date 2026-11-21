@@ -2,8 +2,51 @@
 
 use crate::services::admin_audit_projection::project_audit_detail;
 use serde_json::json;
-use sqlx::{Postgres, Transaction};
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
+
+#[derive(sqlx::FromRow)]
+pub(crate) struct OrganizationAdministratorRow {
+    pub(crate) grant_id: Uuid,
+    pub(crate) tenant_id: Uuid,
+    pub(crate) user_id: Uuid,
+    pub(crate) username: String,
+    pub(crate) display_name: String,
+    pub(crate) granted_by: Uuid,
+    pub(crate) granted_at: chrono::DateTime<chrono::Utc>,
+    pub(crate) disabled_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+pub(crate) async fn list_active_for_tenant(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<(i64, Vec<OrganizationAdministratorRow>), sqlx::Error> {
+    let total = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM organization_administrators WHERE tenant_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(tenant_id)
+    .fetch_one(pool)
+    .await?;
+
+    let rows = sqlx::query_as::<_, OrganizationAdministratorRow>(
+        r#"SELECT oa.id AS grant_id, oa.tenant_id, oa.user_id, u.username, u.display_name,
+                  oa.granted_by, oa.granted_at, u.disabled_at
+           FROM organization_administrators oa
+           JOIN users u ON u.id = oa.user_id AND u.tenant_id = oa.tenant_id
+           WHERE oa.tenant_id = $1 AND oa.revoked_at IS NULL
+           ORDER BY oa.granted_at DESC, oa.id DESC
+           LIMIT $2 OFFSET $3"#,
+    )
+    .bind(tenant_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    Ok((total, rows))
+}
 
 /// Insert a tenant-attributable success record with the mutation in one transaction.
 #[allow(clippy::too_many_arguments)]

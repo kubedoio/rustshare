@@ -64,23 +64,19 @@
   ],
   "backend/server/src/handlers/admin/organization_administrators.rs": [
     "Executor.execute:443b48ec2a3aef9de7d313b7988273637e3ee33612a27f9eeb3ebab3b38bb9af",
-    "Executor.fetch_all:a8f0fc558bfc27e505b5f6573f53d248ce6c494efe748ed9b1f3f3b51cebe093",
     "Executor.fetch_one:078961ba422cc8bdfdb000a68a447ba1d69b84ec2c805a7614ae8ad295251aab",
     "Executor.fetch_one:078961ba422cc8bdfdb000a68a447ba1d69b84ec2c805a7614ae8ad295251aab",
     "Executor.fetch_one:078961ba422cc8bdfdb000a68a447ba1d69b84ec2c805a7614ae8ad295251aab",
     "Executor.fetch_one:078961ba422cc8bdfdb000a68a447ba1d69b84ec2c805a7614ae8ad295251aab",
-    "Executor.fetch_one:821bde5c037524ede64b9c4a2cb289e2caa301848153bcb1593a3cd1f2a7f908",
     "Executor.fetch_optional:4cc930d8a4c2ab7f6e59a859c67bb55c2fcc204de182b27b668d16bbae110052",
     "Executor.fetch_optional:4cc930d8a4c2ab7f6e59a859c67bb55c2fcc204de182b27b668d16bbae110052",
     "query:6ceb59f731358b7f0275373734cbfe79aeb8db02ae06440378af75eb277130d1",
     "query_as:1832f5295aaea9fb189941a10557b708bc6f7dc73217650327ebc87395017337",
-    "query_as:70942152a35ef727f0bf08082a1cea5320a1520d990aa07f7ab0ba0b66784524",
-    "query_as:ada0ed5b68a3968d0e36ab537a85dc14f42e157d5f8706afba3375e21d88b69c",
+    "query_as:fcfdeacc157d186b512e28c88158acde6274114f786545666e56a5642ffeedec",
     "query_scalar:1271110a7e2fec632b5f6e18e6db783bc1b779f23b338a96822de2f55515385c",
     "query_scalar:2f6d2c1aa2ec9caf0137ab385e9318545297fe2e621cb5ca93390cc6ef833d71",
     "query_scalar:e4a582c07aff1c68f1484c6df143bffb00b53ba4364ff8efa6ae9269241ae1aa",
-    "query_scalar:e4c1515e5548081118ee7c6f3ddba840c5031cd2a51be10ae30739090bab546d",
-    "query_scalar:ff0b63b0e143fe387e73188bec9ee6a25d4c282c76a84fdb8f444829b8ea45f5"
+    "query_scalar:e4c1515e5548081118ee7c6f3ddba840c5031cd2a51be10ae30739090bab546d"
   ],
   "backend/server/src/handlers/admin/templates.rs": [],
   "backend/server/src/handlers/admin/users.rs": [

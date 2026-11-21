@@ -304,6 +304,15 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
         foreign_list["administrators"].as_array().map(Vec::len),
         Some(0)
     );
+    let (status, _) = send(
+        &app,
+        "GET",
+        &format!("/api/v1/admin/organizations/{tenant_id}/administrators"),
+        &ordinary_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
     assert_eq!(
         send(&app, "DELETE", &grant_uri(member_id), &operator_token, None)
             .await
