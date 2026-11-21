@@ -1,5 +1,6 @@
 //! Repository for share access notification tracking
 
+use anyhow::Result;
 use rustshare_core::domain::UserId;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -15,7 +16,7 @@ impl ShareNotificationRepoImpl {
 }
 
 impl rustshare_core::services::ShareNotificationRepo for ShareNotificationRepoImpl {
-    async fn was_notified(&self, user_id: UserId, share_id: Uuid) -> Result<bool, sqlx::Error> {
+    async fn was_notified(&self, user_id: UserId, share_id: Uuid) -> Result<bool> {
         let result = sqlx::query_scalar::<_, bool>(
             r#"
             SELECT EXISTS(
@@ -32,11 +33,7 @@ impl rustshare_core::services::ShareNotificationRepo for ShareNotificationRepoIm
         Ok(result)
     }
 
-    async fn record_notification(
-        &self,
-        user_id: UserId,
-        share_id: Uuid,
-    ) -> Result<(), sqlx::Error> {
+    async fn record_notification(&self, user_id: UserId, share_id: Uuid) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO share_access_notifications (user_id, share_id, notified_at)
