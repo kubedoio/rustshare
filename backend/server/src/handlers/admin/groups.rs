@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     handlers::{AdminUser, AppError},
-    services::note_service,
+    services::{note_service, organization_groups},
     AppState,
 };
 
@@ -471,68 +471,37 @@ pub async fn add_member(
     Path(group_id): Path<Uuid>,
     Json(req): Json<AddMemberRequest>,
 ) -> Result<StatusCode, AppError> {
-    // Verify group exists and capture tenant for ACL refresh.
-    let group_tenant: Option<Uuid> =
-        sqlx::query_scalar("SELECT tenant_id FROM user_groups WHERE id = $1")
-            .bind(group_id)
-            .fetch_optional(&state.db_pool)
-            .await
-            .map_err(db_error)?;
-    let tenant_id = group_tenant.ok_or_else(|| admin_not_found("Group not found"))?;
-
-    // Verify the target user exists and belongs to the group's organization
-    // (ADR-0040: organization = tenant, strict equality). The AdminUser
-    // extractor is installation-wide, so the membership itself must enforce
-    // the organization boundary.
-    let user_tenant: Option<Uuid> =
-        sqlx::query_scalar!("SELECT tenant_id FROM users WHERE id = $1", req.user_id)
-            .fetch_optional(&state.db_pool)
-            .await
-            .map_err(db_error)?;
-    let user_tenant = user_tenant.ok_or_else(|| admin_not_found("User not found"))?;
-    if user_tenant != tenant_id {
-        return Err(admin_bad_request(
-            "User belongs to a different organization than the group",
-        ));
-    }
-
-    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
-    let result = sqlx::query!(
-        r#"
-        INSERT INTO group_members (group_id, user_id, added_by)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (group_id, user_id) DO NOTHING
-        "#,
+    match organization_groups::add_member(
+        &state.db_pool,
         group_id,
         req.user_id,
-        actor_id
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(db_error)?;
-
-    if result.rows_affected() == 0 {
-        return Err(admin_conflict("User is already a member of this group"));
-    }
-
-    insert_scoped_admin_action(
-        &mut tx,
-        tenant_id,
         actor_id,
-        "group.member_added",
-        Some("group"),
-        Some(group_id),
-        json!({"user_id": req.user_id}),
         request_correlation_id(&headers),
     )
     .await
-    .map_err(db_error)?;
-    tx.commit().await.map_err(db_error)?;
-
-    // Best-effort ACL refresh so newly added member can search group-shared notes.
-    note_service::dispatch_group_index_acl_refresh(Arc::clone(&state.note_service), group_id);
-
-    Ok(StatusCode::NO_CONTENT)
+    .map_err(db_error)?
+    {
+        organization_groups::AddMemberOutcome::Added => {
+            // Refresh only after the membership and audit transaction commits.
+            note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&state.note_service),
+                group_id,
+            );
+            Ok(StatusCode::NO_CONTENT)
+        }
+        organization_groups::AddMemberOutcome::GroupNotFound => {
+            Err(admin_not_found("Group not found"))
+        }
+        organization_groups::AddMemberOutcome::UserNotFound => {
+            Err(admin_not_found("User not found"))
+        }
+        organization_groups::AddMemberOutcome::DifferentTenant => Err(admin_bad_request(
+            "User belongs to a different organization than the group",
+        )),
+        organization_groups::AddMemberOutcome::AlreadyMember => {
+            Err(admin_conflict("User is already a member of this group"))
+        }
+    }
 }
 
 /// DELETE /api/v1/admin/groups/:id/members/:user_id
