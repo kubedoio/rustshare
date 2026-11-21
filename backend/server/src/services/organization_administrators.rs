@@ -48,6 +48,12 @@ pub(crate) async fn list_active_for_tenant(
     Ok((total, rows))
 }
 
+pub(crate) enum OperatorRevokeOutcome {
+    Revoked,
+    NotFound,
+    LastEnabledAdmin,
+}
+
 /// Insert a tenant-attributable success record with the mutation in one transaction.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_scoped_admin_action(
@@ -115,6 +121,55 @@ pub(crate) async fn lock_tenant_admin_grants(
         .execute(&mut **tx)
         .await?;
     Ok(())
+}
+
+pub(crate) async fn revoke_operator_grant(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    actor_id: Uuid,
+    user_id: Uuid,
+    correlation_id: Option<&str>,
+) -> Result<OperatorRevokeOutcome, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+
+    let Some(grant_id) = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM organization_administrators WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE",
+    )
+    .bind(tenant_id)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(OperatorRevokeOutcome::NotFound);
+    };
+
+    if removal_would_leave_no_enabled_admin(&mut tx, tenant_id, user_id).await? {
+        return Ok(OperatorRevokeOutcome::LastEnabledAdmin);
+    }
+
+    sqlx::query(
+        "UPDATE organization_administrators
+         SET revoked_by = $2, revoked_at = NOW(), revocation_source = 'operator'
+         WHERE id = $1",
+    )
+    .bind(grant_id)
+    .bind(actor_id)
+    .execute(&mut *tx)
+    .await?;
+    insert_scoped_admin_action(
+        &mut tx,
+        tenant_id,
+        actor_id,
+        "organization_admin.revoked",
+        Some("organization_administrator"),
+        Some(user_id),
+        json!({ "grant_id": grant_id }),
+        correlation_id,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(OperatorRevokeOutcome::Revoked)
 }
 
 /// Revoke grants when the installation operator disables or deletes the principal.

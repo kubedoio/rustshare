@@ -197,6 +197,44 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
         )
     );
 
+    let cross_tenant_revoke_uri =
+        format!("/api/v1/admin/organizations/{foreign_tenant_id}/administrators/{member_id}");
+    let (status, _) = send(
+        &app,
+        "DELETE",
+        &cross_tenant_revoke_uri,
+        &operator_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM organization_administrators
+             WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL",
+        )
+        .bind(tenant_id)
+        .bind(member_id)
+        .fetch_one(&pool)
+        .await
+        .expect("cross-tenant revocation must not change the grant"),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM admin_actions
+             WHERE tenant_id = $1 AND actor_principal_id = $2 AND target_id = $3
+               AND action_type = 'organization_admin.revoked'",
+        )
+        .bind(tenant_id)
+        .bind(operator_id)
+        .bind(member_id)
+        .fetch_one(&pool)
+        .await
+        .expect("cross-tenant revocation must not create an audit record"),
+        0
+    );
+
     let (status, _) = send_json(
         &app,
         "POST",
@@ -318,6 +356,20 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
             .await
             .0,
         axum::http::StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM admin_actions
+             WHERE tenant_id = $1 AND actor_principal_id = $2 AND target_id = $3
+               AND action_type = 'organization_admin.revoked'",
+        )
+        .bind(tenant_id)
+        .bind(operator_id)
+        .bind(member_id)
+        .fetch_one(&pool)
+        .await
+        .expect("successful revocation must be audited"),
+        1
     );
     let (status, _) = send_json(
         &app,

@@ -15,7 +15,8 @@ use super::{
 };
 pub(crate) use crate::services::organization_administrators::{
     list_active_for_tenant, lock_tenant_admin_grants, removal_would_leave_no_enabled_admin,
-    revoke_for_lifecycle, OrganizationAdministratorRow,
+    revoke_for_lifecycle, revoke_operator_grant, OperatorRevokeOutcome,
+    OrganizationAdministratorRow,
 };
 use crate::{
     handlers::{AdminUser, AppError, PaginationQuery},
@@ -256,54 +257,24 @@ pub async fn revoke_organization_administrator(
     headers: axum::http::HeaderMap,
     Path((tenant_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
-    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
-    lock_tenant_admin_grants(&mut tx, tenant_id)
-        .await
-        .map_err(db_error)?;
-
-    let active_grant = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM organization_administrators WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE",
-    )
-    .bind(tenant_id)
-    .bind(user_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(db_error)?
-    .ok_or_else(|| admin_not_found("Active organization administrator grant not found"))?;
-
-    if removal_would_leave_no_enabled_admin(&mut tx, tenant_id, user_id)
-        .await
-        .map_err(db_error)?
-    {
-        return Err(admin_conflict(
-            "Grant a replacement enabled administrator before revoking the last one",
-        ));
-    }
-
-    sqlx::query(
-        "UPDATE organization_administrators
-         SET revoked_by = $2, revoked_at = NOW(), revocation_source = 'operator'
-         WHERE id = $1",
-    )
-    .bind(active_grant)
-    .bind(actor_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(db_error)?;
-    insert_scoped_admin_action(
-        &mut tx,
+    match revoke_operator_grant(
+        &state.db_pool,
         tenant_id,
         actor_id,
-        "organization_admin.revoked",
-        Some("organization_administrator"),
-        Some(user_id),
-        json!({ "grant_id": active_grant }),
+        user_id,
         request_correlation_id(&headers),
     )
     .await
-    .map_err(db_error)?;
-    tx.commit().await.map_err(db_error)?;
-    Ok(StatusCode::NO_CONTENT)
+    .map_err(db_error)?
+    {
+        OperatorRevokeOutcome::Revoked => Ok(StatusCode::NO_CONTENT),
+        OperatorRevokeOutcome::NotFound => Err(admin_not_found(
+            "Active organization administrator grant not found",
+        )),
+        OperatorRevokeOutcome::LastEnabledAdmin => Err(admin_conflict(
+            "Grant a replacement enabled administrator before revoking the last one",
+        )),
+    }
 }
 
 fn db_error(error: sqlx::Error) -> AppError {
