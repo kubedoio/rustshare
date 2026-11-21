@@ -267,6 +267,21 @@ async fn organization_administrator_grants_are_scoped_audited_and_recoverable() 
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT NOT EXISTS(
+             SELECT 1 FROM organization_administrators
+             WHERE tenant_id = $1 AND user_id = $2
+         ) AND NOT EXISTS(
+             SELECT 1 FROM admin_actions
+             WHERE tenant_id = $1 AND target_id = $2
+               AND action_type LIKE 'organization_admin.%'
+         )",
+    )
+    .bind(tenant_id)
+    .bind(foreign_member_id)
+    .fetch_one(&pool)
+    .await
+    .expect("cross-tenant grant must not write a grant or audit record"));
     let (status, _) = send_json(
         &app,
         "POST",

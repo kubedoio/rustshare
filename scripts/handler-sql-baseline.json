@@ -62,18 +62,7 @@
     "query:39ec619369f0d4a067ede2a04323ae70a1a7f6cafb64bf4c204a34810f653366",
     "query:39ec619369f0d4a067ede2a04323ae70a1a7f6cafb64bf4c204a34810f653366"
   ],
-  "backend/server/src/handlers/admin/organization_administrators.rs": [
-    "Executor.fetch_one:078961ba422cc8bdfdb000a68a447ba1d69b84ec2c805a7614ae8ad295251aab",
-    "Executor.fetch_one:078961ba422cc8bdfdb000a68a447ba1d69b84ec2c805a7614ae8ad295251aab",
-    "Executor.fetch_one:078961ba422cc8bdfdb000a68a447ba1d69b84ec2c805a7614ae8ad295251aab",
-    "Executor.fetch_one:078961ba422cc8bdfdb000a68a447ba1d69b84ec2c805a7614ae8ad295251aab",
-    "Executor.fetch_optional:4cc930d8a4c2ab7f6e59a859c67bb55c2fcc204de182b27b668d16bbae110052",
-    "query_as:1832f5295aaea9fb189941a10557b708bc6f7dc73217650327ebc87395017337",
-    "query_as:fcfdeacc157d186b512e28c88158acde6274114f786545666e56a5642ffeedec",
-    "query_scalar:2f6d2c1aa2ec9caf0137ab385e9318545297fe2e621cb5ca93390cc6ef833d71",
-    "query_scalar:e4a582c07aff1c68f1484c6df143bffb00b53ba4364ff8efa6ae9269241ae1aa",
-    "query_scalar:e4c1515e5548081118ee7c6f3ddba840c5031cd2a51be10ae30739090bab546d"
-  ],
+  "backend/server/src/handlers/admin/organization_administrators.rs": [],
   "backend/server/src/handlers/admin/templates.rs": [],
   "backend/server/src/handlers/admin/users.rs": [
     "Executor.execute:443b48ec2a3aef9de7d313b7988273637e3ee33612a27f9eeb3ebab3b38bb9af",
