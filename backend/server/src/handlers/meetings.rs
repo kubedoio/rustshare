@@ -23,10 +23,28 @@ pub struct LinkMeetingResourceRequest {
     pub resource_ref: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MeetingResourceAvailability {
+    Available,
+    Deleted,
+    PermissionDenied,
+    Unavailable,
+}
+
+fn unavailable_resource_state(error: &SourceError) -> MeetingResourceAvailability {
+    match error {
+        SourceError::Unauthorized => MeetingResourceAvailability::PermissionDenied,
+        SourceError::NotFound => MeetingResourceAvailability::Deleted,
+        _ => MeetingResourceAvailability::Unavailable,
+    }
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MeetingResourceLinkView {
     pub id: Uuid,
     pub available: bool,
+    pub availability: MeetingResourceAvailability,
     pub created_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resource_ref: Option<String>,
@@ -100,6 +118,7 @@ async fn meeting_resource_view(
     let unavailable = || MeetingResourceLinkView {
         id,
         available: false,
+        availability: MeetingResourceAvailability::Unavailable,
         created_at,
         resource_ref: None,
         display_name: None,
@@ -122,13 +141,19 @@ async fn meeting_resource_view(
             return Err(AppError::service_unavailable("Resource owner unavailable"));
         }
         Err(SourceError::Internal(_)) => return Err(AppError::internal("Resource access failed")),
-        Err(_) => return Ok(unavailable()),
+        Err(error) => {
+            return Ok(MeetingResourceLinkView {
+                availability: unavailable_resource_state(&error),
+                ..unavailable()
+            });
+        }
     };
 
     if resource.application.0 == "io.elembra.notes" {
         return Ok(MeetingResourceLinkView {
             id,
             available: true,
+            availability: MeetingResourceAvailability::Available,
             created_at,
             resource_ref: Some(resource.to_uri()),
             display_name: Some(resolved.display_name),
@@ -151,10 +176,18 @@ async fn meeting_resource_view(
         {
             file
         }
-        Ok(_)
-        | Err(rustshare_core::services::FileError::NotFound(_))
-        | Err(rustshare_core::services::FileError::PermissionDenied { .. }) => {
-            return Ok(unavailable());
+        Ok(_) => return Ok(unavailable()),
+        Err(rustshare_core::services::FileError::NotFound(_)) => {
+            return Ok(MeetingResourceLinkView {
+                availability: MeetingResourceAvailability::Deleted,
+                ..unavailable()
+            });
+        }
+        Err(rustshare_core::services::FileError::PermissionDenied { .. }) => {
+            return Ok(MeetingResourceLinkView {
+                availability: MeetingResourceAvailability::PermissionDenied,
+                ..unavailable()
+            });
         }
         Err(_) => return Err(AppError::internal("Resource access failed")),
     };
@@ -182,6 +215,7 @@ async fn meeting_resource_view(
     Ok(MeetingResourceLinkView {
         id,
         available: true,
+        availability: MeetingResourceAvailability::Available,
         created_at,
         resource_ref: Some(resource.to_uri()),
         display_name: Some(display_name),
@@ -748,7 +782,7 @@ mod tests {
     use rustshare_core::services::FileError;
     use uuid::Uuid;
 
-    use super::map_resource_lookup_error;
+    use super::{map_resource_lookup_error, SourceError};
 
     async fn response(error: FileError) -> (axum::http::StatusCode, String) {
         let response = map_resource_lookup_error(error).into_response();
@@ -782,5 +816,54 @@ mod tests {
             assert!(body.contains("Internal server error"));
             assert!(!body.contains("secret-detail"));
         }
+    }
+
+    #[test]
+    fn unavailable_link_states_omit_resource_metadata() {
+        for (availability, expected) in [
+            (super::MeetingResourceAvailability::Deleted, "deleted"),
+            (
+                super::MeetingResourceAvailability::PermissionDenied,
+                "permission_denied",
+            ),
+            (
+                super::MeetingResourceAvailability::Unavailable,
+                "unavailable",
+            ),
+        ] {
+            let view = super::MeetingResourceLinkView {
+                id: Uuid::new_v4(),
+                available: false,
+                availability,
+                created_at: chrono::Utc::now(),
+                resource_ref: None,
+                display_name: None,
+                media_type: None,
+                resource_kind: None,
+                open_url: None,
+            };
+            let json = serde_json::to_value(view).expect("serialize meeting resource view");
+            assert_eq!(json["available"], false);
+            assert_eq!(json["availability"], expected);
+            assert!(json["resource_ref"].is_null());
+            assert!(json["display_name"].is_null());
+            assert!(json["open_url"].is_null());
+        }
+    }
+
+    #[test]
+    fn source_errors_map_to_sanitized_link_states() {
+        assert!(matches!(
+            super::unavailable_resource_state(&SourceError::Unauthorized),
+            super::MeetingResourceAvailability::PermissionDenied
+        ));
+        assert!(matches!(
+            super::unavailable_resource_state(&SourceError::NotFound),
+            super::MeetingResourceAvailability::Deleted
+        ));
+        assert!(matches!(
+            super::unavailable_resource_state(&SourceError::VersionUnavailable),
+            super::MeetingResourceAvailability::Unavailable
+        ));
     }
 }

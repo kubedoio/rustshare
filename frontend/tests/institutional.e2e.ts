@@ -155,7 +155,7 @@ test('institutional Calendar journey preserves linked context and denies unavail
 	expect(decision.owner_id).toBe(profile.id);
 	expect(decision.status).toBe('proposed');
 
-	// A stale link must retain an unavailable placeholder without title or URL.
+	// A deleted link must expose only its sanitized state, without title or URL.
 	const staleResponse = await api.post('/api/v1/notes', {
 		headers,
 		data: { title: `Stale ${suffix}`, content: 'Synthetic unavailable context' }
@@ -169,7 +169,7 @@ test('institutional Calendar journey preserves linked context and denies unavail
 	expect(linked.ok()).toBeTruthy();
 	expect((await api.delete(`/api/v1/notes/${stale.id}`, { headers })).ok()).toBeTruthy();
 	await page.reload();
-	await expect(resources.getByText('Linked resource unavailable', { exact: true })).toBeVisible();
+	await expect(resources.getByText('Linked resource deleted', { exact: true })).toBeVisible();
 	await expect(resources).not.toContainText(`Stale ${suffix}`);
 	const anonymous = await browser.newContext({ baseURL: new URL(page.url()).origin });
 	try {

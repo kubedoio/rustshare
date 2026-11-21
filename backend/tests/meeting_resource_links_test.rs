@@ -292,6 +292,7 @@ async fn direct_links_are_idempotent_permission_aware_persistent_and_non_destruc
         .find(|item| item["id"] == moved_link["id"])
         .expect("moved resource link remains present");
     assert_eq!(moved_entry["available"], true);
+    assert_eq!(moved_entry["availability"], "available");
     assert_eq!(moved_entry["display_name"], "moved-agenda.txt");
     assert_eq!(
         moved_entry["open_url"],
@@ -335,6 +336,7 @@ async fn direct_links_are_idempotent_permission_aware_persistent_and_non_destruc
         .find(|item| item["id"] == deleted_link["id"])
         .expect("deleted resource link remains for safe historical display");
     assert_eq!(deleted_entry["available"], false);
+    assert_eq!(deleted_entry["availability"], "deleted");
     assert!(deleted_entry.get("resource_ref").is_none());
     assert!(deleted_entry.get("display_name").is_none());
     assert!(deleted_entry.get("open_url").is_none());
@@ -590,6 +592,7 @@ async fn notes_resource_links_use_current_notes_authorization() {
         .find(|item| item["id"] == first["id"])
         .expect("linked Note remains attributable");
     assert_eq!(unavailable["available"], false);
+    assert_eq!(unavailable["availability"], "permission_denied");
     for field in ["display_name", "open_url", "resource_ref"] {
         assert!(unavailable.get(field).is_none());
     }
@@ -664,6 +667,7 @@ async fn revoked_direct_and_group_grants_hide_linked_metadata_immediately() {
     let (status, still_available) = request_json(&api, &token, "GET", &uri, None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(still_available["items"][0]["available"], true);
+    assert_eq!(still_available["items"][0]["availability"], "available");
 
     sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
         .bind(group_id)
@@ -674,6 +678,7 @@ async fn revoked_direct_and_group_grants_hide_linked_metadata_immediately() {
     let (status, unavailable) = request_json(&api, &token, "GET", &uri, None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(unavailable["items"][0]["available"], false);
+    assert_eq!(unavailable["items"][0]["availability"], "permission_denied");
     assert!(unavailable["items"][0].get("resource_ref").is_none());
     assert!(unavailable["items"][0].get("display_name").is_none());
     assert!(unavailable
