@@ -2,6 +2,7 @@ mod application;
 mod application_config;
 mod application_user_preference;
 mod calendar;
+mod connector;
 mod device_token;
 mod file;
 mod file_version;
@@ -29,6 +30,12 @@ pub use calendar::{
     CalendarSyncState,
 };
 
+pub use connector::{
+    ConnectorAuthority, ConnectorCapabilities, ConnectorDescriptor, ConnectorDescriptorError,
+    ConnectorHealth, ConnectorInstance, ConnectorInstanceId, ConnectorInstanceStatus,
+    ConnectorMetadata, ConnectorMode, ConnectorModes, ConnectorOperations, ConnectorPublications,
+    ConnectorSource, ConnectorStatusError, CONNECTOR_API_VERSION,
+};
 pub use device_token::{DevicePairRequest, DeviceToken};
 
 pub use application::*;
