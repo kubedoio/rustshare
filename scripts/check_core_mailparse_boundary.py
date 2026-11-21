@@ -152,6 +152,8 @@ def violations(
     )
     if re.search(r"\bsqlx\s*::\s*(?:Type|FromRow)\b", thumbnail_domain):
         errors.append("thumbnail domain records derive SQLx persistence types")
+    if re.search(r"\bsqlx\s*::\s*Error\b|\b23505\b", scim_v2_service):
+        errors.append("ScimV2 Core contract exposes SQLx errors")
     return errors
 
 
@@ -268,6 +270,25 @@ def self_test() -> None:
         '[dependencies]\nchrono = "1"\n',
         {thumbnail_domain: "#[derive(Debug, sqlx::FromRow)] pub struct FileThumbnail { field: String }"},
     ) == ["thumbnail domain records derive SQLx persistence types"]
+    scim_v2_service = "backend/crates/core/src/services/scim_v2_service.rs"
+    assert violations(
+        '[dependencies]\nchrono = "1"\n',
+        {
+            scim_v2_service: (
+                "pub trait ScimV2Repository { async fn list_users() "
+                "-> Result<Vec<User>, ScimV2RepositoryError>; }"
+            )
+        },
+    ) == []
+    assert violations(
+        '[dependencies]\nchrono = "1"\n',
+        {
+            scim_v2_service: (
+                "pub trait ScimV2Repository { async fn list_users() "
+                "-> Result<Vec<User>, sqlx::Error>; }"
+            )
+        },
+    ) == ["ScimV2 Core contract exposes SQLx errors"]
     for source in (
         'std::env::var("RUSTSHARE_SETTING")',
         'use std::env; env::var_os("RUSTSHARE_SETTING")',

@@ -1383,6 +1383,20 @@ async fn scim_creates_fail_with_generic_conflict_on_unique_violation() {
     .await;
     assert_generic_conflict(status, &body, "v2 create with in-scope username duplicate");
 
+    let (status, body) = scim_request(
+        &app,
+        "PUT",
+        &format!("/scim/v2/Users/{}", fixture.user_a1),
+        Some(json!({
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+            "userName": fixture.username_a1,
+            "externalId": fixture.user_a2_external,
+            "active": true
+        })),
+    )
+    .await;
+    assert_generic_conflict(status, &body, "v2 update with duplicate externalId");
+
     // --- SCIM v2 group creates ---
     let (status, body) = scim_request(
         &app,
