@@ -609,7 +609,7 @@ pub struct ScimV2SchemaAttribute {
 }
 
 /// Group record for SCIM v2 operations.
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct ScimV2GroupRecord {
     pub id: Uuid,
     pub external_id: Option<String>,
@@ -620,7 +620,7 @@ pub struct ScimV2GroupRecord {
 }
 
 /// User record with external_id for SCIM v2.
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct ScimV2UserRecord {
     pub id: Uuid,
     pub external_id: Option<String>,

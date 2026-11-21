@@ -37,6 +37,60 @@ impl ScimV2RepositoryImpl {
     }
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct ScimV2UserRow {
+    id: Uuid,
+    external_id: Option<String>,
+    username: String,
+    display_name: String,
+    email: String,
+    disabled_at: Option<DateTime<Utc>>,
+    name: Option<String>,
+    surname: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl From<ScimV2UserRow> for ScimV2UserRecord {
+    fn from(row: ScimV2UserRow) -> Self {
+        Self {
+            id: row.id,
+            external_id: row.external_id,
+            username: row.username,
+            display_name: row.display_name,
+            email: row.email,
+            disabled_at: row.disabled_at,
+            name: row.name,
+            surname: row.surname,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ScimV2GroupRow {
+    id: Uuid,
+    external_id: Option<String>,
+    name: String,
+    description: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl From<ScimV2GroupRow> for ScimV2GroupRecord {
+    fn from(row: ScimV2GroupRow) -> Self {
+        Self {
+            id: row.id,
+            external_id: row.external_id,
+            name: row.name,
+            description: row.description,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
 impl ScimV2Repository for ScimV2RepositoryImpl {
     async fn list_users(
         &self,
@@ -97,7 +151,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             "{} {} ORDER BY username LIMIT ${} OFFSET ${}",
             base_select, where_clause, pag_idx_1, pag_idx_2
         );
-        let mut q = sqlx::query_as::<_, rustshare_core::services::ScimV2UserRecord>(&query);
+        let mut q = sqlx::query_as::<_, ScimV2UserRow>(&query);
         q = q.bind(tenant_id);
         for val in &binds {
             q = q.bind(val);
@@ -105,7 +159,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         q = q.bind(limit).bind(offset);
         let users = q.fetch_all(&self.pool).await?;
 
-        Ok((users, total))
+        Ok((users.into_iter().map(Into::into).collect(), total))
     }
 
     async fn get_user(
@@ -113,8 +167,8 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         id: Uuid,
     ) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, sqlx::Error> {
-        sqlx::query_as!(
-            ScimV2UserRecord,
+        let row = sqlx::query_as!(
+            ScimV2UserRow,
             r#"
             SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at
             FROM users WHERE id = $1 AND tenant_id = $2
@@ -123,7 +177,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .fetch_optional(&self.pool)
-        .await
+        .await?;
+
+        Ok(row.map(Into::into))
     }
 
     async fn get_user_by_external_id(
@@ -131,8 +187,8 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, sqlx::Error> {
-        sqlx::query_as!(
-            ScimV2UserRecord,
+        let row = sqlx::query_as!(
+            ScimV2UserRow,
             r#"
             SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at
             FROM users WHERE external_id = $1 AND tenant_id = $2
@@ -141,7 +197,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .fetch_optional(&self.pool)
-        .await
+        .await?;
+
+        Ok(row.map(Into::into))
     }
 
     async fn create_user(
@@ -465,7 +523,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             "{} {} ORDER BY name LIMIT ${} OFFSET ${}",
             base_select, where_clause, pag_idx_1, pag_idx_2
         );
-        let mut q = sqlx::query_as::<_, rustshare_core::services::ScimV2GroupRecord>(&query);
+        let mut q = sqlx::query_as::<_, ScimV2GroupRow>(&query);
         q = q.bind(tenant_id);
         for val in &binds {
             q = q.bind(val);
@@ -473,7 +531,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         q = q.bind(limit).bind(offset);
         let groups = q.fetch_all(&self.pool).await?;
 
-        Ok((groups, total))
+        Ok((groups.into_iter().map(Into::into).collect(), total))
     }
 
     async fn get_group(
@@ -481,8 +539,8 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         id: Uuid,
     ) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, sqlx::Error> {
-        sqlx::query_as!(
-            ScimV2GroupRecord,
+        let row = sqlx::query_as!(
+            ScimV2GroupRow,
             r#"
             SELECT id, external_id, name, description, created_at, updated_at
             FROM user_groups WHERE id = $1 AND tenant_id = $2
@@ -491,7 +549,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .fetch_optional(&self.pool)
-        .await
+        .await?;
+
+        Ok(row.map(Into::into))
     }
 
     async fn get_group_by_external_id(
@@ -499,8 +559,8 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         external_id: &str,
     ) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, sqlx::Error> {
-        sqlx::query_as!(
-            ScimV2GroupRecord,
+        let row = sqlx::query_as!(
+            ScimV2GroupRow,
             r#"
             SELECT id, external_id, name, description, created_at, updated_at
             FROM user_groups WHERE external_id = $1 AND tenant_id = $2
@@ -509,7 +569,9 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .fetch_optional(&self.pool)
-        .await
+        .await?;
+
+        Ok(row.map(Into::into))
     }
 
     async fn create_group(
@@ -823,4 +885,89 @@ fn base64_encode(input: &[u8]) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_row_conversion_preserves_every_field() {
+        let id = Uuid::new_v4();
+        let created_at = Utc::now();
+        let updated_at = created_at + chrono::Duration::seconds(1);
+        let record = ScimV2UserRecord::from(ScimV2UserRow {
+            id,
+            external_id: Some("external-user".into()),
+            username: "user".into(),
+            display_name: "User Name".into(),
+            email: "user@example.test".into(),
+            disabled_at: None,
+            name: Some("User".into()),
+            surname: Some("Name".into()),
+            created_at,
+            updated_at,
+        });
+
+        assert_eq!(
+            (
+                record.id,
+                record.external_id.as_deref(),
+                record.username.as_str(),
+                record.display_name.as_str(),
+                record.email.as_str(),
+                record.disabled_at,
+                record.name.as_deref(),
+                record.surname.as_deref(),
+                record.created_at,
+                record.updated_at,
+            ),
+            (
+                id,
+                Some("external-user"),
+                "user",
+                "User Name",
+                "user@example.test",
+                None,
+                Some("User"),
+                Some("Name"),
+                created_at,
+                updated_at,
+            )
+        );
+    }
+
+    #[test]
+    fn group_row_conversion_preserves_every_field() {
+        let id = Uuid::new_v4();
+        let created_at = Utc::now();
+        let updated_at = created_at + chrono::Duration::seconds(1);
+        let record = ScimV2GroupRecord::from(ScimV2GroupRow {
+            id,
+            external_id: Some("external-group".into()),
+            name: "Group".into(),
+            description: Some("Group description".into()),
+            created_at,
+            updated_at,
+        });
+
+        assert_eq!(
+            (
+                record.id,
+                record.external_id.as_deref(),
+                record.name.as_str(),
+                record.description.as_deref(),
+                record.created_at,
+                record.updated_at,
+            ),
+            (
+                id,
+                Some("external-group"),
+                "Group",
+                Some("Group description"),
+                created_at,
+                updated_at,
+            )
+        );
+    }
 }
