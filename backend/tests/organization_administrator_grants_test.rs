@@ -876,6 +876,21 @@ async fn organization_admin_http_scope_and_immediate_revocation() {
         .execute(&pool)
         .await
         .unwrap();
+    let (status, local_groups) = send(
+        &app,
+        "GET",
+        "/api/v1/organization-admin/groups?per_page=100",
+        &org_token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(local_groups["total"], 1);
+    assert!(local_groups["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|group| group["name"] != foreign_group_name));
     let (status, _) = send_json(
         &app,
         "POST",
