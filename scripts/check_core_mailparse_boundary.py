@@ -152,7 +152,11 @@ def violations(
     )
     if re.search(r"\bsqlx\s*::\s*(?:Type|FromRow)\b", thumbnail_domain):
         errors.append("thumbnail domain records derive SQLx persistence types")
-    if re.search(r"\bsqlx\s*::\s*Error\b|\b23505\b", scim_v2_service):
+    if re.search(
+        r"\buse\b[^;]*\bsqlx\b|\bextern\s+crate\s+(?:r#)?sqlx\b|"
+        r"\bsqlx\s*::\s*Error\b|\b23505\b",
+        scim_v2_service,
+    ):
         errors.append("ScimV2 Core contract exposes SQLx errors")
     return errors
 
@@ -288,6 +292,10 @@ def self_test() -> None:
                 "-> Result<Vec<User>, sqlx::Error>; }"
             )
         },
+    ) == ["ScimV2 Core contract exposes SQLx errors"]
+    assert violations(
+        '[dependencies]\nchrono = "1"\n',
+        {scim_v2_service: "use sqlx as db; type DatabaseError = db::Error;"},
     ) == ["ScimV2 Core contract exposes SQLx errors"]
     for source in (
         'std::env::var("RUSTSHARE_SETTING")',
