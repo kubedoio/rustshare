@@ -96,6 +96,21 @@ def violations(
     )
     if re.search(r"\bsqlx\s*::\s*Error\b|\bidx_folders_unique_name\b", folder_service):
         errors.append("FolderService contains SQLx-specific duplicate-name handling")
+    share_service = next(
+        (
+            source
+            for name, source in sources.items()
+            if name.replace("\\", "/").endswith(
+                "backend/crates/core/src/services/share_service.rs"
+            )
+        ),
+        "",
+    )
+    notification_repo = re.search(
+        r"\bpub trait ShareNotificationRepo\b[\s\S]*?}", share_service
+    )
+    if notification_repo and re.search(r"\bsqlx\s*::\s*Error\b", notification_repo.group()):
+        errors.append("ShareNotificationRepo exposes a SQLx-specific error")
     return errors
 
 
@@ -156,6 +171,25 @@ def self_test() -> None:
         assert violations('[dependencies]\nchrono = "1"\n', {folder_service: source}) == [
             "FolderService contains SQLx-specific duplicate-name handling"
         ], source
+    notification_repo = "backend/crates/core/src/services/share_service.rs"
+    assert violations(
+        '[dependencies]\nchrono = "1"\n',
+        {
+            notification_repo: (
+                "pub trait ShareNotificationRepo { "
+                "async fn was_notified(&self) -> anyhow::Result<bool>; }"
+            )
+        },
+    ) == []
+    assert violations(
+        '[dependencies]\nchrono = "1"\n',
+        {
+            notification_repo: (
+                "pub trait ShareNotificationRepo { "
+                "async fn was_notified(&self) -> Result<bool, sqlx::Error>; }"
+            )
+        },
+    ) == ["ShareNotificationRepo exposes a SQLx-specific error"]
     for source in (
         'std::env::var("RUSTSHARE_SETTING")',
         'use std::env; env::var_os("RUSTSHARE_SETTING")',
@@ -184,7 +218,7 @@ def main() -> int:
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1
-    print("rustshare-core has no concrete mail/HTTP/image adapters or process config reads")
+    print("rustshare-core boundary checks passed")
     return 0
 
 

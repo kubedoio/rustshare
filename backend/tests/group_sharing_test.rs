@@ -48,7 +48,7 @@ impl ShareNotificationRepo for MockNotificationRepo {
         &self,
         _user_id: rustshare_core::domain::UserId,
         _share_id: uuid::Uuid,
-    ) -> Result<bool, sqlx::Error> {
+    ) -> anyhow::Result<bool> {
         Ok(false)
     }
 
@@ -56,7 +56,7 @@ impl ShareNotificationRepo for MockNotificationRepo {
         &self,
         _user_id: rustshare_core::domain::UserId,
         _share_id: uuid::Uuid,
-    ) -> Result<(), sqlx::Error> {
+    ) -> anyhow::Result<()> {
         Ok(())
     }
 }

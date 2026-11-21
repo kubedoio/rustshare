@@ -197,18 +197,10 @@ pub trait MetadataStoreOps: Send + Sync {
 #[allow(async_fn_in_trait)]
 pub trait ShareNotificationRepo: Send + Sync {
     /// Check if user was already notified for this share.
-    async fn was_notified(
-        &self,
-        user_id: UserId,
-        share_id: uuid::Uuid,
-    ) -> Result<bool, sqlx::Error>;
+    async fn was_notified(&self, user_id: UserId, share_id: uuid::Uuid) -> Result<bool>;
 
     /// Record that notification was sent.
-    async fn record_notification(
-        &self,
-        user_id: UserId,
-        share_id: uuid::Uuid,
-    ) -> Result<(), sqlx::Error>;
+    async fn record_notification(&self, user_id: UserId, share_id: uuid::Uuid) -> Result<()>;
 }
 
 /// ShareService handles share link creation and management.
@@ -2223,19 +2215,11 @@ mod tests {
     struct MockNotificationRepo;
 
     impl ShareNotificationRepo for MockNotificationRepo {
-        async fn was_notified(
-            &self,
-            _user_id: UserId,
-            _share_id: uuid::Uuid,
-        ) -> Result<bool, sqlx::Error> {
+        async fn was_notified(&self, _user_id: UserId, _share_id: uuid::Uuid) -> Result<bool> {
             Ok(false)
         }
 
-        async fn record_notification(
-            &self,
-            _user_id: UserId,
-            _share_id: uuid::Uuid,
-        ) -> Result<(), sqlx::Error> {
+        async fn record_notification(&self, _user_id: UserId, _share_id: uuid::Uuid) -> Result<()> {
             Ok(())
         }
     }
