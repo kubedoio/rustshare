@@ -20,7 +20,7 @@ pub enum ScimV2Error {
     #[error("Group not found: {0}")]
     GroupNotFound(String),
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(String),
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
     #[error("Conflict: {0}")]
@@ -29,6 +29,15 @@ pub enum ScimV2Error {
     FilterParse(String),
     #[error("Unauthorized")]
     Unauthorized,
+}
+
+/// Technology-neutral failures returned by the SCIM v2 persistence port.
+#[derive(Debug, Error)]
+pub enum ScimV2RepositoryError {
+    #[error("Repository operation failed: {0}")]
+    Database(String),
+    #[error("Conflict: {0}")]
+    Conflict(String),
 }
 
 impl ScimV2Error {
@@ -40,6 +49,15 @@ impl ScimV2Error {
             ScimV2Error::Conflict(_) => 409,
             ScimV2Error::Unauthorized => 401,
             ScimV2Error::Database(_) => 500,
+        }
+    }
+}
+
+impl From<ScimV2RepositoryError> for ScimV2Error {
+    fn from(error: ScimV2RepositoryError) -> Self {
+        match error {
+            ScimV2RepositoryError::Database(message) => Self::Database(message),
+            ScimV2RepositoryError::Conflict(message) => Self::Conflict(message),
         }
     }
 }
@@ -86,7 +104,7 @@ impl std::error::Error for ScimV2WriteError {
     }
 }
 
-/// Converts an error through the blanket `From` impls only via `?` in
+/// Converts a repository error through the blanket `From` impl only via `?` in
 /// **pre-write** positions — before the first statement that can commit.
 /// Once any write has committed, errors must be constructed explicitly with
 /// `writes_committed: true` (see [`ScimV2WriteError::post_commit`]); a `?`
@@ -108,12 +126,12 @@ impl From<ScimV2Error> for ScimV2WriteError {
 /// `writes_committed: true` (see [`ScimV2WriteError::post_commit`]); a `?`
 /// added after a committing statement would silently default to
 /// `writes_committed: false` and wrongly skip post-failure refresh.
-impl From<sqlx::Error> for ScimV2WriteError {
+impl From<ScimV2RepositoryError> for ScimV2WriteError {
     // Conservative default: an unclassified error is treated as pre-write.
     // Only apply `?` via this conversion BEFORE the first committing
     // statement; errors after any committed write must be constructed
     // explicitly with writes_committed: true.
-    fn from(error: sqlx::Error) -> Self {
+    fn from(error: ScimV2RepositoryError) -> Self {
         Self::pre_write(error.into())
     }
 }
@@ -721,21 +739,21 @@ pub trait ScimV2Repository: Send + Sync {
         filters: &[ScimFilter],
         start_index: Option<i64>,
         count: Option<i64>,
-    ) -> Result<(Vec<ScimV2UserRecord>, i64), sqlx::Error>;
+    ) -> Result<(Vec<ScimV2UserRecord>, i64), ScimV2RepositoryError>;
 
     /// Get a single user by ID within the organization.
     async fn get_user(
         &self,
         tenant_id: Uuid,
         id: Uuid,
-    ) -> Result<Option<ScimV2UserRecord>, sqlx::Error>;
+    ) -> Result<Option<ScimV2UserRecord>, ScimV2RepositoryError>;
 
     /// Get a user by external_id within the organization.
     async fn get_user_by_external_id(
         &self,
         tenant_id: Uuid,
         external_id: &str,
-    ) -> Result<Option<ScimV2UserRecord>, sqlx::Error>;
+    ) -> Result<Option<ScimV2UserRecord>, ScimV2RepositoryError>;
 
     /// Create a new user in the organization.
     async fn create_user(
@@ -743,7 +761,7 @@ pub trait ScimV2Repository: Send + Sync {
         user: &ScimV2User,
         tenant_id: Uuid,
         storage_quota: i64,
-    ) -> Result<Uuid, sqlx::Error>;
+    ) -> Result<Uuid, ScimV2RepositoryError>;
 
     /// Update an existing user (full replacement) within the organization.
     async fn update_user(
@@ -751,7 +769,7 @@ pub trait ScimV2Repository: Send + Sync {
         tenant_id: Uuid,
         id: Uuid,
         user: &ScimV2User,
-    ) -> Result<(), ScimV2Error>;
+    ) -> Result<(), ScimV2RepositoryError>;
 
     /// Partial update a user (PATCH) within the organization.
     async fn patch_user(
@@ -759,11 +777,11 @@ pub trait ScimV2Repository: Send + Sync {
         tenant_id: Uuid,
         id: Uuid,
         operations: &[ScimPatchOperation],
-    ) -> Result<(), ScimV2Error>;
+    ) -> Result<(), ScimV2RepositoryError>;
 
     /// Deprovision a user within the organization while retaining the
     /// account and its owned data.
-    async fn delete_user(&self, tenant_id: Uuid, id: Uuid) -> Result<(), ScimV2Error>;
+    async fn delete_user(&self, tenant_id: Uuid, id: Uuid) -> Result<(), ScimV2RepositoryError>;
 
     /// Get all groups in the organization with optional filtering and pagination.
     async fn list_groups(
@@ -772,25 +790,28 @@ pub trait ScimV2Repository: Send + Sync {
         filters: &[ScimFilter],
         start_index: Option<i64>,
         count: Option<i64>,
-    ) -> Result<(Vec<ScimV2GroupRecord>, i64), sqlx::Error>;
+    ) -> Result<(Vec<ScimV2GroupRecord>, i64), ScimV2RepositoryError>;
 
     /// Get a single group by ID within the organization.
     async fn get_group(
         &self,
         tenant_id: Uuid,
         id: Uuid,
-    ) -> Result<Option<ScimV2GroupRecord>, sqlx::Error>;
+    ) -> Result<Option<ScimV2GroupRecord>, ScimV2RepositoryError>;
 
     /// Get a group by external_id within the organization.
     async fn get_group_by_external_id(
         &self,
         tenant_id: Uuid,
         external_id: &str,
-    ) -> Result<Option<ScimV2GroupRecord>, sqlx::Error>;
+    ) -> Result<Option<ScimV2GroupRecord>, ScimV2RepositoryError>;
 
     /// Create a new group in the organization.
-    async fn create_group(&self, tenant_id: Uuid, group: &ScimV2Group)
-        -> Result<Uuid, sqlx::Error>;
+    async fn create_group(
+        &self,
+        tenant_id: Uuid,
+        group: &ScimV2Group,
+    ) -> Result<Uuid, ScimV2RepositoryError>;
 
     /// Update an existing group within the organization.
     async fn update_group(
@@ -798,7 +819,7 @@ pub trait ScimV2Repository: Send + Sync {
         tenant_id: Uuid,
         id: Uuid,
         group: &ScimV2Group,
-    ) -> Result<(), sqlx::Error>;
+    ) -> Result<(), ScimV2RepositoryError>;
 
     /// Partial update a group (PATCH) within the organization.
     async fn patch_group(
@@ -806,24 +827,24 @@ pub trait ScimV2Repository: Send + Sync {
         tenant_id: Uuid,
         id: Uuid,
         operations: &[ScimPatchOperation],
-    ) -> Result<(), sqlx::Error>;
+    ) -> Result<(), ScimV2RepositoryError>;
 
     /// Delete a group within the organization.
-    async fn delete_group(&self, tenant_id: Uuid, id: Uuid) -> Result<(), sqlx::Error>;
+    async fn delete_group(&self, tenant_id: Uuid, id: Uuid) -> Result<(), ScimV2RepositoryError>;
 
     /// Get group members within the organization.
     async fn get_group_members(
         &self,
         tenant_id: Uuid,
         group_id: Uuid,
-    ) -> Result<Vec<(Uuid, String)>, sqlx::Error>;
+    ) -> Result<Vec<(Uuid, String)>, ScimV2RepositoryError>;
 
     /// Get user's groups within the organization.
     async fn get_user_groups(
         &self,
         tenant_id: Uuid,
         user_id: Uuid,
-    ) -> Result<Vec<(Uuid, String)>, sqlx::Error>;
+    ) -> Result<Vec<(Uuid, String)>, ScimV2RepositoryError>;
 
     /// Add member to group; both must belong to the organization.
     async fn add_group_member(
@@ -831,7 +852,7 @@ pub trait ScimV2Repository: Send + Sync {
         tenant_id: Uuid,
         group_id: Uuid,
         user_id: Uuid,
-    ) -> Result<(), sqlx::Error>;
+    ) -> Result<(), ScimV2RepositoryError>;
 
     /// Remove member from group within the organization.
     async fn remove_group_member(
@@ -839,18 +860,21 @@ pub trait ScimV2Repository: Send + Sync {
         tenant_id: Uuid,
         group_id: Uuid,
         user_id: Uuid,
-    ) -> Result<(), sqlx::Error>;
+    ) -> Result<(), ScimV2RepositoryError>;
 
     /// Find user ID by external_id within the organization.
     async fn find_user_id_by_external_id(
         &self,
         tenant_id: Uuid,
         external_id: &str,
-    ) -> Result<Option<Uuid>, sqlx::Error>;
+    ) -> Result<Option<Uuid>, ScimV2RepositoryError>;
 
     /// Clear all members from a group within the organization.
-    async fn clear_group_members(&self, tenant_id: Uuid, group_id: Uuid)
-        -> Result<(), sqlx::Error>;
+    async fn clear_group_members(
+        &self,
+        tenant_id: Uuid,
+        group_id: Uuid,
+    ) -> Result<(), ScimV2RepositoryError>;
 }
 
 /// SCIM Patch operation (RFC 7644 Section 3.5.2).
@@ -868,27 +892,6 @@ pub struct ScimPatchRequest {
     pub schemas: Vec<String>,
     #[serde(rename = "Operations")]
     pub operations: Vec<ScimPatchOperation>,
-}
-
-/// Map a collision with the installation-wide unique directory identifiers
-/// (SQLSTATE 23505) to a generic conflict that does not name the database
-/// constraint or reveal which organization owns the existing row.
-fn directory_conflict(resource: &str, e: sqlx::Error) -> ScimV2Error {
-    if let sqlx::Error::Database(db) = &e {
-        if db.code().as_deref() == Some("23505") {
-            return ScimV2Error::Conflict(format!(
-                "a {resource} with the same identifying value already exists in the directory"
-            ));
-        }
-    }
-    ScimV2Error::Database(e)
-}
-
-fn identity_write_conflict(error: ScimV2Error) -> ScimV2Error {
-    match error {
-        ScimV2Error::Database(error) => directory_conflict("user", error),
-        error => error,
-    }
 }
 
 /// SCIM v2 Service.
@@ -998,8 +1001,7 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
         let id = self
             .repository
             .create_user(&user, self.tenant_scope, self.default_storage_quota)
-            .await
-            .map_err(|e| directory_conflict("user", e))?;
+            .await?;
 
         self.get_user(id).await
     }
@@ -1018,8 +1020,7 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
 
         self.repository
             .update_user(self.tenant_scope, id, &user)
-            .await
-            .map_err(identity_write_conflict)?;
+            .await?;
         self.get_user(id).await
     }
 
@@ -1041,8 +1042,7 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
 
         self.repository
             .patch_user(self.tenant_scope, id, operations)
-            .await
-            .map_err(identity_write_conflict)?;
+            .await?;
         self.get_user(id).await
     }
 
@@ -1134,8 +1134,7 @@ impl<R: ScimV2Repository> ScimV2Service<R> {
         let id = self
             .repository
             .create_group(self.tenant_scope, &group)
-            .await
-            .map_err(|e| ScimV2WriteError::pre_write(directory_conflict("group", e)))?;
+            .await?;
 
         // The group INSERT is committed from here on.
         if let Some(ref members) = group.members {
@@ -1683,5 +1682,26 @@ mod tests {
         assert!(config.patch.supported);
         assert!(config.filter.supported);
         assert_eq!(config.filter.max_results, 200);
+    }
+
+    #[test]
+    fn repository_errors_preserve_http_and_write_commit_semantics() {
+        let database_error =
+            ScimV2Error::from(ScimV2RepositoryError::Database("query failed".to_string()));
+        assert_eq!(database_error.status_code(), 500);
+        assert_eq!(
+            ScimV2Error::from(ScimV2RepositoryError::Conflict("generic conflict".into()))
+                .status_code(),
+            409
+        );
+
+        let pre_write: ScimV2WriteError =
+            ScimV2RepositoryError::Conflict("generic conflict".to_string()).into();
+        assert!(!pre_write.writes_committed);
+
+        let post_write = ScimV2WriteError::post_commit(ScimV2Error::from(
+            ScimV2RepositoryError::Database("follow-up lookup failed".to_string()),
+        ));
+        assert!(post_write.writes_committed);
     }
 }
