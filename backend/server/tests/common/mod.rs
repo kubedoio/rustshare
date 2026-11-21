@@ -98,7 +98,9 @@ pub async fn setup_test_server() -> (AppState, String) {
     );
 
     let thumbnail_service = Arc::new(ThumbnailService::new(
-        pool.clone(),
+        Arc::new(rustshare_storage::repos::ThumbnailRepositoryImpl::new(
+            pool.clone(),
+        )),
         object_store.clone(),
         rustshare_server::services::thumbnail_renderer::default_thumbnail_renderer(),
     ));

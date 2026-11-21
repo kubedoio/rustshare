@@ -9,6 +9,28 @@ use crate::domain::{
 };
 use crate::services::ObjectStoreOps;
 
+/// Persistence operations used by thumbnail generation and retrieval.
+#[async_trait::async_trait]
+pub trait ThumbnailRepository: Send + Sync {
+    async fn get_thumbnail(
+        &self,
+        file_id: Uuid,
+        size: ThumbnailSize,
+    ) -> anyhow::Result<Option<FileThumbnail>>;
+    async fn get_file_metadata(
+        &self,
+        file_id: Uuid,
+    ) -> anyhow::Result<Option<(String, i64, String)>>;
+    async fn save_thumbnail(
+        &self,
+        file_id: Uuid,
+        size: ThumbnailSize,
+        storage_path: &str,
+        content_type: &str,
+    ) -> anyhow::Result<FileThumbnail>;
+    async fn delete_thumbnails(&self, file_id: Uuid) -> anyhow::Result<()>;
+}
+
 /// Domain-neutral rendering boundary implemented by the application adapter.
 #[async_trait::async_trait]
 pub trait ThumbnailRenderer: Send + Sync {
@@ -47,7 +69,7 @@ pub enum ThumbnailError {
 
 /// Thumbnail service for generating and retrieving file thumbnails
 pub struct ThumbnailService<S> {
-    db_pool: sqlx::PgPool,
+    repository: Arc<dyn ThumbnailRepository>,
     storage: Arc<S>,
     renderer: Arc<dyn ThumbnailRenderer>,
 }
@@ -57,12 +79,12 @@ where
     S: ObjectStoreOps,
 {
     pub fn new(
-        db_pool: sqlx::PgPool,
+        repository: Arc<dyn ThumbnailRepository>,
         storage: Arc<S>,
         renderer: Arc<dyn ThumbnailRenderer>,
     ) -> Self {
         Self {
-            db_pool,
+            repository,
             storage,
             renderer,
         }
@@ -74,20 +96,10 @@ where
         file_id: Uuid,
         size: ThumbnailSize,
     ) -> Result<Option<FileThumbnail>, ThumbnailError> {
-        let row = sqlx::query_as::<_, FileThumbnail>(
-            r#"
-            SELECT id, file_id, size, storage_path, content_type, generated_at
-            FROM file_thumbnails
-            WHERE file_id = $1 AND size = $2
-            "#,
-        )
-        .bind(file_id)
-        .bind(size)
-        .fetch_optional(&self.db_pool)
-        .await
-        .map_err(|e| ThumbnailError::Database(e.to_string()))?;
-
-        Ok(row)
+        self.repository
+            .get_thumbnail(file_id, size)
+            .await
+            .map_err(|e| ThumbnailError::Database(e.to_string()))
     }
 
     /// Check if thumbnail generation is supported for a file type
@@ -106,16 +118,14 @@ where
         tracing::info!(file_id = %file_id, mime_type = mime_type, file_name = file_name, size = size.as_str(), "Starting thumbnail generation");
 
         // Check if file exists and get content hash for storage lookup
-        let file_row = sqlx::query_as::<_, (String, i64, String)>(
-            "SELECT name, size, content_hash FROM files WHERE id = $1",
-        )
-        .bind(file_id)
-        .fetch_optional(&self.db_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Database error fetching file");
-            ThumbnailError::Database(e.to_string())
-        })?;
+        let file_row = self
+            .repository
+            .get_file_metadata(file_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Database error fetching file");
+                ThumbnailError::Database(e.to_string())
+            })?;
 
         let (db_file_name, _file_size, content_hash) = match file_row {
             Some(row) => row,
@@ -191,27 +201,14 @@ where
         tracing::debug!(path = %thumbnail_path, "Thumbnail saved to storage");
 
         // Save to database
-        let thumbnail = sqlx::query_as::<_, FileThumbnail>(
-            r#"
-            INSERT INTO file_thumbnails (file_id, size, storage_path, content_type)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (file_id, size) DO UPDATE SET
-                storage_path = EXCLUDED.storage_path,
-                content_type = EXCLUDED.content_type,
-                generated_at = NOW()
-            RETURNING id, file_id, size, storage_path, content_type, generated_at
-            "#,
-        )
-        .bind(file_id)
-        .bind(size)
-        .bind(&thumbnail_path)
-        .bind(&content_type)
-        .fetch_one(&self.db_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Database error saving thumbnail metadata");
-            ThumbnailError::Database(e.to_string())
-        })?;
+        let thumbnail = self
+            .repository
+            .save_thumbnail(file_id, size, &thumbnail_path, &content_type)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "Database error saving thumbnail metadata");
+                ThumbnailError::Database(e.to_string())
+            })?;
 
         tracing::info!(file_id = %file_id, size = size.as_str(), "Thumbnail generation completed successfully");
         Ok(thumbnail)
@@ -220,9 +217,8 @@ where
     /// Delete thumbnails when file is updated
     pub async fn invalidate_thumbnails(&self, file_id: Uuid) -> Result<(), ThumbnailError> {
         // Delete from database
-        sqlx::query("DELETE FROM file_thumbnails WHERE file_id = $1")
-            .bind(file_id)
-            .execute(&self.db_pool)
+        self.repository
+            .delete_thumbnails(file_id)
             .await
             .map_err(|e| ThumbnailError::Database(e.to_string()))?;
 

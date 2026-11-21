@@ -95,7 +95,9 @@ async fn setup_test_env() -> AppState {
     ));
 
     let thumbnail_service = Arc::new(rustshare_core::services::ThumbnailService::new(
-        pool.clone(),
+        Arc::new(rustshare_storage::repos::ThumbnailRepositoryImpl::new(
+            pool.clone(),
+        )),
         object_store.clone(),
         rustshare_server::services::thumbnail_renderer::default_thumbnail_renderer(),
     ));
