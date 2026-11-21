@@ -35,6 +35,7 @@ export interface MeetingSummary {
 export interface MeetingResourceLink {
 	id: string;
 	available: boolean;
+	availability: 'available' | 'deleted' | 'permission_denied' | 'unavailable';
 	created_at: string;
 	resource_ref?: string;
 	display_name?: string;

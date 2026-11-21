@@ -171,9 +171,13 @@
 								<span class="ml-1 text-xs text-base-content/55">{link.resource_kind}</span>
 							</a>
 						{:else}
-							<span class="min-w-0 flex-1 truncate text-sm text-base-content/55"
-								>Linked resource unavailable</span
-							>
+							<span class="min-w-0 flex-1 truncate text-sm text-base-content/55" role="status">
+								{link.availability === 'deleted'
+									? 'Linked resource deleted'
+									: link.availability === 'permission_denied'
+										? 'Access to linked resource denied'
+										: 'Linked resource unavailable'}
+							</span>
 						{/if}
 						<button
 							class="btn btn-ghost btn-xs"
