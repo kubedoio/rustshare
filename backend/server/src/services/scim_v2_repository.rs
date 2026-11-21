@@ -6,10 +6,54 @@ use crate::services::organization_administrators::{
 use crate::user_disable::{set_user_disabled_at, DisableUserTarget};
 use chrono::{DateTime, Utc};
 use rustshare_core::services::{
-    ScimV2Error, ScimV2Group, ScimV2GroupRecord, ScimV2Repository, ScimV2User, ScimV2UserRecord,
+    ScimV2Group, ScimV2GroupRecord, ScimV2Repository, ScimV2RepositoryError, ScimV2User,
+    ScimV2UserRecord,
 };
 use sqlx::PgPool;
+use std::future::Future;
 use uuid::Uuid;
+
+fn repository_error(error: sqlx::Error) -> ScimV2RepositoryError {
+    ScimV2RepositoryError::Database(error.to_string())
+}
+
+fn write_error(resource: &str, error: sqlx::Error) -> ScimV2RepositoryError {
+    let code = match &error {
+        sqlx::Error::Database(db) => db.code(),
+        _ => None,
+    };
+    if let Some(conflict) = unique_conflict(resource, code.as_deref()) {
+        return conflict;
+    }
+    repository_error(error)
+}
+
+fn unique_conflict(resource: &str, code: Option<&str>) -> Option<ScimV2RepositoryError> {
+    (code == Some("23505")).then(|| {
+        ScimV2RepositoryError::Conflict(format!(
+            "a {resource} with the same identifying value already exists in the directory"
+        ))
+    })
+}
+
+trait ScimV2SqlxFutureExt<T> {
+    async fn into_repository_result(self) -> Result<T, ScimV2RepositoryError>;
+
+    async fn into_write_result(self, resource: &'static str) -> Result<T, ScimV2RepositoryError>;
+}
+
+impl<F, T> ScimV2SqlxFutureExt<T> for F
+where
+    F: Future<Output = Result<T, sqlx::Error>>,
+{
+    async fn into_repository_result(self) -> Result<T, ScimV2RepositoryError> {
+        self.await.map_err(repository_error)
+    }
+
+    async fn into_write_result(self, resource: &'static str) -> Result<T, ScimV2RepositoryError> {
+        self.await.map_err(|error| write_error(resource, error))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Repository implementation
@@ -98,7 +142,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         filters: &[rustshare_core::services::ScimFilter],
         start_index: Option<i64>,
         count: Option<i64>,
-    ) -> Result<(Vec<rustshare_core::services::ScimV2UserRecord>, i64), sqlx::Error> {
+    ) -> Result<(Vec<rustshare_core::services::ScimV2UserRecord>, i64), ScimV2RepositoryError> {
         let base_select = "SELECT id, external_id, username, display_name, email, disabled_at, name, surname, created_at, updated_at
              FROM users WHERE tenant_id = $1";
         let base_count = "SELECT COUNT(*) FROM users WHERE tenant_id = $1";
@@ -142,7 +186,10 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         for val in &binds {
             count_q = count_q.bind(val);
         }
-        let total: i64 = count_q.fetch_one(&self.pool).await?;
+        let total: i64 = count_q
+            .fetch_one(&self.pool)
+            .into_repository_result()
+            .await?;
 
         // select query with pagination binds
         let pag_idx_1 = binds.len() + 2;
@@ -157,7 +204,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             q = q.bind(val);
         }
         q = q.bind(limit).bind(offset);
-        let users = q.fetch_all(&self.pool).await?;
+        let users = q.fetch_all(&self.pool).into_repository_result().await?;
 
         Ok((users.into_iter().map(Into::into).collect(), total))
     }
@@ -166,7 +213,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         tenant_id: Uuid,
         id: Uuid,
-    ) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, sqlx::Error> {
+    ) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, ScimV2RepositoryError> {
         let row = sqlx::query_as!(
             ScimV2UserRow,
             r#"
@@ -177,7 +224,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .fetch_optional(&self.pool)
-        .await?;
+        .into_repository_result().await?;
 
         Ok(row.map(Into::into))
     }
@@ -186,7 +233,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         tenant_id: Uuid,
         external_id: &str,
-    ) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, sqlx::Error> {
+    ) -> Result<Option<rustshare_core::services::ScimV2UserRecord>, ScimV2RepositoryError> {
         let row = sqlx::query_as!(
             ScimV2UserRow,
             r#"
@@ -197,7 +244,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .fetch_optional(&self.pool)
-        .await?;
+        .into_repository_result().await?;
 
         Ok(row.map(Into::into))
     }
@@ -207,7 +254,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         user: &ScimV2User,
         tenant_id: Uuid,
         storage_quota: i64,
-    ) -> Result<Uuid, sqlx::Error> {
+    ) -> Result<Uuid, ScimV2RepositoryError> {
         let id = Uuid::new_v4();
 
         // Extract email from SCIM emails
@@ -265,6 +312,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             user.external_id
         )
         .execute(&self.pool)
+        .into_write_result("user")
         .await?;
 
         Ok(id)
@@ -275,7 +323,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         id: Uuid,
         user: &ScimV2User,
-    ) -> Result<(), ScimV2Error> {
+    ) -> Result<(), ScimV2RepositoryError> {
         let email = user
             .emails
             .as_ref()
@@ -291,20 +339,25 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             (n.given_name.clone(), n.family_name.clone())
         });
 
-        let mut tx = self.pool.begin().await?;
-        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+        let mut tx = self.pool.begin().into_write_result("user").await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id)
+            .into_write_result("user")
+            .await?;
         let current_disabled_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
             "SELECT disabled_at FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
         )
         .bind(id)
         .bind(tenant_id)
         .fetch_optional(&mut *tx)
+        .into_write_result("user")
         .await?;
         if !user.active
             && matches!(current_disabled_at.as_ref(), Some(None))
-            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id).await?
+            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id)
+                .into_write_result("user")
+                .await?
         {
-            return Err(ScimV2Error::Conflict(
+            return Err(ScimV2RepositoryError::Conflict(
                 "Cannot deactivate the last enabled organization administrator".into(),
             ));
         }
@@ -337,13 +390,15 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .execute(&mut *tx)
+        .into_write_result("user")
         .await?;
 
         if !user.active || was_disabled {
             revoke_for_scim_lifecycle(&mut tx, tenant_id, id, self.correlation_id.as_deref())
+                .into_write_result("user")
                 .await?;
         }
-        tx.commit().await?;
+        tx.commit().into_write_result("user").await?;
 
         Ok(())
     }
@@ -353,15 +408,18 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         id: Uuid,
         operations: &[rustshare_core::services::ScimPatchOperation],
-    ) -> Result<(), ScimV2Error> {
-        let mut tx = self.pool.begin().await?;
-        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+    ) -> Result<(), ScimV2RepositoryError> {
+        let mut tx = self.pool.begin().into_write_result("user").await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id)
+            .into_write_result("user")
+            .await?;
         let mut was_disabled = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
             "SELECT disabled_at FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
         )
         .bind(id)
         .bind(tenant_id)
         .fetch_optional(&mut *tx)
+        .into_write_result("user")
         .await?
         .flatten()
         .is_some();
@@ -374,9 +432,10 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                             if !active
                                 && !was_disabled
                                 && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id)
+                                    .into_write_result("user")
                                     .await?
                             {
-                                return Err(ScimV2Error::Conflict(
+                                return Err(ScimV2RepositoryError::Conflict(
                                     "Cannot deactivate the last enabled organization administrator"
                                         .into(),
                                 ));
@@ -392,6 +451,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                                 Some(tenant_id),
                                 if active { None } else { Some(Utc::now()) },
                             )
+                            .into_write_result("user")
                             .await?;
                             if !active || was_disabled {
                                 revoke_for_scim_lifecycle(
@@ -400,6 +460,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                                     id,
                                     self.correlation_id.as_deref(),
                                 )
+                                .into_write_result("user")
                                 .await?;
                             }
                             was_disabled = !active;
@@ -410,9 +471,11 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                     if let Some(active) = value.get("active").and_then(|v| v.as_bool()) {
                         if !active
                             && !was_disabled
-                            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id).await?
+                            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id)
+                                .into_write_result("user")
+                                .await?
                         {
-                            return Err(ScimV2Error::Conflict(
+                            return Err(ScimV2RepositoryError::Conflict(
                                 "Cannot deactivate the last enabled organization administrator"
                                     .into(),
                             ));
@@ -423,6 +486,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                             Some(tenant_id),
                             if active { None } else { Some(Utc::now()) },
                         )
+                        .into_write_result("user")
                         .await?;
                         if !active || was_disabled {
                             revoke_for_scim_lifecycle(
@@ -431,6 +495,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                                 id,
                                 self.correlation_id.as_deref(),
                             )
+                            .into_write_result("user")
                             .await?;
                         }
                         was_disabled = !active;
@@ -438,24 +503,29 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
                 }
             }
         }
-        tx.commit().await?;
+        tx.commit().into_write_result("user").await?;
         Ok(())
     }
 
-    async fn delete_user(&self, tenant_id: Uuid, id: Uuid) -> Result<(), ScimV2Error> {
-        let mut tx = self.pool.begin().await?;
-        lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+    async fn delete_user(&self, tenant_id: Uuid, id: Uuid) -> Result<(), ScimV2RepositoryError> {
+        let mut tx = self.pool.begin().into_repository_result().await?;
+        lock_tenant_admin_grants(&mut tx, tenant_id)
+            .into_repository_result()
+            .await?;
         let current_disabled_at = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
             "SELECT disabled_at FROM users WHERE id = $1 AND tenant_id = $2 FOR UPDATE",
         )
         .bind(id)
         .bind(tenant_id)
         .fetch_optional(&mut *tx)
+        .into_repository_result()
         .await?;
         if matches!(current_disabled_at.as_ref(), Some(None))
-            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id).await?
+            && removal_would_leave_no_enabled_admin(&mut tx, tenant_id, id)
+                .into_repository_result()
+                .await?
         {
-            return Err(ScimV2Error::Conflict(
+            return Err(ScimV2RepositoryError::Conflict(
                 "Cannot deactivate the last enabled organization administrator".into(),
             ));
         }
@@ -466,9 +536,12 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         .bind(id)
         .bind(tenant_id)
         .execute(&mut *tx)
+        .into_repository_result()
         .await?;
-        revoke_for_scim_lifecycle(&mut tx, tenant_id, id, self.correlation_id.as_deref()).await?;
-        tx.commit().await?;
+        revoke_for_scim_lifecycle(&mut tx, tenant_id, id, self.correlation_id.as_deref())
+            .into_repository_result()
+            .await?;
+        tx.commit().into_repository_result().await?;
         Ok(())
     }
 
@@ -478,7 +551,8 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         filters: &[rustshare_core::services::ScimFilter],
         start_index: Option<i64>,
         count: Option<i64>,
-    ) -> Result<(Vec<rustshare_core::services::ScimV2GroupRecord>, i64), sqlx::Error> {
+    ) -> Result<(Vec<rustshare_core::services::ScimV2GroupRecord>, i64), ScimV2RepositoryError>
+    {
         let base_select = "SELECT id, external_id, name, description, created_at, updated_at
              FROM user_groups WHERE tenant_id = $1";
         let base_count = "SELECT COUNT(*) FROM user_groups WHERE tenant_id = $1";
@@ -514,7 +588,10 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         for val in &binds {
             count_q = count_q.bind(val);
         }
-        let total: i64 = count_q.fetch_one(&self.pool).await?;
+        let total: i64 = count_q
+            .fetch_one(&self.pool)
+            .into_repository_result()
+            .await?;
 
         // select query with pagination binds
         let pag_idx_1 = binds.len() + 2;
@@ -529,7 +606,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             q = q.bind(val);
         }
         q = q.bind(limit).bind(offset);
-        let groups = q.fetch_all(&self.pool).await?;
+        let groups = q.fetch_all(&self.pool).into_repository_result().await?;
 
         Ok((groups.into_iter().map(Into::into).collect(), total))
     }
@@ -538,7 +615,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         tenant_id: Uuid,
         id: Uuid,
-    ) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, sqlx::Error> {
+    ) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, ScimV2RepositoryError> {
         let row = sqlx::query_as!(
             ScimV2GroupRow,
             r#"
@@ -549,6 +626,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .fetch_optional(&self.pool)
+        .into_repository_result()
         .await?;
 
         Ok(row.map(Into::into))
@@ -558,7 +636,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         tenant_id: Uuid,
         external_id: &str,
-    ) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, sqlx::Error> {
+    ) -> Result<Option<rustshare_core::services::ScimV2GroupRecord>, ScimV2RepositoryError> {
         let row = sqlx::query_as!(
             ScimV2GroupRow,
             r#"
@@ -569,6 +647,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .fetch_optional(&self.pool)
+        .into_repository_result()
         .await?;
 
         Ok(row.map(Into::into))
@@ -578,7 +657,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         tenant_id: Uuid,
         group: &ScimV2Group,
-    ) -> Result<Uuid, sqlx::Error> {
+    ) -> Result<Uuid, ScimV2RepositoryError> {
         let id = Uuid::new_v4();
 
         sqlx::query!(
@@ -590,6 +669,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .execute(&self.pool)
+        .into_write_result("group")
         .await?;
 
         Ok(id)
@@ -600,7 +680,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         id: Uuid,
         group: &ScimV2Group,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), ScimV2RepositoryError> {
         sqlx::query!(
             "UPDATE user_groups SET name = $2, external_id = $3, updated_at = NOW() \
              WHERE id = $1 AND tenant_id = $4",
@@ -610,6 +690,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .execute(&self.pool)
+        .into_repository_result()
         .await?;
 
         Ok(())
@@ -620,7 +701,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         id: Uuid,
         operations: &[rustshare_core::services::ScimPatchOperation],
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), ScimV2RepositoryError> {
         for op in operations {
             match op.op.to_lowercase().as_str() {
                 "add" | "replace" => {
@@ -690,13 +771,14 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         Ok(())
     }
 
-    async fn delete_group(&self, tenant_id: Uuid, id: Uuid) -> Result<(), sqlx::Error> {
+    async fn delete_group(&self, tenant_id: Uuid, id: Uuid) -> Result<(), ScimV2RepositoryError> {
         sqlx::query!(
             "DELETE FROM user_groups WHERE id = $1 AND tenant_id = $2",
             id,
             tenant_id
         )
         .execute(&self.pool)
+        .into_repository_result()
         .await?;
         Ok(())
     }
@@ -705,7 +787,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         tenant_id: Uuid,
         group_id: Uuid,
-    ) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    ) -> Result<Vec<(Uuid, String)>, ScimV2RepositoryError> {
         // Both legs of the membership must belong to the organization: the
         // member user and the group (defense in depth).
         let rows = sqlx::query!(
@@ -723,6 +805,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .fetch_all(&self.pool)
+        .into_repository_result()
         .await?;
 
         Ok(rows.into_iter().map(|r| (r.id, r.display_name)).collect())
@@ -732,7 +815,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         tenant_id: Uuid,
         user_id: Uuid,
-    ) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    ) -> Result<Vec<(Uuid, String)>, ScimV2RepositoryError> {
         // Both legs of the membership must belong to the organization: the
         // group and the user (defense in depth).
         let rows = sqlx::query!(
@@ -750,6 +833,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .fetch_all(&self.pool)
+        .into_repository_result()
         .await?;
 
         Ok(rows.into_iter().map(|r| (r.id, r.name)).collect())
@@ -760,7 +844,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         group_id: Uuid,
         user_id: Uuid,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), ScimV2RepositoryError> {
         // The membership is written only when both the group and the user
         // belong to the configured organization.
         sqlx::query!(
@@ -780,6 +864,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .execute(&self.pool)
+        .into_repository_result()
         .await?;
 
         Ok(())
@@ -790,7 +875,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         tenant_id: Uuid,
         group_id: Uuid,
         user_id: Uuid,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), ScimV2RepositoryError> {
         sqlx::query!(
             "DELETE FROM group_members gm WHERE gm.group_id = $1 AND gm.user_id = $2 \
                 AND EXISTS (SELECT 1 FROM user_groups g WHERE g.id = gm.group_id AND g.tenant_id = $3) \
@@ -800,7 +885,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .execute(&self.pool)
-        .await?;
+        .into_repository_result().await?;
 
         Ok(())
     }
@@ -809,13 +894,14 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         tenant_id: Uuid,
         external_id: &str,
-    ) -> Result<Option<Uuid>, sqlx::Error> {
+    ) -> Result<Option<Uuid>, ScimV2RepositoryError> {
         let row = sqlx::query_scalar!(
             "SELECT id FROM users WHERE external_id = $1 AND tenant_id = $2",
             external_id,
             tenant_id
         )
         .fetch_optional(&self.pool)
+        .into_repository_result()
         .await?;
 
         Ok(row)
@@ -825,7 +911,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
         &self,
         tenant_id: Uuid,
         group_id: Uuid,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), ScimV2RepositoryError> {
         // Per-row user leg: in-scope memberships are cleared, cross-tenant
         // member rows survive.
         sqlx::query!(
@@ -836,7 +922,7 @@ impl ScimV2Repository for ScimV2RepositoryImpl {
             tenant_id
         )
         .execute(&self.pool)
-        .await?;
+        .into_repository_result().await?;
 
         Ok(())
     }
@@ -890,6 +976,26 @@ fn base64_encode(input: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unique_violation_maps_to_generic_resource_conflict() {
+        for (resource, expected) in [("user", "a user"), ("group", "a group")] {
+            let error = unique_conflict(resource, Some("23505")).unwrap();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "Conflict: {expected} with the same identifying value already exists in the directory"
+                )
+            );
+            assert!(!error.to_string().contains("23505"));
+        }
+    }
+
+    #[test]
+    fn non_unique_database_errors_are_not_conflicts() {
+        assert!(unique_conflict("user", Some("23503")).is_none());
+        assert!(unique_conflict("user", None).is_none());
+    }
 
     #[test]
     fn user_row_conversion_preserves_every_field() {
