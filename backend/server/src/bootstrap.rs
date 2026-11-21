@@ -376,7 +376,9 @@ async fn init_services(
         async { Arc::new(ShareNotificationRepoImpl::new(db_pool.clone())) },
         async {
             Arc::new(ThumbnailService::new(
-                db_pool.clone(),
+                Arc::new(rustshare_storage::repos::ThumbnailRepositoryImpl::new(
+                    db_pool.clone(),
+                )),
                 Arc::clone(&object_store),
                 crate::services::thumbnail_renderer::default_thumbnail_renderer(),
             ))

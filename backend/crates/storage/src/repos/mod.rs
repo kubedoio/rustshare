@@ -6,10 +6,12 @@
 pub mod path_builder;
 pub mod share_notification;
 pub mod sync;
+pub mod thumbnail_repository;
 pub mod upload_session;
 
 pub use path_builder::PathBuilder;
 pub use share_notification::ShareNotificationRepoImpl;
+pub use thumbnail_repository::ThumbnailRepositoryImpl;
 pub use upload_session::RustFsUploadSessionRepository;
 
 use thiserror::Error;

@@ -76,7 +76,7 @@ pub use share_service::{
     ShareNotificationRepo, ShareService,
 };
 pub use thumbnail_service::{
-    RenderedThumbnail, ThumbnailError, ThumbnailRenderer, ThumbnailService,
+    RenderedThumbnail, ThumbnailError, ThumbnailRenderer, ThumbnailRepository, ThumbnailService,
 };
 pub use upload_service::{
     UploadError, UploadMetadataStore, UploadObjectStore, UploadService, UploadSessionRepository,

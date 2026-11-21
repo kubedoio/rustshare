@@ -128,6 +128,30 @@ def violations(
         )
         if record and re.search(r"\bsqlx\s*::\s*FromRow\b", record.group(1)):
             errors.append(f"{record_name} derives the SQLx row decoder in Core")
+    thumbnail_service = next(
+        (
+            source
+            for name, source in sources.items()
+            if name.replace("\\", "/").endswith(
+                "backend/crates/core/src/services/thumbnail_service.rs"
+            )
+        ),
+        "",
+    )
+    if re.search(r"\bsqlx\s*::|\bPgPool\b", thumbnail_service):
+        errors.append("ThumbnailService contains SQLx persistence")
+    thumbnail_domain = next(
+        (
+            source
+            for name, source in sources.items()
+            if name.replace("\\", "/").endswith(
+                "backend/crates/core/src/domain/thumbnail.rs"
+            )
+        ),
+        "",
+    )
+    if re.search(r"\bsqlx\s*::\s*(?:Type|FromRow)\b", thumbnail_domain):
+        errors.append("thumbnail domain records derive SQLx persistence types")
     return errors
 
 
@@ -226,6 +250,24 @@ def self_test() -> None:
                 )
             },
         ) == [f"{record_name} derives the SQLx row decoder in Core"]
+    thumbnail_service = "backend/crates/core/src/services/thumbnail_service.rs"
+    assert violations(
+        '[dependencies]\nchrono = "1"\n',
+        {thumbnail_service: "pub struct ThumbnailService { repository: Arc<dyn ThumbnailRepository> }"},
+    ) == []
+    assert violations(
+        '[dependencies]\nchrono = "1"\n',
+        {thumbnail_service: "pub struct ThumbnailService { db: sqlx::PgPool }"},
+    ) == ["ThumbnailService contains SQLx persistence"]
+    thumbnail_domain = "backend/crates/core/src/domain/thumbnail.rs"
+    assert violations(
+        '[dependencies]\nchrono = "1"\n',
+        {thumbnail_domain: "#[derive(Debug, Clone)] pub struct FileThumbnail { field: String }"},
+    ) == []
+    assert violations(
+        '[dependencies]\nchrono = "1"\n',
+        {thumbnail_domain: "#[derive(Debug, sqlx::FromRow)] pub struct FileThumbnail { field: String }"},
+    ) == ["thumbnail domain records derive SQLx persistence types"]
     for source in (
         'std::env::var("RUSTSHARE_SETTING")',
         'use std::env; env::var_os("RUSTSHARE_SETTING")',
