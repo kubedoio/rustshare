@@ -1172,8 +1172,10 @@ async fn group_membership_changes_and_audits_commit_or_roll_back_together() -> T
     let state = setup_test_env().await;
     let pool = state.db_pool.clone();
     let tenant_id = Uuid::new_v4();
+    let foreign_tenant_id = Uuid::new_v4();
     let actor_id = Uuid::new_v4();
     let member_id = Uuid::new_v4();
+    let foreign_member_id = Uuid::new_v4();
     let group_id = Uuid::new_v4();
     let suffix = group_id.simple();
     let function_name = format!("rs_group_audit_fail_{suffix}");
@@ -1187,6 +1189,15 @@ async fn group_membership_changes_and_audits_commit_or_roll_back_together() -> T
         )
         .bind(tenant_id)
         .bind(format!("Group audit transaction test {tenant_id}"))
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO tenants (id, name, created_at, updated_at)
+             VALUES ($1, $2, NOW(), NOW())",
+        )
+        .bind(foreign_tenant_id)
+        .bind(format!("Foreign group member test {foreign_tenant_id}"))
         .execute(&pool)
         .await?;
 
@@ -1206,6 +1217,20 @@ async fn group_membership_changes_and_audits_commit_or_roll_back_together() -> T
             .execute(&pool)
             .await?;
         }
+
+        let foreign_username = format!("foreign_group_member_{}", foreign_member_id.simple());
+        sqlx::query(
+            "INSERT INTO users
+                (id, username, email, password_hash, display_name, is_admin,
+                 storage_quota, tenant_id)
+             VALUES ($1, $2, $3, 'test-password-hash', $2, false, 10737418240, $4)",
+        )
+        .bind(foreign_member_id)
+        .bind(&foreign_username)
+        .bind(format!("{foreign_username}@test.local"))
+        .bind(foreign_tenant_id)
+        .execute(&pool)
+        .await?;
 
         sqlx::query(
             "INSERT INTO user_groups (id, name, created_by, tenant_id)
@@ -1244,7 +1269,7 @@ async fn group_membership_changes_and_audits_commit_or_roll_back_together() -> T
 
         let app = rustshare_server::routes::admin_routes().with_state(state.clone());
         let bearer = support::calendar_harness::create_auth_token(&state, actor_id, tenant_id);
-        let add_request = || {
+        let add_request = |user_id: Uuid| {
             Request::builder()
                 .method("POST")
                 .uri(format!("/api/v1/admin/groups/{group_id}/members"))
@@ -1253,11 +1278,39 @@ async fn group_membership_changes_and_audits_commit_or_roll_back_together() -> T
                     format!("Bearer {bearer}"),
                 )
                 .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(Body::from(format!(r#"{{"user_id":"{member_id}"}}"#)))
+                .body(Body::from(format!(r#"{{"user_id":"{user_id}"}}"#)))
                 .expect("build group member add request")
         };
 
-        let failed_add_status = app.clone().oneshot(add_request()).await?.status();
+        let cross_tenant_status = app
+            .clone()
+            .oneshot(add_request(foreign_member_id))
+            .await?
+            .status();
+        assert_eq!(
+            cross_tenant_status,
+            axum::http::StatusCode::BAD_REQUEST,
+            "a group cannot include a user from another tenant"
+        );
+        let cross_tenant_side_effects: bool = sqlx::query_scalar(
+            "SELECT NOT EXISTS (
+                 SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2
+             ) AND NOT EXISTS (
+                 SELECT 1 FROM admin_actions
+                 WHERE action_type = 'group.member_added' AND target_id = $1
+                   AND detail->>'user_id' = $2::text
+             )",
+        )
+        .bind(group_id)
+        .bind(foreign_member_id)
+        .fetch_one(&pool)
+        .await?;
+        assert!(
+            cross_tenant_side_effects,
+            "cross-tenant add must not write membership or audit rows"
+        );
+
+        let failed_add_status = app.clone().oneshot(add_request(member_id)).await?.status();
         assert_eq!(
             failed_add_status,
             axum::http::StatusCode::INTERNAL_SERVER_ERROR
@@ -1287,7 +1340,7 @@ async fn group_membership_changes_and_audits_commit_or_roll_back_together() -> T
         sqlx::query(&format!("DROP TRIGGER {trigger_name} ON admin_actions"))
             .execute(&pool)
             .await?;
-        let added_status = app.clone().oneshot(add_request()).await?.status();
+        let added_status = app.clone().oneshot(add_request(member_id)).await?.status();
         assert_eq!(added_status, axum::http::StatusCode::NO_CONTENT);
         let add_audit_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM admin_actions
@@ -1403,16 +1456,18 @@ async fn group_membership_changes_and_audits_commit_or_roll_back_together() -> T
         &mut cleanup_error,
     );
     record_cleanup_result(
-        sqlx::query("DELETE FROM users WHERE id IN ($1, $2)")
+        sqlx::query("DELETE FROM users WHERE id IN ($1, $2, $3)")
             .bind(actor_id)
             .bind(member_id)
+            .bind(foreign_member_id)
             .execute(&pool)
             .await,
         &mut cleanup_error,
     );
     record_cleanup_result(
-        sqlx::query("DELETE FROM tenants WHERE id = $1")
+        sqlx::query("DELETE FROM tenants WHERE id IN ($1, $2)")
             .bind(tenant_id)
+            .bind(foreign_tenant_id)
             .execute(&pool)
             .await,
         &mut cleanup_error,

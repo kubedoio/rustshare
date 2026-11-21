@@ -1,7 +1,75 @@
 //! Tenant-scoped organization group queries.
 
+use crate::services::organization_administrators::insert_scoped_admin_action;
+use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
+
+pub(crate) enum AddMemberOutcome {
+    Added,
+    GroupNotFound,
+    UserNotFound,
+    DifferentTenant,
+    AlreadyMember,
+}
+
+pub(crate) async fn add_member(
+    pool: &PgPool,
+    group_id: Uuid,
+    user_id: Uuid,
+    actor_id: Uuid,
+    correlation_id: Option<&str>,
+) -> Result<AddMemberOutcome, sqlx::Error> {
+    let tenant_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT tenant_id FROM user_groups WHERE id = $1")
+            .bind(group_id)
+            .fetch_optional(pool)
+            .await?;
+    let Some(tenant_id) = tenant_id else {
+        return Ok(AddMemberOutcome::GroupNotFound);
+    };
+
+    let user_tenant: Option<Uuid> = sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+    let Some(user_tenant) = user_tenant else {
+        return Ok(AddMemberOutcome::UserNotFound);
+    };
+    if user_tenant != tenant_id {
+        return Ok(AddMemberOutcome::DifferentTenant);
+    }
+
+    let mut tx = pool.begin().await?;
+    let result = sqlx::query(
+        "INSERT INTO group_members (group_id, user_id, added_by)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (group_id, user_id) DO NOTHING",
+    )
+    .bind(group_id)
+    .bind(user_id)
+    .bind(actor_id)
+    .execute(&mut *tx)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Ok(AddMemberOutcome::AlreadyMember);
+    }
+
+    insert_scoped_admin_action(
+        &mut tx,
+        tenant_id,
+        actor_id,
+        "group.member_added",
+        Some("group"),
+        Some(group_id),
+        json!({"user_id": user_id}),
+        correlation_id,
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(AddMemberOutcome::Added)
+}
 
 #[derive(sqlx::FromRow)]
 pub(crate) struct OrganizationGroupSummary {
