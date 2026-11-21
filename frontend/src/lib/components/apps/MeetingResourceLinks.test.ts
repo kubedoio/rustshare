@@ -21,6 +21,7 @@ describe('MeetingResourceLinks', () => {
 				{
 					id: 'visible-link',
 					available: true,
+					availability: 'available',
 					created_at: '2026-10-20T10:00:00Z',
 					display_name: 'agenda.pdf',
 					resource_kind: 'file',
@@ -29,6 +30,7 @@ describe('MeetingResourceLinks', () => {
 				{
 					id: 'hidden-link',
 					available: false,
+					availability: 'permission_denied',
 					created_at: '2026-10-20T10:01:00Z'
 				}
 			],
@@ -55,7 +57,7 @@ describe('MeetingResourceLinks', () => {
 		expect((await screen.findByRole('link', { name: /agenda\.pdf/ })).getAttribute('href')).toBe(
 			'/files?preview=file-1'
 		);
-		expect(screen.getByText('Linked resource unavailable')).toBeTruthy();
+		expect(screen.getByText('Access to linked resource denied')).toBeTruthy();
 		expect(screen.queryByText('private-budget.xlsx')).toBeNull();
 
 		const removeButtons = screen.getAllByRole('button', { name: 'Remove linked resource' });
@@ -65,7 +67,7 @@ describe('MeetingResourceLinks', () => {
 
 	it('searches authorized resources and links them by canonical reference', async () => {
 		render(MeetingResourceLinks, { props: { meetingId: 'meeting-2' } });
-		await screen.findByText('Linked resource unavailable');
+		await screen.findByText('Access to linked resource denied');
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Link a resource' }));
 		await fireEvent.input(
@@ -85,5 +87,30 @@ describe('MeetingResourceLinks', () => {
 			)
 		);
 		expect(mocks.listResources).toHaveBeenCalledWith('meeting-2', 1);
+	});
+
+	it('distinguishes deleted resources without rendering their metadata', async () => {
+		mocks.listResources.mockResolvedValueOnce({
+			items: [
+				{
+					id: 'deleted-link',
+					available: false,
+					availability: 'deleted',
+					created_at: '2026-10-20T10:01:00Z',
+					display_name: 'private-budget.xlsx',
+					resource_ref: 'elembra://io.elembra.files/file/private-id',
+					open_url: '/files?preview=private-id'
+				}
+			],
+			total: 1,
+			page: 1,
+			per_page: 50
+		});
+
+		render(MeetingResourceLinks, { props: { meetingId: 'meeting-3' } });
+
+		expect(await screen.findByText('Linked resource deleted')).toBeTruthy();
+		expect(screen.queryByText('private-budget.xlsx')).toBeNull();
+		expect(screen.queryByRole('link', { name: /private-budget/ })).toBeNull();
 	});
 });

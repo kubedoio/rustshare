@@ -24971,6 +24971,15 @@
           }
         }
       },
+      "MeetingResourceAvailability": {
+        "type": "string",
+        "enum": [
+          "available",
+          "deleted",
+          "permission_denied",
+          "unavailable"
+        ]
+      },
       "MeetingResourceLinkPage": {
         "type": "object",
         "required": [
@@ -25006,9 +25015,13 @@
         "required": [
           "id",
           "available",
+          "availability",
           "created_at"
         ],
         "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/MeetingResourceAvailability"
+          },
           "available": {
             "type": "boolean"
           },
