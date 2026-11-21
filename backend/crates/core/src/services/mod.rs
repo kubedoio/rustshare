@@ -59,7 +59,7 @@ pub use permission_resolver::{
 };
 pub use scim_service::{
     GroupRecord, ScimAction, ScimEmail, ScimError, ScimGroup, ScimGroupResult, ScimMember,
-    ScimName, ScimRepository, ScimService, ScimUser, ScimUserResult,
+    ScimName, ScimRepository, ScimRepositoryError, ScimService, ScimUser, ScimUserResult,
 };
 pub use scim_v2_service::{
     parse_filter, FilterOperator, ScimFilter, ScimPatchOperation, ScimPatchRequest, ScimSchemas,
