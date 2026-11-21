@@ -63,11 +63,37 @@ test('institutional Calendar journey preserves linked context and denies unavail
 	expect(eventResponse.status()).toBe(201);
 	const event = await eventResponse.json();
 	await page.goto(`/apps/calendar?event_id=${event.id}`);
+	await page.getByRole('button', { name: 'Create/Open Meeting Notes', exact: true }).click();
+	await expect(page).toHaveURL(/\/apps\/notes\/[\da-f-]+\?/i);
+	const eventNoteId = new URL(page.url()).pathname.split('/').pop()!;
+	const eventNoteResponse = await api.get(`/api/v1/notes/${eventNoteId}`);
+	expect(eventNoteResponse.ok()).toBeTruthy();
+	expect((await eventNoteResponse.json()).content).toContain('Synthetic Gate A discussion');
+	await expect(page.getByRole('button', { name: 'Back to calendar event' })).toBeVisible();
+	await page.getByRole('button', { name: 'Back to calendar event' }).click();
+	await expect(page).toHaveURL(new RegExp(`/apps/calendar\\?event_id=${event.id}`));
+	const reopenedEventNote = await api.post(`/api/v1/calendar/events/${event.id}/notes`, {
+		headers
+	});
+	expect(reopenedEventNote.ok()).toBeTruthy();
+	expect((await reopenedEventNote.json()).note_id).toBe(eventNoteId);
 	await page.getByRole('button', { name: 'Open meeting note', exact: true }).click();
 	await expect(page).toHaveURL(/\/apps\/meetings\/[\da-f-]+$/);
 	const meetingId = page.url().split('/').pop()!;
 	const resources = page.getByRole('region', { name: 'Linked resources', exact: true });
 	const linkedUrls: string[] = [];
+	const eventNoteLink = await api.post(`/api/v1/meetings/${meetingId}/resources`, {
+		headers,
+		data: {
+			resource_ref: `elembra://io.elembra.notes/notes.resource/${eventNoteId}`
+		}
+	});
+	expect(eventNoteLink.ok()).toBeTruthy();
+	const linkedEventNote = await eventNoteLink.json();
+	expect(linkedEventNote.open_url).toBe(`/apps/notes/${eventNoteId}`);
+	linkedUrls.push(linkedEventNote.open_url);
+	await page.reload();
+	await expect(resources.locator(`a[href="${linkedEventNote.open_url}"]`)).toBeVisible();
 	await resources.getByRole('button', { name: 'Link a resource' }).click();
 	for (const [name, identity] of [
 		[noteTitle, note.path],
@@ -133,7 +159,7 @@ test('institutional Calendar journey preserves linked context and denies unavail
 	await expect(page).toHaveURL(new RegExp(`/apps/meetings/${meetingId}$`));
 	await page.reload();
 	await expect(page.locator('main.doc-content')).toContainText('Synthetic Gate A discussion');
-	await expect(resources.locator('a')).toHaveCount(2);
+	await expect(resources.locator('a')).toHaveCount(3);
 	for (const url of linkedUrls) await expect(resources.locator(`a[href="${url}"]`)).toBeVisible();
 	await expect(
 		decisions.getByRole('link', { name: `Decision ${suffix}`, exact: true })
