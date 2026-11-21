@@ -11,6 +11,7 @@ use uuid::Uuid;
 use super::{PrincipalId, TenantId, WorkspaceId};
 
 pub const CONNECTOR_API_VERSION: &str = "elembra.io/v1alpha1";
+const MAX_RESOURCE_TYPE_LEN: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -72,7 +73,7 @@ impl ConnectorDescriptor {
             .publishes
             .resources
             .iter()
-            .any(|resource| resource.trim().is_empty() || resource.contains(char::is_whitespace))
+            .any(|resource| !valid_resource_type(resource))
         {
             return Err(ConnectorDescriptorError::Publication);
         }
@@ -105,6 +106,19 @@ fn valid_source_system(value: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
         && value.as_bytes()[0].is_ascii_lowercase()
         && value.as_bytes()[value.len() - 1] != b'-'
+}
+
+fn valid_resource_type(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_RESOURCE_TYPE_LEN
+        && value.split('.').all(|part| {
+            !part.is_empty()
+                && part.bytes().all(|byte| {
+                    byte.is_ascii_lowercase()
+                        || byte.is_ascii_digit()
+                        || matches!(byte, b'-' | b'_')
+                })
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -438,6 +452,12 @@ mod tests {
     #[test]
     fn descriptor_rejects_invalid_and_duplicate_publications() {
         let mut value = descriptor();
+        value.publishes.resources = vec!["drive_file".into()];
+        assert_eq!(value.validate(), Ok(()));
+        value.publishes.resources = vec!["drive/file".into()];
+        assert_eq!(value.validate(), Err(ConnectorDescriptorError::Publication));
+        value.publishes.resources = vec!["r".repeat(MAX_RESOURCE_TYPE_LEN + 1)];
+        assert_eq!(value.validate(), Err(ConnectorDescriptorError::Publication));
         value.publishes.resources = vec!["drive file".into()];
         assert_eq!(value.validate(), Err(ConnectorDescriptorError::Publication));
         value.publishes.resources = vec!["drive_file".into(), "drive_file".into()];
