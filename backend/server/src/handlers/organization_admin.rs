@@ -12,6 +12,7 @@ use crate::{
         },
         AppError, OrganizationAdmin,
     },
+    services::organization_groups::list_groups,
     user_disable::{set_user_disabled_at, DisableUserTarget},
     AppState,
 };
@@ -513,28 +514,20 @@ pub async fn groups(
     Query(q): Query<PaginationQuery>,
 ) -> Result<Json<OrgGroups>, AppError> {
     let (page, per_page, offset) = pagination(q.page, q.per_page)?;
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_groups WHERE tenant_id=$1")
-        .bind(tenant_id)
-        .fetch_one(&s.db_pool)
+    let (total, groups) = list_groups(&s.db_pool, tenant_id, per_page, offset)
         .await
         .map_err(db_error)?;
-    let r = if offset >= total {
-        Vec::new()
-    } else {
-        sqlx::query_as::<_, (Uuid, String, Option<String>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>, i64)>("SELECT g.id,g.name,g.description,g.created_at,g.updated_at,g.archived_at,count(u.id) FROM user_groups g LEFT JOIN group_members m ON m.group_id=g.id LEFT JOIN users u ON u.id=m.user_id AND u.tenant_id=g.tenant_id WHERE g.tenant_id=$1 GROUP BY g.id ORDER BY g.created_at DESC LIMIT $2 OFFSET $3")
-            .bind(tenant_id).bind(per_page).bind(offset).fetch_all(&s.db_pool).await.map_err(db_error)?
-    };
     Ok(Json(OrgGroups {
-        groups: r
+        groups: groups
             .into_iter()
             .map(|x| Group {
-                id: x.0,
-                name: x.1,
-                description: x.2,
-                created_at: x.3,
-                updated_at: x.4,
-                archived_at: x.5,
-                member_count: x.6,
+                id: x.id,
+                name: x.name,
+                description: x.description,
+                created_at: x.created_at,
+                updated_at: x.updated_at,
+                archived_at: x.archived_at,
+                member_count: x.member_count,
             })
             .collect(),
         total,

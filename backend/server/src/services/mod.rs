@@ -24,6 +24,7 @@ pub mod meeting_service;
 pub mod note_index_sink;
 pub mod note_service;
 pub mod organization_administrators;
+pub mod organization_groups;
 pub mod outlook_calendar;
 pub mod scim_repository;
 pub mod scim_v2_repository;
