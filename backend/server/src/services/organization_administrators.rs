@@ -17,6 +17,14 @@ pub(crate) struct OrganizationAdministratorRow {
     pub(crate) disabled_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+pub(crate) enum OperatorGrantOutcome {
+    Created(OrganizationAdministratorRow),
+    PrincipalUnavailable,
+    ActiveGrantExists,
+    RecoveryReasonRequired,
+    RecoveryReasonNotApplicable,
+}
+
 pub(crate) async fn list_active_for_tenant(
     pool: &PgPool,
     tenant_id: Uuid,
@@ -121,6 +129,113 @@ pub(crate) async fn lock_tenant_admin_grants(
         .execute(&mut **tx)
         .await?;
     Ok(())
+}
+
+pub(crate) async fn grant_operator_organization_admin(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    actor_id: Uuid,
+    user_id: Uuid,
+    recovery_reason: Option<&str>,
+    correlation_id: Option<&str>,
+) -> Result<OperatorGrantOutcome, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    // Serialize bootstrap and recovery classification across different targets.
+    lock_tenant_admin_grants(&mut tx, tenant_id).await?;
+
+    let target = sqlx::query_as::<_, (Uuid, Option<chrono::DateTime<chrono::Utc>>)>(
+        "SELECT tenant_id, disabled_at FROM users WHERE id = $1 FOR UPDATE",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if !target.is_some_and(|(target_tenant, disabled_at)| {
+        target_tenant == tenant_id && disabled_at.is_none()
+    }) {
+        return Ok(OperatorGrantOutcome::PrincipalUnavailable);
+    }
+
+    let target_has_active_grant: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM organization_administrators
+         WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL)",
+    )
+    .bind(tenant_id)
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if target_has_active_grant {
+        return Ok(OperatorGrantOutcome::ActiveGrantExists);
+    }
+
+    let history_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM organization_administrators WHERE tenant_id = $1)",
+    )
+    .bind(tenant_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let active_admin_exists: bool = sqlx::query_scalar(
+        r#"SELECT EXISTS(
+               SELECT 1 FROM organization_administrators oa
+               JOIN users u ON u.id = oa.user_id AND u.tenant_id = oa.tenant_id
+               WHERE oa.tenant_id = $1 AND oa.revoked_at IS NULL AND u.disabled_at IS NULL
+           )"#,
+    )
+    .bind(tenant_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let action_type = if !history_exists {
+        "organization_admin.bootstrap"
+    } else if !active_admin_exists {
+        "organization_admin.recovered"
+    } else {
+        "organization_admin.granted"
+    };
+    if action_type == "organization_admin.recovered" && recovery_reason.is_none() {
+        return Ok(OperatorGrantOutcome::RecoveryReasonRequired);
+    }
+    if action_type != "organization_admin.recovered" && recovery_reason.is_some() {
+        return Ok(OperatorGrantOutcome::RecoveryReasonNotApplicable);
+    }
+
+    let row = match sqlx::query_as::<_, OrganizationAdministratorRow>(
+        r#"INSERT INTO organization_administrators (tenant_id, user_id, granted_by)
+           VALUES ($1, $2, $3)
+           RETURNING id AS grant_id, tenant_id, user_id,
+             (SELECT username FROM users WHERE id = $2) AS username,
+             (SELECT display_name FROM users WHERE id = $2) AS display_name,
+             granted_by, granted_at, NULL::timestamptz AS disabled_at"#,
+    )
+    .bind(tenant_id)
+    .bind(user_id)
+    .bind(actor_id)
+    .fetch_one(&mut *tx)
+    .await
+    {
+        Ok(row) => row,
+        Err(sqlx::Error::Database(db))
+            if db.constraint() == Some("organization_administrators_one_active_grant") =>
+        {
+            return Ok(OperatorGrantOutcome::ActiveGrantExists);
+        }
+        Err(error) => return Err(error),
+    };
+    insert_scoped_admin_action(
+        &mut tx,
+        tenant_id,
+        actor_id,
+        action_type,
+        Some("organization_administrator"),
+        Some(user_id),
+        if let Some(recovery_reason) = recovery_reason {
+            json!({ "grant_id": row.grant_id, "recovery_reason": recovery_reason })
+        } else {
+            json!({ "grant_id": row.grant_id })
+        },
+        correlation_id,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(OperatorGrantOutcome::Created(row))
 }
 
 pub(crate) async fn revoke_operator_grant(

@@ -6,17 +6,16 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use uuid::Uuid;
 
 use super::{
     admin_bad_request, admin_conflict, admin_internal_error, admin_not_found,
-    insert_scoped_admin_action, request_correlation_id,
+    request_correlation_id,
 };
 pub(crate) use crate::services::organization_administrators::{
-    list_active_for_tenant, lock_tenant_admin_grants, removal_would_leave_no_enabled_admin,
-    revoke_for_lifecycle, revoke_operator_grant, OperatorRevokeOutcome,
-    OrganizationAdministratorRow,
+    grant_operator_organization_admin, list_active_for_tenant, lock_tenant_admin_grants,
+    removal_would_leave_no_enabled_admin, revoke_for_lifecycle, revoke_operator_grant,
+    OperatorGrantOutcome, OperatorRevokeOutcome, OrganizationAdministratorRow,
 };
 use crate::{
     handlers::{AdminUser, AppError, PaginationQuery},
@@ -49,6 +48,16 @@ pub enum OrganizationAdministratorRecoveryReason {
     AdministratorUnavailable,
     SecurityIncident,
     AdministrativeContinuity,
+}
+
+impl OrganizationAdministratorRecoveryReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AdministratorUnavailable => "administrator_unavailable",
+            Self::SecurityIncident => "security_incident",
+            Self::AdministrativeContinuity => "administrative_continuity",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -127,119 +136,33 @@ pub async fn grant_organization_administrator(
         ));
     }
 
-    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
-    // Serialize grant classification within a tenant so bootstrap/recovery audit
-    // events cannot race across distinct target users.
-    lock_tenant_admin_grants(&mut tx, tenant_id)
-        .await
-        .map_err(db_error)?;
-
-    let target = sqlx::query_as::<_, (Uuid, Option<chrono::DateTime<chrono::Utc>>)>(
-        "SELECT tenant_id, disabled_at FROM users WHERE id = $1 FOR UPDATE",
-    )
-    .bind(user_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(db_error)?;
-    if !target.is_some_and(|(target_tenant, disabled_at)| {
-        target_tenant == tenant_id && disabled_at.is_none()
-    }) {
-        return Err(admin_not_found("Enabled principal not found in tenant"));
-    }
-
-    let target_has_active_grant: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM organization_administrators
-         WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL)",
-    )
-    .bind(tenant_id)
-    .bind(user_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(db_error)?;
-    if target_has_active_grant {
-        return Err(admin_conflict(
-            "An active organization administrator grant already exists",
-        ));
-    }
-
-    let history_exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM organization_administrators WHERE tenant_id = $1)",
-    )
-    .bind(tenant_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(db_error)?;
-    let active_admin_exists: bool = sqlx::query_scalar(
-        r#"SELECT EXISTS(
-               SELECT 1 FROM organization_administrators oa
-               JOIN users u ON u.id = oa.user_id AND u.tenant_id = oa.tenant_id
-               WHERE oa.tenant_id = $1 AND oa.revoked_at IS NULL AND u.disabled_at IS NULL
-           )"#,
-    )
-    .bind(tenant_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(db_error)?;
-    let action_type = if !history_exists {
-        "organization_admin.bootstrap"
-    } else if !active_admin_exists {
-        "organization_admin.recovered"
-    } else {
-        "organization_admin.granted"
-    };
-
-    if action_type == "organization_admin.recovered" && request.recovery_reason.is_none() {
-        return Err(admin_bad_request(
-            "A recovery reason is required when restoring administration",
-        ));
-    }
-    if action_type != "organization_admin.recovered" && request.recovery_reason.is_some() {
-        return Err(admin_bad_request(
-            "A recovery reason is only valid when restoring administration",
-        ));
-    }
-
-    let row = sqlx::query_as::<_, OrganizationAdministratorRow>(
-        r#"INSERT INTO organization_administrators (tenant_id, user_id, granted_by)
-           VALUES ($1, $2, $3)
-           RETURNING id AS grant_id, tenant_id, user_id,
-             (SELECT username FROM users WHERE id = $2) AS username,
-             (SELECT display_name FROM users WHERE id = $2) AS display_name,
-             granted_by, granted_at, NULL::timestamptz AS disabled_at"#,
-    )
-    .bind(tenant_id)
-    .bind(user_id)
-    .bind(actor_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|error| {
-        if let sqlx::Error::Database(db) = &error {
-            if db.constraint() == Some("organization_administrators_one_active_grant") {
-                return admin_conflict("An active organization administrator grant already exists");
-            }
-        }
-        db_error(error)
-    })?;
-
-    insert_scoped_admin_action(
-        &mut tx,
+    match grant_operator_organization_admin(
+        &state.db_pool,
         tenant_id,
         actor_id,
-        action_type,
-        Some("organization_administrator"),
-        Some(user_id),
-        if let Some(recovery_reason) = request.recovery_reason {
-            json!({ "grant_id": row.grant_id, "recovery_reason": recovery_reason })
-        } else {
-            json!({ "grant_id": row.grant_id })
-        },
+        user_id,
+        request
+            .recovery_reason
+            .map(OrganizationAdministratorRecoveryReason::as_str),
         request_correlation_id(&headers),
     )
     .await
-    .map_err(db_error)?;
-    tx.commit().await.map_err(db_error)?;
-
-    Ok((StatusCode::CREATED, Json(row.into())))
+    .map_err(db_error)?
+    {
+        OperatorGrantOutcome::Created(row) => Ok((StatusCode::CREATED, Json(row.into()))),
+        OperatorGrantOutcome::PrincipalUnavailable => {
+            Err(admin_not_found("Enabled principal not found in tenant"))
+        }
+        OperatorGrantOutcome::ActiveGrantExists => Err(admin_conflict(
+            "An active organization administrator grant already exists",
+        )),
+        OperatorGrantOutcome::RecoveryReasonRequired => Err(admin_bad_request(
+            "A recovery reason is required when restoring administration",
+        )),
+        OperatorGrantOutcome::RecoveryReasonNotApplicable => Err(admin_bad_request(
+            "A recovery reason is only valid when restoring administration",
+        )),
+    }
 }
 
 /// Revoke a grant while preserving its history. The final enabled administrator
