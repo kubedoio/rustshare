@@ -33,6 +33,12 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
     assert_disposable_database(&url);
     let pool = PgPool::connect(&url).await.unwrap();
     sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM tenants WHERE id = '00000000-0000-0000-0000-000000000000')"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap());
 
     let tenant_id = Uuid::new_v4();
     let other_tenant_id = Uuid::new_v4();
