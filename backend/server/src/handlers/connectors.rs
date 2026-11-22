@@ -20,8 +20,40 @@ use crate::{
 pub struct UpdateConnectorRequest {
     pub expected_version: i64,
     pub source_config: Option<serde_json::Value>,
+    #[serde(
+        default,
+        deserialize_with = "crate::handlers::organization_admin::deserialize_present_nullable_string"
+    )]
     pub credential_ref: Option<Option<String>>,
     pub lifecycle_state: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UpdateConnectorRequest;
+
+    #[test]
+    fn credential_reference_patch_distinguishes_omitted_null_and_value() {
+        let omitted: UpdateConnectorRequest =
+            serde_json::from_value(serde_json::json!({"expectedVersion": 1})).unwrap();
+        assert_eq!(omitted.credential_ref, None);
+
+        let cleared: UpdateConnectorRequest = serde_json::from_value(
+            serde_json::json!({"expectedVersion": 1, "credentialRef": null}),
+        )
+        .unwrap();
+        assert_eq!(cleared.credential_ref, Some(None));
+
+        let set: UpdateConnectorRequest = serde_json::from_value(serde_json::json!({
+            "expectedVersion": 1,
+            "credentialRef": "secret://connector/key"
+        }))
+        .unwrap();
+        assert_eq!(
+            set.credential_ref,
+            Some(Some("secret://connector/key".to_string()))
+        );
+    }
 }
 
 fn map_error(error: ConnectorError) -> AppError {
