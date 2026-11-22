@@ -124,6 +124,7 @@ fn connector_management_contract_is_tenant_scoped_and_redacts_credentials() {
         ("/api/v1/connectors", "post"),
         ("/api/v1/connectors/worker/session", "get"),
         ("/api/v1/connectors/worker/lease", "post"),
+        ("/api/v1/connectors/worker/files/import", "post"),
         ("/api/v1/connectors/worker/lease/{lease_id}/renew", "post"),
         ("/api/v1/connectors/worker/lease/{lease_id}/ack", "post"),
         ("/api/v1/connectors/worker/lease/{lease_id}/fail", "post"),
@@ -148,4 +149,9 @@ fn connector_management_contract_is_tenant_scoped_and_redacts_credentials() {
         .unwrap()
         .iter()
         .any(|parameter| parameter["name"] == "Idempotency-Key"));
+    assert_eq!(
+        value["paths"]["/api/v1/connectors/worker/files/import"]["post"]["requestBody"]["content"]
+            ["multipart/form-data"]["schema"]["$ref"],
+        "#/components/schemas/ConnectorFileImportMultipart"
+    );
 }

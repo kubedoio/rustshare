@@ -80,6 +80,11 @@ pub fn connector_routes() -> Router<AppState> {
             get(crate::handlers::connectors::worker_session),
         )
         .route(
+            "/api/v1/connectors/worker/files/import",
+            post(crate::handlers::connectors::import_connector_file)
+                .layer(DefaultBodyLimit::max(4 * 1024 * 1024 + 32 * 1024)),
+        )
+        .route(
             "/api/v1/connectors/worker/lease",
             post(crate::handlers::connectors::claim_worker_lease),
         )

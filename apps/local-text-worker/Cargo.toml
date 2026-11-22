@@ -10,12 +10,16 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
 glob = { workspace = true }
 hex = { workspace = true }
 libc = "0.2"
+notify = { workspace = true }
+reqwest = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }

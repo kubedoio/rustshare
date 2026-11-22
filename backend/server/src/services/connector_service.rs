@@ -449,6 +449,42 @@ impl ConnectorService {
             .await
             .map_err(Into::into)
     }
+
+    pub async fn mapped_target(
+        &self,
+        worker: &AuthenticatedConnectorWorker,
+        source_resource_ref: &str,
+        source_revision: &str,
+    ) -> Result<Option<String>, ConnectorError> {
+        let (tenant_id, _, instance_id) = worker_scope(worker)?;
+        self.store
+            .mapped_target(tenant_id, instance_id, source_resource_ref, source_revision)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn record_mapping(
+        &self,
+        worker: &AuthenticatedConnectorWorker,
+        source_resource_ref: &str,
+        source_revision: &str,
+        target_resource_ref: &str,
+    ) -> Result<bool, ConnectorError> {
+        let (tenant_id, _, instance_id) = worker_scope(worker)?;
+        self.store
+            .record_mapping(
+                tenant_id,
+                instance_id,
+                source_resource_ref,
+                source_revision,
+                target_resource_ref,
+            )
+            .await
+            .map_err(|error| match error {
+                sqlx::Error::RowNotFound => ConnectorError::Conflict,
+                other => ConnectorError::Storage(other),
+            })
+    }
 }
 
 fn validate_checkpoint_cursor(expected_version: i64, cursor: &Value) -> Result<(), ConnectorError> {

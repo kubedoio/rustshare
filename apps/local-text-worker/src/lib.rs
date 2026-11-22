@@ -3,13 +3,17 @@ use glob::Pattern;
 use rusqlite::{params, Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::{self, OpenOptions};
+use std::fs;
+#[cfg(not(unix))]
+use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 pub const MAX_TEXT_FILE_BYTES: u64 = 4 * 1024 * 1024;
 pub const MAX_FILES_PER_SCAN: usize = 10_000;
+pub const MAX_SCAN_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_QUEUE_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_SCAN_ENTRIES: usize = 50_000;
 const MAX_DIRECTORY_DEPTH: usize = 64;
 const DEFAULT_INCLUDES: &[&str] = &[
@@ -82,6 +86,7 @@ pub fn scan_root(config: &RootConfig) -> Result<ScanSummary> {
             excluded: 0,
         },
         examined: 0,
+        total_bytes: 0,
     };
     scan.directory(&root, 0)?;
     Ok(scan.summary)
@@ -103,6 +108,7 @@ struct RootScan<'a> {
     excludes: &'a [Pattern],
     summary: ScanSummary,
     examined: usize,
+    total_bytes: u64,
 }
 
 impl RootScan<'_> {
@@ -142,6 +148,7 @@ impl RootScan<'_> {
             if !metadata.is_file()
                 || is_private_path(relative)
                 || matches_any(self.excludes, relative)
+                || !is_supported_text_path(relative)
                 || !matches_any(self.includes, relative)
             {
                 self.summary.excluded += 1;
@@ -149,6 +156,9 @@ impl RootScan<'_> {
             }
             if metadata.len() > MAX_TEXT_FILE_BYTES {
                 bail!("a selected text file exceeds the configured safety limit");
+            }
+            if self.total_bytes.saturating_add(metadata.len()) > MAX_SCAN_BYTES {
+                bail!("configured root exceeds the bounded scan byte limit");
             }
             let canonical = path.canonicalize()?;
             if !canonical.starts_with(self.root) {
@@ -158,12 +168,13 @@ impl RootScan<'_> {
             if self.summary.observations.len() >= MAX_FILES_PER_SCAN {
                 bail!("configured root exceeds the bounded scan limit");
             }
-            let mut file = open_selected_file(&canonical)?.take(MAX_TEXT_FILE_BYTES + 1);
+            let mut file = open_selected_file(self.root, relative)?.take(MAX_TEXT_FILE_BYTES + 1);
             let mut content = Vec::with_capacity(metadata.len() as usize);
             file.read_to_end(&mut content)?;
             if content.len() as u64 > MAX_TEXT_FILE_BYTES {
                 bail!("a selected text file exceeds the configured safety limit");
             }
+            self.total_bytes = self.total_bytes.saturating_add(content.len() as u64);
             std::str::from_utf8(&content).context("a selected text file is not valid UTF-8")?;
             let relative_path = relative
                 .components()
@@ -197,19 +208,70 @@ fn matches_any(patterns: &[Pattern], path: &Path) -> bool {
     patterns.iter().any(|pattern| pattern.matches_path(path))
 }
 
-fn open_selected_file(path: &Path) -> Result<std::fs::File> {
-    let mut options = OpenOptions::new();
-    options.read(true);
+fn open_selected_file(root: &Path, relative: &Path) -> Result<std::fs::File> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        use std::{
+            ffi::CString,
+            os::fd::{AsRawFd, FromRawFd},
+            os::unix::ffi::OsStrExt,
+        };
+        let components = relative
+            .components()
+            .map(|component| match component {
+                Component::Normal(name) => {
+                    CString::new(name.as_bytes()).context("invalid source filename")
+                }
+                _ => bail!("source path is not relative"),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut directory = std::fs::File::open(root)?;
+        for name in &components[..components.len().saturating_sub(1)] {
+            let descriptor = unsafe {
+                libc::openat(
+                    directory.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                )
+            };
+            if descriptor < 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            directory = unsafe { std::fs::File::from_raw_fd(descriptor) };
+        }
+        let name = components.last().context("source path is empty")?;
+        let descriptor = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+            )
+        };
+        if descriptor < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let file = unsafe { std::fs::File::from_raw_fd(descriptor) };
+        if !file.metadata()?.is_file() {
+            bail!("selected source is not a regular file");
+        }
+        Ok(file)
     }
-    let file = options.open(path)?;
-    if !file.metadata()?.is_file() {
-        bail!("selected source is not a regular file");
+
+    #[cfg(not(unix))]
+    {
+        let path = root.join(relative);
+        let canonical = path.canonicalize()?;
+        if !canonical.starts_with(root) {
+            bail!("selected source is outside its configured root");
+        }
+        let mut options = OpenOptions::new();
+        options.read(true);
+        let file = options.open(canonical)?;
+        if !file.metadata()?.is_file() {
+            bail!("selected source is not a regular file");
+        }
+        Ok(file)
     }
-    Ok(file)
 }
 
 fn has_unsafe_component(path: &Path) -> bool {
@@ -231,6 +293,11 @@ fn is_private_path(path: &Path) -> bool {
         };
         let name = name.to_ascii_lowercase();
         name.starts_with('.')
+            || name.contains("credential")
+            || name.contains("secret")
+            || name.contains("password")
+            || name.contains("token")
+            || name.starts_with("id_")
             || matches!(
                 name.as_str(),
                 "credentials"
@@ -240,10 +307,23 @@ fn is_private_path(path: &Path) -> bool {
                     | "authorized_keys"
                     | "known_hosts"
             )
-            || [".env", ".pem", ".key", ".p12", ".pfx", ".kdbx"]
-                .iter()
-                .any(|suffix| name.ends_with(suffix))
+            || [
+                ".env", ".pem", ".key", ".p12", ".pfx", ".kdbx", ".crt", ".cer", ".der",
+            ]
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
     })
+}
+
+fn is_supported_text_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "md" | "markdown" | "txt"
+            )
+        })
 }
 
 pub struct OfflineQueue {
@@ -294,7 +374,7 @@ impl OfflineQueue {
 
     pub fn enqueue(&mut self, instance_id: Uuid, observation: &Observation) -> Result<Uuid> {
         let id = Uuid::new_v4();
-        self.connection.execute(
+        let inserted = self.connection.execute(
             "INSERT INTO local_text_queue (id, instance_id, root_id, relative_path, revision, observed_modified_at, content)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(instance_id, root_id, relative_path, revision) DO NOTHING",
@@ -302,6 +382,20 @@ impl OfflineQueue {
                 observation.relative_path, observation.revision, observation.observed_modified_at,
                 observation.content],
         )?;
+        if inserted == 1 {
+            let queued_bytes: i64 = self.connection.query_row(
+                "SELECT COALESCE(SUM(length(content)), 0) FROM local_text_queue",
+                [],
+                |row| row.get(0),
+            )?;
+            if queued_bytes as u64 > MAX_QUEUE_BYTES {
+                self.connection.execute(
+                    "DELETE FROM local_text_queue WHERE id = ?1",
+                    [id.to_string()],
+                )?;
+                bail!("offline queue exceeds its configured byte limit");
+            }
+        }
         let stored_id: String = self.connection.query_row(
             "SELECT id FROM local_text_queue WHERE instance_id = ?1 AND root_id = ?2 AND relative_path = ?3 AND revision = ?4",
             params![instance_id.to_string(), observation.root_id, observation.relative_path,
@@ -400,6 +494,19 @@ mod tests {
     }
 
     #[test]
+    fn privacy_filter_rejects_common_secret_and_key_names() {
+        for path in [
+            ".ssh/id_ed25519",
+            "notes/passwords.md",
+            "exports/api-token.txt",
+            "keys/id_ecdsa",
+            "certificates/service.crt",
+        ] {
+            assert!(is_private_path(Path::new(path)), "{path}");
+        }
+    }
+
+    #[test]
     fn queue_survives_reopen_and_deduplicates_the_same_revision() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("queue.sqlite3");
@@ -459,6 +566,9 @@ mod tests {
         fs::write(root.path().join("skip.md"), "private").unwrap();
         let mut cfg = config(root.path().to_path_buf());
         cfg.exclude.push("skip.md".into());
+        assert_eq!(scan_root(&cfg).unwrap().observations.len(), 1);
+        std::fs::write(root.path().join("binary.pdf"), b"not text").unwrap();
+        cfg.include = vec!["**/*".into()];
         assert_eq!(scan_root(&cfg).unwrap().observations.len(), 1);
         let mut large = std::fs::File::create(root.path().join("large.md")).unwrap();
         large
