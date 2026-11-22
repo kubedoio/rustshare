@@ -164,6 +164,134 @@ async fn connector_mappings(
     .expect("read Connector-to-Files mappings")
 }
 
+async fn wait_for_memory_projection(
+    pool: &sqlx::PgPool,
+    file_id: Uuid,
+    expected_version: &str,
+    expected_revision: &str,
+    expected_version_number: i64,
+) {
+    for _ in 0..150 {
+        let projected: Option<(Option<String>, Option<String>, Option<i64>)> = sqlx::query_as(
+            "SELECT current_version, source_revision, current_version_number \
+             FROM memory_files_catalog WHERE file_id = $1 AND deleted_at IS NULL",
+        )
+        .bind(file_id)
+        .fetch_optional(pool)
+        .await
+        .expect("read Memory Files provenance projection");
+        let chunks: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM note_index_chunks WHERE source_file_id = $1")
+                .bind(file_id)
+                .fetch_one(pool)
+                .await
+                .expect("read rebuildable Memory keyword projection");
+        if projected.is_some_and(|(version, revision, number)| {
+            version.as_deref() == Some(expected_version)
+                && revision.as_deref() == Some(expected_revision)
+                && number == Some(expected_version_number)
+        }) && chunks > 0
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("timed out waiting for authorized Memory Files projection");
+}
+
+async fn memory_delivery_id(pool: &sqlx::PgPool, source_revision: &str) -> Uuid {
+    sqlx::query_scalar(
+        "SELECT event_id FROM integration_outbox \
+         WHERE event_json->'data'->'sourceProvenance'->>'source_revision' = $1 \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(source_revision)
+    .fetch_one(pool)
+    .await
+    .expect("find durable Files provenance event")
+}
+
+async fn redeliver_memory_event(pool: &sqlx::PgPool, event_id: Uuid) {
+    let result = sqlx::query(
+        "UPDATE integration_deliveries SET state='pending', available_at=NOW(), \
+         claimed_by=NULL, claim_token=NULL, claim_expires_at=NULL, processed_at=NULL \
+         WHERE consumer_id='io.elembra.memory.files-connector.v1' AND event_id=$1 \
+         AND state='processed'",
+    )
+    .bind(event_id)
+    .execute(pool)
+    .await
+    .expect("redeliver Files event to Memory consumer");
+    assert_eq!(result.rows_affected(), 1);
+}
+
+async fn wait_for_memory_redelivery(pool: &sqlx::PgPool, event_id: Uuid) {
+    for _ in 0..150 {
+        let state: Option<(String, i32)> = sqlx::query_as(
+            "SELECT state, attempt_count FROM integration_deliveries \
+             WHERE consumer_id='io.elembra.memory.files-connector.v1' AND event_id=$1",
+        )
+        .bind(event_id)
+        .fetch_optional(pool)
+        .await
+        .expect("read Memory event delivery status");
+        if state.is_some_and(|(state, attempts)| state == "processed" && attempts >= 2) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("timed out waiting for Memory event redelivery");
+}
+
+async fn wait_for_memory_initial_delivery(pool: &sqlx::PgPool, event_id: Uuid) {
+    for _ in 0..150 {
+        let state: Option<(String, i32)> = sqlx::query_as(
+            "SELECT state, attempt_count FROM integration_deliveries \
+             WHERE consumer_id='io.elembra.memory.files-connector.v1' AND event_id=$1",
+        )
+        .bind(event_id)
+        .fetch_optional(pool)
+        .await
+        .expect("read initial Memory event delivery status");
+        if state.is_some_and(|(state, attempts)| state == "processed" && attempts >= 1) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("timed out waiting for initial Memory event delivery");
+}
+
+async fn keyword_search(client: &Client, server: &str, token: &str, query: &str) -> Value {
+    let response = client
+        .post(format!("{server}/api/v1/search"))
+        .bearer_auth(token)
+        .json(&json!({ "query": query, "sources": ["files"], "limit": 10 }))
+        .send()
+        .await
+        .expect("run current Files-authorized keyword search");
+    assert_eq!(response.status(), StatusCode::OK);
+    response.json().await.expect("decode keyword search")
+}
+
+async fn reconcile_memory_files(
+    client: &Client,
+    server: &str,
+    token: &str,
+    tenant_id: Uuid,
+) -> Value {
+    let response = client
+        .post(format!(
+            "{server}/api/v1/admin/applications/memory/files/reconcile"
+        ))
+        .bearer_auth(token)
+        .json(&json!({ "tenant_id": tenant_id, "limit": 100 }))
+        .send()
+        .await
+        .expect("request authoritative Files/Connector reconciliation");
+    assert_eq!(response.status(), StatusCode::OK);
+    response.json().await.expect("decode reconciliation result")
+}
+
 #[tokio::test]
 #[ignore = "requires a disposable loopback backend, PostgreSQL, and object store"]
 async fn independent_worker_imports_retries_recovers_and_stops_after_revocation() {
@@ -332,7 +460,147 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
                 .any(|file| target.contains(file["id"].as_str().unwrap()))
     }));
 
+    let first_file_id = Uuid::parse_str(
+        files
+            .iter()
+            .find(|file| file["path"] == first_path)
+            .expect("imported first Files resource")["id"]
+            .as_str()
+            .expect("Files id"),
+    )
+    .expect("valid Files id");
     let first_v2_revision = revision(first_v2);
+    let first_v2_version = format!("sha256:{}", first_v2_revision.trim_start_matches("sha256:"));
+    wait_for_memory_projection(
+        &pool,
+        first_file_id,
+        &first_v2_version,
+        &first_v2_revision,
+        2,
+    )
+    .await;
+    let tenant_id: Uuid = sqlx::query_scalar("SELECT tenant_id FROM files WHERE id=$1")
+        .bind(first_file_id)
+        .fetch_one(&pool)
+        .await
+        .expect("read imported File tenant");
+    let catalog_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM memory_files_catalog WHERE file_id=$1 AND tenant_id=$2",
+    )
+    .bind(first_file_id)
+    .bind(tenant_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count Memory provenance rows");
+    assert_eq!(
+        catalog_rows, 1,
+        "one logical Memory catalog row per Files resource"
+    );
+    let catalog_provenance: (Uuid, String, String, String, bool) = sqlx::query_as(
+        "SELECT connector_instance_id, source_resource_ref, source_revision, relative_path, observed_modified_at IS NOT NULL \
+         FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2",
+    )
+    .bind(tenant_id)
+    .bind(first_file_id)
+    .fetch_one(&pool)
+    .await
+    .expect("read Memory source provenance");
+    assert_eq!(catalog_provenance.0, instance_uuid);
+    assert_eq!(catalog_provenance.2, first_v2_revision);
+    assert_eq!(
+        catalog_provenance.3,
+        format!("{scope}/people/alex/shared.md")
+    );
+    assert!(catalog_provenance
+        .1
+        .starts_with("elembra://io.elembra.connector.local-text/file/"));
+    assert!(catalog_provenance.4);
+    let latest_memory_event = memory_delivery_id(&pool, &first_v2_revision).await;
+    let access_audit: (String, String, i64) = sqlx::query_as(
+        "SELECT outcome, file_version, count(*) OVER () \
+         FROM memory_files_source_access_audit WHERE event_id=$1",
+    )
+    .bind(latest_memory_event)
+    .fetch_one(&pool)
+    .await
+    .expect("read content-free Files access audit");
+    assert_eq!(access_audit.0, "authorized");
+    assert_eq!(access_audit.1, first_v2_version);
+    assert_eq!(access_audit.2, 1);
+
+    let search = keyword_search(&client, &server, &owner_token, "alpha v2").await;
+    let result = search["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["provenance"]["file_id"] == first_file_id.to_string())
+        .expect("find the imported Files citation");
+    assert!(result["snippet"].as_str().unwrap().contains("alpha v2"));
+    let citation = url::Url::parse(result["resource_ref"].as_str().unwrap())
+        .expect("parse versioned Files citation");
+    assert_eq!(
+        citation.path().rsplit('/').next(),
+        Some(first_file_id.to_string().as_str())
+    );
+    assert_eq!(
+        citation
+            .query_pairs()
+            .find(|(key, _)| key == "version")
+            .map(|(_, value)| value.into_owned())
+            .as_deref(),
+        Some(first_v2_version.as_str())
+    );
+
+    // Simulate a lost Memory projection after durable Files/Connector state
+    // was committed. The normal reconciler rebuilds provenance and content.
+    sqlx::query("DELETE FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2")
+        .bind(tenant_id)
+        .bind(first_file_id)
+        .execute(&pool)
+        .await
+        .expect("simulate missing Memory catalog row");
+    sqlx::query("DELETE FROM note_index_chunks WHERE tenant_id=$1 AND source_file_id=$2")
+        .bind(tenant_id)
+        .bind(first_file_id)
+        .execute(&pool)
+        .await
+        .expect("simulate missing Memory search projection");
+    let _ = reconcile_memory_files(&client, &server, &owner_token, tenant_id).await;
+    wait_for_memory_projection(
+        &pool,
+        first_file_id,
+        &first_v2_version,
+        &first_v2_revision,
+        2,
+    )
+    .await;
+
+    // The durable consumer tolerates duplicate delivery and fences a
+    // reordered older revision without regressing the projection.
+    let v1_event = memory_delivery_id(&pool, &revision(first_v1)).await;
+    let v2_event = latest_memory_event;
+    wait_for_memory_initial_delivery(&pool, v1_event).await;
+    wait_for_memory_initial_delivery(&pool, v2_event).await;
+    redeliver_memory_event(&pool, v1_event).await;
+    wait_for_memory_redelivery(&pool, v1_event).await;
+    redeliver_memory_event(&pool, v2_event).await;
+    wait_for_memory_redelivery(&pool, v2_event).await;
+    wait_for_memory_projection(
+        &pool,
+        first_file_id,
+        &first_v2_version,
+        &first_v2_revision,
+        2,
+    )
+    .await;
+    let catalog_rows_after_replay: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM memory_files_catalog WHERE file_id=$1")
+            .bind(first_file_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count Memory provenance rows after replay");
+    assert_eq!(catalog_rows_after_replay, 1);
+
     Connection::open(&queue)
         .unwrap()
         .execute(
@@ -370,6 +638,77 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     .await;
     drop(worker);
 
+    let first_v3_revision = revision(first_v3);
+    let first_v3_version = format!("sha256:{}", first_v3_revision.trim_start_matches("sha256:"));
+    wait_for_memory_projection(
+        &pool,
+        first_file_id,
+        &first_v3_version,
+        &first_v3_revision,
+        3,
+    )
+    .await;
+    let search = keyword_search(
+        &client,
+        &server,
+        &owner_token,
+        "alpha v3 after offline edit",
+    )
+    .await;
+    let updated = search["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["provenance"]["file_id"] == first_file_id.to_string())
+        .expect("find updated Files citation");
+    assert!(updated["snippet"]
+        .as_str()
+        .unwrap()
+        .contains("alpha v3 after offline edit"));
+
+    // An unavailable Memory catalog cannot make the worker's authorized Files
+    // import fail; reconciliation rebuilds the projection when it returns.
+    let unavailable_memory_content = b"files survives memory outage\n";
+    let unavailable_memory_source_path = format!("{scope}/people/outage.md");
+    let unavailable_memory_path = format!("/{unavailable_memory_source_path}");
+    fs::write(
+        root.join(&unavailable_memory_source_path),
+        unavailable_memory_content,
+    )
+    .unwrap();
+    sqlx::query("ALTER TABLE memory_files_catalog RENAME TO memory_files_catalog_unavailable")
+        .execute(&pool)
+        .await
+        .expect("simulate unavailable Memory catalog");
+    let worker = spawn_worker(&instance_id, &server, &credential_file, &queue, root);
+    wait_for_versions(
+        &client,
+        &server,
+        &owner_token,
+        &scope,
+        &[(&unavailable_memory_path, 1)],
+    )
+    .await;
+    drop(worker);
+    sqlx::query("ALTER TABLE memory_files_catalog_unavailable RENAME TO memory_files_catalog")
+        .execute(&pool)
+        .await
+        .expect("restore Memory catalog");
+    let outage_file_id = Uuid::parse_str(
+        imported_files(&client, &server, &owner_token, &scope)
+            .await
+            .iter()
+            .find(|file| file["path"] == unavailable_memory_path)
+            .expect("Files import completed while Memory was unavailable")["id"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let outage_revision = revision(unavailable_memory_content);
+    let outage_version = format!("sha256:{}", outage_revision.trim_start_matches("sha256:"));
+    let _ = reconcile_memory_files(&client, &server, &owner_token, tenant_id).await;
+    wait_for_memory_projection(&pool, outage_file_id, &outage_version, &outage_revision, 1).await;
+
     let rotated = client
         .post(format!(
             "{server}/api/v1/connectors/{instance_id}/worker-credentials"
@@ -402,13 +741,83 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     tokio::time::sleep(Duration::from_secs(2)).await;
     drop(worker);
     let files = imported_files(&client, &server, &owner_token, &scope).await;
-    assert_eq!(files.len(), 2);
+    assert_eq!(files.len(), 3);
     assert!(files
         .iter()
         .any(|file| { file["path"] == first_path && file["current_version"] == 3 }));
     assert_eq!(queue_pending(&queue, &instance_id), 1);
-    assert_eq!(connector_mappings(&pool, instance_uuid).await.len(), 4);
-    assert_eq!(connector_events(&pool, &instance_id).await.len(), 4);
+    assert_eq!(connector_mappings(&pool, instance_uuid).await.len(), 5);
+    assert_eq!(connector_events(&pool, &instance_id).await.len(), 5);
+
+    // Files deletion publishes a durable tombstone and live Files auth keeps
+    // stale keyword candidates from returning content while cleanup runs.
+    let deleted = client
+        .delete(format!("{server}/api/v1/files/{first_file_id}"))
+        .bearer_auth(&owner_token)
+        .send()
+        .await
+        .expect("delete imported Files resource");
+    assert!(matches!(
+        deleted.status(),
+        StatusCode::OK | StatusCode::NO_CONTENT
+    ));
+    let deleted_search = keyword_search(
+        &client,
+        &server,
+        &owner_token,
+        "alpha v3 after offline edit",
+    )
+    .await;
+    assert!(!deleted_search["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|result| result["provenance"]["file_id"] == first_file_id.to_string()));
+    for _ in 0..150 {
+        let deleted_at: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT deleted_at FROM memory_files_catalog WHERE file_id=$1")
+                .bind(first_file_id)
+                .fetch_optional(&pool)
+                .await
+                .expect("read Memory Files tombstone")
+                .flatten();
+        if deleted_at.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let remaining_chunks: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM note_index_chunks WHERE source_file_id=$1")
+            .bind(first_file_id)
+            .fetch_one(&pool)
+            .await
+            .expect("check stale keyword projection cleanup");
+    assert_eq!(remaining_chunks, 0);
+
+    // Trash restore has no integration event; authoritative reconciliation
+    // must reauthorize, reactivate and rebuild its Memory projection.
+    let restored = client
+        .post(format!(
+            "{server}/api/v1/files/{first_file_id}/restore-from-trash"
+        ))
+        .bearer_auth(&owner_token)
+        .send()
+        .await
+        .expect("restore imported Files resource");
+    assert_eq!(restored.status(), StatusCode::NO_CONTENT);
+    reconcile_memory_files(&client, &server, &owner_token, tenant_id).await;
+    let restored_search = keyword_search(
+        &client,
+        &server,
+        &owner_token,
+        "alpha v3 after offline edit",
+    )
+    .await;
+    assert!(restored_search["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|result| result["provenance"]["file_id"] == first_file_id.to_string()));
 
     let current = client
         .get(format!("{server}/api/v1/connectors/{instance_id}"))

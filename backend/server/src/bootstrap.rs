@@ -747,6 +747,9 @@ pub async fn init_app() -> Result<AppState> {
         db_pool.clone(),
         (*chat_observation_store).clone(),
     ));
+    let memory_files_catalog_store = Arc::new(rustshare_storage::MemoryFilesCatalogStore::new(
+        db_pool.clone(),
+    ));
     let buzz_observation_service = Arc::new(BuzzObservationService::new(
         db_pool.clone(),
         (*chat_identity_store).clone(),
@@ -825,36 +828,7 @@ pub async fn init_app() -> Result<AppState> {
     // (it consumes the Chat observation events this process publishes); the
     // Buzz admission bridge is optional (disabled unless a service key is
     // configured).
-    let memory_projection_consumer =
-        Arc::new(crate::memory_projection::MemoryChatProjectionConsumer::new(
-            db_pool.clone(),
-            (*chat_identity_store).clone(),
-            (*chat_observation_store).clone(),
-            (*memory_catalog_store).clone(),
-        ));
-    let outbox_consumers: Vec<Arc<dyn rustshare_integration_events::OutboxConsumer>> =
-        crate::buzz_bridge::BuzzAdmissionBridge::from_env_with_pool(db_pool.clone())
-            .map(|consumer| {
-                Arc::new(consumer) as Arc<dyn rustshare_integration_events::OutboxConsumer>
-            })
-            .into_iter()
-            .chain(std::iter::once(
-                memory_projection_consumer as Arc<dyn rustshare_integration_events::OutboxConsumer>,
-            ))
-            .collect();
     let outbox_worker_config = OutboxWorkerConfig::from_env();
-    let outbox_dispatcher = Arc::new(OutboxDispatcher::new(
-        Arc::clone(&services.outbox_store),
-        outbox_consumers,
-        outbox_worker_config.clone(),
-        format!("outbox-{}", uuid::Uuid::new_v4()),
-    ));
-    let outbox_status = outbox_dispatcher.status().clone();
-    if outbox_worker_config.enabled {
-        outbox_dispatcher.spawn(shutdown_tx.subscribe());
-    } else {
-        info!("Outbox worker disabled; integration events still publish into the outbox");
-    }
 
     if config.mail_import_worker_enabled {
         crate::mail_import_worker::spawn_mail_import_worker(
@@ -891,20 +865,6 @@ pub async fn init_app() -> Result<AppState> {
     } else {
         info!("Calendar sync worker disabled");
     }
-
-    let memory_files_reconcile_worker = if config.memory_files_reconcile_enabled {
-        let task = crate::memory_files_reconcile_worker::spawn_memory_files_reconcile_worker(
-            Arc::clone(&metadata_store),
-            Arc::clone(&services.note_service),
-            crate::memory_files_reconcile_worker::MemoryFilesReconcileConfig::from_config(&config)?,
-            shutdown_tx.subscribe(),
-        );
-        info!("Files-backed Memory reconciliation worker enabled");
-        Some(Arc::new(Mutex::new(task)))
-    } else {
-        info!("Files-backed Memory reconciliation worker disabled");
-        None
-    };
 
     let memory_orphan_cleanup_worker = if config.memory_files_orphan_cleanup_enabled {
         let task = crate::memory_orphan_cleanup_worker::spawn_memory_orphan_cleanup_worker(
@@ -1097,6 +1057,63 @@ pub async fn init_app() -> Result<AppState> {
     .map_err(|error| anyhow::anyhow!("source owner registration failed: {error}"))?;
     let source_authorizer = Arc::new(source_authorizer);
 
+    let memory_files_reconcile_worker = if config.memory_files_reconcile_enabled {
+        let task = crate::memory_files_reconcile_worker::spawn_memory_files_reconcile_worker(
+            Arc::clone(&metadata_store),
+            Arc::clone(&services.note_service),
+            (*memory_files_catalog_store).clone(),
+            Arc::clone(&source_authorizer),
+            crate::memory_files_reconcile_worker::MemoryFilesReconcileConfig::from_config(&config)?,
+            shutdown_tx.subscribe(),
+        );
+        info!("Files-backed Memory reconciliation worker enabled");
+        Some(Arc::new(Mutex::new(task)))
+    } else {
+        info!("Files-backed Memory reconciliation worker disabled");
+        None
+    };
+
+    let memory_projection_consumer =
+        Arc::new(crate::memory_projection::MemoryChatProjectionConsumer::new(
+            db_pool.clone(),
+            (*chat_identity_store).clone(),
+            (*chat_observation_store).clone(),
+            (*memory_catalog_store).clone(),
+        ));
+    let memory_files_projection_consumer = Arc::new(
+        crate::memory_files_projection::MemoryFilesProjectionConsumer::new(
+            db_pool.clone(),
+            Arc::clone(&metadata_store),
+            Arc::clone(&source_authorizer),
+            Arc::clone(&services.note_service),
+            (*memory_files_catalog_store).clone(),
+        ),
+    );
+    let outbox_consumers: Vec<Arc<dyn rustshare_integration_events::OutboxConsumer>> =
+        crate::buzz_bridge::BuzzAdmissionBridge::from_env_with_pool(db_pool.clone())
+            .map(|consumer| {
+                Arc::new(consumer) as Arc<dyn rustshare_integration_events::OutboxConsumer>
+            })
+            .into_iter()
+            .chain([
+                memory_projection_consumer as Arc<dyn rustshare_integration_events::OutboxConsumer>,
+                memory_files_projection_consumer
+                    as Arc<dyn rustshare_integration_events::OutboxConsumer>,
+            ])
+            .collect();
+    let outbox_dispatcher = Arc::new(OutboxDispatcher::new(
+        Arc::clone(&services.outbox_store),
+        outbox_consumers,
+        outbox_worker_config.clone(),
+        format!("outbox-{}", uuid::Uuid::new_v4()),
+    ));
+    let outbox_status = outbox_dispatcher.status().clone();
+    if outbox_worker_config.enabled {
+        outbox_dispatcher.spawn(shutdown_tx.subscribe());
+    } else {
+        info!("Outbox worker disabled; integration events still publish into the outbox");
+    }
+
     // Permission-aware unified search: candidates come from Files metadata,
     // the note index and the Memory catalog; final inclusion is gated by the
     // source authorizer (Files → PermissionResolver; Chat → BuzzAuthority).
@@ -1110,7 +1127,8 @@ pub async fn init_app() -> Result<AppState> {
         .with_keyword_indexer(
             Arc::clone(&services.keyword_indexer),
             Arc::clone(&permission_resolver),
-        ),
+        )
+        .with_memory_files_catalog(Arc::clone(&memory_files_catalog_store)),
     );
     let llm_provider = if config.ai_enabled {
         crate::services::ask_workspace::OpenAiCompatibleProvider::from_env()

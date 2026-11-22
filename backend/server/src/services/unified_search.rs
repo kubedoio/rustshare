@@ -26,7 +26,9 @@ use rustshare_resource_auth::{
     PrincipalContext, Purpose, Representation, ResourceRef, SourceAuthorizer, SourceError,
     CHAT_READ, FILES_READ, MAX_BATCH_SIZE,
 };
-use rustshare_storage::{content_match_terms, MemoryCatalogStore, MetadataStore};
+use rustshare_storage::{
+    content_match_terms, MemoryCatalogStore, MemoryFilesCatalogStore, MetadataStore,
+};
 use uuid::Uuid;
 
 use crate::state::AppAiService;
@@ -179,6 +181,7 @@ pub struct UnifiedSearchService {
     keyword_indexer: Option<Arc<KeywordIndexer>>,
     permission_resolver: Option<Arc<PermissionResolver<PermissionResolverRepository>>>,
     memory_catalog: Arc<MemoryCatalogStore>,
+    memory_files_catalog: Option<Arc<MemoryFilesCatalogStore>>,
 }
 
 impl UnifiedSearchService {
@@ -195,6 +198,7 @@ impl UnifiedSearchService {
             keyword_indexer: None,
             permission_resolver: None,
             memory_catalog,
+            memory_files_catalog: None,
         }
     }
 
@@ -205,6 +209,11 @@ impl UnifiedSearchService {
     ) -> Self {
         self.keyword_indexer = Some(keyword_indexer);
         self.permission_resolver = Some(permission_resolver);
+        self
+    }
+
+    pub fn with_memory_files_catalog(mut self, catalog: Arc<MemoryFilesCatalogStore>) -> Self {
+        self.memory_files_catalog = Some(catalog);
         self
     }
 
@@ -357,6 +366,33 @@ impl UnifiedSearchService {
                     && candidate.channel_id.as_deref() == Some(channel_id.as_str())
             }
         });
+
+        if let Some(catalog) = &self.memory_files_catalog {
+            let file_ids: Vec<_> = candidates
+                .iter()
+                .filter(|candidate| candidate.source_application == FILES_APPLICATION)
+                .filter_map(|candidate| candidate.file_id)
+                .collect();
+            match catalog.versions(ctx.tenant_id.0, &file_ids).await {
+                Ok(versions) => {
+                    for candidate in &mut candidates {
+                        if candidate.source_application == FILES_APPLICATION {
+                            if let Some(version) =
+                                candidate.file_id.and_then(|file_id| versions.get(&file_id))
+                            {
+                                candidate.resource_ref =
+                                    candidate.resource_ref.clone().with_version(version.clone());
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "unified search: Memory Files citation versions unavailable; dropping Files candidates");
+                    candidates
+                        .retain(|candidate| candidate.source_application != FILES_APPLICATION);
+                }
+            }
+        }
 
         if let SearchScope::Folder(_) = scope {
             let Some(folder_ids) = allowed_folders else {
@@ -703,28 +739,31 @@ impl UnifiedSearchService {
                     };
                     match indexer.search_with_acl(&principal, query, budget).await {
                         Ok(results) => {
-                            candidates.extend(results.into_iter().map(|(doc, score)| Candidate {
-                                source_application: FILES_APPLICATION.to_string(),
-                                source_type: "file".to_string(),
-                                resource_ref: ResourceRef::new(
+                            for (doc, score) in results {
+                                let resource_ref = ResourceRef::new(
                                     ApplicationId::new(FILES_APPLICATION),
                                     "file",
                                     doc.file_id.to_string(),
-                                ),
-                                score,
-                                title: doc.file_name,
-                                location: Some(doc.file_path),
-                                occurred_at: None,
-                                file_id: Some(doc.file_id),
-                                note_id: None,
-                                mime_type: Some(doc.mime_type),
-                                cached_hint: None,
-                                message_id: None,
-                                community_id: None,
-                                channel_id: None,
-                                channel_kind: None,
-                                author_pubkey: None,
-                            }))
+                                );
+                                candidates.push(Candidate {
+                                    source_application: FILES_APPLICATION.to_string(),
+                                    source_type: "file".to_string(),
+                                    resource_ref,
+                                    score,
+                                    title: doc.file_name,
+                                    location: Some(doc.file_path),
+                                    occurred_at: None,
+                                    file_id: Some(doc.file_id),
+                                    note_id: None,
+                                    mime_type: Some(doc.mime_type),
+                                    cached_hint: None,
+                                    message_id: None,
+                                    community_id: None,
+                                    channel_id: None,
+                                    channel_kind: None,
+                                    author_pubkey: None,
+                                });
+                            }
                         }
                         Err(error) => tracing::warn!(
                             %error,

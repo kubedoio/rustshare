@@ -18,7 +18,8 @@ use rustshare_core::domain::{PrincipalId, TenantId};
 use rustshare_memory::event::ObservedEventType;
 use rustshare_server::handlers::memory_reconcile::reconcile_chat_memory_for_tenant;
 use rustshare_storage::{
-    ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, MetadataStore, ReconcileCounts,
+    ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, MemoryFilesCatalogStore,
+    MetadataStore, ReconcileCounts,
 };
 use sqlx::{PgPool, Row};
 use std::sync::LazyLock;
@@ -841,6 +842,8 @@ async fn files_reconcile_worker_automates_recovery_and_bounds_failures(db: PgPoo
     let worker = spawn_memory_files_reconcile_worker(
         state.metadata_store.clone(),
         notes.clone(),
+        MemoryFilesCatalogStore::new(db.clone()),
+        state.source_authorizer.clone(),
         config,
         shutdown.subscribe(),
     );
@@ -923,6 +926,8 @@ async fn files_reconcile_worker_automates_recovery_and_bounds_failures(db: PgPoo
     let worker = spawn_memory_files_reconcile_worker(
         state.metadata_store.clone(),
         notes.clone(),
+        MemoryFilesCatalogStore::new(db.clone()),
+        state.source_authorizer.clone(),
         config,
         shutdown.subscribe(),
     );
@@ -958,6 +963,8 @@ async fn files_reconcile_worker_automates_recovery_and_bounds_failures(db: PgPoo
     let worker = spawn_memory_files_reconcile_worker(
         state.metadata_store.clone(),
         notes.clone(),
+        MemoryFilesCatalogStore::new(db.clone()),
+        state.source_authorizer.clone(),
         config,
         shutdown.subscribe(),
     );
@@ -991,6 +998,8 @@ async fn files_reconcile_worker_automates_recovery_and_bounds_failures(db: PgPoo
     let worker = spawn_memory_files_reconcile_worker(
         state.metadata_store.clone(),
         notes.clone(),
+        MemoryFilesCatalogStore::new(db.clone()),
+        state.source_authorizer.clone(),
         config,
         shutdown.subscribe(),
     );
@@ -1050,6 +1059,8 @@ async fn files_reconcile_worker_automates_recovery_and_bounds_failures(db: PgPoo
     let worker = spawn_memory_files_reconcile_worker(
         state.metadata_store.clone(),
         notes.clone(),
+        MemoryFilesCatalogStore::new(db.clone()),
+        state.source_authorizer.clone(),
         config,
         shutdown.subscribe(),
     );
@@ -1075,6 +1086,8 @@ async fn files_reconcile_worker_automates_recovery_and_bounds_failures(db: PgPoo
     let worker = spawn_memory_files_reconcile_worker(
         state.metadata_store.clone(),
         failing,
+        MemoryFilesCatalogStore::new(db.clone()),
+        state.source_authorizer.clone(),
         config,
         shutdown.subscribe(),
     );

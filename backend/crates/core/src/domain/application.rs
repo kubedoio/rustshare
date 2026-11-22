@@ -580,7 +580,7 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
             }]
         };
         // The Files Application owns the durable integration-event contracts
-        // for file creation and content updates (ADR-0031). The Chat
+        // for file creation, updates, and deletion (ADR-0031). The Chat
         // Application publishes the Buzz event observation contract that
         // feeds the Buzz → Elembra Memory projection (ADR-0033/ADR-0034).
         // Other Applications declare no integration events yet.
@@ -589,6 +589,7 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
                 publishes: vec![
                     "io.elembra.files.file.created.v1".into(),
                     "io.elembra.files.file.updated.v1".into(),
+                    "io.elembra.files.file.deleted.v1".into(),
                 ],
                 subscribes: Vec::new(),
             },
@@ -1038,15 +1039,17 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
         let notes = ApplicationId::new("io.elembra.notes");
         let created = "io.elembra.files.file.created.v1";
         let updated = "io.elembra.files.file.updated.v1";
+        let deleted = "io.elembra.files.file.deleted.v1";
 
         let files_manifest = registry.manifest(&files).unwrap();
         assert!(files_manifest.publishes_event(created));
         assert!(files_manifest.publishes_event(updated));
+        assert!(files_manifest.publishes_event(deleted));
         assert!(!files_manifest.publishes_event("io.elembra.mail.message.archived.v1"));
 
         assert!(registry.owns_event_type(&files, created));
         assert!(registry.owns_event_type(&files, updated));
-        assert!(!registry.owns_event_type(&files, "io.elembra.files.file.deleted.v1"));
+        assert!(registry.owns_event_type(&files, deleted));
         assert!(!registry.owns_event_type(&notes, created));
         assert!(!registry.owns_event_type(&notes, updated));
     }
@@ -1077,9 +1080,11 @@ data: {{ owner: {id}, preserveOnDisable: true, exportSupported: true }}
         let files = ApplicationId::new("io.elembra.files");
         let created = "io.elembra.files.file.created.v1";
         let updated = "io.elembra.files.file.updated.v1";
+        let deleted = "io.elembra.files.file.deleted.v1";
 
         assert!(registry.owns_event_type(&files, created));
         assert!(registry.owns_event_type(&files, updated));
+        assert!(registry.owns_event_type(&files, deleted));
         assert!(!registry.owns_event_type(&files, "io.elembra.chat.buzz.event.observed.v1"));
         assert!(registry.manifest(&files).unwrap().memory.is_none());
     }

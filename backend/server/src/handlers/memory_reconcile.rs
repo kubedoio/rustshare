@@ -16,13 +16,14 @@
 
 use axum::{extract::State, http::StatusCode, Json};
 use chrono::{DateTime, Utc};
-use rustshare_core::domain::{TenantId, WorkspaceId};
+use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_memory::project::rebuild_records;
 use rustshare_resource_auth::BuzzChannelKind;
-use rustshare_resource_auth::ResourceRef;
+use rustshare_resource_auth::{PrincipalContext, Representation, ResourceRef, SourceAuthorizer};
 use rustshare_storage::{
-    ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, ReconcileCounts,
+    ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, MemoryFilesCatalogStore,
+    ReconcileCounts,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -167,6 +168,8 @@ pub async fn reconcile_files_memory(
     let result = reconcile_files_memory_page(
         &state.metadata_store,
         &state.note_service,
+        &MemoryFilesCatalogStore::new(state.db_pool.clone()),
+        &state.source_authorizer,
         body.tenant_id,
         after_file_id,
         limit,
@@ -180,6 +183,8 @@ pub async fn reconcile_files_memory(
 pub async fn reconcile_files_memory_page(
     metadata_store: &rustshare_storage::MetadataStore,
     note_service: &crate::services::note_service::NoteService,
+    memory_files_catalog: &MemoryFilesCatalogStore,
+    source_authorizer: &SourceAuthorizer,
     tenant_id: Uuid,
     after_file_id: Option<Uuid>,
     limit: u32,
@@ -190,6 +195,22 @@ pub async fn reconcile_files_memory_page(
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ErrorResponse::new("Memory index is unavailable")),
         ));
+    }
+    let deleted_files = memory_files_catalog
+        .tombstone_missing_files(tenant_id)
+        .await
+        .map_err(|_| {
+            tracing::error!(tenant = %tenant_id, "memory files reconcile: deleted source cleanup failed");
+            internal_error()
+        })?;
+    for file_id in deleted_files {
+        note_service
+            .remove_connector_markdown_index(tenant_id, file_id)
+            .await
+            .map_err(|_| {
+                tracing::error!(tenant = %tenant_id, file_id = %file_id, "memory files reconcile: deleted source index cleanup failed");
+                internal_error()
+            })?;
     }
     let mut page = metadata_store
         .list_files_for_memory_reconciliation(tenant_id, after_file_id, i64::from(limit) + 1)
@@ -240,15 +261,142 @@ pub async fn reconcile_files_memory_page(
             response.removed += u64::from(removed > 0);
             response.unavailable += u64::from(is_active && !entry.owner_available);
         } else {
-            match note_service
-                .reconcile_index_file(file.id, file.owner_id, tenant_id)
+            let current_version = format!("sha256:{}", file.content_hash);
+            let current_version_number = i64::from(file.current_version);
+            let connector_record = memory_files_catalog
+                .connector_record_for_current_file(
+                    tenant_id,
+                    file.id,
+                    current_version.clone(),
+                    current_version_number,
+                )
                 .await
-            {
-                Ok(true) => response.indexed += 1,
-                Ok(false) => response.removed += 1,
-                Err(_) => {
-                    tracing::error!(tenant = %tenant_id, "memory files reconcile: source refresh failed");
-                    return Err(internal_error());
+                .map_err(|_| {
+                    tracing::error!(tenant = %tenant_id, "memory files reconcile: connector catalog lookup failed");
+                    internal_error()
+                })?;
+            let connector_version = memory_files_catalog
+                .version(tenant_id, file.id)
+                .await
+                .map_err(|_| {
+                    tracing::error!(tenant = %tenant_id, "memory files reconcile: connector version lookup failed");
+                    internal_error()
+                })?;
+            let is_connector = connector_record.is_some() || connector_version.is_some();
+            let projection_current = if let Some(record) = connector_record {
+                let mut tx = metadata_store.pool().begin().await.map_err(|_| {
+                    tracing::error!(tenant = %tenant_id, "memory files reconcile: catalog transaction failed");
+                    internal_error()
+                })?;
+                let accepted = memory_files_catalog
+                    .upsert_in_tx(&mut tx, &record)
+                    .await
+                    .map_err(|_| {
+                        tracing::error!(tenant = %tenant_id, "memory files reconcile: connector provenance repair failed");
+                        internal_error()
+                    })?;
+                tx.commit().await.map_err(|_| internal_error())?;
+                accepted
+            } else if connector_version.is_some() {
+                let mut tx = metadata_store.pool().begin().await.map_err(|_| {
+                    tracing::error!(tenant = %tenant_id, "memory files reconcile: catalog transaction failed");
+                    internal_error()
+                })?;
+                let accepted = memory_files_catalog
+                    .refresh_current_version_in_tx(
+                        &mut tx,
+                        tenant_id,
+                        file.id,
+                        &current_version,
+                        current_version_number,
+                    )
+                    .await
+                    .map_err(|_| {
+                        tracing::error!(tenant = %tenant_id, "memory files reconcile: Files citation version repair failed");
+                        internal_error()
+                    })?;
+                tx.commit().await.map_err(|_| internal_error())?;
+                accepted
+            } else {
+                true
+            };
+            let outcome = if is_connector && projection_current {
+                let file_ref = ResourceRef::new(
+                    rustshare_core::domain::ApplicationId::new(FILES_APPLICATION_ID),
+                    FILES_RESOURCE_TYPE,
+                    file.id.to_string(),
+                )
+                .with_version(current_version.clone());
+                let context = PrincipalContext::user(
+                    PrincipalId(file.owner_id),
+                    TenantId(tenant_id),
+                    WorkspaceId(tenant_id),
+                );
+                let fetched = source_authorizer
+                    .fetch(&context, &file_ref, Representation::Text)
+                    .await;
+                memory_files_catalog
+                    .record_source_access(
+                        Uuid::new_v4(),
+                        tenant_id,
+                        file.id,
+                        file.owner_id,
+                        &current_version,
+                        fetched.is_ok(),
+                    )
+                    .await
+                    .map_err(|_| {
+                        tracing::error!(tenant = %tenant_id, file_id = %file.id, "memory files reconcile: source access audit failed");
+                        internal_error()
+                    })?;
+                match fetched {
+                    Ok(resource) => match String::from_utf8(resource.data.to_vec()) {
+                        Ok(content) => Some(
+                            note_service
+                                .index_connector_markdown(
+                                    file.id,
+                                    file.owner_id,
+                                    tenant_id,
+                                    &content,
+                                )
+                                .await,
+                        ),
+                        Err(_) => {
+                            note_service
+                                .remove_connector_markdown_index(tenant_id, file.id)
+                                .await
+                                .map_err(|_| internal_error())?;
+                            response.unavailable += 1;
+                            None
+                        }
+                    },
+                    Err(_) => {
+                        note_service
+                            .remove_connector_markdown_index(tenant_id, file.id)
+                            .await
+                            .map_err(|_| internal_error())?;
+                        response.unavailable += 1;
+                        None
+                    }
+                }
+            } else if is_connector {
+                response.unavailable += 1;
+                None
+            } else {
+                Some(
+                    note_service
+                        .reconcile_index_file(file.id, file.owner_id, tenant_id)
+                        .await,
+                )
+            };
+            if let Some(outcome) = outcome {
+                match outcome {
+                    Ok(true) => response.indexed += 1,
+                    Ok(false) => response.removed += 1,
+                    Err(_) => {
+                        tracing::error!(tenant = %tenant_id, "memory files reconcile: source refresh failed");
+                        return Err(internal_error());
+                    }
                 }
             }
         }

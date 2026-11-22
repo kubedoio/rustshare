@@ -454,6 +454,32 @@ where
             .await
             .map_err(|e| FileError::Database(format!("failed to publish integration event: {e}")))
     }
+
+    async fn publish_file_deleted_integration_event(
+        &self,
+        tx: &mut E::Tx,
+        file: &File,
+        actor: IntegrationEventActor,
+    ) -> Result<(), FileError> {
+        let Some(publisher) = &self.integration_publisher else {
+            return Ok(());
+        };
+        let resource_id = file.id.to_string();
+        let facts = IntegrationEventFacts {
+            event_type: "io.elembra.files.file.deleted.v1",
+            resource_type: "file",
+            resource_id: &resource_id,
+            version: None,
+            data: serde_json::json!({ "deleted": true }),
+            tenant_id: file.tenant_id,
+            workspace_id: file.workspace_id(),
+            actor,
+        };
+        publisher
+            .publish_in_tx(tx, &facts)
+            .await
+            .map_err(|e| FileError::Database(format!("failed to publish deletion event: {e}")))
+    }
     /// Check a resource permission using the shared resolver before an Application mutation.
     pub async fn require_file_permission(
         &self,
@@ -1830,6 +1856,12 @@ where
             .delete_file_in_tx(&mut tx, file_id, file.owner_id)
             .await
             .map_err(|e| FileError::Database(e.to_string()))?;
+        self.publish_file_deleted_integration_event(
+            &mut tx,
+            &file,
+            IntegrationEventActor::Principal(user_id),
+        )
+        .await?;
         self.event_store
             .commit_transaction(tx)
             .await
@@ -1902,6 +1934,14 @@ where
             .delete_file_in_tx(&mut tx, second_id, second.owner_id)
             .await
             .map_err(|error| FileError::Database(error.to_string()))?;
+        for file in [&first, &second] {
+            self.publish_file_deleted_integration_event(
+                &mut tx,
+                file,
+                IntegrationEventActor::Principal(user_id),
+            )
+            .await?;
+        }
         self.event_store
             .commit_transaction(tx)
             .await

@@ -11,6 +11,8 @@
 pub const FILES_FILE_CREATED_V1: &str = "io.elembra.files.file.created.v1";
 /// An existing file gained a new content version.
 pub const FILES_FILE_UPDATED_V1: &str = "io.elembra.files.file.updated.v1";
+/// A Files resource was soft-deleted.
+pub const FILES_FILE_DELETED_V1: &str = "io.elembra.files.file.deleted.v1";
 /// Durable observation of a signed Buzz chat event by the Elembra Chat Bridge
 /// (Buzz → Elembra Memory projection, ADR-0033/ADR-0034). Published by the
 /// Chat Application; consumed by Memory.
@@ -63,5 +65,11 @@ mod tests {
             CALENDAR_EVENT_IMPORTED_V1,
             "io.elembra.calendar.event.imported.v1"
         );
+    }
+
+    #[test]
+    fn files_file_deleted_v1_is_canonical() {
+        assert!(validate_event_type(FILES_FILE_DELETED_V1).is_ok());
+        assert_eq!(FILES_FILE_DELETED_V1, "io.elembra.files.file.deleted.v1");
     }
 }

@@ -13,6 +13,7 @@ pub mod event_store;
 pub mod managed_identity_operations;
 pub mod managed_identity_vault;
 pub mod memory_catalog;
+pub mod memory_files_catalog;
 pub mod metadata;
 pub mod object_store;
 pub mod outbox_store;
@@ -29,8 +30,8 @@ pub use chat_identity::{
 pub use chat_observation::{ChatObservationStore, UpsertOutcome};
 pub use connector_store::{
     AuthenticatedConnectorWorkerRecord, ConnectorExecutionAcknowledgment, ConnectorExecutionLease,
-    ConnectorInstanceRecord, ConnectorMutation, ConnectorRegistration, ConnectorStore,
-    ConnectorWorkerCredentialIdentity,
+    ConnectorInstanceRecord, ConnectorMappingProvenance, ConnectorMutation, ConnectorRegistration,
+    ConnectorStore, ConnectorWorkerCredentialIdentity,
 };
 pub use event_store::EventStore;
 pub use managed_identity_operations::{
@@ -42,6 +43,7 @@ pub use managed_identity_vault::{
     ManagedIdentityVaultStore,
 };
 pub use memory_catalog::{content_match_terms, MemoryCatalogStore, ReconcileCounts};
+pub use memory_files_catalog::{MemoryFilesCatalogRecord, MemoryFilesCatalogStore};
 pub use metadata::{
     BlobReferenceSummary, MemoryReconcileFile, MetadataStore, ObjectGcCandidate,
     PublicShareAccessLogEntry, ReplicationAttemptRecord, SecurityConfig, ShareAccessLogEntry,

@@ -45,6 +45,12 @@ pub struct ConnectorMutation<'a> {
     pub lifecycle_state: Option<&'a str>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ConnectorMappingProvenance<'a> {
+    pub relative_path: Option<&'a str>,
+    pub source_observed_modified_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone, FromRow)]
 pub struct ConnectorWorkerCredentialIdentity {
     pub credential_id: Uuid,
@@ -434,18 +440,26 @@ impl ConnectorStore {
         external_resource_ref: &str,
         external_revision: &str,
         target_resource_ref: &str,
+        provenance: ConnectorMappingProvenance<'_>,
     ) -> Result<bool, sqlx::Error> {
         let result = sqlx::query(
             r#"INSERT INTO connector_external_mappings
-                   (tenant_id, instance_id, external_resource_ref, external_revision, target_resource_ref)
-               VALUES ($1, $2, $3, $4, $5)
-               ON CONFLICT (tenant_id, instance_id, external_resource_ref, external_revision) DO NOTHING"#,
+                   (tenant_id, instance_id, external_resource_ref, external_revision, target_resource_ref, relative_path, source_observed_modified_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               ON CONFLICT (tenant_id, instance_id, external_resource_ref, external_revision)
+               DO UPDATE SET relative_path = COALESCE(EXCLUDED.relative_path, connector_external_mappings.relative_path),
+                             source_observed_modified_at = COALESCE(EXCLUDED.source_observed_modified_at, connector_external_mappings.source_observed_modified_at)
+               WHERE connector_external_mappings.target_resource_ref = EXCLUDED.target_resource_ref
+                 AND (connector_external_mappings.relative_path IS DISTINCT FROM EXCLUDED.relative_path
+                   OR connector_external_mappings.source_observed_modified_at IS DISTINCT FROM EXCLUDED.source_observed_modified_at)"#,
         )
         .bind(tenant_id)
         .bind(instance_id)
         .bind(external_resource_ref)
         .bind(external_revision)
         .bind(target_resource_ref)
+        .bind(provenance.relative_path)
+        .bind(provenance.source_observed_modified_at)
         .execute(&self.pool)
         .await?;
 
