@@ -116,6 +116,49 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
         .await
         .unwrap()
         .is_none());
+
+    let second_digest: [u8; 32] = Sha256::digest(b"request 2").into();
+    let (concurrent, created) = store
+        .register(ConnectorRegistration {
+            tenant_id,
+            principal_id,
+            connector_id: "io.elembra.connector.local-text",
+            descriptor: &descriptor,
+            source_config: &config,
+            credential_ref: None,
+            mode: "import",
+            idempotency_key: "request-2",
+            request_digest: &second_digest,
+        })
+        .await
+        .unwrap();
+    assert!(created);
+    let (first_writer, second_writer) = tokio::join!(
+        store.mutate(ConnectorMutation {
+            tenant_id,
+            principal_id,
+            id: concurrent.id,
+            expected_version: 1,
+            source_config: None,
+            credential_ref: None,
+            lifecycle_state: Some("paused"),
+        }),
+        store.mutate(ConnectorMutation {
+            tenant_id,
+            principal_id,
+            id: concurrent.id,
+            expected_version: 1,
+            source_config: None,
+            credential_ref: None,
+            lifecycle_state: Some("active"),
+        })
+    );
+    assert_ne!(
+        first_writer.unwrap().is_some(),
+        second_writer.unwrap().is_some(),
+        "only one concurrent mutation may claim a version"
+    );
+
     assert!(store
         .record_mapping(
             tenant_id,
