@@ -147,6 +147,8 @@ pub async fn import_connector_file(
     if !valid_source_revision(&metadata.source_revision) {
         return Err(AppError::bad_request("Invalid source revision").into_response());
     }
+    rustshare_core::services::validate_connector_relative_path(&metadata.relative_path)
+        .map_err(|_| AppError::bad_request("Invalid relative source path").into_response())?;
     if state
         .connector_service
         .renew_execution(&worker, metadata.lease_id, metadata.fence)
@@ -221,6 +223,30 @@ pub async fn import_connector_file(
         .and_then(|name| name.to_str())
         .ok_or_else(|| AppError::bad_request("Invalid relative source path").into_response())?
         .to_owned();
+    let mut parent_folder_id = metadata.parent_folder_id;
+    for component in std::path::Path::new(&metadata.relative_path)
+        .parent()
+        .into_iter()
+        .flat_map(std::path::Path::components)
+    {
+        let std::path::Component::Normal(name) = component else {
+            return Err(AppError::bad_request("Invalid relative source path").into_response());
+        };
+        let name = name
+            .to_str()
+            .ok_or_else(|| AppError::bad_request("Invalid relative source path").into_response())?;
+        let folder = services
+            .folder_service
+            .create_folder_or_get(
+                name.to_owned(),
+                parent_folder_id,
+                authority.user_authority_id.0,
+                worker.context.tenant_id.0,
+            )
+            .await
+            .map_err(|error| AppError::from(error).into_response())?;
+        parent_folder_id = Some(folder.id);
+    }
     let mime_type = mime_guess::from_path(&file_name)
         .first_or_octet_stream()
         .to_string();
@@ -234,7 +260,7 @@ pub async fn import_connector_file(
             relative_path: metadata.relative_path,
             observed_modified_at: metadata.observed_modified_at,
             name: file_name,
-            parent_folder_id: metadata.parent_folder_id,
+            parent_folder_id,
             file_path: file_temp.path().to_path_buf(),
             mime_type,
             tenant_id: worker.context.tenant_id.0,

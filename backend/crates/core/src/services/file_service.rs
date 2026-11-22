@@ -2416,7 +2416,7 @@ where
     }
 }
 
-fn validate_connector_relative_path(value: &str) -> Result<(), FileError> {
+pub fn validate_connector_relative_path(value: &str) -> Result<(), FileError> {
     let path = std::path::Path::new(value);
     let supported_text = path
         .extension()
