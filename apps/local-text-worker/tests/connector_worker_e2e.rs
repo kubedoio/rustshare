@@ -518,7 +518,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     let latest_memory_event = memory_delivery_id(&pool, &first_v2_revision).await;
     let access_audit: (String, String, i64) = sqlx::query_as(
         "SELECT outcome, file_version, count(*) OVER () \
-         FROM memory_files_source_access_audit WHERE event_id=$1",
+         FROM memory_files_source_access_audit WHERE access_id=$1",
     )
     .bind(latest_memory_event)
     .fetch_one(&pool)
@@ -536,6 +536,20 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .find(|result| result["provenance"]["file_id"] == first_file_id.to_string())
         .expect("find the imported Files citation");
     assert!(result["snippet"].as_str().unwrap().contains("alpha v2"));
+    let source_read_audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM memory_files_source_access_audit \
+         WHERE tenant_id=$1 AND file_id=$2 AND file_version=$3 AND outcome='authorized'",
+    )
+    .bind(tenant_id)
+    .bind(first_file_id)
+    .bind(&first_v2_version)
+    .fetch_one(&pool)
+    .await
+    .expect("count content-free Memory source access audits");
+    assert!(
+        source_read_audits >= 2,
+        "indexing and search reads are audited"
+    );
     let citation = url::Url::parse(result["resource_ref"].as_str().unwrap())
         .expect("parse versioned Files citation");
     assert_eq!(
@@ -793,6 +807,19 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
             .await
             .expect("check stale keyword projection cleanup");
     assert_eq!(remaining_chunks, 0);
+
+    // A delete-first placeholder has no version fence or provenance. A live,
+    // authorized Connector mapping must be able to restore it during repair.
+    sqlx::query(
+        "UPDATE memory_files_catalog SET current_version=NULL, current_version_number=NULL, \
+         connector_instance_id=NULL, source_resource_ref=NULL, source_revision=NULL, relative_path=NULL, \
+         observed_modified_at=NULL, deleted_at=COALESCE(deleted_at, NOW()) WHERE tenant_id=$1 AND file_id=$2",
+    )
+    .bind(tenant_id)
+    .bind(first_file_id)
+    .execute(&pool)
+    .await
+    .expect("simulate delete-first Memory tombstone placeholder");
 
     // Trash restore has no integration event; authoritative reconciliation
     // must reauthorize, reactivate and rebuild its Memory projection.

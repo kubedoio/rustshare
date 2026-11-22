@@ -35,7 +35,7 @@ impl MemoryFilesCatalogStore {
     /// fetch attempt.
     pub async fn record_source_access(
         &self,
-        event_id: Uuid,
+        access_id: Uuid,
         tenant_id: Uuid,
         file_id: Uuid,
         principal_id: Uuid,
@@ -43,11 +43,11 @@ impl MemoryFilesCatalogStore {
         authorized: bool,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO memory_files_source_access_audit (event_id, tenant_id, file_id, principal_id, file_version, outcome) \
+            "INSERT INTO memory_files_source_access_audit (access_id, tenant_id, file_id, principal_id, file_version, outcome) \
              VALUES ($1, $2, $3, $4, $5, $6) \
-             ON CONFLICT (event_id) DO UPDATE SET outcome=EXCLUDED.outcome, occurred_at=NOW()",
+             ON CONFLICT (access_id) DO UPDATE SET outcome=EXCLUDED.outcome, occurred_at=NOW()",
         )
-        .bind(event_id)
+        .bind(access_id)
         .bind(tenant_id)
         .bind(file_id)
         .bind(principal_id)
@@ -66,7 +66,7 @@ impl MemoryFilesCatalogStore {
         record: &MemoryFilesCatalogRecord,
     ) -> Result<bool> {
         let row = sqlx::query(
-            "INSERT INTO memory_files_catalog (tenant_id, file_id, current_version, current_version_number, connector_instance_id, source_resource_ref, source_revision, relative_path, observed_modified_at, deleted_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL) ON CONFLICT (tenant_id, file_id) DO UPDATE SET current_version = EXCLUDED.current_version, current_version_number = EXCLUDED.current_version_number, connector_instance_id = EXCLUDED.connector_instance_id, source_resource_ref = EXCLUDED.source_resource_ref, source_revision = EXCLUDED.source_revision, relative_path = EXCLUDED.relative_path, observed_modified_at = EXCLUDED.observed_modified_at, deleted_at = NULL, updated_at = NOW() WHERE memory_files_catalog.current_version_number <= EXCLUDED.current_version_number RETURNING file_id",
+            "INSERT INTO memory_files_catalog (tenant_id, file_id, current_version, current_version_number, connector_instance_id, source_resource_ref, source_revision, relative_path, observed_modified_at, deleted_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL) ON CONFLICT (tenant_id, file_id) DO UPDATE SET current_version = EXCLUDED.current_version, current_version_number = EXCLUDED.current_version_number, connector_instance_id = EXCLUDED.connector_instance_id, source_resource_ref = EXCLUDED.source_resource_ref, source_revision = EXCLUDED.source_revision, relative_path = EXCLUDED.relative_path, observed_modified_at = EXCLUDED.observed_modified_at, deleted_at = NULL, updated_at = NOW() WHERE COALESCE(memory_files_catalog.current_version_number, 0) <= EXCLUDED.current_version_number RETURNING file_id",
         )
         .bind(record.tenant_id)
         .bind(record.file_id)

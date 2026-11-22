@@ -462,11 +462,35 @@ impl UnifiedSearchService {
             };
             // The snippet is built ONLY from authorized fetch bytes; the
             // cached index/Memory hint never reaches the output.
-            let snippet = match self
+            let fetched = self
                 .authorizer
                 .fetch(ctx, &reference, Representation::Text)
-                .await
-            {
+                .await;
+            if let (Some(catalog), Some(file_id), Some(version)) = (
+                &self.memory_files_catalog,
+                candidate.file_id,
+                reference.version.as_deref(),
+            ) {
+                if let Err(error) = catalog
+                    .record_source_access(
+                        Uuid::new_v4(),
+                        ctx.tenant_id.0,
+                        file_id,
+                        ctx.principal_id.0,
+                        version,
+                        fetched.is_ok(),
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        %error,
+                        file_id = %file_id,
+                        "unified search: source access audit unavailable; dropping result"
+                    );
+                    continue;
+                }
+            }
+            let snippet = match fetched {
                 Ok(fetched) => Some(authorized_snippet(&fetched.data, query, SNIPPET_MAX_CHARS)),
                 // Reference-only chat messages have no indexing copy; the
                 // result stays, just without a snippet.

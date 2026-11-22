@@ -80,7 +80,9 @@ the catalog and removes the index projection.
 
 Unified Search still treats keyword rows as candidates: Files reauthorizes,
 resolves and fetches current source content before returning a snippet or
-citation. The same Files reconciliation worker can reconstruct Connector
+citation. Successful and denied Connector source reads during indexing,
+reconciliation, and search are audited by principal, resource, version, and
+outcome; audit failures fail closed for search results. The same Files reconciliation worker can reconstruct Connector
 provenance from `connector_external_mappings` and rebuild the body projection
 when an event delivery or index row is missing. Memory remains an in-process
 backend component in this slice; the Connector worker is the independent

@@ -24,7 +24,7 @@ CREATE TABLE memory_files_catalog (
 
 -- Durable, content-free record of Memory's authorized Files reads.
 CREATE TABLE memory_files_source_access_audit (
-    event_id UUID PRIMARY KEY,
+    access_id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL,
     file_id UUID NOT NULL,
     principal_id UUID NOT NULL,
