@@ -197,6 +197,8 @@ Use one local text/folder Connector with source adapters/configuration that can 
 - source editor/profile label;
 - configured inclusion/exclusion patterns.
 
+The first worker imports through `POST /api/v1/connectors/worker/files/import` using its instance credential and execution lease. The owner may set `sourceConfig.destinationFolderId`; the worker may import only into that folder (or the account root when it is unset/null). Files remains authoritative, and the import publishes the external source reference, relative path, source revision, observation time, and Connector instance as provenance. The worker keeps observations in its local protected SQLite queue until the server accepts the execution checkpoint.
+
 The source files remain ordinary local files. The Connector may import/mirror them into Files and publish Memory provenance.
 
 ## Shell Memory Connector

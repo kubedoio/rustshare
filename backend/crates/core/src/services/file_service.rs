@@ -9,6 +9,8 @@
 
 use anyhow::Result;
 use bytes::Bytes;
+use serde::Serialize;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
@@ -31,6 +33,29 @@ pub struct FileUploadActor {
     pub actor_share_id: Option<uuid::Uuid>,
     pub actor_share_session_id: Option<uuid::Uuid>,
     pub actor_display_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectorFileProvenance {
+    pub connector_instance_id: Uuid,
+    pub source_resource_ref: String,
+    pub source_revision: String,
+    pub relative_path: String,
+    pub observed_modified_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub struct ConnectorFileImport {
+    pub owner_id: UserId,
+    pub connector_instance_id: Uuid,
+    pub source_resource_ref: String,
+    pub source_revision: String,
+    pub relative_path: String,
+    pub observed_modified_at: chrono::DateTime<chrono::Utc>,
+    pub name: String,
+    pub parent_folder_id: Option<FolderId>,
+    pub file_path: std::path::PathBuf,
+    pub mime_type: String,
+    pub tenant_id: Uuid,
 }
 
 #[derive(Debug, Clone)]
@@ -394,6 +419,7 @@ where
         file: &File,
         version: &FileVersion,
         actor: IntegrationEventActor,
+        source_provenance: Option<&Value>,
     ) -> Result<(), FileError> {
         let Some(publisher) = &self.integration_publisher else {
             return Ok(());
@@ -402,17 +428,21 @@ where
         // Files are content-addressed, so the version selector is the
         // SHA-256 content hash of the new version.
         let version_selector = format!("sha256:{}", version.content_hash);
+        let mut data = serde_json::json!({
+            "name": file.name,
+            "mime_type": file.mime_type,
+            "size": file.size,
+            "version": version_selector,
+        });
+        if let Some(provenance) = source_provenance {
+            data["sourceProvenance"] = provenance.clone();
+        }
         let facts = IntegrationEventFacts {
             event_type,
             resource_type: "file",
             resource_id: &resource_id,
             version: Some(&version_selector),
-            data: serde_json::json!({
-                "name": file.name,
-                "mime_type": file.mime_type,
-                "size": file.size,
-                "version": version_selector,
-            }),
+            data,
             tenant_id: file.tenant_id,
             // WorkspaceId == TenantId today (see File::workspace_id); the
             // adapter's envelope validation enforces the same invariant.
@@ -550,6 +580,7 @@ where
             tenant_id,
             None,
             None,
+            None,
         )
         .await
     }
@@ -584,6 +615,78 @@ where
             tenant_id,
             None,
             None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn import_connector_file_from_path(
+        &self,
+        request: ConnectorFileImport,
+    ) -> Result<File, FileError> {
+        self.validate_file_name(&request.name)?;
+        validate_connector_relative_path(&request.relative_path)?;
+        let source_metadata = tokio::fs::metadata(&request.file_path)
+            .await
+            .map_err(|error| FileError::Storage(error.to_string()))?;
+        if !source_metadata.is_file() || source_metadata.len() > 4 * 1024 * 1024 {
+            return Err(FileError::InvalidName(
+                "Connector text file exceeds the supported size or type".into(),
+            ));
+        }
+        tokio::fs::read_to_string(&request.file_path)
+            .await
+            .map_err(|_| {
+                FileError::InvalidName("Connector source is not valid UTF-8 text".into())
+            })?;
+        if std::path::Path::new(&request.relative_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            != Some(request.name.as_str())
+        {
+            return Err(FileError::InvalidName(
+                "Connector source filename does not match the imported name".into(),
+            ));
+        }
+        let (content_hash, size) = self
+            .calculate_sha256_and_size_from_path(&request.file_path)
+            .await?;
+        if request.source_revision != format!("sha256:{content_hash}") {
+            return Err(FileError::InvalidName(
+                "source revision does not match imported content".into(),
+            ));
+        }
+        let target_file_id = connector_target_file_id(
+            request.tenant_id,
+            request.connector_instance_id,
+            &request.source_resource_ref,
+        );
+        let provenance = serde_json::to_value(ConnectorFileProvenance {
+            connector_instance_id: request.connector_instance_id,
+            source_resource_ref: request.source_resource_ref,
+            source_revision: request.source_revision,
+            relative_path: request.relative_path,
+            observed_modified_at: request.observed_modified_at,
+        })
+        .map_err(|error| FileError::Storage(error.to_string()))?;
+        self.upload_file_with_actor_impl(
+            request.owner_id,
+            FileUploadActor {
+                actor_type: "connector".into(),
+                actor_user_id: Some(request.owner_id),
+                actor_display_name: Some("Elembra Connector".into()),
+                ..Default::default()
+            },
+            request.name,
+            request.parent_folder_id,
+            content_hash,
+            size,
+            UploadSource::Path(request.file_path),
+            request.mime_type,
+            request.tenant_id,
+            Some(target_file_id),
+            None,
+            Some(provenance),
         )
         .await
     }
@@ -636,6 +739,7 @@ where
                 tenant_id,
                 Some(id),
                 creation_event_id,
+                None,
             )
             .await;
         match result {
@@ -666,6 +770,7 @@ where
         tenant_id: uuid::Uuid,
         create_id: Option<Uuid>,
         creation_event_id: Option<Uuid>,
+        source_provenance: Option<Value>,
     ) -> Result<File, FileError> {
         // 1. Check parent folder exists (if provided) and verify permissions
         let (parent_path, file_owner_id) = if let Some(folder_id) = parent_folder_id {
@@ -748,7 +853,9 @@ where
                         "Creation path is already occupied".into(),
                     ));
                 }
-                return Ok(existing);
+                if source_provenance.is_none() {
+                    return Ok(existing);
+                }
             }
             if existing.content_hash == content_hash && existing.size == size {
                 return Ok(existing);
@@ -821,6 +928,7 @@ where
                     Some(user_id) => IntegrationEventActor::Principal(user_id),
                     None => IntegrationEventActor::External,
                 },
+                source_provenance.as_ref(),
             )
             .await?;
             self.event_store
@@ -925,6 +1033,7 @@ where
                 Some(user_id) => IntegrationEventActor::Principal(user_id),
                 None => IntegrationEventActor::External,
             },
+            source_provenance.as_ref(),
         )
         .await?;
         self.event_store
@@ -1155,6 +1264,7 @@ where
             &file,
             &version,
             IntegrationEventActor::Principal(user_id),
+            None,
         )
         .await?;
         self.event_store
@@ -1316,6 +1426,7 @@ where
             &file,
             &version,
             IntegrationEventActor::Principal(user_id),
+            None,
         )
         .await?;
         self.event_store
@@ -2005,6 +2116,7 @@ where
             &file,
             &version,
             IntegrationEventActor::Principal(user_id),
+            None,
         )
         .await?;
         self.event_store
@@ -2301,6 +2413,121 @@ where
             .map_err(|e| FileError::Storage(format!("Failed to append event: {}", e)))?;
 
         Ok(())
+    }
+}
+
+pub fn validate_connector_relative_path(value: &str) -> Result<(), FileError> {
+    let path = std::path::Path::new(value);
+    let supported_text = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "md" | "markdown" | "txt"
+            )
+        });
+    if value.is_empty()
+        || value.starts_with('/')
+        || value.contains('\\')
+        || value.contains('\0')
+        || value.chars().any(char::is_control)
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        || !supported_text
+        || path.components().any(|component| {
+            let std::path::Component::Normal(part) = component else {
+                return true;
+            };
+            let Some(name) = part.to_str() else {
+                return true;
+            };
+            let name = name.to_ascii_lowercase();
+            name.starts_with('.')
+                || name.contains("credential")
+                || name.contains("secret")
+                || name.contains("password")
+                || name.contains("token")
+                || name.starts_with("id_")
+                || matches!(
+                    name.as_str(),
+                    "credentials"
+                        | "secrets"
+                        | "id_rsa"
+                        | "id_ed25519"
+                        | "authorized_keys"
+                        | "known_hosts"
+                )
+                || [
+                    ".env", ".pem", ".key", ".p12", ".pfx", ".kdbx", ".crt", ".cer", ".der",
+                ]
+                .iter()
+                .any(|suffix| name.ends_with(suffix))
+        })
+    {
+        return Err(FileError::InvalidName(
+            "Connector source path is not an allowed relative text path".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn connector_target_file_id(tenant_id: Uuid, instance_id: Uuid, source_ref: &str) -> Uuid {
+    let mut digest = Sha256::new();
+    digest.update(b"elembra.connector-file.v1\0");
+    digest.update(tenant_id.as_bytes());
+    digest.update(instance_id.as_bytes());
+    digest.update(source_ref.as_bytes());
+    let digest = digest.finalize();
+    let mut bytes = [0; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
+}
+
+#[cfg(test)]
+mod connector_import_tests {
+    use super::{connector_target_file_id, validate_connector_relative_path};
+    use uuid::Uuid;
+
+    #[test]
+    fn connector_file_identity_is_stable_and_scoped() {
+        let tenant = Uuid::new_v4();
+        let instance = Uuid::new_v4();
+        let source = "elembra://io.elembra.connector.local-text/file/source-1";
+        assert_eq!(
+            connector_target_file_id(tenant, instance, source),
+            connector_target_file_id(tenant, instance, source)
+        );
+        assert_ne!(
+            connector_target_file_id(tenant, instance, source),
+            connector_target_file_id(tenant, Uuid::new_v4(), source)
+        );
+        assert_ne!(
+            connector_target_file_id(tenant, instance, source),
+            connector_target_file_id(Uuid::new_v4(), instance, source)
+        );
+    }
+
+    #[test]
+    fn connector_source_paths_reject_traversal_and_private_files() {
+        assert!(validate_connector_relative_path("notes/daily.md").is_ok());
+        for path in [
+            "../secrets.md",
+            "/etc/passwd",
+            ".env",
+            "private/id_rsa",
+            "notes/report.pdf",
+            "notes/passwords.md",
+            "exports/api-token.txt",
+            "keys/id_ecdsa",
+            "certificates/service.crt",
+            "a\\b.md",
+        ] {
+            assert!(validate_connector_relative_path(path).is_err(), "{path}");
+        }
     }
 }
 
@@ -4025,6 +4252,60 @@ mod integration_publish_tests {
     }
 
     #[tokio::test]
+    async fn connector_import_retries_idempotently_and_publishes_provenance() {
+        let (service, _, _, publisher) = setup_service();
+        let owner_id = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let connector_id = Uuid::new_v4();
+        let source_ref = "elembra://io.elembra.connector.local-text/file/root-note";
+        let source_path = std::env::temp_dir().join(format!("connector-{}.md", Uuid::new_v4()));
+        std::fs::write(&source_path, b"first revision").unwrap();
+        let revision = format!("sha256:{}", hex::encode(Sha256::digest(b"first revision")));
+        let import = || ConnectorFileImport {
+            owner_id,
+            connector_instance_id: connector_id,
+            source_resource_ref: source_ref.to_owned(),
+            source_revision: revision.clone(),
+            relative_path: "notes/daily.md".to_owned(),
+            observed_modified_at: chrono::Utc::now(),
+            name: "daily.md".to_owned(),
+            parent_folder_id: None,
+            file_path: source_path.clone(),
+            mime_type: "text/markdown".to_owned(),
+            tenant_id,
+        };
+
+        let first = service
+            .import_connector_file_from_path(import())
+            .await
+            .unwrap();
+        let retry = service
+            .import_connector_file_from_path(import())
+            .await
+            .unwrap();
+        assert_eq!(first.id, retry.id);
+        assert_eq!(publisher.calls().len(), 1);
+        assert_eq!(
+            publisher.calls()[0].data["sourceProvenance"]["relative_path"],
+            "notes/daily.md"
+        );
+        assert_eq!(
+            publisher.calls()[0].data["sourceProvenance"]["source_revision"],
+            revision
+        );
+        std::fs::write(&source_path, [0xff, 0xfe]).unwrap();
+        let malformed_revision = format!("sha256:{}", hex::encode(Sha256::digest([0xff, 0xfe])));
+        let mut malformed_import = import();
+        malformed_import.source_revision = malformed_revision;
+        assert!(service
+            .import_connector_file_from_path(malformed_import)
+            .await
+            .is_err());
+        assert_eq!(publisher.calls().len(), 1);
+        std::fs::remove_file(source_path).unwrap();
+    }
+
+    #[tokio::test]
     async fn upload_without_authenticated_actor_publishes_external_facts() {
         let (service, _, _, publisher) = setup_service();
         let owner_id = Uuid::new_v4();
@@ -4092,6 +4373,7 @@ mod integration_publish_tests {
                 &file,
                 &version,
                 IntegrationEventActor::External,
+                None,
             )
             .await
             .unwrap();

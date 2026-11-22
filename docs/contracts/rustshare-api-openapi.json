@@ -5139,6 +5139,56 @@
         ]
       }
     },
+    "/api/v1/connectors/worker/files/import": {
+      "post": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "operationId": "import_connector_file",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Connector ecw1 credential",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectorFileImportMultipart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorFileImportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or unsafe source observation"
+          },
+          "401": {
+            "description": "Invalid Connector credential"
+          },
+          "409": {
+            "description": "Source revision conflicts with an existing mapping"
+          }
+        }
+      }
+    },
     "/api/v1/connectors/worker/lease": {
       "post": {
         "tags": [
@@ -18903,6 +18953,83 @@
           "leaseId": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "ConnectorFileImportMetadata": {
+        "type": "object",
+        "required": [
+          "leaseId",
+          "fence",
+          "sourceResourceRef",
+          "sourceRevision",
+          "relativePath",
+          "observedModifiedAt"
+        ],
+        "properties": {
+          "fence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "leaseId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "observedModifiedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "parentFolderId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "relativePath": {
+            "type": "string"
+          },
+          "sourceResourceRef": {
+            "type": "string"
+          },
+          "sourceRevision": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorFileImportMultipart": {
+        "type": "object",
+        "required": [
+          "metadata",
+          "file"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary"
+          },
+          "metadata": {
+            "type": "string"
+          }
+        }
+      },
+      "ConnectorFileImportResponse": {
+        "type": "object",
+        "required": [
+          "sourceResourceRef",
+          "sourceRevision",
+          "targetResourceRef"
+        ],
+        "properties": {
+          "sourceResourceRef": {
+            "type": "string"
+          },
+          "sourceRevision": {
+            "type": "string"
+          },
+          "targetResourceRef": {
+            "type": "string"
           }
         }
       },

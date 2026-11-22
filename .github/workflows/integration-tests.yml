@@ -245,6 +245,52 @@ jobs:
           cargo test -p rustshare-server --test memory_orphan_cleanup_test memory_orphan_cleanup_ -- --ignored --test-threads=1
           cargo test -p rustshare-server --test memory_reconcile_test memory_reconcile_status_is_scoped_to_admin_tenant -- --ignored --exact --test-threads=1
 
+      - name: Local Text connector worker E2E (PostgreSQL and RustFS)
+        env:
+          RUSTSHARE_TEST_DISPOSABLE_DB: "1"
+          RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE: "1"
+        run: |
+          base_database_url="$DATABASE_URL"
+          e2e_database_url="${DATABASE_URL%/*}/rustshare_test_connector_e2e"
+          server_pid=""
+          cleanup() {
+            if [[ -n "$server_pid" ]]; then
+              kill "$server_pid" 2>/dev/null || true
+              wait "$server_pid" 2>/dev/null || true
+            fi
+            psql "$base_database_url" -v ON_ERROR_STOP=1 -c \
+              'DROP DATABASE IF EXISTS rustshare_test_connector_e2e WITH (FORCE)' >/dev/null || true
+          }
+          trap cleanup EXIT
+          psql "$base_database_url" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE rustshare_test_connector_e2e'
+          DATABASE_URL="$e2e_database_url" sqlx migrate run --source backend/migrations
+          SERVER_HOST=127.0.0.1 SERVER_PORT=18333 RUSTSHARE_CHAT_AUTHORITY=local \
+            RUSTSHARE_CHAT_PROVISIONING=manual DATABASE_URL="$e2e_database_url" \
+            ./target/debug/rustshare-server > "${RUNNER_TEMP}/local-text-worker-backend.log" 2>&1 &
+          server_pid=$!
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:18333/health/ready >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              tail -n 40 "${RUNNER_TEMP}/local-text-worker-backend.log"
+              exit 1
+            fi
+            sleep 2
+          done
+          curl --fail --silent http://127.0.0.1:18333/health/ready >/dev/null || {
+            tail -n 40 "${RUNNER_TEMP}/local-text-worker-backend.log"
+            exit 1
+          }
+          owner_token="$(curl --fail --silent \
+            -H 'content-type: application/json' \
+            --data "{\"email\":\"${RUSTSHARE_ADMIN_EMAIL}\",\"password\":\"${RUSTSHARE_ADMIN_PASSWORD}\"}" \
+            http://127.0.0.1:18333/api/v1/auth/login | jq -er '.token')"
+          RUSTSHARE_CONNECTOR_TEST_SERVER=http://127.0.0.1:18333 \
+          RUSTSHARE_CONNECTOR_TEST_OWNER_TOKEN="$owner_token" \
+          DATABASE_URL="$e2e_database_url" \
+            SQLX_OFFLINE=true cargo test -p local-text-worker --test connector_worker_e2e independent_worker_imports_retries_recovers_and_stops_after_revocation -- --ignored --exact --test-threads=1
+
       - name: Run all integration tests
         # `-j 1` serializes Cargo's test processes, while
         # `--test-threads=1` serializes tests inside each binary. The ignored
@@ -260,8 +306,9 @@ jobs:
           export RUSTSHARE_TEST_BUZZ_BINARY="${BUZZ_TEST_RELAY_BINARY}"
           export RUSTSHARE_TEST_BUZZ_BINARY_SHA256="$(sha256sum "${BUZZ_TEST_RELAY_BINARY}" | cut -d ' ' -f 1)"
           # Dedicated Buzz/Cilium fixtures use their own separately provisioned harness.
+          # The Local Text process E2E needs a loopback backend, which this DB/object-store sweep does not start.
           RUSTSHARE_SCIM_BEARER_TOKEN="$(openssl rand -hex 32)" \
-            cargo test --workspace --all-features -j 1 -- --ignored --skip upstream_buzz_transport::disposable_service_tests --skip upstream_identity_provisioning::tests::live_ --test-threads=1
+            cargo test --workspace --all-features -j 1 -- --ignored --skip upstream_buzz_transport::disposable_service_tests --skip upstream_identity_provisioning::tests::live_ --skip independent_worker_imports_retries_recovers_and_stops_after_revocation --test-threads=1
 
       - name: Ask Workspace security matrix (repeated)
         # Keep this explicit: the recording-provider matrix is the security
