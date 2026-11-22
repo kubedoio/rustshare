@@ -13,6 +13,7 @@ pub mod chat_identity;
 pub mod chat_integration;
 pub mod chat_resource;
 pub mod collab;
+pub mod connectors;
 pub mod decisions;
 pub mod device_auth;
 pub mod devices;

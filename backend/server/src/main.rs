@@ -102,6 +102,7 @@ async fn main() -> Result<()> {
         .merge(routes::auth_routes())
         .merge(routes::device_auth_routes())
         .merge(routes::device_management_routes())
+        .merge(routes::connector_routes())
         .merge(routes::feature_routes())
         .merge(routes::file_routes())
         .merge(routes::upload_routes())

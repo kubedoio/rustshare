@@ -287,6 +287,10 @@ name = "openapi_export_test"
 path = "../tests/openapi_export_test.rs"
 
 [[test]]
+name = "connector_persistence_test"
+path = "../tests/connector_persistence_test.rs"
+
+[[test]]
 name = "chat_webhook_signature_test"
 path = "../tests/chat_webhook_signature_test.rs"
 
