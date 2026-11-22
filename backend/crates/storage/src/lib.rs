@@ -8,6 +8,7 @@
 pub mod chat_identity;
 pub mod chat_integration_impl;
 pub mod chat_observation;
+pub mod connector_store;
 pub mod event_store;
 pub mod managed_identity_operations;
 pub mod managed_identity_vault;
@@ -26,6 +27,9 @@ pub use chat_identity::{
     ReplacementStart, ReplacementStatus, ResolvedChatAuthor,
 };
 pub use chat_observation::{ChatObservationStore, UpsertOutcome};
+pub use connector_store::{
+    ConnectorInstanceRecord, ConnectorMutation, ConnectorRegistration, ConnectorStore,
+};
 pub use event_store::EventStore;
 pub use managed_identity_operations::{
     ManagedIdentityOperationError, ManagedIdentityOperationRecord, ManagedIdentityOperationStatus,

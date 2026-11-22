@@ -112,3 +112,34 @@ fn account_and_vault_device_delete_routes_are_distinct() {
         assert_eq!(parameter["required"], true);
     }
 }
+
+#[test]
+fn connector_management_contract_is_tenant_scoped_and_redacts_credentials() {
+    let spec = rustshare_server::openapi::to_pretty_json()
+        .expect("failed to serialize generated OpenAPI spec");
+    let value: serde_json::Value = serde_json::from_str(&spec).expect("invalid OpenAPI JSON");
+
+    for (path, method) in [
+        ("/api/v1/connectors", "get"),
+        ("/api/v1/connectors", "post"),
+        ("/api/v1/connectors/{id}", "get"),
+        ("/api/v1/connectors/{id}", "patch"),
+    ] {
+        assert!(
+            value["paths"][path][method].is_object(),
+            "missing connector operation {method} {path}"
+        );
+    }
+
+    let connector_schema = &value["components"]["schemas"]["ConnectorView"];
+    assert!(connector_schema["properties"]["credentialConfigured"].is_object());
+    assert!(connector_schema["properties"]["credentialRef"].is_null());
+    let register_schema = &value["components"]["schemas"]["RegisterConnector"];
+    assert!(register_schema["properties"]["tenantId"].is_null());
+    assert!(register_schema["properties"]["workspaceId"].is_null());
+    assert!(value["paths"]["/api/v1/connectors"]["post"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|parameter| parameter["name"] == "Idempotency-Key"));
+}

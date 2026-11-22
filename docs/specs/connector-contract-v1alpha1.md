@@ -261,6 +261,17 @@ last safe error summary
 
 Failure of one Connector does not make Files/Memory globally unavailable.
 
+## Instance management API
+
+The first server runtime exposes authenticated instance registration, listing,
+inspection and updates under `/api/v1/connectors`. Tenant/workspace scope and
+owner Principal come from the authenticated request; clients cannot choose
+those identifiers. Registration requires an `Idempotency-Key`, and updates
+carry the instance version so concurrent lifecycle/configuration changes fail
+closed. Responses may include source configuration and bounded status/error
+categories, but never credential references, cursors or other private worker
+state. Credential references are stored separately from source configuration.
+
 ## Security rules
 
 - provider tokens/secrets never in event payloads/logs;

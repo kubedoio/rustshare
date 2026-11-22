@@ -123,7 +123,7 @@ pub struct UpdateGroupInput {
     pub archived: Option<bool>,
 }
 
-fn deserialize_present_nullable_string<'de, D>(
+pub(crate) fn deserialize_present_nullable_string<'de, D>(
     deserializer: D,
 ) -> Result<Option<Option<String>>, D::Error>
 where

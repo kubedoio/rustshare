@@ -63,6 +63,29 @@ pub fn device_management_routes() -> Router<AppState> {
         )
 }
 
+pub fn connector_routes() -> Router<AppState> {
+    use axum::extract::DefaultBodyLimit;
+    use axum::routing::{get, patch, post};
+    Router::new()
+        .route(
+            "/api/v1/connectors",
+            get(crate::handlers::connectors::list_connectors),
+        )
+        .route(
+            "/api/v1/connectors",
+            post(crate::handlers::connectors::register_connector),
+        )
+        .route(
+            "/api/v1/connectors/{id}",
+            get(crate::handlers::connectors::get_connector),
+        )
+        .route(
+            "/api/v1/connectors/{id}",
+            patch(crate::handlers::connectors::update_connector),
+        )
+        .layer(DefaultBodyLimit::max(64 * 1024))
+}
+
 pub fn feature_routes() -> Router<AppState> {
     use axum::routing::get;
     Router::new().route("/api/v1/features", get(crate::handlers::get_features))

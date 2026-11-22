@@ -5057,6 +5057,171 @@
         }
       }
     },
+    "/api/v1/connectors": {
+      "get": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "operationId": "list_connectors",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ConnectorView"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "operationId": "register_connector",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Stable retry key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterConnector"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorView"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/connectors/{id}": {
+      "get": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "operationId": "get_connector",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorView"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "operationId": "update_connector",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConnectorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorView"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale version or disconnected instance"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/api/v1/decisions": {
       "get": {
         "tags": [
@@ -18385,6 +18550,296 @@
           }
         }
       },
+      "ConnectorAuthority": {
+        "type": "string",
+        "enum": [
+          "external",
+          "local"
+        ]
+      },
+      "ConnectorCapabilities": {
+        "type": "object",
+        "required": [
+          "operations",
+          "modes"
+        ],
+        "properties": {
+          "modes": {
+            "$ref": "#/components/schemas/ConnectorModes"
+          },
+          "operations": {
+            "$ref": "#/components/schemas/ConnectorOperations"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorDescriptor": {
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "kind",
+          "metadata",
+          "source",
+          "supports"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/ConnectorMetadata"
+          },
+          "publishes": {
+            "$ref": "#/components/schemas/ConnectorPublications"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ConnectorSource"
+          },
+          "supports": {
+            "$ref": "#/components/schemas/ConnectorCapabilities"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorHealth": {
+        "type": "string",
+        "enum": [
+          "healthy",
+          "degraded",
+          "auth_required",
+          "rate_limited",
+          "paused",
+          "failed"
+        ]
+      },
+      "ConnectorInstanceId": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "ConnectorInstanceStatus": {
+        "type": "object",
+        "required": [
+          "health",
+          "queuedCount",
+          "retryCount"
+        ],
+        "properties": {
+          "health": {
+            "$ref": "#/components/schemas/ConnectorHealth"
+          },
+          "lastError": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ConnectorStatusError"
+              }
+            ]
+          },
+          "lastSuccessAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "queuedCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "retryCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ConnectorMetadata": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorModes": {
+        "type": "object",
+        "required": [
+          "reference",
+          "mirror",
+          "import",
+          "archive",
+          "export",
+          "bidirectionalSync"
+        ],
+        "properties": {
+          "archive": {
+            "type": "boolean"
+          },
+          "bidirectionalSync": {
+            "type": "boolean"
+          },
+          "export": {
+            "type": "boolean"
+          },
+          "import": {
+            "type": "boolean"
+          },
+          "mirror": {
+            "type": "boolean"
+          },
+          "reference": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorOperations": {
+        "type": "object",
+        "required": [
+          "list",
+          "read",
+          "watch",
+          "write",
+          "delete",
+          "versions",
+          "externalSharingMetadata"
+        ],
+        "properties": {
+          "delete": {
+            "type": "boolean"
+          },
+          "externalSharingMetadata": {
+            "type": "boolean"
+          },
+          "list": {
+            "type": "boolean"
+          },
+          "read": {
+            "type": "boolean"
+          },
+          "versions": {
+            "type": "boolean"
+          },
+          "watch": {
+            "type": "boolean"
+          },
+          "write": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorPublications": {
+        "type": "object",
+        "properties": {
+          "memory": {
+            "type": "boolean"
+          },
+          "resources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorSource": {
+        "type": "object",
+        "required": [
+          "system",
+          "authority"
+        ],
+        "properties": {
+          "authority": {
+            "$ref": "#/components/schemas/ConnectorAuthority"
+          },
+          "system": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectorStatusError": {
+        "type": "string",
+        "description": "Bounded error categories keep credentials and provider responses out of status payloads.",
+        "enum": [
+          "authentication",
+          "rate_limit",
+          "source_unavailable",
+          "invalid_content",
+          "policy_denied",
+          "unknown"
+        ]
+      },
+      "ConnectorView": {
+        "type": "object",
+        "required": [
+          "id",
+          "connectorId",
+          "descriptor",
+          "sourceConfig",
+          "credentialConfigured",
+          "mode",
+          "lifecycleState",
+          "status",
+          "version",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "connectorId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "credentialConfigured": {
+            "type": "boolean"
+          },
+          "descriptor": {},
+          "id": {
+            "$ref": "#/components/schemas/ConnectorInstanceId"
+          },
+          "lifecycleState": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "sourceConfig": {},
+          "status": {
+            "$ref": "#/components/schemas/ConnectorInstanceStatus"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ContractRef": {
         "type": "object",
         "required": [
@@ -26880,6 +27335,29 @@
           }
         }
       },
+      "RegisterConnector": {
+        "type": "object",
+        "required": [
+          "descriptor",
+          "mode"
+        ],
+        "properties": {
+          "credentialRef": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "descriptor": {
+            "$ref": "#/components/schemas/ConnectorDescriptor"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "sourceConfig": {}
+        },
+        "additionalProperties": false
+      },
       "RegisterWebhookRequest": {
         "type": "object",
         "description": "Request to register a new webhook URL.",
@@ -29352,6 +29830,32 @@
             ]
           }
         }
+      },
+      "UpdateConnectorRequest": {
+        "type": "object",
+        "required": [
+          "expectedVersion"
+        ],
+        "properties": {
+          "credentialRef": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "lifecycleState": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceConfig": {}
+        },
+        "additionalProperties": false
       },
       "UpdateDecisionRequest": {
         "type": "object",

@@ -3185,6 +3185,11 @@ async fn database_state(pool: PgPool) -> DatabaseState {
     );
     DatabaseState {
         db_pool: pool.clone(),
+        connector_service: Arc::new(
+            rustshare_server::services::connector_service::ConnectorService::new(Arc::new(
+                rustshare_storage::ConnectorStore::new(pool.clone()),
+            )),
+        ),
         workflow_repository: rustshare_infrastructure::repositories::WorkflowRepository::new(
             pool.clone(),
         ),
