@@ -277,15 +277,6 @@ impl ConnectorStore {
         .bind(expires_at)
         .execute(&mut *tx)
         .await?;
-        sqlx::query(
-            r#"UPDATE connector_instances
-               SET health = 'healthy', last_error = NULL
-               WHERE tenant_id = $1 AND id = $2 AND health = 'auth_required'"#,
-        )
-        .bind(tenant_id)
-        .bind(instance_id)
-        .execute(&mut *tx)
-        .await?;
         tx.commit().await
     }
 

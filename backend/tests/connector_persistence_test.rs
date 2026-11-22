@@ -1,9 +1,8 @@
 //! Persistent Connector lifecycle contract against disposable PostgreSQL.
 //! Run with `DATABASE_URL=postgres://.../rustshare_test` and `--ignored`.
 
-use rustshare_core::domain::ConnectorStatusError;
 use rustshare_server::services::connector_service::{
-    AcknowledgeConnectorExecution, ConnectorService, FailConnectorExecution,
+    AcknowledgeConnectorExecution, ConnectorService,
 };
 use rustshare_storage::{
     ConnectorExecutionAcknowledgment, ConnectorMutation, ConnectorRegistration, ConnectorStore,
@@ -303,37 +302,8 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
         )
         .await
         .unwrap());
-    let auth_failure = service
-        .claim_execution(&lease_worker)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(service
-        .fail_execution(
-            &lease_worker,
-            auth_failure.lease_id,
-            FailConnectorExecution {
-                fence: auth_failure.fence,
-                error: ConnectorStatusError::Authentication,
-            },
-        )
-        .await
-        .unwrap());
-    assert!(service
-        .claim_execution(&lease_worker)
-        .await
-        .unwrap()
-        .is_none());
-    let replacement = service
-        .rotate_worker_credential(tenant_id, principal_id, concurrent.id)
-        .await
-        .unwrap();
-    let replacement_worker = service
-        .authenticate_worker(&replacement.credential)
-        .await
-        .unwrap();
-    let concurrent_lease = service
-        .claim_execution(&replacement_worker)
+    let concurrent_lease = store
+        .claim_execution(tenant_id, principal_id, concurrent.id, Uuid::new_v4(), 60)
         .await
         .unwrap()
         .unwrap();
@@ -368,7 +338,7 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
             principal_id,
             instance_id: concurrent.id,
             lease_id: concurrent_lease.lease_id,
-            lease_fence: concurrent_lease.fence,
+            lease_fence: concurrent_lease.lease_fence,
             expected_checkpoint_version: concurrent_lease.checkpoint_version,
             cursor: &json!({"revision":1}),
         })
