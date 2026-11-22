@@ -282,9 +282,18 @@ fn validate_config(value: &Value) -> Result<(), ConnectorError> {
         match value {
             Value::Object(map) => map.iter().all(|(key, value)| {
                 let key = key.to_ascii_lowercase().replace(['-', '_'], "");
-                !["token", "password", "secret", "privatekey", "credential"]
-                    .iter()
-                    .any(|part| key.contains(part))
+                ![
+                    "token",
+                    "password",
+                    "secret",
+                    "privatekey",
+                    "credential",
+                    "apikey",
+                    "accesskey",
+                    "auth",
+                ]
+                .iter()
+                .any(|part| key.contains(part))
                     && check(value)
             }),
             Value::Array(values) => values.iter().all(check),
@@ -318,6 +327,8 @@ mod tests {
     fn source_config_rejects_credentials_recursively() {
         let config = serde_json::json!({"paths": {"api_token": "do-not-store"}});
         assert!(validate_config(&config).is_err());
+        assert!(validate_config(&serde_json::json!({"api_key":"do-not-store"})).is_err());
+        assert!(validate_config(&serde_json::json!({"authorization":"Bearer x"})).is_err());
     }
 
     #[test]

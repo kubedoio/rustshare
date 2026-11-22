@@ -29,8 +29,7 @@ CREATE TABLE connector_instances (
 );
 
 CREATE INDEX connector_instances_scope_idx
-    ON connector_instances (tenant_id, workspace_id, principal_id, created_at DESC)
-    WHERE disconnected_at IS NULL;
+    ON connector_instances (tenant_id, workspace_id, principal_id, created_at DESC);
 
 CREATE TABLE connector_external_mappings (
     tenant_id uuid NOT NULL,
