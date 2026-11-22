@@ -77,7 +77,7 @@ test('institutional Calendar journey preserves linked context and denies unavail
 	});
 	expect(reopenedEventNote.ok()).toBeTruthy();
 	expect((await reopenedEventNote.json()).note_id).toBe(eventNoteId);
-	await page.getByRole('button', { name: 'Open meeting note', exact: true }).click();
+	await page.getByRole('button', { name: 'Open meeting workspace', exact: true }).click();
 	await expect(page).toHaveURL(/\/apps\/meetings\/[\da-f-]+$/);
 	const meetingId = page.url().split('/').pop()!;
 	const resources = page.getByRole('region', { name: 'Linked resources', exact: true });
