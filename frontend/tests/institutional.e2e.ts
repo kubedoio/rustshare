@@ -120,10 +120,13 @@ test('institutional Calendar journey preserves linked context and denies unavail
 		await expect(resources.locator(`a[href="${link.open_url}"]`)).toBeVisible();
 	}
 	await resources.getByRole('button', { name: 'Close', exact: true }).click();
-	for (const path of ['/apps/notes/', '/files?preview=']) {
-		await resources.locator(`a[href^="${path}"]`).click();
+	for (const [index, link] of [
+		resources.locator(`a[href="/apps/notes/${noteId}"]`),
+		resources.locator('a[href^="/files?preview="]')
+	].entries()) {
+		await link.click();
 		await expect(page).not.toHaveURL(new RegExp(`/apps/meetings/${meetingId}$`));
-		if (path === '/apps/notes/') {
+		if (index === 0) {
 			await expect(page.locator('.doc-subtitle')).toHaveText('Beta Smoke H1');
 		} else {
 			await expect(page.getByRole('heading', { name: fileName, exact: true })).toBeVisible();
