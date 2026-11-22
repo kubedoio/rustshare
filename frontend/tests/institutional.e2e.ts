@@ -77,7 +77,7 @@ test('institutional Calendar journey preserves linked context and denies unavail
 	});
 	expect(reopenedEventNote.ok()).toBeTruthy();
 	expect((await reopenedEventNote.json()).note_id).toBe(eventNoteId);
-	await page.getByRole('button', { name: 'Open meeting note', exact: true }).click();
+	await page.getByRole('button', { name: 'Open meeting workspace', exact: true }).click();
 	await expect(page).toHaveURL(/\/apps\/meetings\/[\da-f-]+$/);
 	const meetingId = page.url().split('/').pop()!;
 	const resources = page.getByRole('region', { name: 'Linked resources', exact: true });
@@ -120,10 +120,13 @@ test('institutional Calendar journey preserves linked context and denies unavail
 		await expect(resources.locator(`a[href="${link.open_url}"]`)).toBeVisible();
 	}
 	await resources.getByRole('button', { name: 'Close', exact: true }).click();
-	for (const path of ['/apps/notes/', '/files?preview=']) {
-		await resources.locator(`a[href^="${path}"]`).click();
+	for (const [index, link] of [
+		resources.locator(`a[href="/apps/notes/${noteId}"]`),
+		resources.locator('a[href^="/files?preview="]')
+	].entries()) {
+		await link.click();
 		await expect(page).not.toHaveURL(new RegExp(`/apps/meetings/${meetingId}$`));
-		if (path === '/apps/notes/') {
+		if (index === 0) {
 			await expect(page.locator('.doc-subtitle')).toHaveText('Beta Smoke H1');
 		} else {
 			await expect(page.getByRole('heading', { name: fileName, exact: true })).toBeVisible();
@@ -155,7 +158,10 @@ test('institutional Calendar journey preserves linked context and denies unavail
 	);
 	await page.getByRole('button', { name: 'Close event details' }).click();
 	await page.getByPlaceholder('Search files, folders, or activity...').fill(title);
-	await page.getByRole('option').filter({ hasText: title }).click();
+	await page
+		.getByRole('listbox')
+		.getByRole('option', { name: new RegExp(`^${title} #`) })
+		.click();
 	await expect(page).toHaveURL(new RegExp(`/apps/meetings/${meetingId}$`));
 	await page.reload();
 	await expect(page.locator('main.doc-content')).toContainText('Synthetic Gate A discussion');
