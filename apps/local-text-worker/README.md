@@ -15,3 +15,16 @@ elembra-local-text-worker \
 ```
 
 The worker imports eligible `.md`, `.markdown`, and `.txt` files by default. Hidden paths and common credential/key files are always excluded. Each file is limited to 4 MiB, each root scan to 256 MiB, and the durable queue to 1 GiB. Imports are one-way; deleting a local file does not delete its Elembra copy.
+
+The connected process test launches the real worker against a loopback backend. Use only a disposable `rustshare_test*` database and a disposable S3-compatible bucket, then supply an owner token:
+
+```sh
+export RUSTSHARE_TEST_DISPOSABLE_DB=1
+export RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE=1
+export RUSTSHARE_CONNECTOR_TEST_SERVER=http://127.0.0.1:18333
+export RUSTSHARE_CONNECTOR_TEST_OWNER_TOKEN=<disposable-owner-bearer-token>
+export DATABASE_URL=postgres://USER:PASSWORD@127.0.0.1:15432/rustshare_test_local_text
+SQLX_OFFLINE=true cargo test -p local-text-worker --test connector_worker_e2e -- --ignored --test-threads=1
+```
+
+The test imports and updates Markdown files, checks Files and provenance mappings, retries a previously acknowledged observation, reconciles a source edit after worker restart, verifies privacy exclusions, and proves a rotated credential cannot ingest later edits.
