@@ -11,7 +11,9 @@ use uuid::Uuid;
 use crate::{
     handlers::{AppError, AuthenticatedUser},
     services::connector_service::{
-        ConnectorError, ConnectorView, IssuedWorkerCredential, RegisterConnector, UpdateConnector,
+        AcknowledgeConnectorExecution, AuthenticatedConnectorWorker, ConnectorError,
+        ConnectorExecutionLeaseView, ConnectorView, FailConnectorExecution, IssuedWorkerCredential,
+        RegisterConnector, UpdateConnector,
     },
     state::DatabaseState,
 };
@@ -27,6 +29,12 @@ pub struct UpdateConnectorRequest {
     )]
     pub credential_ref: Option<Option<String>>,
     pub lifecycle_state: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkerLeaseFenceRequest {
+    pub fence: i64,
 }
 
 #[utoipa::path(post, path = "/api/v1/connectors/{id}/worker-credentials", params(("id" = Uuid, Path)), responses((status = 201, body = IssuedWorkerCredential)), security(("bearer_auth" = [])))]
@@ -50,13 +58,94 @@ pub async fn worker_session(
     State(state): State<DatabaseState>,
     headers: HeaderMap,
 ) -> Result<Json<ConnectorView>, Response> {
-    let credential = connector_credential(&headers).ok_or_else(worker_auth_rejection)?;
+    let worker = authenticate_worker(&state, &headers).await?;
+    Ok(Json(worker.instance))
+}
+
+#[utoipa::path(post, path = "/api/v1/connectors/worker/lease", params(("Authorization" = String, Header, description = "Connector ecw1 credential")), responses((status = 200, body = Option<ConnectorExecutionLeaseView>)))]
+pub async fn claim_worker_lease(
+    State(state): State<DatabaseState>,
+    headers: HeaderMap,
+) -> Result<Json<Option<ConnectorExecutionLeaseView>>, Response> {
+    let worker = authenticate_worker(&state, &headers).await?;
+    state
+        .connector_service
+        .claim_execution(&worker)
+        .await
+        .map(Json)
+        .map_err(|error| map_error(error).into_response())
+}
+
+#[utoipa::path(post, path = "/api/v1/connectors/worker/lease/{lease_id}/renew", params(("Authorization" = String, Header, description = "Connector ecw1 credential"), ("lease_id" = Uuid, Path)), request_body = WorkerLeaseFenceRequest, responses((status = 200, body = ConnectorExecutionLeaseView), (status = 409, description = "Lease expired or fenced")))]
+pub async fn renew_worker_lease(
+    State(state): State<DatabaseState>,
+    headers: HeaderMap,
+    Path(lease_id): Path<Uuid>,
+    Json(request): Json<WorkerLeaseFenceRequest>,
+) -> Result<Json<ConnectorExecutionLeaseView>, Response> {
+    let worker = authenticate_worker(&state, &headers).await?;
+    let lease = state
+        .connector_service
+        .renew_execution(&worker, lease_id, request.fence)
+        .await
+        .map_err(|error| map_error(error).into_response())?
+        .ok_or_else(|| {
+            AppError::conflict("Connector execution lease expired or was fenced").into_response()
+        })?;
+    Ok(Json(lease))
+}
+
+#[utoipa::path(post, path = "/api/v1/connectors/worker/lease/{lease_id}/ack", params(("Authorization" = String, Header, description = "Connector ecw1 credential"), ("lease_id" = Uuid, Path)), request_body = AcknowledgeConnectorExecution, responses((status = 204, description = "Checkpoint acknowledged"), (status = 409, description = "Lease expired, fenced, or checkpoint is stale")))]
+pub async fn acknowledge_worker_lease(
+    State(state): State<DatabaseState>,
+    headers: HeaderMap,
+    Path(lease_id): Path<Uuid>,
+    Json(request): Json<AcknowledgeConnectorExecution>,
+) -> Result<StatusCode, Response> {
+    let worker = authenticate_worker(&state, &headers).await?;
+    let acknowledged = state
+        .connector_service
+        .acknowledge_execution(&worker, lease_id, request)
+        .await
+        .map_err(|error| map_error(error).into_response())?;
+    if acknowledged {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(AppError::conflict("Connector execution lease expired or was fenced").into_response())
+    }
+}
+
+#[utoipa::path(post, path = "/api/v1/connectors/worker/lease/{lease_id}/fail", params(("Authorization" = String, Header, description = "Connector ecw1 credential"), ("lease_id" = Uuid, Path)), request_body = FailConnectorExecution, responses((status = 204, description = "Failure status recorded"), (status = 409, description = "Lease expired or fenced")))]
+pub async fn fail_worker_lease(
+    State(state): State<DatabaseState>,
+    headers: HeaderMap,
+    Path(lease_id): Path<Uuid>,
+    Json(request): Json<FailConnectorExecution>,
+) -> Result<StatusCode, Response> {
+    let worker = authenticate_worker(&state, &headers).await?;
+    let recorded = state
+        .connector_service
+        .fail_execution(&worker, lease_id, request)
+        .await
+        .map_err(|error| map_error(error).into_response())?;
+    if recorded {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(AppError::conflict("Connector execution lease expired or was fenced").into_response())
+    }
+}
+
+async fn authenticate_worker(
+    state: &DatabaseState,
+    headers: &HeaderMap,
+) -> Result<AuthenticatedConnectorWorker, Response> {
+    let credential = connector_credential(headers).ok_or_else(worker_auth_rejection)?;
     match state
         .connector_service
         .authenticate_worker(credential)
         .await
     {
-        Ok(worker) => Ok(Json(worker.instance)),
+        Ok(worker) => Ok(worker),
         Err(ConnectorError::NotFound) => Err(worker_auth_rejection()),
         Err(error) => Err(map_error(error).into_response()),
     }

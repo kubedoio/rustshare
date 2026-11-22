@@ -8,8 +8,8 @@ use rustshare_core::domain::{
 };
 use rustshare_resource_auth::{Delegation, PrincipalContext, PrincipalKind, WorkloadIdentity};
 use rustshare_storage::{
-    ConnectorInstanceRecord, ConnectorMutation, ConnectorRegistration, ConnectorStore,
-    ConnectorWorkerCredentialIdentity,
+    ConnectorExecutionAcknowledgment, ConnectorInstanceRecord, ConnectorMutation,
+    ConnectorRegistration, ConnectorStore, ConnectorWorkerCredentialIdentity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -43,6 +43,8 @@ fn empty_config() -> Value {
 }
 
 const WORKER_CREDENTIAL_LIFETIME: chrono::Duration = chrono::Duration::days(30);
+const EXECUTION_LEASE_SECONDS: i32 = 60;
+const MAX_CURSOR_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +58,31 @@ pub struct IssuedWorkerCredential {
 pub struct AuthenticatedConnectorWorker {
     pub context: PrincipalContext,
     pub instance: ConnectorView,
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorExecutionLeaseView {
+    pub lease_id: Uuid,
+    pub fence: i64,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub checkpoint_version: i64,
+    pub cursor: Option<Value>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AcknowledgeConnectorExecution {
+    pub fence: i64,
+    pub expected_checkpoint_version: i64,
+    pub cursor: Value,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FailConnectorExecution {
+    pub fence: i64,
+    pub error: ConnectorStatusError,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -320,6 +347,153 @@ impl ConnectorService {
             instance: authenticated.instance.into(),
         })
     }
+
+    pub async fn claim_execution(
+        &self,
+        worker: &AuthenticatedConnectorWorker,
+    ) -> Result<Option<ConnectorExecutionLeaseView>, ConnectorError> {
+        let (tenant_id, principal_id, instance_id) = worker_scope(worker)?;
+        self.store
+            .claim_execution(
+                tenant_id,
+                principal_id,
+                instance_id,
+                Uuid::new_v4(),
+                EXECUTION_LEASE_SECONDS,
+            )
+            .await
+            .map(|lease| lease.map(Into::into))
+            .map_err(Into::into)
+    }
+
+    pub async fn renew_execution(
+        &self,
+        worker: &AuthenticatedConnectorWorker,
+        lease_id: Uuid,
+        fence: i64,
+    ) -> Result<Option<ConnectorExecutionLeaseView>, ConnectorError> {
+        let (tenant_id, principal_id, instance_id) = worker_scope(worker)?;
+        self.store
+            .renew_execution(
+                tenant_id,
+                principal_id,
+                instance_id,
+                lease_id,
+                fence,
+                EXECUTION_LEASE_SECONDS,
+            )
+            .await
+            .map(|lease| lease.map(Into::into))
+            .map_err(Into::into)
+    }
+
+    pub async fn acknowledge_execution(
+        &self,
+        worker: &AuthenticatedConnectorWorker,
+        lease_id: Uuid,
+        acknowledgment: AcknowledgeConnectorExecution,
+    ) -> Result<bool, ConnectorError> {
+        if acknowledgment.fence < 1 || acknowledgment.expected_checkpoint_version < 0 {
+            return Err(ConnectorError::Invalid(
+                "lease fence must be positive and checkpoint version non-negative".into(),
+            ));
+        }
+        validate_checkpoint_cursor(
+            acknowledgment.expected_checkpoint_version,
+            &acknowledgment.cursor,
+        )?;
+        let (tenant_id, principal_id, instance_id) = worker_scope(worker)?;
+        self.store
+            .acknowledge_execution(ConnectorExecutionAcknowledgment {
+                tenant_id,
+                principal_id,
+                instance_id,
+                lease_id,
+                lease_fence: acknowledgment.fence,
+                expected_checkpoint_version: acknowledgment.expected_checkpoint_version,
+                cursor: &acknowledgment.cursor,
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn fail_execution(
+        &self,
+        worker: &AuthenticatedConnectorWorker,
+        lease_id: Uuid,
+        failure: FailConnectorExecution,
+    ) -> Result<bool, ConnectorError> {
+        if failure.fence < 1 {
+            return Err(ConnectorError::Invalid(
+                "lease fence must be positive".into(),
+            ));
+        }
+        let category = match failure.error {
+            ConnectorStatusError::Authentication => "authentication",
+            ConnectorStatusError::RateLimit => "rate_limit",
+            ConnectorStatusError::SourceUnavailable => "source_unavailable",
+            ConnectorStatusError::InvalidContent => "invalid_content",
+            ConnectorStatusError::PolicyDenied => "policy_denied",
+            ConnectorStatusError::Unknown => "unknown",
+        };
+        let (tenant_id, principal_id, instance_id) = worker_scope(worker)?;
+        self.store
+            .fail_execution(
+                tenant_id,
+                principal_id,
+                instance_id,
+                lease_id,
+                failure.fence,
+                category,
+            )
+            .await
+            .map_err(Into::into)
+    }
+}
+
+fn validate_checkpoint_cursor(expected_version: i64, cursor: &Value) -> Result<(), ConnectorError> {
+    let next_version = expected_version
+        .checked_add(1)
+        .ok_or_else(|| ConnectorError::Invalid("checkpoint version is exhausted".into()))?;
+    let size = serde_json::to_vec(cursor)
+        .map_err(|error| ConnectorError::Invalid(error.to_string()))?
+        .len();
+    if !cursor.is_object()
+        || size > MAX_CURSOR_BYTES
+        || cursor.get("revision").and_then(Value::as_i64) != Some(next_version)
+    {
+        return Err(ConnectorError::Invalid(format!(
+            "cursor must be an object no larger than 64 KiB with revision {next_version}"
+        )));
+    }
+    Ok(())
+}
+
+impl From<rustshare_storage::ConnectorExecutionLease> for ConnectorExecutionLeaseView {
+    fn from(lease: rustshare_storage::ConnectorExecutionLease) -> Self {
+        Self {
+            lease_id: lease.lease_id,
+            fence: lease.lease_fence,
+            expires_at: lease.lease_expires_at,
+            checkpoint_version: lease.checkpoint_version,
+            cursor: lease.cursor,
+        }
+    }
+}
+
+fn worker_scope(
+    worker: &AuthenticatedConnectorWorker,
+) -> Result<(Uuid, Uuid, Uuid), ConnectorError> {
+    let action = ActionCapability::new("files.write");
+    let authority = worker
+        .context
+        .effective_user_authority(&action, None)
+        .map_err(|_| ConnectorError::NotFound)?;
+    Ok((
+        worker.context.tenant_id.0,
+        authority.user_authority_id.0,
+        Uuid::from(worker.instance.id),
+    ))
 }
 
 fn worker_principal_context(identity: &ConnectorWorkerCredentialIdentity) -> PrincipalContext {
@@ -487,5 +661,14 @@ mod tests {
                 .effective_user_authority(&ActionCapability::new(action), None)
                 .is_err());
         }
+    }
+
+    #[test]
+    fn checkpoint_cursor_revision_must_advance_exactly_once() {
+        assert!(validate_checkpoint_cursor(0, &serde_json::json!({"revision": 1})).is_ok());
+        assert!(validate_checkpoint_cursor(0, &serde_json::json!({"revision": 0})).is_err());
+        assert!(validate_checkpoint_cursor(0, &serde_json::json!({"revision": 2})).is_err());
+        assert!(validate_checkpoint_cursor(0, &serde_json::json!([])).is_err());
+        assert!(validate_checkpoint_cursor(i64::MAX, &serde_json::json!({"revision": 0})).is_err());
     }
 }

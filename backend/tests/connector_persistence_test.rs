@@ -1,8 +1,13 @@
 //! Persistent Connector lifecycle contract against disposable PostgreSQL.
 //! Run with `DATABASE_URL=postgres://.../rustshare_test` and `--ignored`.
 
-use rustshare_server::services::connector_service::ConnectorService;
-use rustshare_storage::{ConnectorMutation, ConnectorRegistration, ConnectorStore};
+use rustshare_core::domain::ConnectorStatusError;
+use rustshare_server::services::connector_service::{
+    AcknowledgeConnectorExecution, ConnectorService, FailConnectorExecution,
+};
+use rustshare_storage::{
+    ConnectorExecutionAcknowledgment, ConnectorMutation, ConnectorRegistration, ConnectorStore,
+};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -192,6 +197,18 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
         .await
         .unwrap();
     assert!(issued.credential.starts_with("ecw1_"));
+    let stored_hash: Vec<u8> = sqlx::query_scalar(
+        "SELECT token_hash FROM connector_worker_credentials WHERE tenant_id = $1 AND instance_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(tenant_id)
+    .bind(concurrent.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored_hash,
+        Sha256::digest(issued.credential.as_bytes()).to_vec()
+    );
     let worker = service
         .authenticate_worker(&issued.credential)
         .await
@@ -215,6 +232,7 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
     );
     let safe_view = serde_json::to_value(&worker.instance).unwrap();
     assert!(safe_view.get("credentialRef").is_none());
+    assert!(safe_view.get("cursor").is_none());
     let rotated = service
         .rotate_worker_credential(tenant_id, principal_id, concurrent.id)
         .await
@@ -255,6 +273,70 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
         .await
         .unwrap()
         .is_none());
+    let lease_credential = service
+        .rotate_worker_credential(tenant_id, principal_id, concurrent.id)
+        .await
+        .unwrap();
+    let lease_worker = service
+        .authenticate_worker(&lease_credential.credential)
+        .await
+        .unwrap();
+    let service_lease = service
+        .claim_execution(&lease_worker)
+        .await
+        .unwrap()
+        .unwrap();
+    let service_lease = service
+        .renew_execution(&lease_worker, service_lease.lease_id, service_lease.fence)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(service
+        .acknowledge_execution(
+            &lease_worker,
+            service_lease.lease_id,
+            AcknowledgeConnectorExecution {
+                fence: service_lease.fence,
+                expected_checkpoint_version: service_lease.checkpoint_version,
+                cursor: json!({"revision":1}),
+            },
+        )
+        .await
+        .unwrap());
+    let auth_failure = service
+        .claim_execution(&lease_worker)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(service
+        .fail_execution(
+            &lease_worker,
+            auth_failure.lease_id,
+            FailConnectorExecution {
+                fence: auth_failure.fence,
+                error: ConnectorStatusError::Authentication,
+            },
+        )
+        .await
+        .unwrap());
+    assert!(service
+        .claim_execution(&lease_worker)
+        .await
+        .unwrap()
+        .is_none());
+    let replacement = service
+        .rotate_worker_credential(tenant_id, principal_id, concurrent.id)
+        .await
+        .unwrap();
+    let replacement_worker = service
+        .authenticate_worker(&replacement.credential)
+        .await
+        .unwrap();
+    let concurrent_lease = service
+        .claim_execution(&replacement_worker)
+        .await
+        .unwrap()
+        .unwrap();
     let (first_writer, second_writer) = tokio::join!(
         store.mutate(ConnectorMutation {
             tenant_id,
@@ -280,6 +362,18 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
         second_writer.unwrap().is_some(),
         "only one concurrent mutation may claim a version"
     );
+    assert!(!store
+        .acknowledge_execution(ConnectorExecutionAcknowledgment {
+            tenant_id,
+            principal_id,
+            instance_id: concurrent.id,
+            lease_id: concurrent_lease.lease_id,
+            lease_fence: concurrent_lease.fence,
+            expected_checkpoint_version: concurrent_lease.checkpoint_version,
+            cursor: &json!({"revision":1}),
+        })
+        .await
+        .unwrap());
 
     assert!(store
         .record_mapping(
@@ -314,6 +408,186 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
             .as_deref(),
         Some("elembra://io.elembra.files/file/target-1")
     );
+    assert!(store
+        .claim_execution(
+            other_tenant_id,
+            other_principal_id,
+            first.id,
+            Uuid::new_v4(),
+            60,
+        )
+        .await
+        .unwrap()
+        .is_none());
+
+    let (claim_a, claim_b) = tokio::join!(
+        store.claim_execution(tenant_id, principal_id, first.id, Uuid::new_v4(), 60),
+        store.claim_execution(tenant_id, principal_id, first.id, Uuid::new_v4(), 60),
+    );
+    let (claim_a, claim_b) = (claim_a.unwrap(), claim_b.unwrap());
+    assert_ne!(claim_a.is_some(), claim_b.is_some());
+    let first_lease = claim_a.or(claim_b).unwrap();
+    let first_lease = store
+        .renew_execution(
+            tenant_id,
+            principal_id,
+            first.id,
+            first_lease.lease_id,
+            first_lease.lease_fence,
+            60,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(store
+        .acknowledge_execution(ConnectorExecutionAcknowledgment {
+            tenant_id,
+            principal_id,
+            instance_id: first.id,
+            lease_id: first_lease.lease_id,
+            lease_fence: first_lease.lease_fence,
+            expected_checkpoint_version: first_lease.checkpoint_version,
+            cursor: &json!({"revision":1}),
+        })
+        .await
+        .unwrap());
+    assert!(!store
+        .acknowledge_execution(ConnectorExecutionAcknowledgment {
+            tenant_id,
+            principal_id,
+            instance_id: first.id,
+            lease_id: first_lease.lease_id,
+            lease_fence: first_lease.lease_fence,
+            expected_checkpoint_version: first_lease.checkpoint_version,
+            cursor: &json!({"revision":0}),
+        })
+        .await
+        .unwrap());
+
+    let expired_lease = store
+        .claim_execution(tenant_id, principal_id, first.id, Uuid::new_v4(), 60)
+        .await
+        .unwrap()
+        .unwrap();
+    sqlx::query("UPDATE connector_instances SET lease_expires_at = now() - interval '1 second' WHERE id = $1")
+        .bind(first.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let recovered_lease = store
+        .claim_execution(tenant_id, principal_id, first.id, Uuid::new_v4(), 60)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(recovered_lease.lease_fence > expired_lease.lease_fence);
+    assert!(store
+        .renew_execution(
+            tenant_id,
+            principal_id,
+            first.id,
+            expired_lease.lease_id,
+            expired_lease.lease_fence,
+            60,
+        )
+        .await
+        .unwrap()
+        .is_none());
+    assert!(!store
+        .acknowledge_execution(ConnectorExecutionAcknowledgment {
+            tenant_id,
+            principal_id,
+            instance_id: first.id,
+            lease_id: expired_lease.lease_id,
+            lease_fence: expired_lease.lease_fence,
+            expected_checkpoint_version: expired_lease.checkpoint_version,
+            cursor: &json!({"revision":1}),
+        })
+        .await
+        .unwrap());
+    assert!(!store
+        .acknowledge_execution(ConnectorExecutionAcknowledgment {
+            tenant_id,
+            principal_id,
+            instance_id: first.id,
+            lease_id: recovered_lease.lease_id,
+            lease_fence: recovered_lease.lease_fence,
+            expected_checkpoint_version: 0,
+            cursor: &json!({"revision":1}),
+        })
+        .await
+        .unwrap());
+    assert!(store
+        .acknowledge_execution(ConnectorExecutionAcknowledgment {
+            tenant_id,
+            principal_id,
+            instance_id: first.id,
+            lease_id: recovered_lease.lease_id,
+            lease_fence: recovered_lease.lease_fence,
+            expected_checkpoint_version: recovered_lease.checkpoint_version,
+            cursor: &json!({"revision":2}),
+        })
+        .await
+        .unwrap());
+
+    let retry_lease = store
+        .claim_execution(tenant_id, principal_id, first.id, Uuid::new_v4(), 60)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(store
+        .fail_execution(
+            tenant_id,
+            principal_id,
+            first.id,
+            retry_lease.lease_id,
+            retry_lease.lease_fence,
+            "source_unavailable",
+        )
+        .await
+        .unwrap());
+    let (retry_count, health, next_attempt): (i64, String, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as(
+            "SELECT retry_count, health, next_attempt_at FROM connector_instances WHERE id = $1",
+        )
+        .bind(first.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!((retry_count, health.as_str()), (1, "degraded"));
+    assert!(next_attempt.is_some_and(|at| at > chrono::Utc::now()));
+    assert!(store
+        .claim_execution(tenant_id, principal_id, first.id, Uuid::new_v4(), 60)
+        .await
+        .unwrap()
+        .is_none());
+    sqlx::query(
+        "UPDATE connector_instances SET next_attempt_at = now(), retry_count = 9 WHERE id = $1",
+    )
+    .bind(first.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let final_retry = store
+        .claim_execution(tenant_id, principal_id, first.id, Uuid::new_v4(), 60)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(store
+        .fail_execution(
+            tenant_id,
+            principal_id,
+            first.id,
+            final_retry.lease_id,
+            final_retry.lease_fence,
+            "unknown",
+        )
+        .await
+        .unwrap());
+    assert!(store
+        .claim_execution(tenant_id, principal_id, first.id, Uuid::new_v4(), 60)
+        .await
+        .unwrap()
+        .is_none());
 
     let paused = store
         .mutate(ConnectorMutation {
@@ -362,6 +636,16 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
         .unwrap()
         .unwrap();
     assert_eq!(resumed.lifecycle_state, "active");
+    let (retry_count, dead_lettered): (i64, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as(
+            "SELECT retry_count, dead_lettered_at FROM connector_instances WHERE id = $1",
+        )
+        .bind(first.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(retry_count, 0);
+    assert!(dead_lettered.is_none());
     assert!(store
         .authenticate_worker_credential(&replacement_hash)
         .await
@@ -381,6 +665,15 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
         .unwrap()
         .unwrap();
     assert_eq!(disconnected.lifecycle_state, "disconnected");
+    let active_worker_credentials: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM connector_worker_credentials WHERE tenant_id = $1 AND instance_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(tenant_id)
+    .bind(first.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(active_worker_credentials, 0);
     assert!(store
         .authenticate_worker_credential(&replacement_hash)
         .await

@@ -122,6 +122,7 @@ The current worker credential contract is:
 
 - `POST /api/v1/connectors/{id}/worker-credentials` issues or rotates one 30-day credential after owner authentication. The opaque value is returned once; only its SHA-256 hash is stored. Rotation revokes the previous credential.
 - `GET /api/v1/connectors/worker/session` accepts `Authorization: Connector <credential>`. It fails closed for expired, rotated, paused, disconnected, or unknown credentials and returns only the safe instance view.
+- Worker execution uses `POST /api/v1/connectors/worker/lease` and the lease's renew, ack, and fail operations. A lease is instance-scoped and expires after 60 seconds unless renewed.
 - Pausing an instance suspends worker authentication. Disconnecting it revokes its credential and is terminal.
 
 The worker credential is valid only for its bound Connector instance and cannot authenticate to user, Files, or Memory routes.
@@ -131,6 +132,12 @@ The worker credential is valid only for its bound Connector instance and cannot 
 Connector service identity authenticates the process. At the trusted boundary, the server builds a PrincipalContext whose Service principal is the Connector instance, whose workload identity identifies that instance, and whose explicit delegation names the owner Principal. The current delegation is limited to `files.write` in the authorized workspace; the source Application still checks the owner's current resource permissions. It grants no Files read/delete/share or Memory authority.
 
 A Connector may not use service credentials to bypass the Principal's Elembra authority when writing into Files/Memory.
+
+## Worker execution
+
+Each Connector instance is one bounded execution stream. The server grants at most one live lease for an instance, increments a fencing value on each claim, and rejects renew/ack/fail requests from an expired or superseded lease. Acknowledgment compares the checkpoint version and persists the cursor only after the worker has durably applied its idempotent effects. A cursor is an object with a `revision` equal to the current checkpoint version plus one; stale or backward revisions cannot overwrite a newer acknowledgment.
+
+Transient source/rate-limit failures use exponential retry delay capped at one hour and stop after ten attempts. Authentication failures pause retries until authorization is repaired; malformed content and policy denials are dead-lettered immediately. The owner can recover a failed instance by pause/resume, which clears retry/dead-letter state and invalidates any old lease. Failure status stores only a bounded category, never provider text or credential material.
 
 ## External authority
 

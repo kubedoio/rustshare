@@ -80,6 +80,22 @@ pub fn connector_routes() -> Router<AppState> {
             get(crate::handlers::connectors::worker_session),
         )
         .route(
+            "/api/v1/connectors/worker/lease",
+            post(crate::handlers::connectors::claim_worker_lease),
+        )
+        .route(
+            "/api/v1/connectors/worker/lease/{lease_id}/renew",
+            post(crate::handlers::connectors::renew_worker_lease),
+        )
+        .route(
+            "/api/v1/connectors/worker/lease/{lease_id}/ack",
+            post(crate::handlers::connectors::acknowledge_worker_lease),
+        )
+        .route(
+            "/api/v1/connectors/worker/lease/{lease_id}/fail",
+            post(crate::handlers::connectors::fail_worker_lease),
+        )
+        .route(
             "/api/v1/connectors/{id}/worker-credentials",
             post(crate::handlers::connectors::rotate_worker_credential),
         )
