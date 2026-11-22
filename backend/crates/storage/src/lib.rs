@@ -28,7 +28,8 @@ pub use chat_identity::{
 };
 pub use chat_observation::{ChatObservationStore, UpsertOutcome};
 pub use connector_store::{
-    ConnectorInstanceRecord, ConnectorMutation, ConnectorRegistration, ConnectorStore,
+    AuthenticatedConnectorWorkerRecord, ConnectorInstanceRecord, ConnectorMutation,
+    ConnectorRegistration, ConnectorStore, ConnectorWorkerCredentialIdentity,
 };
 pub use event_store::EventStore;
 pub use managed_identity_operations::{

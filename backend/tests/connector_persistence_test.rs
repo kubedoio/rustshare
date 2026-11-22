@@ -1,10 +1,12 @@
 //! Persistent Connector lifecycle contract against disposable PostgreSQL.
 //! Run with `DATABASE_URL=postgres://.../rustshare_test` and `--ignored`.
 
+use rustshare_server::services::connector_service::ConnectorService;
 use rustshare_storage::{ConnectorMutation, ConnectorRegistration, ConnectorStore};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use std::sync::Arc;
 use uuid::Uuid;
 
 fn assert_disposable_database(url: &str) {
@@ -117,6 +119,57 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
         .unwrap()
         .is_none());
 
+    let worker_token = b"one-time-worker-secret";
+    let worker_hash: [u8; 32] = Sha256::digest(worker_token).into();
+    store
+        .rotate_worker_credential(
+            tenant_id,
+            principal_id,
+            first.id,
+            Uuid::new_v4(),
+            &worker_hash,
+            chrono::Utc::now() + chrono::Duration::days(1),
+        )
+        .await
+        .unwrap();
+    let authenticated = store
+        .authenticate_worker_credential(&worker_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(authenticated.identity.tenant_id, tenant_id);
+    assert_eq!(authenticated.identity.principal_id, principal_id);
+    assert_eq!(authenticated.identity.instance_id, first.id);
+
+    let replacement_token = b"rotated-worker-secret";
+    let replacement_hash: [u8; 32] = Sha256::digest(replacement_token).into();
+    store
+        .rotate_worker_credential(
+            tenant_id,
+            principal_id,
+            first.id,
+            Uuid::new_v4(),
+            &replacement_hash,
+            chrono::Utc::now() + chrono::Duration::days(1),
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .authenticate_worker_credential(&worker_hash)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(store
+        .authenticate_worker_credential(&replacement_hash)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(store
+        .authenticate_worker_credential(&Sha256::digest(b"unknown-tenant-token").into())
+        .await
+        .unwrap()
+        .is_none());
+
     let second_digest: [u8; 32] = Sha256::digest(b"request 2").into();
     let (concurrent, created) = store
         .register(ConnectorRegistration {
@@ -133,6 +186,75 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
         .await
         .unwrap();
     assert!(created);
+    let service = ConnectorService::new(Arc::new(store.clone()));
+    let issued = service
+        .rotate_worker_credential(tenant_id, principal_id, concurrent.id)
+        .await
+        .unwrap();
+    assert!(issued.credential.starts_with("ecw1_"));
+    let worker = service
+        .authenticate_worker(&issued.credential)
+        .await
+        .unwrap();
+    assert_eq!(worker.context.principal_id.0, concurrent.id);
+    assert_eq!(
+        worker
+            .context
+            .delegation
+            .as_ref()
+            .map(|delegation| delegation.issuer_principal_id.0),
+        Some(principal_id)
+    );
+    assert_eq!(
+        worker
+            .context
+            .workload_identity
+            .as_ref()
+            .and_then(|identity| identity.subject.as_deref()),
+        Some(format!("connector-instance:{}", concurrent.id).as_str())
+    );
+    let safe_view = serde_json::to_value(&worker.instance).unwrap();
+    assert!(safe_view.get("credentialRef").is_none());
+    let rotated = service
+        .rotate_worker_credential(tenant_id, principal_id, concurrent.id)
+        .await
+        .unwrap();
+    assert!(service
+        .authenticate_worker(&issued.credential)
+        .await
+        .is_err());
+    assert!(service
+        .authenticate_worker(&rotated.credential)
+        .await
+        .is_ok());
+    let (rotation_a, rotation_b) = tokio::join!(
+        service.rotate_worker_credential(tenant_id, principal_id, concurrent.id),
+        service.rotate_worker_credential(tenant_id, principal_id, concurrent.id),
+    );
+    let rotation_a = rotation_a.unwrap();
+    let rotation_b = rotation_b.unwrap();
+    let (valid_a, valid_b) = tokio::join!(
+        service.authenticate_worker(&rotation_a.credential),
+        service.authenticate_worker(&rotation_b.credential),
+    );
+    assert_ne!(valid_a.is_ok(), valid_b.is_ok());
+    let expired_hash: [u8; 32] = Sha256::digest(b"expired-worker-secret").into();
+    store
+        .rotate_worker_credential(
+            tenant_id,
+            principal_id,
+            concurrent.id,
+            Uuid::new_v4(),
+            &expired_hash,
+            chrono::Utc::now() - chrono::Duration::seconds(1),
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .authenticate_worker_credential(&expired_hash)
+        .await
+        .unwrap()
+        .is_none());
     let (first_writer, second_writer) = tokio::join!(
         store.mutate(ConnectorMutation {
             tenant_id,
@@ -208,6 +330,11 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
         .unwrap();
     assert_eq!(paused.lifecycle_state, "paused");
     assert!(store
+        .authenticate_worker_credential(&replacement_hash)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(store
         .mutate(ConnectorMutation {
             tenant_id,
             principal_id,
@@ -235,6 +362,11 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
         .unwrap()
         .unwrap();
     assert_eq!(resumed.lifecycle_state, "active");
+    assert!(store
+        .authenticate_worker_credential(&replacement_hash)
+        .await
+        .unwrap()
+        .is_some());
     let disconnected = store
         .mutate(ConnectorMutation {
             tenant_id,
@@ -249,6 +381,11 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
         .unwrap()
         .unwrap();
     assert_eq!(disconnected.lifecycle_state, "disconnected");
+    assert!(store
+        .authenticate_worker_credential(&replacement_hash)
+        .await
+        .unwrap()
+        .is_none());
     assert!(store
         .mutate(ConnectorMutation {
             tenant_id,

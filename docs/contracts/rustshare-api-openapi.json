@@ -5139,6 +5139,41 @@
         ]
       }
     },
+    "/api/v1/connectors/worker/session": {
+      "get": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "summary": "Connector credentials authenticate only to this Connector's worker API;\nthey are not accepted by user or Files routes.",
+        "operationId": "worker_session",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Connector ecw1 credential",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired, revoked, paused, or disconnected worker credential"
+          }
+        }
+      }
+    },
     "/api/v1/connectors/{id}": {
       "get": {
         "tags": [
@@ -5213,6 +5248,42 @@
           },
           "409": {
             "description": "Stale version or disconnected instance"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/connectors/{id}/worker-credentials": {
+      "post": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "operationId": "rotate_worker_credential",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedWorkerCredential"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -23011,6 +23082,23 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "IssuedWorkerCredential": {
+        "type": "object",
+        "required": [
+          "credential",
+          "expiresAt"
+        ],
+        "properties": {
+          "credential": {
+            "type": "string",
+            "description": "Returned only at issuance; the server stores only its SHA-256 hash."
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },

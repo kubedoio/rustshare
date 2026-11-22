@@ -44,6 +44,23 @@ pub struct ConnectorMutation<'a> {
     pub lifecycle_state: Option<&'a str>,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct ConnectorWorkerCredentialIdentity {
+    pub credential_id: Uuid,
+    pub tenant_id: Uuid,
+    pub principal_id: Uuid,
+    pub instance_id: Uuid,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct AuthenticatedConnectorWorkerRecord {
+    #[sqlx(flatten)]
+    pub identity: ConnectorWorkerCredentialIdentity,
+    #[sqlx(flatten)]
+    pub instance: ConnectorInstanceRecord,
+}
+
 #[derive(Clone)]
 pub struct ConnectorStore {
     pool: PgPool,
@@ -145,7 +162,8 @@ impl ConnectorStore {
         &self,
         mutation: ConnectorMutation<'_>,
     ) -> Result<Option<ConnectorInstanceRecord>, sqlx::Error> {
-        sqlx::query_as::<_, ConnectorInstanceRecord>(
+        let mut tx = self.pool.begin().await?;
+        let updated = sqlx::query_as::<_, ConnectorInstanceRecord>(
             r#"UPDATE connector_instances
                SET source_config = COALESCE($5, source_config),
                    credential_ref = CASE WHEN $6 THEN $7 ELSE credential_ref END,
@@ -171,6 +189,90 @@ impl ConnectorStore {
         .bind(mutation.credential_ref.is_some())
         .bind(mutation.credential_ref.flatten())
         .bind(mutation.lifecycle_state)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(record) = &updated {
+            if record.lifecycle_state == "disconnected" {
+                sqlx::query(
+                    "UPDATE connector_worker_credentials SET revoked_at = now() WHERE tenant_id = $1 AND instance_id = $2 AND revoked_at IS NULL",
+                )
+                .bind(mutation.tenant_id)
+                .bind(mutation.id)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+        tx.commit().await?;
+        Ok(updated)
+    }
+
+    pub async fn rotate_worker_credential(
+        &self,
+        tenant_id: Uuid,
+        principal_id: Uuid,
+        instance_id: Uuid,
+        credential_id: Uuid,
+        token_hash: &[u8; 32],
+        expires_at: DateTime<Utc>,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let instance = sqlx::query_scalar::<_, Uuid>(
+            r#"SELECT id FROM connector_instances
+               WHERE tenant_id = $1 AND workspace_id = $1 AND principal_id = $2
+                 AND id = $3 AND lifecycle_state = 'active' AND disconnected_at IS NULL
+               FOR UPDATE"#,
+        )
+        .bind(tenant_id)
+        .bind(principal_id)
+        .bind(instance_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if instance.is_none() {
+            return Err(sqlx::Error::RowNotFound);
+        }
+        sqlx::query(
+            "UPDATE connector_worker_credentials SET revoked_at = now() WHERE tenant_id = $1 AND instance_id = $2 AND revoked_at IS NULL",
+        )
+        .bind(tenant_id)
+        .bind(instance_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            r#"INSERT INTO connector_worker_credentials
+                   (id, tenant_id, instance_id, principal_id, token_hash, expires_at)
+               VALUES ($1, $2, $3, $4, $5, $6)"#,
+        )
+        .bind(credential_id)
+        .bind(tenant_id)
+        .bind(instance_id)
+        .bind(principal_id)
+        .bind(token_hash.as_slice())
+        .bind(expires_at)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await
+    }
+
+    pub async fn authenticate_worker_credential(
+        &self,
+        token_hash: &[u8; 32],
+    ) -> Result<Option<AuthenticatedConnectorWorkerRecord>, sqlx::Error> {
+        sqlx::query_as::<_, AuthenticatedConnectorWorkerRecord>(
+            r#"UPDATE connector_worker_credentials c
+               SET last_used_at = now()
+               FROM connector_instances i
+               WHERE c.token_hash = $1 AND c.revoked_at IS NULL AND c.expires_at > now()
+                 AND i.tenant_id = c.tenant_id AND i.id = c.instance_id
+                 AND i.principal_id = c.principal_id AND i.workspace_id = c.tenant_id
+                 AND i.lifecycle_state = 'active' AND i.disconnected_at IS NULL
+               RETURNING c.id AS credential_id, c.tenant_id, c.principal_id,
+                         c.instance_id, c.expires_at,
+                         i.id, i.connector_id, i.descriptor, i.source_config,
+                         i.credential_ref, i.mode, i.lifecycle_state, i.health,
+                         i.last_success_at, i.retry_count, i.queued_count,
+                         i.last_error, i.version, i.created_at, i.updated_at"#,
+        )
+        .bind(token_hash.as_slice())
         .fetch_optional(&self.pool)
         .await
     }

@@ -1,11 +1,15 @@
 use std::sync::Arc;
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use rand::Rng;
 use rustshare_core::domain::{
-    ConnectorDescriptor, ConnectorHealth, ConnectorInstanceId, ConnectorInstanceStatus,
-    ConnectorStatusError,
+    ActionCapability, ConnectorDescriptor, ConnectorHealth, ConnectorInstanceId,
+    ConnectorInstanceStatus, ConnectorStatusError, PrincipalId, TenantId, WorkspaceId,
 };
+use rustshare_resource_auth::{Delegation, PrincipalContext, PrincipalKind, WorkloadIdentity};
 use rustshare_storage::{
     ConnectorInstanceRecord, ConnectorMutation, ConnectorRegistration, ConnectorStore,
+    ConnectorWorkerCredentialIdentity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -36,6 +40,22 @@ pub struct RegisterConnector {
 
 fn empty_config() -> Value {
     serde_json::json!({})
+}
+
+const WORKER_CREDENTIAL_LIFETIME: chrono::Duration = chrono::Duration::days(30);
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IssuedWorkerCredential {
+    /// Returned only at issuance; the server stores only its SHA-256 hash.
+    pub credential: String,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthenticatedConnectorWorker {
+    pub context: PrincipalContext,
+    pub instance: ConnectorView,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -246,6 +266,89 @@ impl ConnectorService {
             .map(Into::into)
             .ok_or(ConnectorError::Conflict)
     }
+
+    pub async fn rotate_worker_credential(
+        &self,
+        tenant_id: Uuid,
+        principal_id: Uuid,
+        instance_id: Uuid,
+    ) -> Result<IssuedWorkerCredential, ConnectorError> {
+        let mut secret = [0_u8; 32];
+        rand::rng().fill_bytes(&mut secret);
+        let credential = format!(
+            "ecw1_{}.{}",
+            Uuid::new_v4().simple(),
+            URL_SAFE_NO_PAD.encode(secret)
+        );
+        let token_hash: [u8; 32] = Sha256::digest(credential.as_bytes()).into();
+        let expires_at = chrono::Utc::now() + WORKER_CREDENTIAL_LIFETIME;
+        self.store
+            .rotate_worker_credential(
+                tenant_id,
+                principal_id,
+                instance_id,
+                Uuid::new_v4(),
+                &token_hash,
+                expires_at,
+            )
+            .await
+            .map_err(|error| match error {
+                sqlx::Error::RowNotFound => ConnectorError::NotFound,
+                other => ConnectorError::Storage(other),
+            })?;
+        Ok(IssuedWorkerCredential {
+            credential,
+            expires_at,
+        })
+    }
+
+    pub async fn authenticate_worker(
+        &self,
+        credential: &str,
+    ) -> Result<AuthenticatedConnectorWorker, ConnectorError> {
+        if !credential.starts_with("ecw1_") || credential.len() > 128 {
+            return Err(ConnectorError::NotFound);
+        }
+        let token_hash: [u8; 32] = Sha256::digest(credential.as_bytes()).into();
+        let authenticated = self
+            .store
+            .authenticate_worker_credential(&token_hash)
+            .await?
+            .ok_or(ConnectorError::NotFound)?;
+        Ok(AuthenticatedConnectorWorker {
+            context: worker_principal_context(&authenticated.identity),
+            instance: authenticated.instance.into(),
+        })
+    }
+}
+
+fn worker_principal_context(identity: &ConnectorWorkerCredentialIdentity) -> PrincipalContext {
+    PrincipalContext {
+        principal_id: PrincipalId(identity.instance_id),
+        principal_kind: PrincipalKind::Service,
+        tenant_id: TenantId(identity.tenant_id),
+        workspace_id: WorkspaceId(identity.tenant_id),
+        group_ids: Vec::new(),
+        grants: Vec::new(),
+        authentication: Some(rustshare_resource_auth::AuthenticationContext {
+            method: "connector_worker_credential".into(),
+            ..Default::default()
+        }),
+        delegation: Some(Delegation {
+            issuer_principal_id: PrincipalId(identity.principal_id),
+            delegate_principal_id: PrincipalId(identity.instance_id),
+            actions: vec![ActionCapability::new("files.write")],
+            workspace_id: Some(WorkspaceId(identity.tenant_id)),
+            resource_scope: None,
+            expires_at: Some(identity.expires_at),
+            grant_id: Some(identity.credential_id.to_string()),
+        }),
+        workload_identity: Some(WorkloadIdentity {
+            application_id: None,
+            subject: Some(format!("connector-instance:{}", identity.instance_id)),
+        }),
+        correlation_id: None,
+    }
 }
 
 fn mode_enabled(descriptor: &ConnectorDescriptor, mode: &str) -> bool {
@@ -342,5 +445,47 @@ mod tests {
         assert!(validate_credential_ref(Some("bearer-token-value")).is_err());
         assert!(validate_credential_ref(Some("secret://")).is_err());
         assert!(validate_credential_ref(Some("secret://connectors/local-text/key-1")).is_ok());
+    }
+
+    #[test]
+    fn worker_context_keeps_owner_principal_and_separate_workload_identity() {
+        let identity = ConnectorWorkerCredentialIdentity {
+            credential_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            principal_id: Uuid::new_v4(),
+            instance_id: Uuid::new_v4(),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+        };
+        let context = worker_principal_context(&identity);
+        assert_eq!(context.principal_id, PrincipalId(identity.instance_id));
+        assert_eq!(context.principal_kind, PrincipalKind::Service);
+        assert_eq!(context.tenant_id, TenantId(identity.tenant_id));
+        assert_eq!(context.workspace_id, WorkspaceId(identity.tenant_id));
+        assert_eq!(
+            context
+                .authentication
+                .as_ref()
+                .map(|auth| auth.method.as_str()),
+            Some("connector_worker_credential")
+        );
+        assert_eq!(
+            context
+                .workload_identity
+                .as_ref()
+                .and_then(|workload| workload.subject.as_deref()),
+            Some(format!("connector-instance:{}", identity.instance_id).as_str())
+        );
+        let delegated_write = context
+            .effective_user_authority(&ActionCapability::new("files.write"), None)
+            .unwrap();
+        assert_eq!(
+            delegated_write.user_authority_id,
+            PrincipalId(identity.principal_id)
+        );
+        for action in ["files.read", "files.delete", "memory.read", "memory.write"] {
+            assert!(context
+                .effective_user_authority(&ActionCapability::new(action), None)
+                .is_err());
+        }
     }
 }

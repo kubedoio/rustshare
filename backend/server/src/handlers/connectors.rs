@@ -1,6 +1,7 @@
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
@@ -10,7 +11,7 @@ use uuid::Uuid;
 use crate::{
     handlers::{AppError, AuthenticatedUser},
     services::connector_service::{
-        ConnectorError, ConnectorView, RegisterConnector, UpdateConnector,
+        ConnectorError, ConnectorView, IssuedWorkerCredential, RegisterConnector, UpdateConnector,
     },
     state::DatabaseState,
 };
@@ -28,9 +29,82 @@ pub struct UpdateConnectorRequest {
     pub lifecycle_state: Option<String>,
 }
 
+#[utoipa::path(post, path = "/api/v1/connectors/{id}/worker-credentials", params(("id" = Uuid, Path)), responses((status = 201, body = IssuedWorkerCredential)), security(("bearer_auth" = [])))]
+pub async fn rotate_worker_credential(
+    State(state): State<DatabaseState>,
+    auth: AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<IssuedWorkerCredential>), AppError> {
+    let credential = state
+        .connector_service
+        .rotate_worker_credential(auth.tenant_id, auth.user_id, id)
+        .await
+        .map_err(map_error)?;
+    Ok((StatusCode::CREATED, Json(credential)))
+}
+
+/// Connector credentials authenticate only to this Connector's worker API;
+/// they are not accepted by user or Files routes.
+#[utoipa::path(get, path = "/api/v1/connectors/worker/session", params(("Authorization" = String, Header, description = "Connector ecw1 credential")), responses((status = 200, body = ConnectorView), (status = 401, description = "Invalid, expired, revoked, paused, or disconnected worker credential")))]
+pub async fn worker_session(
+    State(state): State<DatabaseState>,
+    headers: HeaderMap,
+) -> Result<Json<ConnectorView>, Response> {
+    let credential = connector_credential(&headers).ok_or_else(worker_auth_rejection)?;
+    match state
+        .connector_service
+        .authenticate_worker(credential)
+        .await
+    {
+        Ok(worker) => Ok(Json(worker.instance)),
+        Err(ConnectorError::NotFound) => Err(worker_auth_rejection()),
+        Err(error) => Err(map_error(error).into_response()),
+    }
+}
+
+fn connector_credential(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split_once(' '))
+        .filter(|(scheme, token)| scheme.eq_ignore_ascii_case("Connector") && !token.is_empty())
+        .map(|(_, token)| token)
+}
+
+fn worker_auth_rejection() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(crate::handlers::ErrorResponse::new(
+            "Invalid Connector credential",
+        )),
+    )
+        .into_response()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::UpdateConnectorRequest;
+    use super::{connector_credential, UpdateConnectorRequest};
+    use axum::http::{header::AUTHORIZATION, HeaderMap, HeaderValue};
+
+    #[test]
+    fn worker_credential_uses_a_separate_authorization_scheme() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Connector ecw1_secret"),
+        );
+        assert_eq!(connector_credential(&headers), Some("ecw1_secret"));
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("Bearer ecw1_secret"),
+        );
+        assert_eq!(connector_credential(&headers), None);
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_static("connector ecw1_secret"),
+        );
+        assert_eq!(connector_credential(&headers), Some("ecw1_secret"));
+    }
 
     #[test]
     fn credential_reference_patch_distinguishes_omitted_null_and_value() {

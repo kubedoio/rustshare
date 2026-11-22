@@ -114,13 +114,21 @@ Use provider-supported OAuth/OIDC/service credentials as appropriate. The Connec
 
 ### Local/device connector
 
-Use Elembra device authorization/scoped tokens or OIDC device flow. Never store the user's Elembra password.
+Never store the user's Elembra password. Connector workers use an instance-scoped workload credential, separate from the owner's user session and device tokens.
 
 Each installation has a stable revocable device/connector instance ID.
 
+The current worker credential contract is:
+
+- `POST /api/v1/connectors/{id}/worker-credentials` issues or rotates one 30-day credential after owner authentication. The opaque value is returned once; only its SHA-256 hash is stored. Rotation revokes the previous credential.
+- `GET /api/v1/connectors/worker/session` accepts `Authorization: Connector <credential>`. It fails closed for expired, rotated, paused, disconnected, or unknown credentials and returns only the safe instance view.
+- Pausing an instance suspends worker authentication. Disconnecting it revokes its credential and is terminal.
+
+The worker credential is valid only for its bound Connector instance and cannot authenticate to user, Files, or Memory routes.
+
 ## Elembra authority
 
-Connector service identity authenticates the process. An Elembra PrincipalContext identifies the user/workspace whose integration is being exercised.
+Connector service identity authenticates the process. At the trusted boundary, the server builds a PrincipalContext whose Service principal is the Connector instance, whose workload identity identifies that instance, and whose explicit delegation names the owner Principal. The current delegation is limited to `files.write` in the authorized workspace; the source Application still checks the owner's current resource permissions. It grants no Files read/delete/share or Memory authority.
 
 A Connector may not use service credentials to bypass the Principal's Elembra authority when writing into Files/Memory.
 
