@@ -158,7 +158,10 @@ test('institutional Calendar journey preserves linked context and denies unavail
 	);
 	await page.getByRole('button', { name: 'Close event details' }).click();
 	await page.getByPlaceholder('Search files, folders, or activity...').fill(title);
-	await page.getByRole('option').filter({ hasText: title }).click();
+	await page
+		.getByRole('listbox')
+		.getByRole('option', { name: new RegExp(`^${title} #`) })
+		.click();
 	await expect(page).toHaveURL(new RegExp(`/apps/meetings/${meetingId}$`));
 	await page.reload();
 	await expect(page.locator('main.doc-content')).toContainText('Synthetic Gate A discussion');
