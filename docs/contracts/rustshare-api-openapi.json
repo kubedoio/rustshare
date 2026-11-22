@@ -5139,6 +5139,224 @@
         ]
       }
     },
+    "/api/v1/connectors/worker/lease": {
+      "post": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "operationId": "claim_worker_lease",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Connector ecw1 credential",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectorExecutionLeaseView"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/connectors/worker/lease/{lease_id}/ack": {
+      "post": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "operationId": "acknowledge_worker_lease",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Connector ecw1 credential",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lease_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcknowledgeConnectorExecution"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Checkpoint acknowledged"
+          },
+          "409": {
+            "description": "Lease expired, fenced, or checkpoint is stale"
+          }
+        }
+      }
+    },
+    "/api/v1/connectors/worker/lease/{lease_id}/fail": {
+      "post": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "operationId": "fail_worker_lease",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Connector ecw1 credential",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lease_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FailConnectorExecution"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Failure status recorded"
+          },
+          "409": {
+            "description": "Lease expired or fenced"
+          }
+        }
+      }
+    },
+    "/api/v1/connectors/worker/lease/{lease_id}/renew": {
+      "post": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "operationId": "renew_worker_lease",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Connector ecw1 credential",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lease_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerLeaseFenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorExecutionLeaseView"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Lease expired or fenced"
+          }
+        }
+      }
+    },
+    "/api/v1/connectors/worker/session": {
+      "get": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "summary": "Connector credentials authenticate only to this Connector's worker API;\nthey are not accepted by user or Files routes.",
+        "operationId": "worker_session",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Connector ecw1 credential",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired, revoked, paused, or disconnected worker credential"
+          }
+        }
+      }
+    },
     "/api/v1/connectors/{id}": {
       "get": {
         "tags": [
@@ -5213,6 +5431,42 @@
           },
           "409": {
             "description": "Stale version or disconnected instance"
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/connectors/{id}/worker-credentials": {
+      "post": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "operationId": "rotate_worker_credential",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedWorkerCredential"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -16709,6 +16963,26 @@
           }
         }
       },
+      "AcknowledgeConnectorExecution": {
+        "type": "object",
+        "required": [
+          "fence",
+          "expectedCheckpointVersion",
+          "cursor"
+        ],
+        "properties": {
+          "cursor": {},
+          "expectedCheckpointVersion": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "fence": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
       "ActionAssignee": {
         "type": "object",
         "required": [
@@ -18603,6 +18877,34 @@
           }
         },
         "additionalProperties": false
+      },
+      "ConnectorExecutionLeaseView": {
+        "type": "object",
+        "required": [
+          "leaseId",
+          "fence",
+          "expiresAt",
+          "checkpointVersion"
+        ],
+        "properties": {
+          "checkpointVersion": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "cursor": {},
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "leaseId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
       },
       "ConnectorHealth": {
         "type": "string",
@@ -21280,6 +21582,23 @@
         ],
         "description": "Event types in the system"
       },
+      "FailConnectorExecution": {
+        "type": "object",
+        "required": [
+          "fence",
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ConnectorStatusError"
+          },
+          "fence": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
       "FeaturesResponse": {
         "type": "object",
         "required": [
@@ -23011,6 +23330,23 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "IssuedWorkerCredential": {
+        "type": "object",
+        "required": [
+          "credential",
+          "expiresAt"
+        ],
+        "properties": {
+          "credential": {
+            "type": "string",
+            "description": "Returned only at issuance; the server stores only its SHA-256 hash."
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -31720,6 +32056,19 @@
             "type": "string"
           }
         }
+      },
+      "WorkerLeaseFenceRequest": {
+        "type": "object",
+        "required": [
+          "fence"
+        ],
+        "properties": {
+          "fence": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
       },
       "WorkflowResponse": {
         "type": "object",

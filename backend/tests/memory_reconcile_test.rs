@@ -543,7 +543,9 @@ async fn files_reconcile_worker_leases_fence_checkpoints_and_resume_cursors(db: 
     let _guard = SERIAL.lock().await;
     sqlx::query("INSERT INTO tenants (id,name,created_at,updated_at) SELECT ('00000000-0000-0000-0000-'||lpad(to_hex(i),12,'0'))::uuid, 'reconcile discovery '||i, NOW(), NOW() FROM generate_series(1,201) i")
         .execute(&db).await.unwrap();
-    for expected in [100_u128, 200] {
+    // The migration-seeded default tenant sorts before fixture tenants, so it
+    // occupies the first slot in the first bounded discovery page.
+    for expected in [99_u128, 199] {
         discover_tenant_page(&MetadataStore::new(db.clone()))
             .await
             .unwrap();
