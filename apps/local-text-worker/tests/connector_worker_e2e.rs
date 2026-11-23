@@ -317,7 +317,14 @@ async fn assert_memory_worker_delivery_scope(owner_pool: &sqlx::PgPool, memory_e
     let chat_event = Uuid::new_v4();
     let buzz_event = Uuid::new_v4();
     let chat_outbox_event = Uuid::new_v4();
-    for event_id in [memory_event, chat_event, buzz_event, chat_outbox_event] {
+    let cross_consumer_event = Uuid::new_v4();
+    for event_id in [
+        memory_event,
+        chat_event,
+        buzz_event,
+        chat_outbox_event,
+        cross_consumer_event,
+    ] {
         sqlx::query(
             "INSERT INTO integration_outbox (source,event_id,event_type,application_id,tenant_id,workspace_id,event_json) VALUES ($1,$2,'io.elembra.chat.test.v1','io.elembra.chat',$3,$3,'{}'::jsonb)",
         )
@@ -379,7 +386,7 @@ async fn assert_memory_worker_delivery_scope(owner_pool: &sqlx::PgPool, memory_e
         "INSERT INTO integration_deliveries (consumer_id,source,event_id,event_type,tenant_id,workspace_id) VALUES ('io.elembra.memory.chat-projection.v1',$1,$2,'files.test.v1',$3,$3)",
     )
     .bind(&source)
-    .bind(chat_event)
+    .bind(cross_consumer_event)
     .bind(Uuid::nil())
     .execute(&worker_pool)
     .await;
