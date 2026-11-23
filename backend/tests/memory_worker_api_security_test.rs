@@ -66,7 +66,6 @@ async fn memory_worker_http_rejects_unbounded_unauthenticated_and_malformed_requ
             "/internal/v1/memory/files/reconcile/page",
             json!({ "tenant_id": Uuid::new_v4(), "after_file_id": null, "limit": 1, "extra": true }),
             vec![
-                json!({ "tenant_id": Uuid::nil(), "after_file_id": null, "limit": 1 }),
                 json!({ "tenant_id": Uuid::new_v4(), "after_file_id": Uuid::nil(), "limit": 1 }),
                 json!({ "tenant_id": Uuid::new_v4(), "after_file_id": null, "limit": 101 }),
             ],
@@ -169,4 +168,22 @@ async fn memory_worker_http_rejects_unbounded_unauthenticated_and_malformed_requ
             "method: {path}"
         );
     }
+
+    let path = "/internal/v1/memory/files/reconcile/page";
+    let body = serde_json::to_vec(&json!({
+        "tenant_id": Uuid::nil(),
+        "after_file_id": null,
+        "limit": 1
+    }))
+    .unwrap();
+    let signed = auth.sign_request("POST", path, &body).unwrap();
+    let response = app
+        .oneshot(request(Method::POST, path, body, Some(signed)))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "the configured default tenant is represented by the nil UUID"
+    );
 }
