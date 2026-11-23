@@ -992,21 +992,27 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         Some(first_v2_version.as_str())
     );
 
-    let missing_object_key = format!("memory-e2e/missing/{}", Uuid::new_v4());
     let content_hash = first_v2_revision.trim_start_matches("sha256:");
-    let original_object_key: String = sqlx::query_scalar(
-        "SELECT storage_key FROM file_versions WHERE file_id=$1 AND content_hash=$2",
+    let object_store = rustshare_storage::ObjectStore::new(
+        env::var("S3_ENDPOINT")
+            .or_else(|_| env::var("RUSTFS_ENDPOINT"))
+            .unwrap_or_else(|_| "http://localhost:9000".into()),
+        env::var("S3_REGION")
+            .or_else(|_| env::var("RUSTFS_REGION"))
+            .unwrap_or_else(|_| "us-east-1".into()),
+        env::var("S3_BUCKET")
+            .or_else(|_| env::var("RUSTFS_BUCKET"))
+            .unwrap_or_else(|_| "rustshare".into()),
     )
-    .bind(first_file_id)
-    .bind(content_hash)
-    .fetch_one(&pool)
     .await
-    .expect("read authoritative Files object key");
-    sqlx::query("UPDATE file_versions SET storage_key=$3 WHERE file_id=$1 AND content_hash=$2")
-        .bind(first_file_id)
-        .bind(content_hash)
-        .bind(&missing_object_key)
-        .execute(&pool)
+    .expect("connect to the Files object store");
+    let object_key = format!("blobs/{content_hash}");
+    let original_object = object_store
+        .get(&object_key)
+        .await
+        .expect("read the authoritative Files version object");
+    object_store
+        .delete(&object_key)
         .await
         .expect("make the live Files version unavailable");
     let unavailable_source_search =
@@ -1027,13 +1033,10 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     .await
     .expect("confirm stale search content remains present");
     assert!(stale_content_remains_indexed);
-    sqlx::query("UPDATE file_versions SET storage_key=$3 WHERE file_id=$1 AND content_hash=$2")
-        .bind(first_file_id)
-        .bind(content_hash)
-        .bind(original_object_key)
-        .execute(&pool)
+    object_store
+        .put(&object_key, original_object)
         .await
-        .expect("restore authoritative Files object key");
+        .expect("restore authoritative Files version object");
 
     let (recipient_email, recipient_password) = create_user(&client, &server, &owner_token).await;
     let recipient_token = login(
