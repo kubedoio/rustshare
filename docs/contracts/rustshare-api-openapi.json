@@ -14606,8 +14606,8 @@
               }
             }
           },
-          "500": {
-            "description": "Source access audit unavailable",
+          "429": {
+            "description": "Rate limited",
             "content": {
               "application/json": {
                 "schema": {
@@ -14616,8 +14616,8 @@
               }
             }
           },
-          "429": {
-            "description": "Rate limited",
+          "500": {
+            "description": "Source access audit unavailable",
             "content": {
               "application/json": {
                 "schema": {
