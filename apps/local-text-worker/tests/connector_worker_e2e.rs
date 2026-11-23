@@ -304,6 +304,56 @@ async fn wait_for_memory_projection(
     panic!("timed out waiting for authorized Memory Files projection");
 }
 
+async fn insert_memory_search_fixture(
+    pool: &sqlx::PgPool,
+    tenant_id: Uuid,
+    file_id: Uuid,
+    read_principal: &str,
+) -> Uuid {
+    let id = Uuid::new_v4();
+    let rows = sqlx::query(
+        "INSERT INTO note_index_chunks (id,tenant_id,workspace_id,source_folder_id,note_id,source_file_id,file_name,file_path,content,mime_type,owner_id,embedding,acl_hash,acl_version,read_acl,visibility,embedding_policy) \
+         SELECT $1,tenant_id,tenant_id,parent_folder_id,id,id,name,path,'alpha v2','text/markdown',owner_id,NULL,'stale-test',1,ARRAY[$3],'private','allowed' \
+         FROM files WHERE tenant_id=$2 AND id=$4 AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .bind(tenant_id)
+    .bind(read_principal)
+    .bind(file_id)
+    .execute(pool)
+    .await
+    .expect("insert Memory search fixture");
+    assert_eq!(rows.rows_affected(), 1);
+    id
+}
+
+async fn wait_for_memory_fixture_removed(pool: &sqlx::PgPool, fixture_id: Uuid) {
+    for _ in 0..100 {
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM note_index_chunks WHERE id=$1)")
+                .bind(fixture_id)
+                .fetch_one(pool)
+                .await
+                .expect("check share ACL refresh effect");
+        if !exists {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting for share ACL refresh to remove its Memory fixture");
+}
+
+async fn memory_search_fixture_exists(pool: &sqlx::PgPool, id: Uuid, principal: &str) -> bool {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM note_index_chunks WHERE id=$1 AND content='alpha v2' AND read_acl=ARRAY[$2])",
+    )
+    .bind(id)
+    .bind(principal)
+    .fetch_one(pool)
+    .await
+    .expect("verify deliberately stale Memory search row")
+}
+
 async fn assert_memory_worker_delivery_scope(owner_pool: &sqlx::PgPool, memory_event_id: Uuid) {
     const MEMORY: &str = "io.elembra.memory.files-connector.v1";
     let worker_database_url = env::var("MEMORY_DATABASE_URL").expect("set worker DATABASE_URL");
@@ -906,6 +956,8 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         Some(tenant_id),
     )
     .await;
+    let share_refresh_fixture =
+        insert_memory_search_fixture(&pool, tenant_id, first_file_id, "share-refresh").await;
     let share = client
         .post(format!("{server}/api/v1/files/{first_file_id}/share"))
         .bearer_auth(&owner_token)
@@ -914,13 +966,15 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .await
         .expect("share imported Files resource with recipient");
     assert_eq!(share.status(), StatusCode::CREATED);
+    wait_for_memory_fixture_removed(&pool, share_refresh_fixture).await;
     let share_id = share.json::<Value>().await.expect("decode share")["share_id"]
         .as_str()
         .expect("share id")
         .to_owned();
-    let recipient_result = loop {
-        // The share must make this Files resource discoverable through current
-        // authorization even while its Memory content projection is stale.
+    let mut recipient_result = None;
+    for _ in 0..20 {
+        // The shared Files resource remains discoverable after Notes ACL
+        // refresh removes the Connector file's Memory content projection.
         let search = keyword_search(&client, &server, &recipient_token, "shared.md").await;
         if let Some(result) = search["results"]
             .as_array()
@@ -928,10 +982,13 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
             .iter()
             .find(|result| result["provenance"]["file_id"] == first_file_id.to_string())
         {
-            break result.clone();
+            recipient_result = Some(result.clone());
+            break;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    };
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let recipient_result =
+        recipient_result.expect("current Files share makes the source searchable");
     assert!(recipient_result["snippet"]
         .as_str()
         .unwrap()
@@ -947,6 +1004,8 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .fetch_one(&pool)
         .await
         .expect("construct existing ACL principal shape");
+    let revoke_refresh_fixture =
+        insert_memory_search_fixture(&pool, tenant_id, first_file_id, &stale_acl_user).await;
     let revoke = client
         .delete(format!("{server}/api/v1/shares/{share_id}/recipient"))
         .bearer_auth(&owner_token)
@@ -957,27 +1016,12 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     // Share ACL refresh is best-effort and may remove this non-Notes source's
     // projection. Recreate the stale row explicitly so this assertion proves
     // current Files authorization hides indexed content after revocation.
-    tokio::time::sleep(Duration::from_millis(250)).await;
-    sqlx::query("DELETE FROM note_index_chunks WHERE tenant_id=$1 AND source_file_id=$2")
-        .bind(tenant_id)
-        .bind(first_file_id)
-        .execute(&pool)
-        .await
-        .expect("clear any refreshed Memory chunks before stale-index fixture");
-    let stale_index_rows = sqlx::query(
-        "INSERT INTO note_index_chunks (id,tenant_id,workspace_id,source_folder_id,note_id,source_file_id,file_name,file_path,content,mime_type,owner_id,embedding,acl_hash,acl_version,read_acl,visibility,embedding_policy) \
-         SELECT $1,tenant_id,tenant_id,parent_folder_id,id,id,name,path,'alpha v2','text/markdown',owner_id,NULL,'stale-test',1,ARRAY[$3],'private','allowed' \
-         FROM files WHERE tenant_id=$2 AND id=$4 AND deleted_at IS NULL",
-    )
-    .bind(Uuid::new_v4())
-    .bind(tenant_id)
-    .bind(&stale_acl_user)
-    .bind(first_file_id)
-    .execute(&pool)
-    .await
-    .expect("insert deliberately stale Memory search row");
-    assert_eq!(stale_index_rows.rows_affected(), 1);
+    wait_for_memory_fixture_removed(&pool, revoke_refresh_fixture).await;
+    let stale_index_id =
+        insert_memory_search_fixture(&pool, tenant_id, first_file_id, &stale_acl_user).await;
+    assert!(memory_search_fixture_exists(&pool, stale_index_id, &stale_acl_user).await);
     let revoked_search = keyword_search(&client, &server, &recipient_token, "alpha v2").await;
+    assert!(memory_search_fixture_exists(&pool, stale_index_id, &stale_acl_user).await);
     assert!(
         revoked_search["results"]
             .as_array()
