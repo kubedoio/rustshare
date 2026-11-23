@@ -210,7 +210,10 @@ pub async fn get_file(
     get,
     path = "/api/v1/files/{id}/download",
     tag = "Files",
-    params(("id" = Uuid, Path, description = "File ID")),
+    params(
+        ("id" = Uuid, Path, description = "File ID"),
+        ("version" = Option<String>, Query, description = "Optional immutable sha256 source version"),
+    ),
     responses(
         (status = 200, description = "File content"),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
@@ -221,8 +224,16 @@ pub async fn download_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
+    Query(query): Query<FileVersionQuery>,
 ) -> Result<Response, AppError> {
-    stream_file_response(&state, auth.user_id, file_id, FileDisposition::Attachment).await
+    stream_file_response(
+        &state,
+        auth.user_id,
+        file_id,
+        FileDisposition::Attachment,
+        query.version.as_deref(),
+    )
+    .await
 }
 
 /// Download file content directly with proper filename.
@@ -235,7 +246,10 @@ pub async fn download_file(
     get,
     path = "/api/v1/files/{id}/content",
     tag = "Files",
-    params(("file_id" = Uuid, Path, description = "File Id")),
+    params(
+        ("file_id" = Uuid, Path, description = "File Id"),
+        ("version" = Option<String>, Query, description = "Optional immutable sha256 source version"),
+    ),
     responses(
         (status = 200, description = "Success"),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
@@ -246,8 +260,22 @@ pub async fn download_file_content(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
+    Query(query): Query<FileVersionQuery>,
 ) -> Result<Response, AppError> {
-    stream_file_response(&state, auth.user_id, file_id, FileDisposition::Attachment).await
+    stream_file_response(
+        &state,
+        auth.user_id,
+        file_id,
+        FileDisposition::Attachment,
+        query.version.as_deref(),
+    )
+    .await
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct FileVersionQuery {
+    /// Optional immutable `sha256:<hex>` source version.
+    pub version: Option<String>,
 }
 
 enum FileDisposition {
@@ -260,6 +288,7 @@ async fn stream_file_response(
     user_id: Uuid,
     file_id: Uuid,
     disposition: FileDisposition,
+    version: Option<&str>,
 ) -> Result<Response, AppError> {
     // Get file metadata first (this also checks permissions)
     let file = state.file_service.get_file(file_id, user_id).await?;
@@ -269,7 +298,22 @@ async fn stream_file_response(
     }
 
     // Stream the file content directly (avoids redirecting to internal storage URLs)
-    let storage_key = file.storage_key();
+    let storage_key = if let Some(version) = version {
+        let hash = version
+            .strip_prefix("sha256:")
+            .filter(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .ok_or_else(|| AppError::not_found("File version unavailable"))?;
+        state
+            .metadata_store
+            .list_file_versions(file.id, file.owner_id)
+            .await?
+            .into_iter()
+            .find(|candidate| candidate.content_hash.eq_ignore_ascii_case(hash))
+            .map(|candidate| candidate.storage_key())
+            .ok_or_else(|| AppError::not_found("File version unavailable"))?
+    } else {
+        file.storage_key()
+    };
     let (content_type, content_length, stream) = state
         .object_store
         .get_stream(&storage_key)
@@ -325,7 +369,10 @@ async fn stream_file_response(
     get,
     path = "/api/v1/files/{id}/preview",
     tag = "Files",
-    params(("file_id" = Uuid, Path, description = "File Id")),
+    params(
+        ("file_id" = Uuid, Path, description = "File Id"),
+        ("version" = Option<String>, Query, description = "Optional immutable sha256 source version"),
+    ),
     responses(
         (status = 200, description = "Success"),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
@@ -336,8 +383,16 @@ pub async fn preview_file(
     State(state): State<AppState>,
     auth: AuthenticatedUser,
     Path(file_id): Path<Uuid>,
+    Query(query): Query<FileVersionQuery>,
 ) -> Result<Response, AppError> {
-    stream_file_response(&state, auth.user_id, file_id, FileDisposition::Inline).await
+    stream_file_response(
+        &state,
+        auth.user_id,
+        file_id,
+        FileDisposition::Inline,
+        query.version.as_deref(),
+    )
+    .await
 }
 
 /// Delete a file.

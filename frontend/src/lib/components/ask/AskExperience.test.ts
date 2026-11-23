@@ -4,22 +4,62 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AskExperience from './AskExperience.svelte';
 import { ApiError } from '$lib/api/types';
 
-const mocks = vi.hoisted(() => ({ askWorkspace: vi.fn(), openAskCitation: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+	askWorkspace: vi.fn(),
+	openAskCitation: vi.fn(),
+	goto: vi.fn()
+}));
 
 vi.mock('$lib/api/ask', () => ({
 	askWorkspace: mocks.askWorkspace,
 	openAskCitation: mocks.openAskCitation
 }));
 vi.mock('$lib/stores/auth', () => ({ currentUser: readable({ tenant_id: 'tenant-1' }) }));
+vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
 
 describe('AskExperience', () => {
 	beforeEach(() => {
 		mocks.askWorkspace.mockReset();
 		mocks.openAskCitation.mockReset();
+		mocks.goto.mockReset();
 		mocks.openAskCitation.mockResolvedValue({
 			available: true,
 			resource_ref: 'elembra://io.elembra.chat/message/m-1'
 		});
+	});
+
+	it('opens a cited Note at the exact authorized historical version', async () => {
+		mocks.askWorkspace.mockResolvedValue({
+			answer: 'Grounded answer',
+			citations: [
+				{
+					resource_ref:
+						'elembra://io.elembra.files/file/n-1?version=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+					title: 'Plan.md',
+					location: '/Plan.md',
+					provenance: { note_id: 'n-1' }
+				}
+			],
+			source_count: 1,
+			grounded: true,
+			insufficient_evidence: false,
+			run_id: 'run-1'
+		});
+		mocks.openAskCitation.mockResolvedValue({
+			available: true,
+			resource_ref:
+				'elembra://io.elembra.files/file/n-1?version=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+		});
+		const { container } = render(AskExperience);
+		await fireEvent.input(screen.getByLabelText('Your question'), {
+			target: { value: 'What changed?' }
+		});
+		await fireEvent.submit(container.querySelector('form')!);
+		await waitFor(() => expect(screen.getByText('Plan.md')).toBeTruthy());
+		await fireEvent.click(screen.getByRole('button', { name: /Plan\.md/ }));
+		expect(mocks.goto).toHaveBeenCalledWith(
+			'/apps/notes/n-1?sourceVersion=sha256%3Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+		);
 	});
 
 	it('uses one component for a scoped question and renders returned citations', async () => {

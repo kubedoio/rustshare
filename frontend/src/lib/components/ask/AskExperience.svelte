@@ -81,7 +81,16 @@
 
 	function fileId(resourceRef: string, type: 'file' | 'folder'): string | null {
 		const prefix = `elembra://io.elembra.files/${type}/`;
-		return resourceRef.startsWith(prefix) ? resourceRef.slice(prefix.length) : null;
+		const ref = resourceRef.split(/[?#]/, 1)[0];
+		return ref.startsWith(prefix) ? ref.slice(prefix.length) : null;
+	}
+
+	function sourceVersion(resourceRef: string): string | null {
+		try {
+			return new URL(resourceRef).searchParams.get('version');
+		} catch {
+			return null;
+		}
 	}
 
 	function sourceApplication(citation: AskCitation): string {
@@ -100,8 +109,20 @@
 			}
 			const file = fileId(opened.resource_ref, 'file');
 			const folder = fileId(opened.resource_ref, 'folder');
-			if (file) goto(`/files?preview=${encodeURIComponent(file)}`);
-			else if (folder) goto(`/files?folder=${encodeURIComponent(folder)}`);
+			const version = sourceVersion(opened.resource_ref);
+			const noteId = citation.provenance.note_id;
+			if (file && noteId === file) {
+				if (!version) {
+					error = 'The cited Note version is unavailable.';
+					return;
+				}
+				goto(
+					`/apps/notes/${encodeURIComponent(noteId)}?sourceVersion=${encodeURIComponent(version)}`
+				);
+			} else if (file) {
+				const versionParam = version ? `&version=${encodeURIComponent(version)}` : '';
+				goto(`/files?preview=${encodeURIComponent(file)}${versionParam}`);
+			} else if (folder) goto(`/files?folder=${encodeURIComponent(folder)}`);
 			else if (opened.resource_ref.startsWith('elembra://io.elembra.chat/')) {
 				onChatCitationOpen(opened);
 			}

@@ -160,6 +160,7 @@
 	let shareType = $state<'file' | 'folder'>('file');
 	let versionHistoryTarget = $state<File | null>(null);
 	let previewTarget = $state<File | null>(null);
+	let previewVersion = $state<string | null>(null);
 	let replaceFileTarget = $state<File | null>(null);
 
 	// Toast
@@ -899,6 +900,7 @@
 			return;
 		}
 		previewTarget = file;
+		previewVersion = null;
 		showFilePreviewModal = true;
 	}
 
@@ -913,6 +915,7 @@
 		const url = $page.url;
 		const previewId = url.searchParams.get('preview');
 		if (!previewId) return;
+		const sourceVersion = url.searchParams.get('version');
 		const rawUrl = url.pathname + url.search;
 		if (rawUrl === lastHandledPreviewUrl) return;
 
@@ -929,6 +932,7 @@
 					navigateToNote(file.id, cleanUrl);
 				} else {
 					previewTarget = file;
+					previewVersion = sourceVersion;
 					showFilePreviewModal = true;
 				}
 			})
@@ -2050,9 +2054,11 @@
 	onVersionRestored={handleVersionRestored}
 	{showFilePreviewModal}
 	{previewTarget}
+	{previewVersion}
 	onFilePreviewClose={() => {
 		showFilePreviewModal = false;
 		previewTarget = null;
+		previewVersion = null;
 	}}
 	onEditFile={handleEditFile}
 	{showReplaceFileModal}

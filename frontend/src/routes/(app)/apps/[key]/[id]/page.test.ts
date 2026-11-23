@@ -9,7 +9,8 @@ const {
 	mockPageStore,
 	mockMutateAsync,
 	getEventForNote,
-	unlinkEventNote
+	unlinkEventNote,
+	getFileContent
 } = vi.hoisted(() => {
 	type PageValue = { params: { key: string; id: string }; url: URL };
 	let value: PageValue = {
@@ -30,6 +31,7 @@ const {
 		mockMutateAsync: vi.fn(),
 		getEventForNote: vi.fn(),
 		unlinkEventNote: vi.fn(),
+		getFileContent: vi.fn(),
 		mockPageStore: {
 			subscribe(run: (value: PageValue) => void) {
 				subscribers.add(run);
@@ -49,6 +51,9 @@ function editorProps() {
 	return (call[1] ?? call[0]) as {
 		saveStatus: string;
 		attachments: { id: string }[];
+		content: string;
+		mode: string;
+		permissions: { canEdit: boolean };
 		$$events: {
 			save: (event: CustomEvent<{ content: string }>) => Promise<void>;
 			upload: (event: CustomEvent<{ files: File[] }>) => void;
@@ -177,7 +182,8 @@ vi.mock('$lib/api/calendar', () => ({
 
 vi.mock('$lib/api/files', () => ({
 	uploadFile: vi.fn(),
-	deleteFile: vi.fn()
+	deleteFile: vi.fn(),
+	getFileContent
 }));
 
 vi.mock('$lib/api/folders', () => ({
@@ -620,6 +626,35 @@ describe('Note detail page conflict banner', () => {
 		render(Page);
 
 		expect(screen.queryByText('Previous note')).toBeNull();
+	});
+
+	it('shows the exact cited Note version read-only without falling back to current content', async () => {
+		const { createQuery } = await import('$lib/query-compat');
+		vi.mocked(createQuery).mockReturnValue(
+			createMockQuery(noteItem('note-1', ['current-attachment']))
+		);
+		mockPageStore.set({
+			params: { key: 'notes', id: 'note-1' },
+			url: new URL(
+				'http://localhost/apps/notes/note-1?sourceVersion=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+			)
+		});
+		getFileContent.mockResolvedValue('# Historical H1\n\nHistorical body');
+
+		render(Page);
+
+		await waitFor(() =>
+			expect(getFileContent).toHaveBeenCalledWith(
+				'note-1',
+				'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+			)
+		);
+		await waitFor(() => expect(editorProps().content).toContain('Historical body'));
+		expect(editorProps().content).not.toContain('Body');
+		expect(editorProps().mode).toBe('read');
+		expect(editorProps().permissions.canEdit).toBe(false);
+		expect(editorProps().attachments).toEqual([]);
+		expect(screen.getByText(/Read-only view of cited version/)).toBeTruthy();
 	});
 
 	it('renders resolution actions for title_mismatch conflicts', async () => {

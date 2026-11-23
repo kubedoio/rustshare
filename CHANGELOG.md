@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - Add an independent Local Text worker with bounded Markdown scanning, a private durable offline queue, and leased Files import.
 - Publish Connector Markdown through a durable Memory Files catalog and rebuildable keyword index, with current Files authorization and versioned citations.
 - Run Files-backed Memory event consumption and reconciliation in an opt-in, least-privilege worker process with a source-authorized Files API.
+- Open Memory citations at the exact historical Note or Files version that was cited.
 - Distinguish deleted and permission-denied meeting resource links without exposing their metadata.
 - Search the paginated membership roster of an organization group by username or email.
 - Archive organization groups to suspend their derived access while retaining memberships and shares for audited restoration.
