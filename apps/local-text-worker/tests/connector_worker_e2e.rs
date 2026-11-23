@@ -82,7 +82,7 @@ fn spawn_worker(
             .arg("--root")
             .arg(root)
             .args(["--reconcile-seconds", "1"])
-            .stdout(Stdio::null())
+            .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()
             .expect("start independent Local Text worker process"),
