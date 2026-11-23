@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { createHash, randomUUID } from 'node:crypto';
 
 const adminEmail = process.env.ADMIN_EMAIL ?? '';
 const adminPassword = process.env.ADMIN_PASSWORD ?? '';
@@ -137,5 +138,56 @@ test('pilot administrator uses Files and edits a Note name independently from it
 		});
 	} finally {
 		if (noteOpened) await test.step('Restore pilot Note fixture', restoreSmokeNote);
+	}
+});
+
+test('Notes opens an exact historical Memory citation without changing Note identity', async ({
+	page
+}) => {
+	test.setTimeout(45_000);
+	const suffix = randomUUID();
+	const title = `Memory citation ${suffix}`;
+	const originalContent = '# Historical citation H1\n\nHistorical citation body';
+	let noteId: string | null = null;
+
+	await page.goto('/login');
+	await page.getByLabel('Email').fill(adminEmail);
+	await page.getByLabel('Password').fill(adminPassword);
+	await page.getByRole('button', { name: 'Sign in with password' }).click();
+	await page.waitForURL('**/files');
+
+	const api = page.context().request;
+	const csrf = (await page.context().cookies()).find(
+		(cookie) => cookie.name === 'rustshare_csrf_token'
+	)?.value;
+	expect(csrf).toBeTruthy();
+	const headers = { 'X-Rustshare-Csrf': decodeURIComponent(csrf!) };
+
+	try {
+		const created = await api.post('/api/v1/notes', {
+			headers,
+			data: { title, content: originalContent }
+		});
+		expect(created.ok()).toBeTruthy();
+		const note = await created.json();
+		noteId = note.id;
+		const sourceVersion = `sha256:${createHash('sha256').update(note.content).digest('hex')}`;
+
+		const updated = await api.put(`/api/v1/notes/${noteId}`, {
+			headers,
+			data: { content: '# Current H1\n\nCurrent Note body' }
+		});
+		expect(updated.ok()).toBeTruthy();
+
+		await page.goto(
+			`/apps/notes/${encodeURIComponent(noteId)}?sourceVersion=${encodeURIComponent(sourceVersion)}`
+		);
+		await expect(page.locator('h1.doc-title-wrapper')).toHaveText(title);
+		await expect(page.locator('.doc-subtitle')).toHaveText('Historical citation H1');
+		await expect(page.getByText('Historical citation body')).toBeVisible();
+		await expect(page.getByText('Current Note body')).toHaveCount(0);
+		await expect(page.getByText(/Read-only view of cited version/)).toBeVisible();
+	} finally {
+		if (noteId) await api.delete(`/api/v1/notes/${noteId}`, { headers });
 	}
 });
