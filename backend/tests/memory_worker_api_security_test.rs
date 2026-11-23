@@ -46,6 +46,7 @@ async fn memory_worker_http_rejects_unbounded_unauthenticated_and_malformed_requ
     // This test binary runs with one test thread in CI. The secret is only a
     // disposable test value and is not used by any production process.
     std::env::set_var("RUSTSHARE_MEMORY_WORKER_SECRET", SECRET);
+    let restart_app = routes::memory_worker_routes().with_state(state.clone());
     let app = routes::memory_worker_routes().with_state(state);
 
     let cases = [
@@ -97,6 +98,23 @@ async fn memory_worker_http_rejects_unbounded_unauthenticated_and_malformed_requ
             response.status(),
             StatusCode::UNAUTHORIZED,
             "stale HMAC: {path}"
+        );
+
+        let invalid_signature = format!("t={},v1={}", Utc::now().timestamp(), "00".repeat(32));
+        let response = app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                path,
+                b"{}".to_vec(),
+                Some(invalid_signature),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "invalid HMAC: {path}"
         );
 
         let unknown = serde_json::to_vec(&unknown_field).unwrap();
@@ -177,13 +195,31 @@ async fn memory_worker_http_rejects_unbounded_unauthenticated_and_malformed_requ
     }))
     .unwrap();
     let signed = auth.sign_request("POST", path, &body).unwrap();
-    let response = app
+    let (first, concurrent_replay) = tokio::join!(
+        app.clone().oneshot(request(
+            Method::POST,
+            path,
+            body.clone(),
+            Some(signed.clone()),
+        )),
+        app.oneshot(request(
+            Method::POST,
+            path,
+            body.clone(),
+            Some(signed.clone()),
+        )),
+    );
+    let mut statuses = [first.unwrap().status(), concurrent_replay.unwrap().status()];
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::OK, StatusCode::UNAUTHORIZED]);
+
+    let response = restart_app
         .oneshot(request(Method::POST, path, body, Some(signed)))
         .await
         .unwrap();
     assert_eq!(
         response.status(),
-        StatusCode::OK,
-        "the configured default tenant is represented by the nil UUID"
+        StatusCode::UNAUTHORIZED,
+        "a claimed signature stays rejected by a fresh router sharing the database"
     );
 }

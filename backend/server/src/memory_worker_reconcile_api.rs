@@ -54,7 +54,8 @@ fn error(status: StatusCode) -> impl IntoResponse {
     )
 }
 
-fn authenticate(
+async fn authenticate(
+    state: &AppState,
     method: &Method,
     expected_path: &str,
     uri: &axum::http::Uri,
@@ -72,8 +73,20 @@ fn authenticate(
         .and_then(|v| v.to_str().ok())
         .ok_or(StatusCode::UNAUTHORIZED)?;
     let auth = MemoryWorkerRequestAuth::from_env().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    auth.verify_request(signature, method.as_str(), expected_path, body)
-        .map_err(|_| StatusCode::UNAUTHORIZED)
+    auth.verify_and_claim(
+        signature,
+        method.as_str(),
+        expected_path,
+        body,
+        &state.db_pool,
+    )
+    .await
+    .map_err(|cause| match cause {
+        crate::memory_worker_auth::MemoryWorkerAuthError::ReplayCheckUnavailable => {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+        _ => StatusCode::UNAUTHORIZED,
+    })
 }
 
 fn valid_tenant_page(request: &TenantPageRequest) -> bool {
@@ -98,7 +111,7 @@ pub async fn tenant_page(
     if body.len() > MAX_REQUEST_BODY_BYTES {
         return error(StatusCode::PAYLOAD_TOO_LARGE).into_response();
     }
-    if let Err(status) = authenticate(&method, TENANTS_PATH, &uri, &headers, &body) {
+    if let Err(status) = authenticate(&state, &method, TENANTS_PATH, &uri, &headers, &body).await {
         return error(status).into_response();
     }
     let Ok(request) = serde_json::from_slice::<TenantPageRequest>(&body) else {
@@ -141,7 +154,7 @@ pub async fn source_page(
     if body.len() > MAX_REQUEST_BODY_BYTES {
         return error(StatusCode::PAYLOAD_TOO_LARGE).into_response();
     }
-    if let Err(status) = authenticate(&method, PAGE_PATH, &uri, &headers, &body) {
+    if let Err(status) = authenticate(&state, &method, PAGE_PATH, &uri, &headers, &body).await {
         return error(status).into_response();
     }
     let Ok(request) = serde_json::from_slice::<SourcePageRequest>(&body) else {

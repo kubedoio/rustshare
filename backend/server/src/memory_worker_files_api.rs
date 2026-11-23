@@ -65,11 +65,17 @@ pub async fn files_snapshot(
     let Ok(auth) = MemoryWorkerRequestAuth::from_env() else {
         return error(StatusCode::SERVICE_UNAVAILABLE).into_response();
     };
-    if auth
-        .verify_request(signature, method.as_str(), &path, &body)
-        .is_err()
+    if let Err(cause) = auth
+        .verify_and_claim(signature, method.as_str(), &path, &body, &state.db_pool)
+        .await
     {
-        return error(StatusCode::UNAUTHORIZED).into_response();
+        let status = match cause {
+            crate::memory_worker_auth::MemoryWorkerAuthError::ReplayCheckUnavailable => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+            _ => StatusCode::UNAUTHORIZED,
+        };
+        return error(status).into_response();
     }
     let Ok(request) = serde_json::from_slice::<SnapshotRequest>(&body) else {
         return error(StatusCode::BAD_REQUEST).into_response();

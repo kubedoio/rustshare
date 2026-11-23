@@ -2,12 +2,15 @@
 
 use chrono::Utc;
 use rustshare_crypto::WebhookSigner;
+use sha2::{Digest, Sha256};
+use sqlx::PgPool;
 use thiserror::Error;
 
 const SECRET_ENV: &str = "RUSTSHARE_MEMORY_WORKER_SECRET";
 const MIN_SECRET_CHARS: usize = 32;
 const MAX_AGE_SECONDS: i64 = 60;
 const FUTURE_SKEW_SECONDS: i64 = 30;
+const CLAIM_TTL_SECONDS: i64 = MAX_AGE_SECONDS + FUTURE_SKEW_SECONDS + 1;
 
 /// Signs and verifies timestamped Memory worker requests.
 ///
@@ -32,6 +35,10 @@ pub enum MemoryWorkerAuthError {
     InvalidSignature,
     #[error("Memory worker signature is outside its validity window")]
     ExpiredSignature,
+    #[error("Memory worker signature has already been used")]
+    ReplayedSignature,
+    #[error("Memory worker replay check is unavailable")]
+    ReplayCheckUnavailable,
 }
 
 impl MemoryWorkerRequestAuth {
@@ -70,6 +77,41 @@ impl MemoryWorkerRequestAuth {
         body: &[u8],
     ) -> Result<(), MemoryWorkerAuthError> {
         self.verify_request_at(signature, method, path, body, Utc::now().timestamp())
+    }
+
+    /// Verifies and atomically claims a signed request across backend instances.
+    pub async fn verify_and_claim(
+        &self,
+        signature: &str,
+        method: &str,
+        path: &str,
+        body: &[u8],
+        db_pool: &PgPool,
+    ) -> Result<(), MemoryWorkerAuthError> {
+        self.verify_request(signature, method, path, body)?;
+        let signature_hash = Sha256::digest(signature.as_bytes()).to_vec();
+
+        sqlx::query(
+            "DELETE FROM memory_worker_request_signatures WHERE expires_at <= clock_timestamp()",
+        )
+        .execute(db_pool)
+        .await
+        .map_err(|_| MemoryWorkerAuthError::ReplayCheckUnavailable)?;
+        let inserted: Option<bool> = sqlx::query_scalar(
+            "INSERT INTO memory_worker_request_signatures (signature_hash, expires_at) \
+             VALUES ($1, clock_timestamp() + make_interval(secs => $2::double precision)) \
+             ON CONFLICT (signature_hash) DO NOTHING RETURNING TRUE",
+        )
+        .bind(signature_hash)
+        .bind(CLAIM_TTL_SECONDS)
+        .fetch_optional(db_pool)
+        .await
+        .map_err(|_| MemoryWorkerAuthError::ReplayCheckUnavailable)?;
+        if inserted.is_some() {
+            Ok(())
+        } else {
+            Err(MemoryWorkerAuthError::ReplayedSignature)
+        }
     }
 
     fn sign_request_at(
