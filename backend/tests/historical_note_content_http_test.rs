@@ -115,14 +115,14 @@ async fn historical_note_content_rechecks_authorization_and_never_falls_back() {
     let (status, _) = content(&app, file.id, Some(&historical_hash), &recipient_token).await;
     assert_eq!(
         status,
-        StatusCode::NOT_FOUND,
+        StatusCode::FORBIDDEN,
         "revocation applies to old versions"
     );
 
     let (status, _) = content(&app, file.id, Some(&historical_hash), &outsider_token).await;
     assert_eq!(
         status,
-        StatusCode::NOT_FOUND,
+        StatusCode::FORBIDDEN,
         "cross-tenant reads stay denied"
     );
 
