@@ -539,13 +539,6 @@ impl UnifiedSearchService {
                     continue;
                 }
             };
-            // Title comes from the authorized resolve; fall back to the
-            // candidate hint when the owner returned an empty name.
-            let title = if resolved.display_name.is_empty() {
-                candidate.title
-            } else {
-                resolved.display_name
-            };
             // The snippet is built ONLY from authorized fetch bytes; the
             // cached index/Memory hint never reaches the output.
             let fetched = self
@@ -573,6 +566,13 @@ impl UnifiedSearchService {
                 );
                 return Err(UnifiedSearchError::AuditUnavailable);
             }
+            // Title comes from the authorized resolve; fall back to the
+            // candidate hint when the owner returned an empty name.
+            let title = if resolved.display_name.is_empty() {
+                candidate.title
+            } else {
+                resolved.display_name
+            };
             let snippet = match fetched {
                 Ok(fetched) => Some(authorized_snippet(&fetched.data, query, SNIPPET_MAX_CHARS)),
                 // Reference-only chat messages have no indexing copy; the
