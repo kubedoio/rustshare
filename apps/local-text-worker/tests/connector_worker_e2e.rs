@@ -1644,7 +1644,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .expect("new worker credential")
         .to_owned();
 
-    let revoked_path = format!("{scope}/people/revoked-credential.md");
+    let revoked_path = format!("{scope}/people/post-rotation.md");
     fs::write(
         root.join(&revoked_path),
         b"old credential must not ingest\n",
