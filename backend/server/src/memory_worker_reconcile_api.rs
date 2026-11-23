@@ -81,9 +81,7 @@ fn valid_tenant_page(request: &TenantPageRequest) -> bool {
 }
 
 fn valid_source_page(request: &SourcePageRequest) -> bool {
-    valid_limit(request.limit)
-        && !request.tenant_id.is_nil()
-        && request.after_file_id.is_none_or(|id| !id.is_nil())
+    valid_limit(request.limit) && request.after_file_id.is_none_or(|id| !id.is_nil())
 }
 
 fn valid_limit(limit: u32) -> bool {
@@ -346,7 +344,7 @@ mod tests {
         assert!(!valid_limit(101));
     }
     #[test]
-    fn reconciliation_requests_reject_nil_scopes_and_cursors() {
+    fn reconciliation_requests_reject_nil_cursors_but_allow_default_tenant() {
         assert!(valid_tenant_page(&TenantPageRequest {
             after: None,
             limit: 1,
@@ -356,14 +354,19 @@ mod tests {
             limit: 1,
         }));
         assert!(valid_source_page(&SourcePageRequest {
-            tenant_id: Uuid::new_v4(),
+            tenant_id: Uuid::nil(),
             after_file_id: None,
+            limit: 1,
+        }));
+        assert!(!valid_source_page(&SourcePageRequest {
+            tenant_id: Uuid::new_v4(),
+            after_file_id: Some(Uuid::nil()),
             limit: 1,
         }));
         assert!(!valid_source_page(&SourcePageRequest {
             tenant_id: Uuid::nil(),
             after_file_id: None,
-            limit: 1,
+            limit: 0,
         }));
     }
     #[test]
