@@ -37,6 +37,10 @@ upstream-buzz-runtime = [
 name = "rustshare-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "elembra-memory-worker"
+path = "src/elembra_memory_worker.rs"
+
 [dependencies]
 rustshare-core = { path = "../crates/core" }
 rustshare-storage = { path = "../crates/storage" }

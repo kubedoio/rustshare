@@ -13,6 +13,7 @@ const FUTURE_SKEW_SECONDS: i64 = 30;
 ///
 /// Signatures cover the HTTP method, origin-form path (including query), and
 /// exact body bytes. The secret is never exposed by this type's formatting.
+#[derive(Clone)]
 pub struct MemoryWorkerRequestAuth {
     signer: WebhookSigner,
 }

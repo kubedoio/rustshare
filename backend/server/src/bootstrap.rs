@@ -40,7 +40,8 @@ use rustshare_infrastructure::{
 use rustshare_resource_auth::{BuzzAuthority, LocalFallbackAuthority};
 use rustshare_storage::{
     repos::ShareNotificationRepoImpl, ChatIdentityStore, ChatObservationStore, EventStore,
-    MemoryCatalogStore, MetadataStore, ObjectStore, OutboxStore,
+    MemoryCatalogStore, MemoryExecutionMode, MemoryExecutionModeStore, MetadataStore, ObjectStore,
+    OutboxStore,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Connection, PgConnection, PgPool};
@@ -829,6 +830,38 @@ pub async fn init_app() -> Result<AppState> {
     // Buzz admission bridge is optional (disabled unless a service key is
     // configured).
     let outbox_worker_config = OutboxWorkerConfig::from_env();
+    let memory_execution_mode = std::env::var("RUSTSHARE_MEMORY_EXECUTION_MODE")
+        .unwrap_or_else(|_| "embedded".into())
+        .parse::<MemoryExecutionMode>()
+        .map_err(|error| anyhow::anyhow!("invalid RUSTSHARE_MEMORY_EXECUTION_MODE: {error}"))?;
+    let memory_mode_store = MemoryExecutionModeStore::new(db_pool.clone());
+    let memory_mode_process_id = uuid::Uuid::new_v4();
+    let memory_mode_generation = memory_mode_store
+        .claim(
+            memory_execution_mode,
+            memory_mode_process_id,
+            crate::memory_execution_lease::MODE_LEASE_DURATION,
+        )
+        .await?;
+    let memory_execution_fence = crate::memory_execution_lease::MemoryExecutionFence::new(
+        memory_mode_store.clone(),
+        memory_execution_mode,
+        memory_mode_process_id,
+        memory_mode_generation,
+    );
+    let memory_mode_active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    crate::memory_execution_lease::spawn_memory_execution_lease(
+        memory_mode_store,
+        memory_execution_mode,
+        memory_mode_process_id,
+        memory_mode_generation,
+        Arc::clone(&memory_mode_active),
+        shutdown_tx.subscribe(),
+    );
+    if memory_execution_mode == MemoryExecutionMode::External {
+        crate::memory_worker_auth::MemoryWorkerRequestAuth::from_env()
+            .map_err(|error| anyhow::anyhow!("external Memory worker auth is invalid: {error}"))?;
+    }
 
     if config.mail_import_worker_enabled {
         crate::mail_import_worker::spawn_mail_import_worker(
@@ -1057,7 +1090,9 @@ pub async fn init_app() -> Result<AppState> {
     .map_err(|error| anyhow::anyhow!("source owner registration failed: {error}"))?;
     let source_authorizer = Arc::new(source_authorizer);
 
-    let memory_files_reconcile_worker = if config.memory_files_reconcile_enabled {
+    let memory_files_reconcile_worker = if config.memory_files_reconcile_enabled
+        && memory_execution_mode == MemoryExecutionMode::Embedded
+    {
         let task = crate::memory_files_reconcile_worker::spawn_memory_files_reconcile_worker(
             Arc::clone(&metadata_store),
             Arc::clone(&services.note_service),
@@ -1068,6 +1103,9 @@ pub async fn init_app() -> Result<AppState> {
         );
         info!("Files-backed Memory reconciliation worker enabled");
         Some(Arc::new(Mutex::new(task)))
+    } else if memory_execution_mode == MemoryExecutionMode::External {
+        info!("Files-backed Memory reconciliation delegated to the independent worker");
+        None
     } else {
         info!("Files-backed Memory reconciliation worker disabled");
         None
@@ -1087,7 +1125,9 @@ pub async fn init_app() -> Result<AppState> {
             Arc::clone(&source_authorizer),
             Arc::clone(&services.note_service),
             (*memory_files_catalog_store).clone(),
-        ),
+        )
+        .with_execution_guard(Arc::clone(&memory_mode_active))
+        .with_execution_fence(memory_execution_fence),
     );
     let outbox_consumers: Vec<Arc<dyn rustshare_integration_events::OutboxConsumer>> =
         crate::buzz_bridge::BuzzAdmissionBridge::from_env_with_pool(db_pool.clone())
@@ -1101,11 +1141,19 @@ pub async fn init_app() -> Result<AppState> {
                     as Arc<dyn rustshare_integration_events::OutboxConsumer>,
             ])
             .collect();
-    let outbox_dispatcher = Arc::new(OutboxDispatcher::new(
+    let registration_only_consumers = if memory_execution_mode == MemoryExecutionMode::External {
+        [crate::memory_files_projection::MEMORY_FILES_PROJECTION_CONSUMER_ID.to_owned()]
+            .into_iter()
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+    let outbox_dispatcher = Arc::new(OutboxDispatcher::new_with_registration_only_consumers(
         Arc::clone(&services.outbox_store),
         outbox_consumers,
         outbox_worker_config.clone(),
         format!("outbox-{}", uuid::Uuid::new_v4()),
+        registration_only_consumers,
     ));
     let outbox_status = outbox_dispatcher.status().clone();
     if outbox_worker_config.enabled {

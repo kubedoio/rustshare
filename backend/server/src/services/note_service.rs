@@ -247,6 +247,7 @@ impl From<rustshare_core::services::FileError> for NoteError {
 }
 
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use rustshare_memory::files_source::{ConnectorSource, FilesIndexSnapshot};
 
 /// Service for managing notes as files with sidecar metadata.
 #[derive(Clone)]
@@ -427,6 +428,67 @@ impl NoteService {
         }
         self.emit_index_note(&file, &metadata, content, tenant_id)
             .await
+    }
+
+    /// Prepare an owner-authorized Files snapshot for the independent Memory
+    /// worker. The caller supplies content already fetched through
+    /// `SourceAuthorizer`; identity, current version and ACL come from Files.
+    pub async fn prepare_connector_index_snapshot(
+        &self,
+        file_id: Uuid,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        current_version: String,
+        current_version_number: i64,
+        connector: ConnectorSource,
+        content: String,
+    ) -> Result<Option<FilesIndexSnapshot>, NoteError> {
+        let file = self.file_service.get_file(file_id, owner_id).await?;
+        if file.tenant_id != tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
+        if format!("sha256:{}", file.content_hash) != current_version
+            || i64::from(file.current_version) != current_version_number
+        {
+            return Err(NoteError::Conflict(
+                "Files source changed while preparing Memory snapshot".to_string(),
+            ));
+        }
+        if !file.name.to_lowercase().ends_with(".md")
+            || rustshare_core::services::is_hidden_file_for_path(&file.name, &file.path)
+        {
+            return Ok(None);
+        }
+        let metadata = self
+            .load_metadata(file_id, owner_id, tenant_id)
+            .await?
+            .unwrap_or_else(|| NoteMetadata::new(file.name.clone()));
+        if metadata.kind != "note" {
+            return Ok(None);
+        }
+        let read_acl = self.resolve_note_read_principals(&file, tenant_id).await?;
+        let mut acl = Self::build_acl_payload(&file, &metadata, &content, tenant_id, read_acl)?;
+        let computed_hash = compute_index_acl_hash(&acl);
+        if computed_hash != acl.acl_hash {
+            acl.acl_version += 1;
+        }
+        acl.acl_hash = computed_hash;
+        Ok(Some(FilesIndexSnapshot {
+            tenant_id,
+            file_id,
+            current_version,
+            current_version_number,
+            owner_id,
+            name: file.name,
+            path: file.path,
+            mime_type: metadata.mime_type,
+            connector: Some(connector),
+            acl,
+            content: content
+                .chars()
+                .take(rustshare_core::services::ai::indexing::MAX_CONTENT_LENGTH)
+                .collect(),
+        }))
     }
 
     /// Remove a Connector-imported file from every configured Memory index.

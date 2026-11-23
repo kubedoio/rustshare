@@ -118,6 +118,18 @@ impl MemoryFilesCatalogStore {
         .map_err(Into::into)
     }
 
+    /// Whether Memory owns a catalog row for this Files source, including a tombstone.
+    pub async fn contains(&self, tenant_id: Uuid, file_id: Uuid) -> Result<bool> {
+        sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2)",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(Into::into)
+    }
+
     /// Current immutable versions for live Files projections in one tenant.
     pub async fn versions(
         &self,

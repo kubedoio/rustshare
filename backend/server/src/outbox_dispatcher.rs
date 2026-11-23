@@ -175,6 +175,7 @@ pub struct OutboxStatus {
 pub struct OutboxDispatcher {
     store: Arc<OutboxStore>,
     consumers: Vec<Arc<dyn OutboxConsumer>>,
+    registration_only_consumers: HashSet<String>,
     config: OutboxWorkerConfig,
     worker_id: String,
     status: Arc<OutboxStatus>,
@@ -187,9 +188,28 @@ impl OutboxDispatcher {
         config: OutboxWorkerConfig,
         worker_id: String,
     ) -> Self {
+        Self::new_with_registration_only_consumers(
+            store,
+            consumers,
+            config,
+            worker_id,
+            HashSet::new(),
+        )
+    }
+
+    /// Register every consumer for durable fan-out while leaving selected
+    /// consumer identities to their independently deployed worker.
+    pub fn new_with_registration_only_consumers(
+        store: Arc<OutboxStore>,
+        consumers: Vec<Arc<dyn OutboxConsumer>>,
+        config: OutboxWorkerConfig,
+        worker_id: String,
+        registration_only_consumers: HashSet<String>,
+    ) -> Self {
         Self {
             store,
             consumers,
+            registration_only_consumers,
             config,
             worker_id,
             status: Arc::new(OutboxStatus::default()),
@@ -281,6 +301,12 @@ impl OutboxDispatcher {
         }
 
         for consumer in &self.consumers {
+            let consumer_id = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                consumer.consumer_id().to_string()
+            }));
+            if matches!(consumer_id, Ok(ref id) if self.registration_only_consumers.contains(id)) {
+                continue;
+            }
             self.dispatch_consumer(consumer).await;
         }
 

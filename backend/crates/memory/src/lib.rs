@@ -23,6 +23,7 @@
 //! un-tombstones an existing record.
 
 pub mod event;
+pub mod files_source;
 pub mod observed;
 pub mod policy;
 pub mod project;

@@ -1,0 +1,62 @@
+# Opt-in independent Memory worker. Apply the migration-owned grant script
+# and provide a dedicated MEMORY_DATABASE_URL before activating this profile:
+#   psql "$MIGRATOR_DATABASE_URL" -v ON_ERROR_STOP=1 \
+#     -v memory_worker_login=elembra_memory_worker_login \
+#     -f scripts/grant-memory-worker.sql
+#   docker compose -f docker-compose.yml -f docker-compose.memory-worker.yml \
+#     --profile memory-worker up -d
+services:
+  backend:
+    profiles: [memory-worker]
+    environment:
+      RUSTSHARE_MEMORY_EXECUTION_MODE: external
+      RUSTSHARE_MEMORY_WORKER_SECRET: ${RUSTSHARE_MEMORY_WORKER_SECRET:?Set a strong shared Memory worker HMAC secret}
+
+  memory-worker:
+    profiles: [memory-worker]
+    build:
+      context: .
+      dockerfile: docker/memory-worker.Dockerfile
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      RUSTSHARE_MEMORY_EXECUTION_MODE: external
+      MEMORY_DATABASE_URL: ${MEMORY_DATABASE_URL:?Set MEMORY_DATABASE_URL to a dedicated login granted elembra_memory_worker}
+      MEMORY_WORKER_DB_MAX_CONNECTIONS: "4"
+      RUSTSHARE_API_BASE_URL: ${MEMORY_WORKER_API_ORIGIN:-http://backend:8080}
+      RUSTSHARE_MEMORY_WORKER_SECRET: ${RUSTSHARE_MEMORY_WORKER_SECRET:?Set a strong shared Memory worker HMAC secret}
+      MEMORY_WORKER_HEALTH_ADDR: 0.0.0.0:8081
+      RUSTSHARE_OUTBOX_WORKER_ENABLED: "true"
+      RUSTSHARE_OUTBOX_POLL_INTERVAL_MS: "1000"
+      RUSTSHARE_OUTBOX_CLAIM_BATCH_SIZE: "5"
+      RUSTSHARE_OUTBOX_LEASE_SECS: "90"
+      RUSTSHARE_OUTBOX_PROCESS_TIMEOUT_SECS: "45"
+      RUSTSHARE_OUTBOX_READINESS_STALENESS_SECS: "90"
+      RUSTSHARE_OUTBOX_RETENTION_HOURS: "0"
+      RUSTSHARE_AI_ENABLED: ${RUSTSHARE_AI_ENABLED:-true}
+      RUST_LOG: info
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --show-error, --max-time, "3", http://127.0.0.1:8081/ready]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3

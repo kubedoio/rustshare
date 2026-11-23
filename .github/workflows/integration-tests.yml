@@ -240,6 +240,7 @@ jobs:
 
       - name: Memory reconciliation lease and restart recovery (PostgreSQL)
         run: |
+          cargo test -p rustshare-storage --lib database_leases_allow_same_mode_and_fence_mode_switches -- --ignored --exact --test-threads=1
           cargo test -p rustshare-server --test memory_reconcile_test files_reconcile_worker_ -- --ignored --test-threads=1
           cargo test -p rustshare-server --test memory_reconcile_test memory_orphan_cleanup_ -- --ignored --test-threads=1
           cargo test -p rustshare-server --test memory_orphan_cleanup_test memory_orphan_cleanup_ -- --ignored --test-threads=1
@@ -252,6 +253,9 @@ jobs:
         run: |
           base_database_url="$DATABASE_URL"
           e2e_database_url="${DATABASE_URL%/*}/rustshare_test_connector_e2e"
+          memory_worker_login="elembra_memory_worker_test"
+          memory_worker_password="$(openssl rand -hex 32)"
+          memory_worker_secret="$(openssl rand -hex 32)"
           server_pid=""
           cleanup() {
             if [[ -n "$server_pid" ]]; then
@@ -260,12 +264,24 @@ jobs:
             fi
             psql "$base_database_url" -v ON_ERROR_STOP=1 -c \
               'DROP DATABASE IF EXISTS rustshare_test_connector_e2e WITH (FORCE)' >/dev/null || true
+            psql "$base_database_url" -v ON_ERROR_STOP=1 -c \
+              "REVOKE elembra_memory_worker FROM ${memory_worker_login}; DROP ROLE IF EXISTS ${memory_worker_login}; DROP ROLE IF EXISTS elembra_memory_worker" >/dev/null || true
           }
           trap cleanup EXIT
           psql "$base_database_url" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE rustshare_test_connector_e2e'
           DATABASE_URL="$e2e_database_url" sqlx migrate run --source backend/migrations
+          psql "$base_database_url" -v ON_ERROR_STOP=1 -c \
+            "CREATE ROLE ${memory_worker_login} LOGIN PASSWORD '${memory_worker_password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS"
+          psql "$e2e_database_url" -v ON_ERROR_STOP=1 \
+            -v memory_worker_login="$memory_worker_login" -f scripts/grant-memory-worker.sql
+          memory_database_url="$(DATABASE_URL="$e2e_database_url" MEMORY_WORKER_LOGIN="$memory_worker_login" MEMORY_WORKER_PASSWORD="$memory_worker_password" python3 -c 'import os, urllib.parse; u=urllib.parse.urlsplit(os.environ["DATABASE_URL"]); auth=urllib.parse.quote(os.environ["MEMORY_WORKER_LOGIN"], safe="")+":"+urllib.parse.quote(os.environ["MEMORY_WORKER_PASSWORD"], safe=""); host=u.hostname or ""; host=f"[{host}]" if ":" in host else host; netloc=auth+"@"+host+(f":{u.port}" if u.port else ""); print(urllib.parse.urlunsplit((u.scheme, netloc, u.path, u.query, u.fragment)))')"
+          worker_acl_ok="$(psql "$memory_database_url" -v ON_ERROR_STOP=1 -Atc "SELECT has_table_privilege(current_user, 'public.memory_files_catalog', 'SELECT') AND has_table_privilege(current_user, 'public.integration_outbox', 'SELECT') AND NOT has_table_privilege(current_user, 'public.files', 'SELECT') AND NOT has_table_privilege(current_user, 'public.file_versions', 'SELECT') AND NOT has_table_privilege(current_user, 'public.connector_external_mappings', 'SELECT') AND NOT has_table_privilege(current_user, 'public.connector_worker_credentials', 'SELECT')")"
+          [[ "$worker_acl_ok" == "t" ]]
+          cargo build -p rustshare-server --bin elembra-memory-worker
           SERVER_HOST=127.0.0.1 SERVER_PORT=18333 RUSTSHARE_CHAT_AUTHORITY=local \
-            RUSTSHARE_CHAT_PROVISIONING=manual DATABASE_URL="$e2e_database_url" \
+            RUSTSHARE_CHAT_PROVISIONING=manual RUSTSHARE_MEMORY_EXECUTION_MODE=external \
+            RUSTSHARE_MEMORY_WORKER_SECRET="$memory_worker_secret" \
+            DATABASE_URL="$e2e_database_url" \
             ./target/debug/rustshare-server > "${RUNNER_TEMP}/local-text-worker-backend.log" 2>&1 &
           server_pid=$!
           for attempt in $(seq 1 60); do
@@ -287,7 +303,12 @@ jobs:
             --data "{\"email\":\"${RUSTSHARE_ADMIN_EMAIL}\",\"password\":\"${RUSTSHARE_ADMIN_PASSWORD}\"}" \
             http://127.0.0.1:18333/api/v1/auth/login | jq -er '.token')"
           RUSTSHARE_CONNECTOR_TEST_SERVER=http://127.0.0.1:18333 \
+          RUSTSHARE_CONNECTOR_TEST_BACKEND_PID="$server_pid" \
+          RUSTSHARE_CONNECTOR_TEST_BACKEND_BIN="${GITHUB_WORKSPACE}/target/debug/rustshare-server" \
           RUSTSHARE_CONNECTOR_TEST_OWNER_TOKEN="$owner_token" \
+          RUSTSHARE_MEMORY_WORKER_BIN="${GITHUB_WORKSPACE}/target/debug/elembra-memory-worker" \
+          RUSTSHARE_MEMORY_WORKER_SECRET="$memory_worker_secret" \
+          MEMORY_DATABASE_URL="$memory_database_url" \
           DATABASE_URL="$e2e_database_url" \
             SQLX_OFFLINE=true cargo test -p local-text-worker --test connector_worker_e2e independent_worker_imports_retries_recovers_and_stops_after_revocation -- --ignored --exact --test-threads=1
 

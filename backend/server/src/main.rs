@@ -112,6 +112,7 @@ async fn main() -> Result<()> {
         .merge(routes::object_gc_routes())
         .merge(routes::chat_integration_routes())
         .merge(routes::buzz_observation_routes())
+        .merge(routes::memory_worker_routes())
         .merge(routes::admin_routes())
         .merge(routes::scim_routes())
         .merge(routes::folder_routes())
