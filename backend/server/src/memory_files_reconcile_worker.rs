@@ -27,6 +27,7 @@ const MAX_RETRIES: i32 = 8;
 pub enum MemoryFilesReconcileFailureStage {
     EmbeddedPage,
     FilesSourcePage,
+    FilesSourceHttpStatus(u16),
     MemoryProjection,
     Checkpoint,
     PageTimeout,
@@ -34,14 +35,15 @@ pub enum MemoryFilesReconcileFailureStage {
 }
 
 impl MemoryFilesReconcileFailureStage {
-    pub fn code(self) -> &'static str {
+    pub fn code(self) -> String {
         match self {
-            Self::EmbeddedPage => "embedded_page",
-            Self::FilesSourcePage => "files_source_page",
-            Self::MemoryProjection => "memory_projection",
-            Self::Checkpoint => "checkpoint",
-            Self::PageTimeout => "page_timeout",
-            Self::LeaseHeartbeat => "lease_heartbeat",
+            Self::EmbeddedPage => "embedded_page".into(),
+            Self::FilesSourcePage => "files_source_page".into(),
+            Self::FilesSourceHttpStatus(status) => format!("files_source_http_{status}"),
+            Self::MemoryProjection => "memory_projection".into(),
+            Self::Checkpoint => "checkpoint".into(),
+            Self::PageTimeout => "page_timeout".into(),
+            Self::LeaseHeartbeat => "lease_heartbeat".into(),
         }
     }
 }
@@ -497,6 +499,14 @@ fn internal_error() -> (StatusCode, Json<ErrorResponse>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_api_status_is_stored_as_a_safe_failure_code() {
+        assert_eq!(
+            MemoryFilesReconcileFailureStage::FilesSourceHttpStatus(401).code(),
+            "files_source_http_401"
+        );
+    }
 
     #[test]
     fn configuration_defaults_off_and_enforces_resource_bounds() {

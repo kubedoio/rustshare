@@ -14,6 +14,12 @@ const RECONCILE_PAGE_PATH: &str = "/internal/v1/memory/files/reconcile/page";
 const SIGNATURE_HEADER: &str = "X-Elembra-Memory-Signature";
 const MAX_RESPONSE_BYTES: usize = 1_000_000;
 
+#[derive(Debug, thiserror::Error)]
+#[error("Memory Files API returned HTTP {status}")]
+pub struct MemoryFilesApiStatusError {
+    pub status: u16,
+}
+
 #[derive(Serialize)]
 struct SnapshotRequest<'a> {
     source: &'a str,
@@ -110,10 +116,12 @@ impl MemoryWorkerFilesClient {
             .send()
             .await?;
         let status = response.status();
-        anyhow::ensure!(
-            status.is_success(),
-            "Memory Files API returned HTTP {status}"
-        );
+        if !status.is_success() {
+            return Err(MemoryFilesApiStatusError {
+                status: status.as_u16(),
+            }
+            .into());
+        }
         let body = response.bytes().await?;
         anyhow::ensure!(
             body.len() <= MAX_RESPONSE_BYTES,

@@ -168,7 +168,10 @@ async fn process_page(
             .await
             .map_err(|error| {
                 tracing::warn!(tenant_id = %lease.tenant_id, error = %error, "Memory Files reconciliation request failed");
-                MemoryFilesReconcileFailureStage::FilesSourcePage
+                error
+                    .downcast_ref::<crate::memory_worker_files_client::MemoryFilesApiStatusError>()
+                    .map(|error| MemoryFilesReconcileFailureStage::FilesSourceHttpStatus(error.status))
+                    .unwrap_or(MemoryFilesReconcileFailureStage::FilesSourcePage)
             })?;
         let mut counts = FilesReconcileResponse {
             processed: 0,
