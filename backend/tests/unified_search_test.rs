@@ -1778,6 +1778,34 @@ async fn cross_tenant_candidates_never_appear() {
         "tenant B's chat candidate must never surface in A's search"
     );
 
+    let cross_tenant_request = Uuid::new_v4();
+    let denied = harness
+        .service()
+        .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone())))
+        .search_scoped_for_run(
+            &ctx_a,
+            "confidential",
+            &[SearchSource::Files],
+            8,
+            &SearchScope::Resource(file_ref(file_b.id)),
+            cross_tenant_request,
+        )
+        .await
+        .expect("cross-tenant Note access is denied without failing search");
+    assert!(denied.results.is_empty());
+    let cross_tenant_audit: (Uuid, String, String, bool) = sqlx::query_as(
+        "SELECT principal_id, source_resource_ref, outcome, context_entered \
+         FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(cross_tenant_request)
+    .fetch_one(&pool)
+    .await
+    .expect("cross-tenant denial is attributed");
+    assert_eq!(cross_tenant_audit.0, owner_a.id);
+    assert!(cross_tenant_audit.1.contains(&file_b.id.to_string()));
+    assert_eq!(cross_tenant_audit.2, "denied");
+    assert!(!cross_tenant_audit.3);
+
     cleanup(&pool, tenant_a).await;
     cleanup(&pool, tenant_b).await;
 }
@@ -3842,7 +3870,11 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         citations: vec!["src-001".into()],
     }));
     let deleted_note = AskWorkspaceService::new(
-        Arc::new(harness.service()),
+        Arc::new(
+            harness
+                .service()
+                .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+        ),
         Some(deleted_note_provider.clone()),
     )
     .ask_scoped(
@@ -3856,6 +3888,18 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
     .expect("deleted note Ask degrades cleanly");
     assert!(deleted_note.insufficient_evidence);
     assert!(deleted_note_provider.calls().await.is_empty());
+    let deleted_audit: (Uuid, String, String, bool) = sqlx::query_as(
+        "SELECT principal_id, source_resource_ref, outcome, context_entered \
+         FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(deleted_note.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("deleted Note access is attributed");
+    assert_eq!(deleted_audit.0, owner.id);
+    assert!(deleted_audit.1.contains(&file.id.to_string()));
+    assert_eq!(deleted_audit.2, "unavailable");
+    assert!(!deleted_audit.3);
 
     cleanup(&pool, tenant).await;
 }
