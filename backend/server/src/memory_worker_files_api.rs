@@ -145,6 +145,7 @@ async fn resolve_snapshot(
     let catalog = MemoryFilesCatalogStore::new(state.db_pool.clone());
     // Resolve provenance from the current Connector mapping, not the event
     // payload: an older create/update may be delivered after a newer import.
+    let connector_event = event.data.get("sourceProvenance").is_some();
     let Some(record) = catalog
         .connector_record_for_current_file(
             tenant_id,
@@ -154,11 +155,12 @@ async fn resolve_snapshot(
         )
         .await?
     else {
-        return Ok(FilesProjectionSnapshot::Ignored {
+        return missing_connector_mapping_snapshot(
             tenant_id,
             file_id,
             observed_at,
-        });
+            connector_event,
+        );
     };
 
     let file_ref = ResourceRef::new(
@@ -257,6 +259,23 @@ fn valid_snapshot_request(request: &SnapshotRequest) -> bool {
     !request.source.is_empty() && request.source.len() <= 255 && !request.event_id.is_nil()
 }
 
+fn missing_connector_mapping_snapshot(
+    tenant_id: Uuid,
+    file_id: Uuid,
+    observed_at: chrono::DateTime<chrono::Utc>,
+    connector_event: bool,
+) -> anyhow::Result<FilesProjectionSnapshot> {
+    anyhow::ensure!(
+        !connector_event,
+        "Connector provenance mapping is not committed yet"
+    );
+    Ok(FilesProjectionSnapshot::Ignored {
+        tenant_id,
+        file_id,
+        observed_at,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +324,20 @@ mod tests {
             source: "connector-worker".into(),
             event_id: Uuid::nil(),
         }));
+    }
+
+    #[test]
+    fn missing_mapping_retries_connector_events_but_ignores_ordinary_files_events() {
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let observed_at = chrono::Utc::now();
+
+        assert!(
+            missing_connector_mapping_snapshot(tenant_id, file_id, observed_at, true,).is_err()
+        );
+        assert!(matches!(
+            missing_connector_mapping_snapshot(tenant_id, file_id, observed_at, false),
+            Ok(FilesProjectionSnapshot::Ignored { .. })
+        ));
     }
 }
