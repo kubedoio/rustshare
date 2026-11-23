@@ -249,6 +249,10 @@ fn memory_worker_context(tenant_id: Uuid) -> PrincipalContext {
     }
 }
 
+fn valid_snapshot_request(request: &SnapshotRequest) -> bool {
+    !request.source.is_empty() && request.source.len() <= 255 && !request.event_id.is_nil()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,8 +302,4 @@ mod tests {
             event_id: Uuid::nil(),
         }));
     }
-}
-
-fn valid_snapshot_request(request: &SnapshotRequest) -> bool {
-    !request.source.is_empty() && request.source.len() <= 255 && !request.event_id.is_nil()
 }
