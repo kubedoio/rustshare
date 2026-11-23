@@ -97,6 +97,7 @@ async fn spawn_memory_worker(server: &str, wait_until_ready: bool) -> Worker {
     let mut worker = Worker(
         Command::new(worker)
             .env("RUSTSHARE_MEMORY_EXECUTION_MODE", "external")
+            .env("RUST_LOG", "warn")
             .env(
                 "MEMORY_DATABASE_URL",
                 env::var("MEMORY_DATABASE_URL").unwrap(),
@@ -116,7 +117,7 @@ async fn spawn_memory_worker(server: &str, wait_until_ready: bool) -> Worker {
             .env("RUSTSHARE_OUTBOX_RETENTION_HOURS", "0")
             .env("MEMORY_WORKER_HEALTH_ADDR", health_addr.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .expect("start separate Elembra Memory worker process"),
     );
