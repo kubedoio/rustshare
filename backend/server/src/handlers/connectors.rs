@@ -250,6 +250,8 @@ pub async fn import_connector_file(
     let mime_type = mime_guess::from_path(&file_name)
         .first_or_octet_stream()
         .to_string();
+    let relative_path = metadata.relative_path.clone();
+    let observed_modified_at = metadata.observed_modified_at;
     let file = services
         .file_service
         .import_connector_file_from_path(rustshare_core::services::ConnectorFileImport {
@@ -281,6 +283,8 @@ pub async fn import_connector_file(
             &source_resource_ref,
             &metadata.source_revision,
             &target_ref,
+            &relative_path,
+            observed_modified_at,
         )
         .await
         .map_err(|error| map_error(error).into_response())?;

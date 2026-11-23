@@ -67,6 +67,31 @@ an index writer. AI being disabled does not trigger this state when the
 keyword-only sink is configured. Index write failures remain best-effort for
 authoritative Note creation and saves; reconciliation retries repair them.
 
+## Connector Markdown publication
+
+The Files outbox publishes Connector source identity and revision as
+`sourceProvenance`; document bytes remain in Files. The Memory-owned
+`memory_files_catalog` stores that provenance separately from the rebuildable
+`note_index_chunks` body projection and retains the latest immutable Files
+version for citations. Its outbox consumer re-reads the live Files row and
+fetches text through `SourceAuthorizer` before indexing. An older or duplicate
+event cannot replace a newer Files version, and a soft-delete event tombstones
+the catalog and removes the index projection.
+Ordinary Files edits preserve the Connector relationship while advancing the
+current Files citation version and rebuildable content projection.
+If the initial provenance event is delayed, update processing recovers the
+relationship from the authoritative Connector mapping.
+
+Unified Search still treats keyword rows as candidates: Files reauthorizes,
+resolves and fetches current source content before returning a snippet or
+citation. Successful and denied Connector source reads during indexing,
+reconciliation, and search are audited by principal, resource, version, and
+outcome; audit failures fail closed for search results. The same Files reconciliation worker can reconstruct Connector
+provenance from `connector_external_mappings` and rebuild the body projection
+when an event delivery or index row is missing. Memory remains an in-process
+backend component in this slice; the Connector worker is the independent
+process.
+
 ## Out of scope
 
 No second Notes index, new authorization mechanism, content parser, embedding

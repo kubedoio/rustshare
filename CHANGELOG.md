@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - Add an independent Local Text worker with bounded Markdown scanning, a private durable offline queue, and leased Files import.
+- Publish Connector Markdown through a durable Memory Files catalog and rebuildable keyword index, with current Files authorization and versioned citations.
 - Distinguish deleted and permission-denied meeting resource links without exposing their metadata.
 - Search the paginated membership roster of an organization group by username or email.
 - Archive organization groups to suspend their derived access while retaining memberships and shares for audited restoration.

@@ -8,8 +8,8 @@ use rustshare_core::domain::{
 };
 use rustshare_resource_auth::{Delegation, PrincipalContext, PrincipalKind, WorkloadIdentity};
 use rustshare_storage::{
-    ConnectorExecutionAcknowledgment, ConnectorInstanceRecord, ConnectorMutation,
-    ConnectorRegistration, ConnectorStore, ConnectorWorkerCredentialIdentity,
+    ConnectorExecutionAcknowledgment, ConnectorInstanceRecord, ConnectorMappingProvenance,
+    ConnectorMutation, ConnectorRegistration, ConnectorStore, ConnectorWorkerCredentialIdentity,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -469,6 +469,8 @@ impl ConnectorService {
         source_resource_ref: &str,
         source_revision: &str,
         target_resource_ref: &str,
+        relative_path: &str,
+        source_observed_modified_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, ConnectorError> {
         let (tenant_id, _, instance_id) = worker_scope(worker)?;
         self.store
@@ -478,6 +480,10 @@ impl ConnectorService {
                 source_resource_ref,
                 source_revision,
                 target_resource_ref,
+                ConnectorMappingProvenance {
+                    relative_path: Some(relative_path),
+                    source_observed_modified_at: Some(source_observed_modified_at),
+                },
             )
             .await
             .map_err(|error| match error {

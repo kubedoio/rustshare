@@ -5,7 +5,8 @@ use rustshare_server::services::connector_service::{
     AcknowledgeConnectorExecution, ConnectorService,
 };
 use rustshare_storage::{
-    ConnectorExecutionAcknowledgment, ConnectorMutation, ConnectorRegistration, ConnectorStore,
+    ConnectorExecutionAcknowledgment, ConnectorMappingProvenance, ConnectorMutation,
+    ConnectorRegistration, ConnectorStore,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -358,6 +359,7 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
             "elembra://io.elembra.connector.local-text/file/a.md",
             "sha256:abc",
             "elembra://io.elembra.files/file/target-1",
+            ConnectorMappingProvenance::default(),
         )
         .await
         .unwrap());
@@ -368,6 +370,7 @@ async fn registration_is_idempotent_tenant_scoped_and_lifecycle_is_fenced() {
             "elembra://io.elembra.connector.local-text/file/a.md",
             "sha256:abc",
             "elembra://io.elembra.files/file/target-1",
+            ConnectorMappingProvenance::default(),
         )
         .await
         .unwrap());

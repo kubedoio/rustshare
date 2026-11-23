@@ -5,6 +5,7 @@ use std::{sync::Arc, time::Duration};
 
 use axum::{extract::State, http::StatusCode, Json};
 use chrono::{DateTime, Utc};
+use rustshare_resource_auth::SourceAuthorizer;
 use serde::Serialize;
 use sqlx::Row;
 use tokio::{sync::broadcast, task::JoinSet};
@@ -66,6 +67,8 @@ impl MemoryFilesReconcileConfig {
 pub fn spawn_memory_files_reconcile_worker(
     metadata: Arc<MetadataStore>,
     note_service: Arc<NoteService>,
+    memory_files_catalog: rustshare_storage::MemoryFilesCatalogStore,
+    source_authorizer: Arc<SourceAuthorizer>,
     config: MemoryFilesReconcileConfig,
     mut shutdown: broadcast::Receiver<()>,
 ) -> tokio::task::JoinHandle<()> {
@@ -89,8 +92,19 @@ pub fn spawn_memory_files_reconcile_worker(
                     Ok(Ok(Some(claim))) => {
                         let metadata = Arc::clone(&metadata);
                         let note_service = Arc::clone(&note_service);
+                        let memory_files_catalog = memory_files_catalog.clone();
+                        let source_authorizer = Arc::clone(&source_authorizer);
                         tasks.spawn(async move {
-                            run_page(metadata, note_service, config, worker_id, claim).await;
+                            run_page(
+                                metadata,
+                                note_service,
+                                memory_files_catalog,
+                                source_authorizer,
+                                config,
+                                worker_id,
+                                claim,
+                            )
+                            .await;
                         });
                     }
                     Ok(Ok(None)) => break,
@@ -202,6 +216,8 @@ pub async fn discover_tenant_page(metadata: &MetadataStore) -> anyhow::Result<()
 async fn run_page(
     metadata: Arc<MetadataStore>,
     note_service: Arc<NoteService>,
+    memory_files_catalog: rustshare_storage::MemoryFilesCatalogStore,
+    source_authorizer: Arc<SourceAuthorizer>,
     config: MemoryFilesReconcileConfig,
     owner: Uuid,
     lease: MemoryFilesLease,
@@ -209,8 +225,15 @@ async fn run_page(
     let tenant_id = lease.tenant_id;
     // Drop an interrupted page to release source locks before retry bookkeeping.
     let result = {
-        let page =
-            reconcile_files_memory_page(&metadata, &note_service, tenant_id, lease.cursor, 100);
+        let page = reconcile_files_memory_page(
+            &metadata,
+            &note_service,
+            &memory_files_catalog,
+            &source_authorizer,
+            tenant_id,
+            lease.cursor,
+            100,
+        );
         tokio::pin!(page);
         let deadline = tokio::time::sleep(config.page_timeout);
         tokio::pin!(deadline);

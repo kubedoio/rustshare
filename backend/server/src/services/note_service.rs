@@ -19,11 +19,25 @@ use rustshare_core::{
         PermissionResolver,
     },
 };
+use rustshare_resource_auth::{
+    PrincipalContext, Representation, ResourceRef, SourceAuthorizer, SourceError,
+};
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
+
+pub async fn read_authorized_source_text(
+    authorizer: &SourceAuthorizer,
+    context: &PrincipalContext,
+    resource: &ResourceRef,
+) -> Result<Bytes, SourceError> {
+    authorizer
+        .fetch(context, resource, Representation::Text)
+        .await
+        .map(|fetched| fetched.data)
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct NoteAttachment {
@@ -378,6 +392,55 @@ impl NoteService {
     /// Whether a Notes content-index sink is configured.
     pub fn content_index_available(&self) -> bool {
         self.index_sink.is_some()
+    }
+
+    /// Index a Connector-owned Markdown import with the same current Files
+    /// ACL and frontmatter policy used for Notes. The caller must fetch
+    /// `content` through the authorized Files source owner before calling.
+    pub async fn index_connector_markdown(
+        &self,
+        file_id: Uuid,
+        owner_id: UserId,
+        tenant_id: Uuid,
+        content: &str,
+    ) -> Result<bool, NoteError> {
+        if self.index_sink.is_none() {
+            return Ok(false);
+        }
+        let file = self.file_service.get_file(file_id, owner_id).await?;
+        if file.tenant_id != tenant_id
+            || !file.name.to_lowercase().ends_with(".md")
+            || rustshare_core::services::is_hidden_file_for_path(&file.name, &file.path)
+        {
+            self.remove_connector_markdown_index(tenant_id, file_id)
+                .await?;
+            return Ok(false);
+        }
+        let metadata = self
+            .load_metadata(file_id, owner_id, tenant_id)
+            .await?
+            .unwrap_or_else(|| NoteMetadata::new(file.name.clone()));
+        if metadata.kind != "note" {
+            self.remove_connector_markdown_index(tenant_id, file_id)
+                .await?;
+            return Ok(false);
+        }
+        self.emit_index_note(&file, &metadata, content, tenant_id)
+            .await
+    }
+
+    /// Remove a Connector-imported file from every configured Memory index.
+    pub async fn remove_connector_markdown_index(
+        &self,
+        tenant_id: Uuid,
+        file_id: Uuid,
+    ) -> Result<(), NoteError> {
+        if let Some(sink) = &self.index_sink {
+            sink.remove_source_file(tenant_id, file_id)
+                .await
+                .map_err(|error| NoteError::Storage(error.to_string()))?;
+        }
+        Ok(())
     }
 
     /// Customize the workspace and folder names.
