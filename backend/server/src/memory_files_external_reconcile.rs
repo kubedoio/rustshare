@@ -166,7 +166,10 @@ async fn process_page(
         let page = files
             .reconcile_page(lease.tenant_id, lease.cursor, PAGE_SIZE)
             .await
-            .map_err(|_| MemoryFilesReconcileFailureStage::FilesSourcePage)?;
+            .map_err(|error| {
+                tracing::warn!(tenant_id = %lease.tenant_id, error = %error, "Memory Files reconciliation request failed");
+                MemoryFilesReconcileFailureStage::FilesSourcePage
+            })?;
         let mut counts = FilesReconcileResponse {
             processed: 0,
             indexed: 0,

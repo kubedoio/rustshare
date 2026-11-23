@@ -109,9 +109,10 @@ impl MemoryWorkerFilesClient {
             .body(body)
             .send()
             .await?;
+        let status = response.status();
         anyhow::ensure!(
-            response.status().is_success(),
-            "Files snapshot endpoint unavailable"
+            status.is_success(),
+            "Files snapshot endpoint returned HTTP {status}"
         );
         let body = response.bytes().await?;
         anyhow::ensure!(
