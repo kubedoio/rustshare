@@ -243,8 +243,7 @@ async fn wait_for_versions(
     owner_token: &str,
     scope: &str,
     phase: &str,
-    queue: &Path,
-    instance_id: &str,
+    queue: (&Path, &str),
     expected: &[(&str, i64)],
 ) -> Vec<Value> {
     let mut last_versions = BTreeMap::new();
@@ -268,7 +267,7 @@ async fn wait_for_versions(
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    panic!("timed out waiting for Local Text Files import during {phase}; expected {expected:?}, observed {last_versions:?}, queued observations {}", queue_pending(queue, instance_id));
+    panic!("timed out waiting for Local Text Files import during {phase}; expected {expected:?}, observed {last_versions:?}, queued observations {}", queue_pending(queue.0, queue.1));
 }
 
 async fn connector_events(pool: &sqlx::PgPool, instance_id: &str) -> Vec<Value> {
@@ -857,8 +856,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         &owner_token,
         &scope,
         "initial import",
-        &queue,
-        &instance_id,
+        (&queue, &instance_id),
         &[(&first_path, 1), (&second_path, 1)],
     )
     .await;
@@ -880,8 +878,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         &owner_token,
         &scope,
         "source update",
-        &queue,
-        &instance_id,
+        (&queue, &instance_id),
         &[(&first_path, 2), (&second_path, 1)],
     )
     .await;
@@ -1296,8 +1293,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         &owner_token,
         &scope,
         "reconciliation update",
-        &queue,
-        &instance_id,
+        (&queue, &instance_id),
         &[(&first_path, 3), (&second_path, 1)],
     )
     .await;
@@ -1353,8 +1349,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         &owner_token,
         &scope,
         "Files import with Memory catalog unavailable",
-        &queue,
-        &instance_id,
+        (&queue, &instance_id),
         &[(&unavailable_memory_path, 1)],
     )
     .await;
@@ -1463,8 +1458,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         &owner_token,
         &scope,
         "Files import with Memory worker offline",
-        &queue,
-        &instance_id,
+        (&queue, &instance_id),
         &[(&offline_path, 1)],
     )
     .await;
@@ -1543,8 +1537,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         &owner_token,
         &scope,
         "Files import before Memory worker restart",
-        &queue,
-        &instance_id,
+        (&queue, &instance_id),
         &[(&crash_path, 1)],
     )
     .await;
@@ -1606,8 +1599,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         &owner_token,
         &scope,
         "Files import after backend restart",
-        &queue,
-        &instance_id,
+        (&queue, &instance_id),
         &[(&backend_restart_path, 1)],
     )
     .await;
@@ -1677,8 +1669,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         &owner_token,
         &scope,
         "Files import after credential rotation",
-        &queue,
-        &instance_id,
+        (&queue, &instance_id),
         &[(&revoked_file_path, 1)],
     )
     .await;
