@@ -83,7 +83,7 @@ use rustshare_server::buzz_gateway::{
 };
 #[cfg(feature = "test-recording-provider")]
 use rustshare_server::services::ask_workspace::{
-    AskWorkspaceService, LlmResult, RecordingLlmProvider, SYSTEM_POLICY,
+    AskWorkspaceService, LlmError, LlmResult, RecordingLlmProvider, SYSTEM_POLICY,
 };
 use rustshare_server::services::unified_search::SearchScope;
 use rustshare_server::services::unified_search::{
@@ -3506,6 +3506,102 @@ async fn full_stack_buzz_gateway_end_to_end() {
 // ---------------------------------------------------------------------------
 // Ask Workspace provider boundary
 // ---------------------------------------------------------------------------
+
+#[cfg(feature = "test-recording-provider")]
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn memory_source_audit_failure_prevents_llm_context_submission() {
+    let _guard = SERIAL.lock().await;
+    let harness = harness_with_scripted_authority(pool().await, false).await;
+    let pool = harness.pool.clone();
+    let tenant = TenantId::from(harness.tenant);
+    cleanup(&pool, tenant).await;
+
+    let owner = create_user(&harness.metadata_store, "audit-failure-owner", tenant.0).await;
+    let file = create_file_with_content(
+        &harness,
+        owner.id,
+        "audit-failure.md",
+        "/docs/audit-failure.md",
+        b"SENSITIVE-AUDIT-FAILURE-CONTEXT",
+    )
+    .await;
+    insert_connector_file_projection(&pool, &file).await;
+    let ctx = user_ctx(PrincipalId::from(owner.id), tenant);
+    let source_ref = file_ref(file.id).with_version(format!("sha256:{}", file.content_hash));
+    let control = harness
+        .service()
+        .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone())))
+        .search_scoped_for_run(
+            &ctx,
+            "SENSITIVE-AUDIT-FAILURE-CONTEXT",
+            &[SearchSource::Files],
+            8,
+            &SearchScope::Workspace,
+            Uuid::new_v4(),
+        )
+        .await
+        .expect("the source is authorized before injecting an audit failure");
+    assert_eq!(control.results.len(), 1);
+    assert_eq!(control.results[0].resource_ref, source_ref.to_uri());
+
+    let suffix = Uuid::new_v4().simple().to_string();
+    let function_name = format!("rs_memory_audit_fail_{suffix}");
+    let trigger_name = format!("rs_memory_audit_fail_{suffix}");
+    sqlx::query(&format!(
+        "CREATE FUNCTION public.{function_name}() RETURNS trigger \
+         LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected Memory audit failure'; END; $$"
+    ))
+    .execute(&pool)
+    .await
+    .expect("create an audit failure trigger function");
+    sqlx::query(&format!(
+        "CREATE TRIGGER {trigger_name} BEFORE INSERT ON memory_files_source_access_audit \
+         FOR EACH ROW EXECUTE FUNCTION public.{function_name}()"
+    ))
+    .execute(&pool)
+    .await
+    .expect("inject Memory source audit failure");
+
+    let provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "must not be called".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let ask = AskWorkspaceService::new(
+        Arc::new(
+            harness
+                .service()
+                .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+        ),
+        Some(provider.clone()),
+    );
+    assert!(matches!(
+        ask.ask(
+            &ctx,
+            "SENSITIVE-AUDIT-FAILURE-CONTEXT",
+            &[SearchSource::Files],
+            8
+        )
+        .await,
+        Err(LlmError::Failed)
+    ));
+    assert!(
+        provider.calls().await.is_empty(),
+        "source content must not reach the provider when its audit write fails"
+    );
+
+    sqlx::query(&format!(
+        "DROP TRIGGER {trigger_name} ON memory_files_source_access_audit"
+    ))
+    .execute(&pool)
+    .await
+    .expect("remove the audit failure trigger");
+    sqlx::query(&format!("DROP FUNCTION public.{function_name}()"))
+        .execute(&pool)
+        .await
+        .expect("remove the audit failure function");
+    cleanup(&pool, tenant).await;
+}
 
 /// Proves the exact generation input: both owning sources are freshly fetched,
 /// stable source IDs are assigned by the server, and the provider sees no
