@@ -77,6 +77,8 @@ version for citations. Its outbox consumer re-reads the live Files row and
 fetches text through `SourceAuthorizer` before indexing. An older or duplicate
 event cannot replace a newer Files version, and a soft-delete event tombstones
 the catalog and removes the index projection.
+Ordinary Files edits preserve the Connector relationship while advancing the
+current Files citation version and rebuildable content projection.
 
 Unified Search still treats keyword rows as candidates: Files reauthorizes,
 resolves and fetches current source content before returning a snippet or

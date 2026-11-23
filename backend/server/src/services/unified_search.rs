@@ -110,6 +110,16 @@ struct Candidate {
     author_pubkey: Option<String>,
 }
 
+fn resource_scope_matches(scope: &ResourceRef, resource: &ResourceRef) -> bool {
+    scope.application == resource.application
+        && scope.resource_type == resource.resource_type
+        && scope.resource_id == resource.resource_id
+        && scope
+            .version
+            .as_ref()
+            .is_none_or(|version| resource.version.as_ref() == Some(version))
+}
+
 /// Response contract of the unified search endpoint.
 #[derive(Debug, Clone)]
 pub struct UnifiedSearchResponse {
@@ -376,7 +386,9 @@ impl UnifiedSearchService {
             match catalog.versions(ctx.tenant_id.0, &file_ids).await {
                 Ok(versions) => {
                     for candidate in &mut candidates {
-                        if candidate.source_application == FILES_APPLICATION {
+                        if candidate.source_application == FILES_APPLICATION
+                            && candidate.resource_ref.version.is_none()
+                        {
                             if let Some(version) =
                                 candidate.file_id.and_then(|file_id| versions.get(&file_id))
                             {
@@ -614,7 +626,8 @@ impl UnifiedSearchService {
         for result in results {
             let keep = match scope {
                 SearchScope::Workspace => true,
-                SearchScope::Resource(resource) => result.resource_ref == resource.to_uri(),
+                SearchScope::Resource(resource) => ResourceRef::from_uri(&result.resource_ref)
+                    .is_ok_and(|reference| resource_scope_matches(resource, &reference)),
                 SearchScope::Folder(_) => {
                     match (result.provenance.file_id, allowed_folders.as_ref()) {
                         (Some(file_id), Some(folder_ids)) => self
@@ -1194,6 +1207,16 @@ mod tests {
             channel_kind: None,
             author_pubkey: None,
         }
+    }
+
+    #[test]
+    fn resource_scope_accepts_current_citation_but_preserves_explicit_versions() {
+        let scope = ResourceRef::new(ApplicationId::new(FILES_APPLICATION), "file", "file-1");
+        let current = scope.clone().with_version("sha256:current");
+        let historical = scope.clone().with_version("sha256:old");
+        assert!(resource_scope_matches(&scope, &current));
+        assert!(resource_scope_matches(&historical, &historical.clone()));
+        assert!(!resource_scope_matches(&historical, &current));
     }
 
     #[test]

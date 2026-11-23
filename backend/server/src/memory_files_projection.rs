@@ -94,19 +94,6 @@ impl MemoryFilesProjectionConsumer {
             return Ok(());
         }
 
-        // Ordinary Files uploads do not belong to this projection.
-        let Some(provenance) = event.data.get("sourceProvenance") else {
-            return Ok(());
-        };
-        let provenance: ConnectorProvenance = serde_json::from_value(provenance.clone())?;
-        anyhow::ensure!(
-            !provenance.source_resource_ref.is_empty()
-                && !provenance.source_revision.is_empty()
-                && !provenance.relative_path.is_empty(),
-            "Connector provenance fields must not be empty"
-        );
-        ResourceRef::from_uri(&provenance.source_resource_ref)?;
-
         let Some(file) = self
             .metadata
             .find_file_by_id_for_tenant(file_id, tenant_id)
@@ -125,15 +112,82 @@ impl MemoryFilesProjectionConsumer {
             return Ok(());
         };
 
+        if event.data.get("sourceProvenance").is_none()
+            && self.catalog.version(tenant_id, file_id).await?.is_none()
+        {
+            return Ok(());
+        }
+
         let Some(ActorRef::Principal(actor)) = event.actor.as_ref() else {
-            anyhow::bail!("Connector Files event has no user Principal actor");
+            anyhow::bail!("Files event has no user Principal actor");
         };
+
+        let version = format!("sha256:{}", file.content_hash);
+        let context = PrincipalContext::user(
+            PrincipalId(actor.0),
+            TenantId(tenant_id),
+            WorkspaceId(tenant_id),
+        );
+
+        // Files edits on an imported Connector resource do not carry source
+        // provenance. Keep the original relationship while advancing the
+        // Files-side citation version and rebuildable content projection.
+        let Some(provenance) = event.data.get("sourceProvenance") else {
+            let file_ref = ResourceRef::new(
+                ApplicationId::new("io.elembra.files"),
+                "file",
+                file_id.to_string(),
+            )
+            .with_version(version.clone());
+            let fetched = self
+                .authorizer
+                .fetch(&context, &file_ref, Representation::Text)
+                .await;
+            self.catalog
+                .record_source_access(
+                    event.id,
+                    tenant_id,
+                    file_id,
+                    actor.0,
+                    &version,
+                    fetched.is_ok(),
+                )
+                .await?;
+            let content = String::from_utf8(fetched?.data.to_vec())?;
+            let mut tx = self.pool.begin().await?;
+            if !self
+                .catalog
+                .refresh_current_version_in_tx(
+                    &mut tx,
+                    tenant_id,
+                    file_id,
+                    &version,
+                    i64::from(file.current_version),
+                )
+                .await?
+            {
+                tx.commit().await?;
+                return Ok(());
+            }
+            self.notes
+                .index_connector_markdown(file_id, file.owner_id, tenant_id, &content)
+                .await?;
+            tx.commit().await?;
+            return Ok(());
+        };
+        let provenance: ConnectorProvenance = serde_json::from_value(provenance.clone())?;
+        anyhow::ensure!(
+            !provenance.source_resource_ref.is_empty()
+                && !provenance.source_revision.is_empty()
+                && !provenance.relative_path.is_empty(),
+            "Connector provenance fields must not be empty"
+        );
+        ResourceRef::from_uri(&provenance.source_resource_ref)?;
         anyhow::ensure!(
             actor.0 == file.owner_id,
             "Connector actor is not the Files owner"
         );
 
-        let version = format!("sha256:{}", file.content_hash);
         // Connector import revisions are content hashes. If this is an old
         // out-of-order event, its newer Files event remains responsible for
         // projection; never combine current bytes with stale provenance.
@@ -146,11 +200,6 @@ impl MemoryFilesProjectionConsumer {
             file.id.to_string(),
         )
         .with_version(version.clone());
-        let context = PrincipalContext::user(
-            PrincipalId(file.owner_id),
-            TenantId(tenant_id),
-            WorkspaceId(tenant_id),
-        );
         tracing::info!(
             tenant_id = %tenant_id,
             file_id = %file_id,

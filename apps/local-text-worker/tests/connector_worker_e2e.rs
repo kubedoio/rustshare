@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use reqwest::{Client, StatusCode};
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -722,6 +723,59 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     let outage_version = format!("sha256:{}", outage_revision.trim_start_matches("sha256:"));
     let _ = reconcile_memory_files(&client, &server, &owner_token, tenant_id).await;
     wait_for_memory_projection(&pool, outage_file_id, &outage_version, &outage_revision, 1).await;
+
+    // A normal Files edit has no Connector sourceProvenance. Memory must keep
+    // the original relationship while indexing/citing the new Files version.
+    let manual_files_content = b"manually edited Files content after import\n";
+    let edited = client
+        .post(format!("{server}/api/v1/files/{outage_file_id}/edit"))
+        .bearer_auth(&owner_token)
+        .json(&json!({
+            "content": base64::engine::general_purpose::STANDARD.encode(manual_files_content),
+            "save_mode": "new_version",
+            "change_description": "Manual Files edit"
+        }))
+        .send()
+        .await
+        .expect("edit imported resource through Files");
+    assert_eq!(edited.status(), StatusCode::OK);
+    let edited: Value = edited.json().await.expect("decode edited Files version");
+    assert_eq!(edited["current_version"], 2);
+    let manual_files_revision = revision(manual_files_content);
+    let manual_files_version = format!(
+        "sha256:{}",
+        manual_files_revision.trim_start_matches("sha256:")
+    );
+    wait_for_memory_projection(
+        &pool,
+        outage_file_id,
+        &manual_files_version,
+        &outage_revision,
+        2,
+    )
+    .await;
+    let manual_search =
+        keyword_search(&client, &server, &owner_token, "manually edited Files").await;
+    let manual_result = manual_search["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["provenance"]["file_id"] == outage_file_id.to_string())
+        .expect("find the Files-edited Connector source");
+    assert!(manual_result["snippet"]
+        .as_str()
+        .unwrap()
+        .contains("manually edited Files content"));
+    let manual_citation = url::Url::parse(manual_result["resource_ref"].as_str().unwrap())
+        .expect("parse Files-edited citation");
+    assert_eq!(
+        manual_citation
+            .query_pairs()
+            .find(|(key, _)| key == "version")
+            .map(|(_, value)| value.into_owned())
+            .as_deref(),
+        Some(manual_files_version.as_str())
+    );
 
     let rotated = client
         .post(format!(
