@@ -28,11 +28,13 @@ const MAX_RESPONSE_BYTES: usize = 1_000_000;
 const MEMORY_WORKER_ID: Uuid = Uuid::from_u128(0x51b1_7a4e_83ba_4f29_9a41_4776_3e2d_0d1a);
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TenantPageRequest {
     after: Option<Uuid>,
     limit: u32,
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SourcePageRequest {
     tenant_id: Uuid,
     after_file_id: Option<Uuid>,
@@ -73,6 +75,16 @@ fn authenticate(
         .map_err(|_| StatusCode::UNAUTHORIZED)
 }
 
+fn valid_tenant_page(request: &TenantPageRequest) -> bool {
+    valid_limit(request.limit) && request.after.is_none_or(|id| !id.is_nil())
+}
+
+fn valid_source_page(request: &SourcePageRequest) -> bool {
+    valid_limit(request.limit)
+        && !request.tenant_id.is_nil()
+        && request.after_file_id.is_none_or(|id| !id.is_nil())
+}
+
 fn valid_limit(limit: u32) -> bool {
     (1..=MAX_PAGE_SIZE).contains(&limit)
 }
@@ -90,7 +102,7 @@ pub async fn tenant_page(
     let Ok(request) = serde_json::from_slice::<TenantPageRequest>(&body) else {
         return error(StatusCode::BAD_REQUEST).into_response();
     };
-    if !valid_limit(request.limit) {
+    if !valid_tenant_page(&request) {
         return error(StatusCode::BAD_REQUEST).into_response();
     }
     let result = async {
@@ -130,7 +142,7 @@ pub async fn source_page(
     let Ok(request) = serde_json::from_slice::<SourcePageRequest>(&body) else {
         return error(StatusCode::BAD_REQUEST).into_response();
     };
-    if !valid_limit(request.limit) {
+    if !valid_source_page(&request) {
         return error(StatusCode::BAD_REQUEST).into_response();
     }
     match resolve_source_page(&state, request).await {
@@ -325,6 +337,27 @@ mod tests {
         assert!(valid_limit(1));
         assert!(valid_limit(100));
         assert!(!valid_limit(101));
+    }
+    #[test]
+    fn reconciliation_requests_reject_nil_scopes_and_cursors() {
+        assert!(valid_tenant_page(&TenantPageRequest {
+            after: None,
+            limit: 1,
+        }));
+        assert!(!valid_tenant_page(&TenantPageRequest {
+            after: Some(Uuid::nil()),
+            limit: 1,
+        }));
+        assert!(valid_source_page(&SourcePageRequest {
+            tenant_id: Uuid::new_v4(),
+            after_file_id: None,
+            limit: 1,
+        }));
+        assert!(!valid_source_page(&SourcePageRequest {
+            tenant_id: Uuid::nil(),
+            after_file_id: None,
+            limit: 1,
+        }));
     }
     #[test]
     fn audit_id_is_stable_and_versioned() {

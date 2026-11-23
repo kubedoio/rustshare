@@ -24,6 +24,7 @@ const SIGNATURE_HEADER: &str = "X-Elembra-Memory-Signature";
 const MEMORY_WORKER_ID: Uuid = Uuid::from_u128(0x51b1_7a4e_83ba_4f29_9a41_4776_3e2d_0d1a);
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SnapshotRequest {
     source: String,
     event_id: Uuid,
@@ -69,6 +70,9 @@ pub async fn files_snapshot(
     let Ok(request) = serde_json::from_slice::<SnapshotRequest>(&body) else {
         return error(StatusCode::BAD_REQUEST).into_response();
     };
+    if !valid_snapshot_request(&request) {
+        return error(StatusCode::BAD_REQUEST).into_response();
+    }
     let observed_at = match sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&state.db_pool)
         .await
@@ -274,4 +278,28 @@ mod tests {
             event_access_audit_id("connector-b", event_id)
         );
     }
+
+    #[test]
+    fn snapshot_request_requires_bounded_source_and_non_nil_event() {
+        assert!(valid_snapshot_request(&SnapshotRequest {
+            source: "connector-worker".into(),
+            event_id: Uuid::new_v4(),
+        }));
+        assert!(!valid_snapshot_request(&SnapshotRequest {
+            source: String::new(),
+            event_id: Uuid::new_v4(),
+        }));
+        assert!(!valid_snapshot_request(&SnapshotRequest {
+            source: "x".repeat(256),
+            event_id: Uuid::new_v4(),
+        }));
+        assert!(!valid_snapshot_request(&SnapshotRequest {
+            source: "connector-worker".into(),
+            event_id: Uuid::nil(),
+        }));
+    }
+}
+
+fn valid_snapshot_request(request: &SnapshotRequest) -> bool {
+    !request.source.is_empty() && request.source.len() <= 255 && !request.event_id.is_nil()
 }
