@@ -919,7 +919,9 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .expect("share id")
         .to_owned();
     let recipient_result = loop {
-        let search = keyword_search(&client, &server, &recipient_token, "alpha v2").await;
+        // The share must make this Files resource discoverable through current
+        // authorization even while its Memory content projection is stale.
+        let search = keyword_search(&client, &server, &recipient_token, "shared.md").await;
         if let Some(result) = search["results"]
             .as_array()
             .unwrap()
@@ -952,15 +954,29 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .await
         .expect("revoke recipient source access");
     assert_eq!(revoke.status(), StatusCode::NO_CONTENT);
-    sqlx::query(
-        "UPDATE note_index_chunks SET read_acl=ARRAY[$3] WHERE tenant_id=$1 AND source_file_id=$2",
+    // Share ACL refresh is best-effort and may remove this non-Notes source's
+    // projection. Recreate the stale row explicitly so this assertion proves
+    // current Files authorization hides indexed content after revocation.
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    sqlx::query("DELETE FROM note_index_chunks WHERE tenant_id=$1 AND source_file_id=$2")
+        .bind(tenant_id)
+        .bind(first_file_id)
+        .execute(&pool)
+        .await
+        .expect("clear any refreshed Memory chunks before stale-index fixture");
+    let stale_index_rows = sqlx::query(
+        "INSERT INTO note_index_chunks (id,tenant_id,workspace_id,source_folder_id,note_id,source_file_id,file_name,file_path,content,mime_type,owner_id,embedding,acl_hash,acl_version,read_acl,visibility,embedding_policy) \
+         SELECT $1,tenant_id,tenant_id,parent_folder_id,id,id,name,path,'alpha v2','text/markdown',owner_id,NULL,'stale-test',1,ARRAY[$3],'private','allowed' \
+         FROM files WHERE tenant_id=$2 AND id=$4 AND deleted_at IS NULL",
     )
+    .bind(Uuid::new_v4())
     .bind(tenant_id)
-    .bind(first_file_id)
     .bind(&stale_acl_user)
+    .bind(first_file_id)
     .execute(&pool)
     .await
-    .expect("retain stale search ACL to exercise source reauthorization");
+    .expect("insert deliberately stale Memory search row");
+    assert_eq!(stale_index_rows.rows_affected(), 1);
     let revoked_search = keyword_search(&client, &server, &recipient_token, "alpha v2").await;
     assert!(
         revoked_search["results"]
