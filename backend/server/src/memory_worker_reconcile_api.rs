@@ -23,6 +23,7 @@ use crate::{memory_worker_auth::MemoryWorkerRequestAuth, AppState};
 const TENANTS_PATH: &str = "/internal/v1/memory/files/reconcile/tenants";
 const PAGE_PATH: &str = "/internal/v1/memory/files/reconcile/page";
 const SIGNATURE_HEADER: &str = "X-Elembra-Memory-Signature";
+const MAX_REQUEST_BODY_BYTES: usize = 4 * 1024;
 const MAX_PAGE_SIZE: u32 = 100;
 const MAX_RESPONSE_BYTES: usize = 1_000_000;
 const MEMORY_WORKER_ID: Uuid = Uuid::from_u128(0x51b1_7a4e_83ba_4f29_9a41_4776_3e2d_0d1a);
@@ -96,6 +97,9 @@ pub async fn tenant_page(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
+    if body.len() > MAX_REQUEST_BODY_BYTES {
+        return error(StatusCode::PAYLOAD_TOO_LARGE).into_response();
+    }
     if let Err(status) = authenticate(&method, TENANTS_PATH, &uri, &headers, &body) {
         return error(status).into_response();
     }
@@ -136,6 +140,9 @@ pub async fn source_page(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
+    if body.len() > MAX_REQUEST_BODY_BYTES {
+        return error(StatusCode::PAYLOAD_TOO_LARGE).into_response();
+    }
     if let Err(status) = authenticate(&method, PAGE_PATH, &uri, &headers, &body) {
         return error(status).into_response();
     }

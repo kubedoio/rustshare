@@ -89,12 +89,12 @@ fn spawn_worker(
     )
 }
 
-fn spawn_memory_worker(server: &str) -> Worker {
+async fn spawn_memory_worker(server: &str, wait_until_ready: bool) -> Worker {
     let worker = env::var("RUSTSHARE_MEMORY_WORKER_BIN").expect("set Memory worker binary path");
     let health_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let health_addr = health_listener.local_addr().unwrap();
     drop(health_listener);
-    Worker(
+    let worker = Worker(
         Command::new(worker)
             .env("RUSTSHARE_MEMORY_EXECUTION_MODE", "external")
             .env(
@@ -119,7 +119,25 @@ fn spawn_memory_worker(server: &str) -> Worker {
             .stderr(Stdio::null())
             .spawn()
             .expect("start separate Elembra Memory worker process"),
-    )
+    );
+    let health_path = if wait_until_ready { "ready" } else { "health" };
+    let health_url = format!("http://{health_addr}/{health_path}");
+    let client = Client::new();
+    for _ in 0..120 {
+        if let Some(status) = worker.0.try_wait().expect("check Memory worker startup") {
+            panic!("Memory worker exited before readiness: {status}");
+        }
+        if client
+            .get(&health_url)
+            .send()
+            .await
+            .is_ok_and(|response| response.status() == StatusCode::OK)
+        {
+            return worker;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    panic!("timed out waiting for Memory worker {health_path}");
 }
 
 fn spawn_backend(database_url: &str, log_path: &Path) -> Worker {
@@ -301,7 +319,34 @@ async fn wait_for_memory_projection(
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    panic!("timed out waiting for authorized Memory Files projection");
+    let catalog: Option<(Option<String>, Option<String>, Option<i64>)> = sqlx::query_as(
+        "SELECT current_version, source_revision, current_version_number \
+         FROM memory_files_catalog WHERE file_id=$1 AND deleted_at IS NULL",
+    )
+    .bind(file_id)
+    .fetch_optional(pool)
+    .await
+    .expect("inspect timed-out Memory catalog state");
+    let chunk_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM note_index_chunks WHERE source_file_id=$1")
+            .bind(file_id)
+            .fetch_one(pool)
+            .await
+            .expect("inspect timed-out Memory search projection");
+    let deliveries: Vec<(String, String, i32)> = sqlx::query_as(
+        "SELECT d.event_type, d.state, d.attempt_count FROM integration_deliveries d \
+         JOIN integration_outbox o USING (source, event_id) \
+         WHERE d.consumer_id='io.elembra.memory.files-connector.v1' \
+           AND o.event_json->'elembraResource'->>'resourceId'=$1 \
+         ORDER BY d.available_at DESC LIMIT 10",
+    )
+    .bind(file_id.to_string())
+    .fetch_all(pool)
+    .await
+    .expect("inspect recent Memory delivery state");
+    panic!(
+        "timed out waiting for authorized Memory Files projection: catalog={catalog:?}, chunks={chunk_count}, recent_deliveries={deliveries:?}"
+    );
 }
 
 async fn insert_memory_search_fixture(
@@ -766,7 +811,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     let credential_file = runtime.path().join("credential");
     save_credential(&credential_file, &credential);
     let queue = runtime.path().join("queue.sqlite3");
-    let mut memory_worker = Some(spawn_memory_worker(&server));
+    let mut memory_worker = Some(spawn_memory_worker(&server, true).await);
     let first_path = format!("/{scope}/people/alex/shared.md");
     let second_path = format!("/{scope}/people/sam/shared.md");
     let mut worker = spawn_worker(&instance_id, &server, &credential_file, &queue, root);
@@ -1346,7 +1391,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     .await
     .expect("read durable Memory backlog");
     assert_eq!(pending, "pending");
-    memory_worker = Some(spawn_memory_worker(&server));
+    memory_worker = Some(spawn_memory_worker(&server, true).await);
     wait_for_memory_initial_delivery(&pool, offline_event).await;
     let offline_revision = revision(offline_content);
     let offline_version = format!("sha256:{}", offline_revision.trim_start_matches("sha256:"));
@@ -1405,12 +1450,12 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .expect("valid backend process id");
     signal_process(backend_pid, "-STOP");
     let resume_backend = ResumeOnDrop(backend_pid);
-    let mut killed_memory_worker = spawn_memory_worker(&server);
+    let mut killed_memory_worker = spawn_memory_worker(&server, false).await;
     wait_for_memory_claim(&pool, crash_event).await;
     killed_memory_worker.kill();
     drop(resume_backend);
     wait_for_backend(&client, &server, true).await;
-    memory_worker = Some(spawn_memory_worker(&server));
+    memory_worker = Some(spawn_memory_worker(&server, true).await);
     wait_for_memory_attempt(&pool, crash_event, 2).await;
     let crash_revision = revision(crash_content);
     let crash_version = format!("sha256:{}", crash_revision.trim_start_matches("sha256:"));

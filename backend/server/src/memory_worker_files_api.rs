@@ -21,6 +21,7 @@ use crate::{memory_worker_auth::MemoryWorkerRequestAuth, AppState};
 
 const ROUTE_PATH: &str = "/internal/v1/memory/files/snapshot";
 const SIGNATURE_HEADER: &str = "X-Elembra-Memory-Signature";
+const MAX_REQUEST_BODY_BYTES: usize = 4 * 1024;
 const MEMORY_WORKER_ID: Uuid = Uuid::from_u128(0x51b1_7a4e_83ba_4f29_9a41_4776_3e2d_0d1a);
 
 #[derive(Deserialize)]
@@ -45,6 +46,9 @@ pub async fn files_snapshot(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
+    if body.len() > MAX_REQUEST_BODY_BYTES {
+        return error(StatusCode::PAYLOAD_TOO_LARGE).into_response();
+    }
     let path = uri.path_and_query().map_or_else(
         || uri.path().to_owned(),
         |path_and_query| path_and_query.as_str().to_owned(),
