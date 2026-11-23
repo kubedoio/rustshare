@@ -180,9 +180,32 @@ test('Notes opens an exact historical Memory citation without changing Note iden
 		});
 		expect(updated.ok()).toBeTruthy();
 
-		await page.goto(
-			`/apps/notes/${encodeURIComponent(createdNoteId)}?sourceVersion=${encodeURIComponent(sourceVersion)}`
+		const resourceRef = `elembra://io.elembra.files/file/${createdNoteId}?version=${encodeURIComponent(sourceVersion)}`;
+		await page.route('**/api/v1/memory/ask', (route) =>
+			route.fulfill({
+				json: {
+					answer: 'The historical Note contains the cited text.',
+					citations: [
+						{
+							resource_ref: resourceRef,
+							title,
+							location: 'Historical citation H1',
+							provenance: { note_id: createdNoteId, file_id: createdNoteId }
+						}
+					],
+					source_count: 1,
+					grounded: true,
+					insufficient_evidence: false,
+					run_id: randomUUID()
+				}
+			})
 		);
+
+		await page.goto('/ask');
+		await page.getByLabel('Your question').fill(`What did ${title} say?`);
+		await page.getByRole('button', { name: 'Ask' }).click();
+		await page.getByRole('button', { name: new RegExp(title) }).click();
+		await page.waitForURL(`**/apps/notes/${createdNoteId}?sourceVersion=*`);
 		await expect(page.locator('h1.doc-title-wrapper')).toHaveText(title);
 		await expect(page.locator('.doc-subtitle')).toHaveText('Historical citation H1');
 		await expect(page.getByText('Historical citation body')).toBeVisible();
