@@ -131,6 +131,11 @@ async fn historical_note_content_rechecks_authorization_and_never_falls_back() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_ne!(body.as_ref(), b"# Current Note\n\nCurrent v2 body");
 
+    sqlx::query("DELETE FROM file_versions WHERE file_id = $1")
+        .bind(file.id)
+        .execute(&state.db_pool)
+        .await
+        .expect("clean up historical and current version rows");
     cleanup_tenant(&state.db_pool, tenant).await;
     cleanup_tenant(&state.db_pool, other_tenant).await;
 }
