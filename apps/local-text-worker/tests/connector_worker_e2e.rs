@@ -94,7 +94,7 @@ async fn spawn_memory_worker(server: &str, wait_until_ready: bool) -> Worker {
     let health_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let health_addr = health_listener.local_addr().unwrap();
     drop(health_listener);
-    let worker = Worker(
+    let mut worker = Worker(
         Command::new(worker)
             .env("RUSTSHARE_MEMORY_EXECUTION_MODE", "external")
             .env(
