@@ -112,7 +112,7 @@ impl MemoryWorkerFilesClient {
         let status = response.status();
         anyhow::ensure!(
             status.is_success(),
-            "Files snapshot endpoint returned HTTP {status}"
+            "Memory Files API returned HTTP {status}"
         );
         let body = response.bytes().await?;
         anyhow::ensure!(
