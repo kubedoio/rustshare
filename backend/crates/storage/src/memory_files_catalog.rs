@@ -249,8 +249,7 @@ impl MemoryFilesCatalogStore {
         let result = sqlx::query(
             "INSERT INTO memory_files_catalog (tenant_id, file_id, deleted_at, updated_at) VALUES ($1, $2, $3, $3) \
              ON CONFLICT (tenant_id, file_id) DO UPDATE SET deleted_at = COALESCE(memory_files_catalog.deleted_at, EXCLUDED.deleted_at), updated_at = EXCLUDED.updated_at \
-             WHERE memory_files_catalog.updated_at < EXCLUDED.updated_at
-                OR (memory_files_catalog.updated_at = EXCLUDED.updated_at AND memory_files_catalog.deleted_at IS NULL)",
+             WHERE memory_files_catalog.updated_at < EXCLUDED.updated_at",
         )
         .bind(tenant_id)
         .bind(file_id)
@@ -291,6 +290,13 @@ mod tests {
         .fetch_one(&pool)
         .await
         .expect("read projection write time");
+        let mut tx = pool.begin().await.expect("begin equal-time removal");
+        let tied_removal = store
+            .tombstone_snapshot_in_tx(&mut tx, tenant_id, file_id, projected_at)
+            .await
+            .expect("conditionally apply equal-time removal");
+        tx.commit().await.expect("commit equal-time removal");
+        assert!(!tied_removal);
         let mut tx = pool.begin().await.expect("begin stale removal");
         let applied = store
             .tombstone_snapshot_in_tx(
