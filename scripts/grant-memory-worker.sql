@@ -114,9 +114,28 @@ REVOKE CREATE, TEMPORARY ON DATABASE :"app_database" FROM elembra_memory_worker;
 -- retention/compaction, and unrelated consumers remain backend-owned.
 GRANT SELECT, INSERT ON TABLE public.integration_consumers TO elembra_memory_worker;
 GRANT SELECT, INSERT ON TABLE public.integration_consumer_subscriptions TO elembra_memory_worker;
-GRANT SELECT ON TABLE public.integration_outbox TO elembra_memory_worker;
+-- PostgreSQL requires UPDATE privilege for SELECT ... FOR UPDATE, which the
+-- durable outbox claimant uses only to serialize first deliveries.
+GRANT SELECT, UPDATE ON TABLE public.integration_outbox TO elembra_memory_worker;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.integration_deliveries TO elembra_memory_worker;
 GRANT INSERT ON TABLE public.integration_consumer_receipts TO elembra_memory_worker;
+
+-- Keep the worker's durable delivery ledger scoped to its existing consumer.
+DO $$
+DECLARE table_name text;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'integration_consumers', 'integration_consumer_subscriptions',
+        'integration_consumer_receipts', 'integration_deliveries'
+    ] LOOP
+        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', table_name);
+        EXECUTE format('DROP POLICY IF EXISTS elembra_memory_worker_consumer ON public.%I', table_name);
+        EXECUTE format(
+            'CREATE POLICY elembra_memory_worker_consumer ON public.%I FOR ALL TO elembra_memory_worker USING (consumer_id = ''io.elembra.memory.files-connector.v1'') WITH CHECK (consumer_id = ''io.elembra.memory.files-connector.v1'')',
+            table_name
+        );
+    END LOOP;
+END $$;
 
 -- Memory-owned catalogs, rebuildable search projection, and content-free audit.
 GRANT SELECT, INSERT, UPDATE ON TABLE public.memory_files_catalog TO elembra_memory_worker;
@@ -146,7 +165,7 @@ SELECT NOT EXISTS (
             SELECT 1 FROM (VALUES
                 ('integration_consumers', 'SELECT'), ('integration_consumers', 'INSERT'),
                 ('integration_consumer_subscriptions', 'SELECT'), ('integration_consumer_subscriptions', 'INSERT'),
-                ('integration_outbox', 'SELECT'),
+                ('integration_outbox', 'SELECT'), ('integration_outbox', 'UPDATE'),
                 ('integration_deliveries', 'SELECT'), ('integration_deliveries', 'INSERT'), ('integration_deliveries', 'UPDATE'),
                 ('integration_consumer_receipts', 'INSERT'),
                 ('memory_files_catalog', 'SELECT'), ('memory_files_catalog', 'INSERT'), ('memory_files_catalog', 'UPDATE'),
@@ -172,7 +191,7 @@ SELECT NOT EXISTS (
             SELECT 1 FROM (VALUES
                 ('integration_consumers', 'SELECT'), ('integration_consumers', 'INSERT'),
                 ('integration_consumer_subscriptions', 'SELECT'), ('integration_consumer_subscriptions', 'INSERT'),
-                ('integration_outbox', 'SELECT'),
+                ('integration_outbox', 'SELECT'), ('integration_outbox', 'UPDATE'),
                 ('integration_deliveries', 'SELECT'), ('integration_deliveries', 'INSERT'), ('integration_deliveries', 'UPDATE'),
                 ('integration_consumer_receipts', 'INSERT'),
                 ('memory_files_catalog', 'SELECT'), ('memory_files_catalog', 'INSERT'), ('memory_files_catalog', 'UPDATE'),

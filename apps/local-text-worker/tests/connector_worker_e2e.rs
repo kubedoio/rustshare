@@ -304,6 +304,78 @@ async fn wait_for_memory_projection(
     panic!("timed out waiting for authorized Memory Files projection");
 }
 
+async fn assert_memory_worker_delivery_scope(owner_pool: &sqlx::PgPool) {
+    const MEMORY: &str = "io.elembra.memory.files-connector.v1";
+    let worker_database_url = env::var("MEMORY_DATABASE_URL").expect("set worker DATABASE_URL");
+    let worker_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&worker_database_url)
+        .await
+        .expect("connect with restricted Memory worker login");
+    let source = format!("memory-rls-test-{}", Uuid::new_v4());
+    let memory_event = Uuid::new_v4();
+    let chat_event = Uuid::new_v4();
+    let buzz_event = Uuid::new_v4();
+    for (consumer, event_id) in [
+        (MEMORY, memory_event),
+        ("io.elembra.memory.chat-projection.v1", chat_event),
+        ("io.elembra.chat.buzz-bridge.v1", buzz_event),
+    ] {
+        sqlx::query(
+            "INSERT INTO integration_deliveries (consumer_id,source,event_id,event_type,tenant_id,workspace_id) VALUES ($1,$2,$3,'files.test.v1',$4,$4)",
+        )
+        .bind(consumer)
+        .bind(&source)
+        .bind(event_id)
+        .bind(Uuid::nil())
+        .execute(owner_pool)
+        .await
+        .expect("create isolated delivery scope fixture");
+    }
+    let visible: Vec<String> = sqlx::query_scalar(
+        "SELECT consumer_id FROM integration_deliveries WHERE source=$1 ORDER BY consumer_id",
+    )
+    .bind(&source)
+    .fetch_all(&worker_pool)
+    .await
+    .expect("read Memory-scoped delivery rows");
+    assert_eq!(visible, [MEMORY]);
+    let hidden_update = sqlx::query(
+        "UPDATE integration_deliveries SET state='processed' WHERE consumer_id='io.elembra.memory.chat-projection.v1' AND source=$1 AND event_id=$2",
+    )
+    .bind(&source)
+    .bind(chat_event)
+    .execute(&worker_pool)
+    .await
+    .expect("cross-consumer update is filtered by RLS");
+    assert_eq!(hidden_update.rows_affected(), 0);
+    let cross_consumer_insert = sqlx::query(
+        "INSERT INTO integration_deliveries (consumer_id,source,event_id,event_type,tenant_id,workspace_id) VALUES ('io.elembra.memory.chat-projection.v1',$1,$2,'files.test.v1',$3,$3)",
+    )
+    .bind(&source)
+    .bind(Uuid::new_v4())
+    .bind(Uuid::nil())
+    .execute(&worker_pool)
+    .await;
+    assert!(cross_consumer_insert.is_err());
+    let allowed_update = sqlx::query(
+        "UPDATE integration_deliveries SET state='processed' WHERE consumer_id=$1 AND source=$2 AND event_id=$3",
+    )
+    .bind(MEMORY)
+    .bind(&source)
+    .bind(memory_event)
+    .execute(&worker_pool)
+    .await
+    .expect("Memory worker can update its own delivery");
+    assert_eq!(allowed_update.rows_affected(), 1);
+    sqlx::query("DELETE FROM integration_deliveries WHERE source=$1")
+        .bind(source)
+        .execute(owner_pool)
+        .await
+        .expect("remove isolated delivery scope fixtures");
+    worker_pool.close().await;
+}
+
 async fn memory_delivery_id(pool: &sqlx::PgPool, source_revision: &str) -> Uuid {
     sqlx::query_scalar(
         "SELECT event_id FROM integration_outbox \
@@ -693,6 +765,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         2,
     )
     .await;
+    assert_memory_worker_delivery_scope(&pool).await;
     let tenant_id: Uuid = sqlx::query_scalar("SELECT tenant_id FROM files WHERE id=$1")
         .bind(first_file_id)
         .fetch_one(&pool)

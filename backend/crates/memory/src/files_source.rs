@@ -54,11 +54,19 @@ impl fmt::Debug for FilesIndexSnapshot {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum FilesProjectionSnapshot {
     /// The authoritative Files service no longer has this resource.
-    Deleted { tenant_id: Uuid, file_id: Uuid },
+    Deleted {
+        tenant_id: Uuid,
+        file_id: Uuid,
+        observed_at: chrono::DateTime<chrono::Utc>,
+    },
     /// The resource is current but is not eligible for the Memory note index.
-    Ignored { tenant_id: Uuid, file_id: Uuid },
+    Ignored {
+        tenant_id: Uuid,
+        file_id: Uuid,
+        observed_at: chrono::DateTime<chrono::Utc>,
+    },
     /// The source is live and was authorized by Files for projection.
-    Available(FilesIndexSnapshot),
+    Available(Box<FilesIndexSnapshot>),
 }
 
 /// One bounded source-authoritative reconciliation page.
@@ -78,12 +86,16 @@ pub struct FilesReconcileTenantPage {
 impl fmt::Debug for FilesProjectionSnapshot {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Deleted { tenant_id, file_id } => formatter
+            Self::Deleted {
+                tenant_id, file_id, ..
+            } => formatter
                 .debug_struct("Deleted")
                 .field("tenant_id", tenant_id)
                 .field("file_id", file_id)
                 .finish(),
-            Self::Ignored { tenant_id, file_id } => formatter
+            Self::Ignored {
+                tenant_id, file_id, ..
+            } => formatter
                 .debug_struct("Ignored")
                 .field("tenant_id", tenant_id)
                 .field("file_id", file_id)

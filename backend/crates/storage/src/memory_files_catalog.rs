@@ -219,4 +219,85 @@ impl MemoryFilesCatalogStore {
         .await?;
         Ok(())
     }
+
+    /// Apply a source removal only if no newer projection has been committed.
+    pub async fn tombstone_snapshot_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        tenant_id: Uuid,
+        file_id: Uuid,
+        observed_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "INSERT INTO memory_files_catalog (tenant_id, file_id, deleted_at, updated_at) VALUES ($1, $2, $3, $3) \
+             ON CONFLICT (tenant_id, file_id) DO UPDATE SET deleted_at = COALESCE(memory_files_catalog.deleted_at, EXCLUDED.deleted_at), updated_at = EXCLUDED.updated_at \
+             WHERE memory_files_catalog.updated_at <= EXCLUDED.updated_at",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .bind(observed_at)
+        .execute(&mut **tx)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires migrated PostgreSQL"]
+    async fn stale_removal_snapshot_cannot_tombstone_a_newer_projection() {
+        let pool =
+            PgPool::connect(&std::env::var("DATABASE_URL").expect("set disposable DATABASE_URL"))
+                .await
+                .expect("connect to disposable PostgreSQL");
+        let store = MemoryFilesCatalogStore::new(pool.clone());
+        let tenant_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO memory_files_catalog (tenant_id,file_id,current_version,current_version_number) VALUES ($1,$2,'sha256:newer',2)",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .execute(&pool)
+        .await
+        .expect("insert newer Memory projection");
+        let projected_at: DateTime<Utc> = sqlx::query_scalar(
+            "SELECT updated_at FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .fetch_one(&pool)
+        .await
+        .expect("read projection write time");
+        let mut tx = pool.begin().await.expect("begin stale removal");
+        let applied = store
+            .tombstone_snapshot_in_tx(
+                &mut tx,
+                tenant_id,
+                file_id,
+                projected_at - chrono::Duration::microseconds(1),
+            )
+            .await
+            .expect("apply conditional tombstone");
+        tx.commit().await.expect("commit stale removal");
+        assert!(!applied);
+        let deleted_at: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT deleted_at FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .fetch_one(&pool)
+        .await
+        .expect("verify newer projection remains live");
+        assert!(deleted_at.is_none());
+        sqlx::query("DELETE FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2")
+            .bind(tenant_id)
+            .bind(file_id)
+            .execute(&pool)
+            .await
+            .expect("remove isolated test row");
+    }
 }

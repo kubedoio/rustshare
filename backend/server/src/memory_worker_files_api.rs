@@ -69,7 +69,14 @@ pub async fn files_snapshot(
     let Ok(request) = serde_json::from_slice::<SnapshotRequest>(&body) else {
         return error(StatusCode::BAD_REQUEST).into_response();
     };
-    match resolve_snapshot(&state, &request.source, request.event_id).await {
+    let observed_at = match sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&state.db_pool)
+        .await
+    {
+        Ok(observed_at) => observed_at,
+        Err(_) => return error(StatusCode::SERVICE_UNAVAILABLE).into_response(),
+    };
+    match resolve_snapshot(&state, &request.source, request.event_id, observed_at).await {
         Ok(snapshot) => (StatusCode::OK, Json(snapshot)).into_response(),
         Err(cause) => {
             tracing::warn!(event_id = %request.event_id, error = %cause, "Memory Files snapshot failed");
@@ -82,6 +89,7 @@ async fn resolve_snapshot(
     state: &AppState,
     source: &str,
     event_id: Uuid,
+    observed_at: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<FilesProjectionSnapshot> {
     let event_json: serde_json::Value = sqlx::query_scalar(
         "SELECT event_json FROM integration_outbox WHERE source = $1 AND event_id = $2",
@@ -119,7 +127,11 @@ async fn resolve_snapshot(
         .find_file_by_id_for_tenant(file_id, tenant_id)
         .await?
     else {
-        return Ok(FilesProjectionSnapshot::Deleted { tenant_id, file_id });
+        return Ok(FilesProjectionSnapshot::Deleted {
+            tenant_id,
+            file_id,
+            observed_at,
+        });
     };
     let current_version = format!("sha256:{}", file.content_hash);
     let catalog = MemoryFilesCatalogStore::new(state.db_pool.clone());
@@ -134,7 +146,11 @@ async fn resolve_snapshot(
         )
         .await?
     else {
-        return Ok(FilesProjectionSnapshot::Ignored { tenant_id, file_id });
+        return Ok(FilesProjectionSnapshot::Ignored {
+            tenant_id,
+            file_id,
+            observed_at,
+        });
     };
 
     let file_ref = ResourceRef::new(
@@ -162,10 +178,18 @@ async fn resolve_snapshot(
     let content = match fetched {
         Ok(fetched) => String::from_utf8(fetched.data.to_vec())?,
         Err(SourceError::Unauthorized) => {
-            return Ok(FilesProjectionSnapshot::Ignored { tenant_id, file_id });
+            return Ok(FilesProjectionSnapshot::Ignored {
+                tenant_id,
+                file_id,
+                observed_at,
+            });
         }
         Err(SourceError::NotFound) => {
-            return Ok(FilesProjectionSnapshot::Deleted { tenant_id, file_id });
+            return Ok(FilesProjectionSnapshot::Deleted {
+                tenant_id,
+                file_id,
+                observed_at,
+            });
         }
         Err(error) => return Err(error.into()),
     };
@@ -189,9 +213,13 @@ async fn resolve_snapshot(
         )
         .await?
     else {
-        return Ok(FilesProjectionSnapshot::Ignored { tenant_id, file_id });
+        return Ok(FilesProjectionSnapshot::Ignored {
+            tenant_id,
+            file_id,
+            observed_at,
+        });
     };
-    Ok(FilesProjectionSnapshot::Available(snapshot))
+    Ok(FilesProjectionSnapshot::Available(Box::new(snapshot)))
 }
 
 fn event_access_audit_id(source: &str, event_id: Uuid) -> Uuid {

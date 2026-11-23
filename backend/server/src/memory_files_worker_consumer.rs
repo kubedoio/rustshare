@@ -116,42 +116,52 @@ impl MemoryFilesWorkerConsumer {
             FilesProjectionSnapshot::Deleted {
                 tenant_id: current_tenant,
                 file_id: current_file,
+                observed_at,
             } => {
                 verify_resource(tenant_id, file_id, current_tenant, current_file)?;
-                if self.catalog.contains(tenant_id, file_id).await? {
-                    let mut tx = self.pool.begin().await?;
-                    self.check_execution_fence_in_transaction(&mut tx).await?;
-                    self.catalog
-                        .tombstone_in_tx(&mut tx, tenant_id, file_id)
-                        .await?;
+                let mut tx = self.pool.begin().await?;
+                self.check_execution_fence_in_transaction(&mut tx).await?;
+                let applied = self
+                    .catalog
+                    .tombstone_snapshot_in_tx(&mut tx, tenant_id, file_id, observed_at)
+                    .await?;
+                if applied {
                     self.index_sink
                         .remove_source_file(tenant_id, file_id)
                         .await
                         .map_err(|error| anyhow::anyhow!(error))?;
-                    tx.commit().await?;
-                    return Ok(SnapshotProjectionOutcome::Removed);
                 }
-                return Ok(SnapshotProjectionOutcome::Unchanged);
+                tx.commit().await?;
+                return Ok(if applied {
+                    SnapshotProjectionOutcome::Removed
+                } else {
+                    SnapshotProjectionOutcome::Unchanged
+                });
             }
             FilesProjectionSnapshot::Ignored {
                 tenant_id: current_tenant,
                 file_id: current_file,
+                observed_at,
             } => {
                 verify_resource(tenant_id, file_id, current_tenant, current_file)?;
-                if self.catalog.contains(tenant_id, file_id).await? {
-                    let mut tx = self.pool.begin().await?;
-                    self.check_execution_fence_in_transaction(&mut tx).await?;
-                    self.catalog
-                        .tombstone_in_tx(&mut tx, tenant_id, file_id)
-                        .await?;
+                let mut tx = self.pool.begin().await?;
+                self.check_execution_fence_in_transaction(&mut tx).await?;
+                let applied = self
+                    .catalog
+                    .tombstone_snapshot_in_tx(&mut tx, tenant_id, file_id, observed_at)
+                    .await?;
+                if applied {
                     self.index_sink
                         .remove_source_file(tenant_id, file_id)
                         .await
                         .map_err(|error| anyhow::anyhow!(error))?;
-                    tx.commit().await?;
-                    return Ok(SnapshotProjectionOutcome::Removed);
                 }
-                return Ok(SnapshotProjectionOutcome::Unchanged);
+                tx.commit().await?;
+                return Ok(if applied {
+                    SnapshotProjectionOutcome::Removed
+                } else {
+                    SnapshotProjectionOutcome::Unchanged
+                });
             }
             FilesProjectionSnapshot::Available(snapshot) => {
                 anyhow::ensure!(

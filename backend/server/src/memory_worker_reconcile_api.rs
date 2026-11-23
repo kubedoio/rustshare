@@ -154,6 +154,9 @@ async fn resolve_source_page(
     state: &AppState,
     request: SourcePageRequest,
 ) -> anyhow::Result<FilesReconcilePage> {
+    let observed_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&state.db_pool)
+        .await?;
     let ids: Vec<Uuid> = sqlx::query_scalar(
         "WITH mapped AS (SELECT CASE WHEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1)::uuid END AS file_id FROM connector_external_mappings WHERE tenant_id=$1) SELECT DISTINCT file_id FROM mapped WHERE file_id IS NOT NULL AND ($2::uuid IS NULL OR file_id > $2) ORDER BY file_id LIMIT $3")
         .bind(request.tenant_id).bind(request.after_file_id).bind(i64::from(request.limit) + 1).fetch_all(&state.db_pool).await?;
@@ -162,7 +165,9 @@ async fn resolve_source_page(
     let catalog = MemoryFilesCatalogStore::new(state.db_pool.clone());
     let mut snapshots = Vec::with_capacity(page_ids.len());
     for file_id in &page_ids {
-        snapshots.push(resolve_current_file(state, &catalog, request.tenant_id, *file_id).await?);
+        snapshots.push(
+            resolve_current_file(state, &catalog, request.tenant_id, *file_id, observed_at).await?,
+        );
     }
     while !snapshots.is_empty() {
         let n = snapshots.len();
@@ -190,13 +195,18 @@ async fn resolve_current_file(
     catalog: &MemoryFilesCatalogStore,
     tenant_id: Uuid,
     file_id: Uuid,
+    observed_at: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<FilesProjectionSnapshot> {
     let Some(file) = state
         .metadata_store
         .find_file_by_id_for_tenant(file_id, tenant_id)
         .await?
     else {
-        return Ok(FilesProjectionSnapshot::Deleted { tenant_id, file_id });
+        return Ok(FilesProjectionSnapshot::Deleted {
+            tenant_id,
+            file_id,
+            observed_at,
+        });
     };
     let version = format!("sha256:{}", file.content_hash);
     let Some(record) = catalog
@@ -208,7 +218,11 @@ async fn resolve_current_file(
         )
         .await?
     else {
-        return Ok(FilesProjectionSnapshot::Ignored { tenant_id, file_id });
+        return Ok(FilesProjectionSnapshot::Ignored {
+            tenant_id,
+            file_id,
+            observed_at,
+        });
     };
     let file_ref = ResourceRef::new(
         ApplicationId::new("io.elembra.files"),
@@ -235,10 +249,18 @@ async fn resolve_current_file(
     let content = match fetched {
         Ok(result) => String::from_utf8(result.data.to_vec())?,
         Err(SourceError::Unauthorized) => {
-            return Ok(FilesProjectionSnapshot::Ignored { tenant_id, file_id });
+            return Ok(FilesProjectionSnapshot::Ignored {
+                tenant_id,
+                file_id,
+                observed_at,
+            });
         }
         Err(SourceError::NotFound) => {
-            return Ok(FilesProjectionSnapshot::Deleted { tenant_id, file_id });
+            return Ok(FilesProjectionSnapshot::Deleted {
+                tenant_id,
+                file_id,
+                observed_at,
+            });
         }
         Err(err) => return Err(err.into()),
     };
@@ -261,10 +283,14 @@ async fn resolve_current_file(
             content,
         )
         .await?;
-    Ok(snapshot.map_or(
-        FilesProjectionSnapshot::Ignored { tenant_id, file_id },
-        FilesProjectionSnapshot::Available,
-    ))
+    match snapshot {
+        Some(snapshot) => Ok(FilesProjectionSnapshot::Available(Box::new(snapshot))),
+        None => Ok(FilesProjectionSnapshot::Ignored {
+            tenant_id,
+            file_id,
+            observed_at,
+        }),
+    }
 }
 
 fn memory_worker_context(tenant_id: Uuid) -> PrincipalContext {
