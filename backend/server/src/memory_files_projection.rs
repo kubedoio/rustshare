@@ -325,6 +325,7 @@ impl MemoryFilesProjectionConsumer {
             None if provenance.source_revision == current_version => MemoryFilesCatalogRecord {
                 tenant_id,
                 file_id,
+                projection_observed_at: self.catalog.projection_timestamp().await?,
                 current_version,
                 current_version_number: i64::from(file.current_version),
                 connector_instance_id: provenance.connector_instance_id,

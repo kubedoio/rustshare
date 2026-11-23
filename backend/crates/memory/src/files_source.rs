@@ -23,6 +23,7 @@ pub struct ConnectorSource {
 pub struct FilesIndexSnapshot {
     pub tenant_id: Uuid,
     pub file_id: Uuid,
+    pub observed_at: chrono::DateTime<chrono::Utc>,
     pub current_version: String,
     pub current_version_number: i64,
     pub owner_id: Uuid,
@@ -117,6 +118,7 @@ mod tests {
         let snapshot = FilesIndexSnapshot {
             tenant_id: Uuid::new_v4(),
             file_id: Uuid::new_v4(),
+            observed_at: chrono::Utc::now(),
             current_version: "sha256:version".into(),
             current_version_number: 1,
             owner_id: Uuid::new_v4(),

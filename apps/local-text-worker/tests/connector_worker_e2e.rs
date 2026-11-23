@@ -304,7 +304,7 @@ async fn wait_for_memory_projection(
     panic!("timed out waiting for authorized Memory Files projection");
 }
 
-async fn assert_memory_worker_delivery_scope(owner_pool: &sqlx::PgPool) {
+async fn assert_memory_worker_delivery_scope(owner_pool: &sqlx::PgPool, memory_event_id: Uuid) {
     const MEMORY: &str = "io.elembra.memory.files-connector.v1";
     let worker_database_url = env::var("MEMORY_DATABASE_URL").expect("set worker DATABASE_URL");
     let worker_pool = PgPoolOptions::new()
@@ -316,6 +316,16 @@ async fn assert_memory_worker_delivery_scope(owner_pool: &sqlx::PgPool) {
     let memory_event = Uuid::new_v4();
     let chat_event = Uuid::new_v4();
     let buzz_event = Uuid::new_v4();
+    let chat_outbox_event = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO integration_outbox (source,event_id,event_type,application_id,tenant_id,workspace_id,event_json) VALUES ($1,$2,'io.elembra.chat.test.v1','io.elembra.chat',$3,$3,'{}'::jsonb)",
+    )
+    .bind(&source)
+    .bind(chat_outbox_event)
+    .bind(Uuid::nil())
+    .execute(owner_pool)
+    .await
+    .expect("create isolated non-Files outbox fixture");
     for (consumer, event_id) in [
         (MEMORY, memory_event),
         ("io.elembra.memory.chat-projection.v1", chat_event),
@@ -340,6 +350,20 @@ async fn assert_memory_worker_delivery_scope(owner_pool: &sqlx::PgPool) {
     .await
     .expect("read Memory-scoped delivery rows");
     assert_eq!(visible, [MEMORY]);
+    let visible_event_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM integration_outbox WHERE source=$1")
+            .bind(&source)
+            .fetch_one(&worker_pool)
+            .await
+            .expect("read event types allowed to Memory");
+    assert_eq!(visible_event_count, 0);
+    let lockable_event: Option<Uuid> =
+        sqlx::query_scalar("SELECT event_id FROM integration_outbox WHERE event_id=$1 FOR UPDATE")
+            .bind(memory_event_id)
+            .fetch_optional(&worker_pool)
+            .await
+            .expect("Memory can row-lock Files events without payload UPDATE rights");
+    assert_eq!(lockable_event, Some(memory_event_id));
     let hidden_update = sqlx::query(
         "UPDATE integration_deliveries SET state='processed' WHERE consumer_id='io.elembra.memory.chat-projection.v1' AND source=$1 AND event_id=$2",
     )
@@ -369,10 +393,15 @@ async fn assert_memory_worker_delivery_scope(owner_pool: &sqlx::PgPool) {
     .expect("Memory worker can update its own delivery");
     assert_eq!(allowed_update.rows_affected(), 1);
     sqlx::query("DELETE FROM integration_deliveries WHERE source=$1")
-        .bind(source)
+        .bind(&source)
         .execute(owner_pool)
         .await
         .expect("remove isolated delivery scope fixtures");
+    sqlx::query("DELETE FROM integration_outbox WHERE source=$1")
+        .bind(&source)
+        .execute(owner_pool)
+        .await
+        .expect("remove isolated outbox fixture");
     worker_pool.close().await;
 }
 
@@ -765,7 +794,6 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         2,
     )
     .await;
-    assert_memory_worker_delivery_scope(&pool).await;
     let tenant_id: Uuid = sqlx::query_scalar("SELECT tenant_id FROM files WHERE id=$1")
         .bind(first_file_id)
         .fetch_one(&pool)
@@ -803,6 +831,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .starts_with("elembra://io.elembra.connector.local-text/file/"));
     assert!(catalog_provenance.4);
     let latest_memory_event = memory_delivery_id(&pool, &first_v2_revision).await;
+    assert_memory_worker_delivery_scope(&pool, latest_memory_event).await;
     let access_audit: (String, String, i64) = sqlx::query_as(
         "SELECT outcome, file_version, count(*) OVER () \
          FROM memory_files_source_access_audit WHERE access_id=$1",

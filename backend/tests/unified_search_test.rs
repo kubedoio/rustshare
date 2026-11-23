@@ -1207,6 +1207,7 @@ async fn insert_connector_file_projection(pool: &PgPool, file: &rustshare_core::
     let record = MemoryFilesCatalogRecord {
         tenant_id: file.tenant_id,
         file_id: file.id,
+        projection_observed_at: chrono::Utc::now(),
         current_version: version.clone(),
         current_version_number: i64::from(file.current_version),
         connector_instance_id: Uuid::new_v4(),

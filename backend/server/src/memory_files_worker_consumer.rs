@@ -132,11 +132,11 @@ impl MemoryFilesWorkerConsumer {
                         .map_err(|error| anyhow::anyhow!(error))?;
                 }
                 tx.commit().await?;
-                return Ok(if applied {
+                Ok(if applied {
                     SnapshotProjectionOutcome::Removed
                 } else {
                     SnapshotProjectionOutcome::Unchanged
-                });
+                })
             }
             FilesProjectionSnapshot::Ignored {
                 tenant_id: current_tenant,
@@ -157,11 +157,11 @@ impl MemoryFilesWorkerConsumer {
                         .map_err(|error| anyhow::anyhow!(error))?;
                 }
                 tx.commit().await?;
-                return Ok(if applied {
+                Ok(if applied {
                     SnapshotProjectionOutcome::Removed
                 } else {
                     SnapshotProjectionOutcome::Unchanged
-                });
+                })
             }
             FilesProjectionSnapshot::Available(snapshot) => {
                 anyhow::ensure!(
@@ -175,6 +175,7 @@ impl MemoryFilesWorkerConsumer {
                 let record = MemoryFilesCatalogRecord {
                     tenant_id,
                     file_id,
+                    projection_observed_at: snapshot.observed_at,
                     current_version: snapshot.current_version.clone(),
                     current_version_number: snapshot.current_version_number,
                     connector_instance_id: connector.instance_id,
@@ -199,11 +200,13 @@ impl MemoryFilesWorkerConsumer {
                         )
                         .await
                         .map_err(|error| anyhow::anyhow!(error))?;
-                    tx.commit().await?;
-                    return Ok(SnapshotProjectionOutcome::Indexed);
                 }
                 tx.commit().await?;
-                return Ok(SnapshotProjectionOutcome::Unchanged);
+                Ok(if current {
+                    SnapshotProjectionOutcome::Indexed
+                } else {
+                    SnapshotProjectionOutcome::Unchanged
+                })
             }
         }
     }

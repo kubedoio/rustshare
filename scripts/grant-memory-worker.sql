@@ -114,9 +114,10 @@ REVOKE CREATE, TEMPORARY ON DATABASE :"app_database" FROM elembra_memory_worker;
 -- retention/compaction, and unrelated consumers remain backend-owned.
 GRANT SELECT, INSERT ON TABLE public.integration_consumers TO elembra_memory_worker;
 GRANT SELECT, INSERT ON TABLE public.integration_consumer_subscriptions TO elembra_memory_worker;
--- PostgreSQL requires UPDATE privilege for SELECT ... FOR UPDATE, which the
--- durable outbox claimant uses only to serialize first deliveries.
-GRANT SELECT, UPDATE ON TABLE public.integration_outbox TO elembra_memory_worker;
+-- PostgreSQL checks UPDATE privilege for SELECT ... FOR UPDATE. Limit that
+-- privilege to an inert lock column so event payloads remain read-only.
+GRANT SELECT ON TABLE public.integration_outbox TO elembra_memory_worker;
+GRANT UPDATE (memory_claim_lock) ON TABLE public.integration_outbox TO elembra_memory_worker;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.integration_deliveries TO elembra_memory_worker;
 GRANT INSERT ON TABLE public.integration_consumer_receipts TO elembra_memory_worker;
 
@@ -136,6 +137,21 @@ BEGIN
         );
     END LOOP;
 END $$;
+ALTER TABLE public.integration_outbox ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS elembra_memory_worker_files_events ON public.integration_outbox;
+CREATE POLICY elembra_memory_worker_files_events
+    ON public.integration_outbox
+    FOR ALL TO elembra_memory_worker
+    USING (event_type IN (
+        'io.elembra.files.file.created.v1',
+        'io.elembra.files.file.updated.v1',
+        'io.elembra.files.file.deleted.v1'
+    ))
+    WITH CHECK (event_type IN (
+        'io.elembra.files.file.created.v1',
+        'io.elembra.files.file.updated.v1',
+        'io.elembra.files.file.deleted.v1'
+    ));
 
 -- Memory-owned catalogs, rebuildable search projection, and content-free audit.
 GRANT SELECT, INSERT, UPDATE ON TABLE public.memory_files_catalog TO elembra_memory_worker;
@@ -205,6 +221,16 @@ SELECT NOT EXISTS (
             WHERE allowed.table_name = c.relname
                 AND allowed.privilege_type = p.privilege_type
         )
+) AND NOT EXISTS (
+    SELECT 1
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_attribute a ON a.attrelid = c.oid
+    WHERE n.nspname = 'public'
+        AND c.relname = 'integration_outbox'
+        AND a.attnum > 0 AND NOT a.attisdropped
+        AND a.attname <> 'memory_claim_lock'
+        AND has_column_privilege('elembra_memory_worker', c.oid, a.attnum, 'UPDATE')
 ) AND NOT EXISTS (
     SELECT 1
     FROM pg_class c

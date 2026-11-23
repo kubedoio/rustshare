@@ -25,7 +25,7 @@ const PAGE_PATH: &str = "/internal/v1/memory/files/reconcile/page";
 const SIGNATURE_HEADER: &str = "X-Elembra-Memory-Signature";
 const MAX_PAGE_SIZE: u32 = 100;
 const MAX_RESPONSE_BYTES: usize = 1_000_000;
-const MEMORY_WORKER_ID: Uuid = Uuid::from_u128(0x51b1_7a4e_83ba_4f29_9a41_47763e2d0d1a);
+const MEMORY_WORKER_ID: Uuid = Uuid::from_u128(0x51b1_7a4e_83ba_4f29_9a41_4776_3e2d_0d1a);
 
 #[derive(Deserialize)]
 struct TenantPageRequest {
@@ -273,15 +273,7 @@ async fn resolve_current_file(
     };
     let snapshot = state
         .note_service
-        .prepare_connector_index_snapshot(
-            file_id,
-            file.owner_id,
-            tenant_id,
-            version,
-            i64::from(file.current_version),
-            connector,
-            content,
-        )
+        .prepare_connector_index_snapshot(&file, observed_at, connector, content)
         .await?;
     match snapshot {
         Some(snapshot) => Ok(FilesProjectionSnapshot::Available(Box::new(snapshot))),

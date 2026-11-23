@@ -21,7 +21,7 @@ use crate::{memory_worker_auth::MemoryWorkerRequestAuth, AppState};
 
 const ROUTE_PATH: &str = "/internal/v1/memory/files/snapshot";
 const SIGNATURE_HEADER: &str = "X-Elembra-Memory-Signature";
-const MEMORY_WORKER_ID: Uuid = Uuid::from_u128(0x51b1_7a4e_83ba_4f29_9a41_47763e2d0d1a);
+const MEMORY_WORKER_ID: Uuid = Uuid::from_u128(0x51b1_7a4e_83ba_4f29_9a41_4776_3e2d_0d1a);
 
 #[derive(Deserialize)]
 pub struct SnapshotRequest {
@@ -202,15 +202,7 @@ async fn resolve_snapshot(
     };
     let Some(snapshot) = state
         .note_service
-        .prepare_connector_index_snapshot(
-            file_id,
-            file.owner_id,
-            tenant_id,
-            current_version,
-            i64::from(file.current_version),
-            connector,
-            content,
-        )
+        .prepare_connector_index_snapshot(&file, observed_at, connector, content)
         .await?
     else {
         return Ok(FilesProjectionSnapshot::Ignored {
