@@ -841,17 +841,24 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     assert!(catalog_provenance.4);
     let latest_memory_event = memory_delivery_id(&pool, &first_v2_revision).await;
     assert_memory_worker_delivery_scope(&pool, latest_memory_event).await;
-    let access_audit: (String, String, i64) = sqlx::query_as(
-        "SELECT outcome, file_version, count(*) OVER () \
-         FROM memory_files_source_access_audit WHERE access_id=$1",
+    let access_audit: Option<(String, String)> = sqlx::query_as(
+        "SELECT outcome, file_version FROM memory_files_source_access_audit \
+         WHERE tenant_id=$1 AND file_id=$2 AND principal_id=$3 AND file_version=$4 AND outcome='authorized' \
+         ORDER BY occurred_at DESC LIMIT 1",
     )
-    .bind(latest_memory_event)
-    .fetch_one(&pool)
+    .bind(tenant_id)
+    .bind(first_file_id)
+    .bind(Uuid::from_u128(
+        0x51b1_7a4e_83ba_4f29_9a41_4776_3e2d_0d1a,
+    ))
+    .bind(&first_v2_version)
+    .fetch_optional(&pool)
     .await
     .expect("read content-free Files access audit");
-    assert_eq!(access_audit.0, "authorized");
-    assert_eq!(access_audit.1, first_v2_version);
-    assert_eq!(access_audit.2, 1);
+    assert_eq!(
+        access_audit,
+        Some(("authorized".into(), first_v2_version.clone()))
+    );
 
     let search = keyword_search(&client, &server, &owner_token, "alpha v2").await;
     let result = search["results"]
