@@ -399,6 +399,10 @@ name = "memory_reconcile_test"
 path = "../tests/memory_reconcile_test.rs"
 
 [[test]]
+name = "memory_worker_api_security_test"
+path = "../tests/memory_worker_api_security_test.rs"
+
+[[test]]
 name = "memory_orphan_cleanup_test"
 path = "../tests/memory_orphan_cleanup_test.rs"
 

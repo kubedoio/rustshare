@@ -81,7 +81,9 @@ fn valid_tenant_page(request: &TenantPageRequest) -> bool {
 }
 
 fn valid_source_page(request: &SourcePageRequest) -> bool {
-    valid_limit(request.limit) && request.after_file_id.is_none_or(|id| !id.is_nil())
+    !request.tenant_id.is_nil()
+        && valid_limit(request.limit)
+        && request.after_file_id.is_none_or(|id| !id.is_nil())
 }
 
 fn valid_limit(limit: u32) -> bool {
