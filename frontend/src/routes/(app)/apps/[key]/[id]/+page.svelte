@@ -911,7 +911,7 @@
 			}}
 			embedSketchesAsBase64={!isFolderBacked}
 			collab={key === 'notes' && !citationVersion}
-			docId={`${id}:${citationVersion ?? 'current'}`}
+			docId={citationVersion ? `${id}:${citationVersion}` : id}
 			showNoteActions={key === 'notes' && !citationVersion}
 			{initialAttachmentsOpen}
 			on:save={handleSave}

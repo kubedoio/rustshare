@@ -144,7 +144,7 @@ test('pilot administrator uses Files and edits a Note name independently from it
 test('Notes opens an exact historical Memory citation without changing Note identity', async ({
 	page
 }) => {
-	test.setTimeout(45_000);
+	test.setTimeout(90_000);
 	const suffix = randomUUID();
 	const title = `Memory citation ${suffix}`;
 	const originalContent = '# Historical citation H1\n\nHistorical citation body';
@@ -204,8 +204,28 @@ test('Notes opens an exact historical Memory citation without changing Note iden
 		await page.goto('/ask');
 		await page.getByLabel('Your question').fill(`What did ${title} say?`);
 		await page.getByRole('button', { name: 'Ask' }).click();
-		await page.getByRole('button', { name: new RegExp(title) }).click();
-		await page.waitForURL(`**/apps/notes/${createdNoteId}?sourceVersion=*`);
+		const versionResponse = page.waitForResponse(
+			(response) =>
+				response.url().includes(`/api/v1/files/${createdNoteId}/content`) &&
+				response.url().includes(`version=${encodeURIComponent(sourceVersion)}`),
+			{ timeout: 15_000 }
+		);
+		await test.step('Open the authorized exact-version citation', async () => {
+			const openResponse = page.waitForResponse(
+				(response) =>
+					response.url().includes('/api/v1/memory/citations/open') &&
+					response.request().method() === 'POST',
+				{ timeout: 15_000 }
+			);
+			await page.getByRole('button', { name: new RegExp(title) }).click();
+			const response = await openResponse;
+			expect(response.status()).toBe(200);
+			await expect(response.json()).resolves.toMatchObject({ available: true });
+		});
+		await page.waitForURL(`**/apps/notes/${createdNoteId}?sourceVersion=*`, { timeout: 15_000 });
+		await test.step('Load the exact historical version', async () => {
+			expect((await versionResponse).status()).toBe(200);
+		});
 		await expect(page.locator('h1.doc-title-wrapper')).toHaveText(title);
 		await expect(page.locator('.doc-subtitle')).toHaveText('Historical citation H1');
 		await expect(page.getByText('Historical citation body')).toBeVisible();
