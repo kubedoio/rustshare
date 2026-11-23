@@ -212,6 +212,39 @@ async fn memory_delivery_id(pool: &sqlx::PgPool, source_revision: &str) -> Uuid 
     .expect("find durable Files provenance event")
 }
 
+async fn file_event_id(pool: &sqlx::PgPool, file_id: Uuid, event_type: &str) -> Uuid {
+    sqlx::query_scalar(
+        "SELECT event_id FROM integration_outbox \
+         WHERE event_json->>'type'=$1 AND event_json->'elembraResource'->>'resourceId'=$2 \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(event_type)
+    .bind(file_id.to_string())
+    .fetch_one(pool)
+    .await
+    .expect("find durable Files event")
+}
+
+async fn set_memory_delivery_pending(pool: &sqlx::PgPool, event_id: Uuid, delay_seconds: i64) {
+    for _ in 0..150 {
+        let result = sqlx::query(
+            "UPDATE integration_deliveries SET state='pending', available_at=NOW()+($2 * INTERVAL '1 second'), \
+             claimed_by=NULL, claim_token=NULL, claim_expires_at=NULL, processed_at=NULL \
+             WHERE consumer_id='io.elembra.memory.files-connector.v1' AND event_id=$1",
+        )
+        .bind(event_id)
+        .bind(delay_seconds)
+        .execute(pool)
+        .await
+        .expect("schedule Memory event delivery");
+        if result.rows_affected() == 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("timed out waiting for Memory event delivery row");
+}
+
 async fn redeliver_memory_event(pool: &sqlx::PgPool, event_id: Uuid) {
     let result = sqlx::query(
         "UPDATE integration_deliveries SET state='pending', available_at=NOW(), \
@@ -682,7 +715,8 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .contains("alpha v3 after offline edit"));
 
     // An unavailable Memory catalog cannot make the worker's authorized Files
-    // import fail; reconciliation rebuilds the projection when it returns.
+    // import or Files edits fail. Let a manual Files update overtake the
+    // initial Connector event, then prove mapping-backed recovery.
     let unavailable_memory_content = b"files survives memory outage\n";
     let unavailable_memory_source_path = format!("{scope}/people/outage.md");
     let unavailable_memory_path = format!("/{unavailable_memory_source_path}");
@@ -705,10 +739,6 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     )
     .await;
     drop(worker);
-    sqlx::query("ALTER TABLE memory_files_catalog_unavailable RENAME TO memory_files_catalog")
-        .execute(&pool)
-        .await
-        .expect("restore Memory catalog");
     let outage_file_id = Uuid::parse_str(
         imported_files(&client, &server, &owner_token, &scope)
             .await
@@ -720,12 +750,13 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     )
     .unwrap();
     let outage_revision = revision(unavailable_memory_content);
-    let outage_version = format!("sha256:{}", outage_revision.trim_start_matches("sha256:"));
-    let _ = reconcile_memory_files(&client, &server, &owner_token, tenant_id).await;
-    wait_for_memory_projection(&pool, outage_file_id, &outage_version, &outage_revision, 1).await;
+    // The unconsumed create and update are held until the update can be sent
+    // first after Memory returns.
+    let create_event =
+        file_event_id(&pool, outage_file_id, "io.elembra.files.file.created.v1").await;
+    set_memory_delivery_pending(&pool, create_event, 600).await;
 
-    // A normal Files edit has no Connector sourceProvenance. Memory must keep
-    // the original relationship while indexing/citing the new Files version.
+    // This normal Files edit has no Connector sourceProvenance.
     let manual_files_content = b"manually edited Files content after import\n";
     let edited = client
         .post(format!("{server}/api/v1/files/{outage_file_id}/edit"))
@@ -741,6 +772,14 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     assert_eq!(edited.status(), StatusCode::OK);
     let edited: Value = edited.json().await.expect("decode edited Files version");
     assert_eq!(edited["current_version"], 2);
+    let update_event =
+        file_event_id(&pool, outage_file_id, "io.elembra.files.file.updated.v1").await;
+    set_memory_delivery_pending(&pool, update_event, 600).await;
+    sqlx::query("ALTER TABLE memory_files_catalog_unavailable RENAME TO memory_files_catalog")
+        .execute(&pool)
+        .await
+        .expect("restore Memory catalog");
+    set_memory_delivery_pending(&pool, update_event, 0).await;
     let manual_files_revision = revision(manual_files_content);
     let manual_files_version = format!(
         "sha256:{}",
@@ -754,6 +793,17 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         2,
     )
     .await;
+    set_memory_delivery_pending(&pool, create_event, 0).await;
+    wait_for_memory_initial_delivery(&pool, create_event).await;
+    let catalog_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2 AND deleted_at IS NULL",
+    )
+    .bind(tenant_id)
+    .bind(outage_file_id)
+    .fetch_one(&pool)
+    .await
+    .expect("verify one logical catalog row after reordered delivery");
+    assert_eq!(catalog_rows, 1);
     let manual_search =
         keyword_search(&client, &server, &owner_token, "manually edited Files").await;
     let manual_result = manual_search["results"]

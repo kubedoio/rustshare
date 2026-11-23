@@ -92,8 +92,8 @@ use rustshare_server::services::unified_search::{
 };
 use rustshare_server::state::AppAiService;
 use rustshare_storage::{
-    ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, MetadataStore, ObjectStore,
-    ObjectStoreOptions,
+    ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, MemoryFilesCatalogRecord,
+    MemoryFilesCatalogStore, MetadataStore, ObjectStore, ObjectStoreOptions,
 };
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -1202,6 +1202,30 @@ async fn insert_note_index_row(
     .unwrap();
 }
 
+async fn insert_connector_file_projection(pool: &PgPool, file: &rustshare_core::domain::File) {
+    let version = format!("sha256:{}", file.content_hash);
+    let record = MemoryFilesCatalogRecord {
+        tenant_id: file.tenant_id,
+        file_id: file.id,
+        current_version: version.clone(),
+        current_version_number: i64::from(file.current_version),
+        connector_instance_id: Uuid::new_v4(),
+        source_resource_ref: ResourceRef::new(
+            ApplicationId::new("io.elembra.connector.test"),
+            "document",
+            file.id.to_string(),
+        )
+        .to_uri(),
+        source_revision: version,
+        relative_path: file.path.clone(),
+        observed_modified_at: None,
+    };
+    let catalog = MemoryFilesCatalogStore::new(pool.clone());
+    let mut tx = pool.begin().await.unwrap();
+    catalog.upsert_in_tx(&mut tx, &record).await.unwrap();
+    tx.commit().await.unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
@@ -1439,6 +1463,8 @@ async fn harness_with_real_gateway(
 async fn cleanup(pool: &PgPool, tenant_id: TenantId) {
     for table in [
         "memory_catalog",
+        "memory_files_source_access_audit",
+        "memory_files_catalog",
         "chat_observed_events",
         "chat_buzz_admissions",
         "chat_workspace_communities",
@@ -1656,6 +1682,7 @@ async fn cross_tenant_candidates_never_appear() {
         b"confidential a stuff",
     )
     .await;
+    insert_connector_file_projection(&pool, &file_a).await;
     let keys_a = Keys::generate();
     let env_a = setup_tenant_with_relay_for_principal(
         &pool,
@@ -1690,6 +1717,7 @@ async fn cross_tenant_candidates_never_appear() {
         b"confidential b stuff",
     )
     .await;
+    insert_connector_file_projection(&pool, &file_b).await;
     let keys_b = Keys::generate();
     let env_b = setup_tenant_with_relay_for_principal(
         &pool,
@@ -1717,6 +1745,7 @@ async fn cross_tenant_candidates_never_appear() {
     let ctx_a = user_ctx(env_a.principal, tenant_a);
     let response = harness
         .service()
+        .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone())))
         .search(
             &ctx_a,
             "confidential",
@@ -1775,6 +1804,7 @@ async fn revoked_files_share_disappears() {
         b"shared plan contents",
     )
     .await;
+    insert_connector_file_projection(&pool, &file).await;
     let share = share_file_to_user(
         &harness,
         file.id,
@@ -1786,7 +1816,9 @@ async fn revoked_files_share_disappears() {
 
     let owner_ctx = user_ctx(PrincipalId::from(owner.id), tenant);
     let recipient_ctx = user_ctx(PrincipalId::from(recipient.id), tenant);
-    let service = harness.service();
+    let service = harness
+        .service()
+        .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone())));
 
     let before = service
         .search(
@@ -1804,8 +1836,11 @@ async fn revoked_files_share_disappears() {
     );
     assert_eq!(
         before.results[0].resource_ref,
-        format!("elembra://io.elembra.files/file/{}", file.id),
-        "the shared file is the result"
+        format!(
+            "elembra://io.elembra.files/file/{}?version=sha256%3A{}",
+            file.id, file.content_hash
+        ),
+        "the shared Connector file carries its cataloged Files version"
     );
 
     harness

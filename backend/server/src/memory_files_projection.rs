@@ -60,6 +60,58 @@ impl MemoryFilesProjectionConsumer {
         }
     }
 
+    async fn project_connector_record(
+        &self,
+        event: &IntegrationEvent,
+        file: &rustshare_core::domain::File,
+        actor_id: Uuid,
+        context: &PrincipalContext,
+        record: MemoryFilesCatalogRecord,
+    ) -> anyhow::Result<()> {
+        let file_ref = ResourceRef::new(
+            ApplicationId::new("io.elembra.files"),
+            "file",
+            file.id.to_string(),
+        )
+        .with_version(record.current_version.clone());
+        let fetched = self
+            .authorizer
+            .fetch(context, &file_ref, Representation::Text)
+            .await;
+        self.catalog
+            .record_source_access(
+                event.id,
+                record.tenant_id,
+                record.file_id,
+                actor_id,
+                &record.current_version,
+                fetched.is_ok(),
+            )
+            .await?;
+        let content = String::from_utf8(fetched?.data.to_vec())?;
+        let mut tx = self.pool.begin().await?;
+        if !self.catalog.upsert_in_tx(&mut tx, &record).await? {
+            tx.commit().await?;
+            return Ok(());
+        }
+        self.notes
+            .index_connector_markdown(file.id, file.owner_id, record.tenant_id, &content)
+            .await?;
+        tx.commit().await?;
+        tracing::info!(
+            tenant_id = %record.tenant_id,
+            file_id = %record.file_id,
+            event_id = %event.id,
+            actor_id = %actor_id,
+            file_version = %record.current_version,
+            connector_instance_id = %record.connector_instance_id,
+            source_resource_ref = %record.source_resource_ref,
+            source_revision = %record.source_revision,
+            "Memory fetched a Connector source through current Files authorization"
+        );
+        Ok(())
+    }
+
     async fn project(&self, event: &IntegrationEvent) -> anyhow::Result<()> {
         let resource = event
             .resource
@@ -112,9 +164,26 @@ impl MemoryFilesProjectionConsumer {
             return Ok(());
         };
 
-        if event.data.get("sourceProvenance").is_none()
-            && self.catalog.version(tenant_id, file_id).await?.is_none()
-        {
+        let has_provenance = event.data.get("sourceProvenance").is_some();
+        let current_version = format!("sha256:{}", file.content_hash);
+        let catalog_version = if has_provenance {
+            None
+        } else {
+            self.catalog.version(tenant_id, file_id).await?
+        };
+        let mapping_record = if !has_provenance && catalog_version.is_none() {
+            self.catalog
+                .connector_record_for_current_file(
+                    tenant_id,
+                    file_id,
+                    current_version.clone(),
+                    i64::from(file.current_version),
+                )
+                .await?
+        } else {
+            None
+        };
+        if !has_provenance && catalog_version.is_none() && mapping_record.is_none() {
             return Ok(());
         }
 
@@ -122,7 +191,6 @@ impl MemoryFilesProjectionConsumer {
             anyhow::bail!("Files event has no user Principal actor");
         };
 
-        let version = format!("sha256:{}", file.content_hash);
         let context = PrincipalContext::user(
             PrincipalId(actor.0),
             TenantId(tenant_id),
@@ -133,12 +201,17 @@ impl MemoryFilesProjectionConsumer {
         // provenance. Keep the original relationship while advancing the
         // Files-side citation version and rebuildable content projection.
         let Some(provenance) = event.data.get("sourceProvenance") else {
+            if let Some(record) = mapping_record {
+                self.project_connector_record(event, &file, actor.0, &context, record)
+                    .await?;
+                return Ok(());
+            }
             let file_ref = ResourceRef::new(
                 ApplicationId::new("io.elembra.files"),
                 "file",
                 file_id.to_string(),
             )
-            .with_version(version.clone());
+            .with_version(current_version.clone());
             let fetched = self
                 .authorizer
                 .fetch(&context, &file_ref, Representation::Text)
@@ -149,7 +222,7 @@ impl MemoryFilesProjectionConsumer {
                     tenant_id,
                     file_id,
                     actor.0,
-                    &version,
+                    &current_version,
                     fetched.is_ok(),
                 )
                 .await?;
@@ -161,7 +234,7 @@ impl MemoryFilesProjectionConsumer {
                     &mut tx,
                     tenant_id,
                     file_id,
-                    &version,
+                    &current_version,
                     i64::from(file.current_version),
                 )
                 .await?
@@ -188,78 +261,39 @@ impl MemoryFilesProjectionConsumer {
             "Connector actor is not the Files owner"
         );
 
-        // Connector import revisions are content hashes. If this is an old
-        // out-of-order event, its newer Files event remains responsible for
-        // projection; never combine current bytes with stale provenance.
-        if provenance.source_revision != version {
-            return Ok(());
-        }
-        let file_ref = ResourceRef::new(
-            ApplicationId::new("io.elembra.files"),
-            "file",
-            file.id.to_string(),
-        )
-        .with_version(version.clone());
-        tracing::info!(
-            tenant_id = %tenant_id,
-            file_id = %file_id,
-            event_id = %event.id,
-            actor_id = %actor.0,
-            file_version = %version,
-            source_revision = %provenance.source_revision,
-            "Memory requesting Connector source through Files authorization"
-        );
-        let fetched = self
-            .authorizer
-            .fetch(&context, &file_ref, Representation::Text)
-            .await;
-        self.catalog
-            .record_source_access(
-                event.id,
+        let mapped_record = self
+            .catalog
+            .connector_record_for_current_file(
                 tenant_id,
                 file_id,
-                file.owner_id,
-                &version,
-                fetched.is_ok(),
+                current_version.clone(),
+                i64::from(file.current_version),
             )
             .await?;
-        let fetched = fetched?;
-        let content = String::from_utf8(fetched.data.to_vec())?;
-
-        let record = MemoryFilesCatalogRecord {
-            tenant_id,
-            file_id,
-            current_version: version,
-            current_version_number: i64::from(file.current_version),
-            connector_instance_id: provenance.connector_instance_id,
-            source_resource_ref: provenance.source_resource_ref,
-            source_revision: provenance.source_revision,
-            relative_path: provenance.relative_path,
-            observed_modified_at: provenance.observed_modified_at,
+        let record = match mapped_record {
+            Some(record)
+                if record.connector_instance_id == provenance.connector_instance_id
+                    && record.source_resource_ref == provenance.source_resource_ref
+                    && record.source_revision == provenance.source_revision =>
+            {
+                record
+            }
+            Some(_) => return Ok(()),
+            None if provenance.source_revision == current_version => MemoryFilesCatalogRecord {
+                tenant_id,
+                file_id,
+                current_version,
+                current_version_number: i64::from(file.current_version),
+                connector_instance_id: provenance.connector_instance_id,
+                source_resource_ref: provenance.source_resource_ref,
+                source_revision: provenance.source_revision,
+                relative_path: provenance.relative_path,
+                observed_modified_at: provenance.observed_modified_at,
+            },
+            None => return Ok(()),
         };
-        let mut tx = self.pool.begin().await?;
-        if !self.catalog.upsert_in_tx(&mut tx, &record).await? {
-            tx.commit().await?;
-            return Ok(());
-        }
-        self.notes
-            .index_connector_markdown(file_id, file.owner_id, tenant_id, &content)
-            .await?;
-        tx.commit().await?;
-
-        // This structured audit record contains resource identity and version
-        // only; source content and connector credentials never enter logs.
-        tracing::info!(
-            tenant_id = %tenant_id,
-            file_id = %file_id,
-            event_id = %event.id,
-            file_version = %record.current_version,
-            connector_instance_id = %record.connector_instance_id,
-            source_resource_ref = %record.source_resource_ref,
-            source_revision = %record.source_revision,
-            "Memory fetched a Connector source through current Files authorization"
-        );
-        Ok(())
+        self.project_connector_record(event, &file, actor.0, &context, record)
+            .await
     }
 }
 

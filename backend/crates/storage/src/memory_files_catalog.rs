@@ -135,8 +135,8 @@ impl MemoryFilesCatalogStore {
         Ok(rows.into_iter().collect())
     }
 
-    /// Rebuild Connector provenance from the authoritative Files/Connector
-    /// mapping when an outbox delivery was missed or the index was lost.
+    /// Rebuild the latest Connector relationship for a live File from the
+    /// authoritative mapping, even when Files has a newer manual edit.
     pub async fn connector_record_for_current_file(
         &self,
         tenant_id: Uuid,
@@ -149,12 +149,10 @@ impl MemoryFilesCatalogStore {
              FROM connector_external_mappings \
              WHERE tenant_id=$1 \
                AND split_part(split_part(target_resource_ref, '/file/', 2), '?', 1)=$2 \
-               AND external_revision=$3 \
              ORDER BY observed_at DESC LIMIT 1",
         )
         .bind(tenant_id)
         .bind(file_id.to_string())
-        .bind(&current_version)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(

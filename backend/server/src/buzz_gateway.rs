@@ -1170,8 +1170,14 @@ mod tests {
             ("request_id", json!(Uuid::new_v4())),
             ("community_id", json!(Uuid::new_v4())),
             ("pubkey", json!(Keys::generate().public_key().to_hex())),
-            ("evaluated_at", json!(Utc::now().timestamp() - 31)),
-            ("evaluated_at", json!(Utc::now().timestamp() + 6)),
+            (
+                "evaluated_at",
+                json!(good["evaluated_at"].as_i64().unwrap() - 31),
+            ),
+            (
+                "evaluated_at",
+                json!(good["evaluated_at"].as_i64().unwrap() + 11),
+            ),
             ("membership_revision", json!(1)),
             ("membership_revision", json!(-1)),
             ("membership_revision", json!(0)),

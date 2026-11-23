@@ -79,6 +79,8 @@ event cannot replace a newer Files version, and a soft-delete event tombstones
 the catalog and removes the index projection.
 Ordinary Files edits preserve the Connector relationship while advancing the
 current Files citation version and rebuildable content projection.
+If the initial provenance event is delayed, update processing recovers the
+relationship from the authoritative Connector mapping.
 
 Unified Search still treats keyword rows as candidates: Files reauthorizes,
 resolves and fetches current source content before returning a snippet or
