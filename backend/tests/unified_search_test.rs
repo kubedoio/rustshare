@@ -1107,6 +1107,21 @@ async fn create_file_with_content(
         .create_file(&file)
         .await
         .expect("Failed to create test file");
+    sqlx::query(
+        "INSERT INTO file_versions (id, file_id, version_number, content_hash, storage_key, size, created_by, tenant_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(file.id)
+    .bind(file.current_version)
+    .bind(&file.content_hash)
+    .bind(file.storage_key())
+    .bind(file.size)
+    .bind(owner_id)
+    .bind(file.tenant_id)
+    .execute(&harness.pool)
+    .await
+    .expect("create the current Files version");
     file
 }
 
@@ -3534,7 +3549,7 @@ async fn memory_source_audit_failure_prevents_llm_context_submission() {
         .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone())))
         .search_scoped_for_run(
             &ctx,
-            "SENSITIVE-AUDIT-FAILURE-CONTEXT",
+            "audit-failure",
             &[SearchSource::Files],
             8,
             &SearchScope::Workspace,
@@ -3544,6 +3559,10 @@ async fn memory_source_audit_failure_prevents_llm_context_submission() {
         .expect("the source is authorized before injecting an audit failure");
     assert_eq!(control.results.len(), 1);
     assert_eq!(control.results[0].resource_ref, source_ref.to_uri());
+    assert!(control.results[0]
+        .snippet
+        .as_deref()
+        .is_some_and(|snippet| snippet.contains("SENSITIVE-AUDIT-FAILURE-CONTEXT")));
 
     let suffix = Uuid::new_v4().simple().to_string();
     let function_name = format!("rs_memory_audit_fail_{suffix}");
@@ -3581,12 +3600,7 @@ async fn memory_source_audit_failure_prevents_llm_context_submission() {
         Some(provider.clone()),
     );
     let result = ask
-        .ask(
-            &ctx,
-            "SENSITIVE-AUDIT-FAILURE-CONTEXT",
-            &[SearchSource::Files],
-            8,
-        )
+        .ask(&ctx, "audit-failure", &[SearchSource::Files], 8)
         .await;
     let provider_calls = provider.calls().await;
 
