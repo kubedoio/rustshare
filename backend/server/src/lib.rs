@@ -18,6 +18,7 @@ pub mod memory_files_projection;
 pub mod memory_files_reconcile_worker;
 pub mod memory_orphan_cleanup_worker;
 pub mod memory_projection;
+pub mod memory_worker_auth;
 pub mod metrics;
 pub mod middleware;
 pub mod object_gc;
