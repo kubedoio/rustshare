@@ -252,7 +252,12 @@ async fn wait_for_versions(
         let files = imported_files(client, server, owner_token, scope).await;
         last_versions = files
             .iter()
-            .filter_map(|file| Some((file["path"].as_str()?, file["current_version"].as_i64()?)))
+            .filter_map(|file| {
+                Some((
+                    file["path"].as_str()?.to_owned(),
+                    file["current_version"].as_i64()?,
+                ))
+            })
             .collect();
         if expected.iter().all(|(path, version)| {
             last_versions
