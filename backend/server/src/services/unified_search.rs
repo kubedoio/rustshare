@@ -70,9 +70,8 @@ pub enum SearchScope {
 
 /// Errors raised by the unified search service.
 ///
-/// Only client-input errors are surfaced: per-candidate denials and
-/// per-source failures are absorbed (dropped) inside the service, so a broken
-/// source can never fail the whole search or reveal a denial.
+/// Client-input errors and audit-write failures are surfaced; source denials
+/// remain hidden from search results after their content-free audit record.
 #[derive(Debug, thiserror::Error)]
 pub enum UnifiedSearchError {
     #[error("invalid query: {0}")]
@@ -338,14 +337,56 @@ impl UnifiedSearchService {
         };
 
         if let SearchScope::Resource(resource) = scope {
-            let Ok(resolved) = self
+            let resolved = self
                 .authorizer
                 .resolve(ctx, resource, Purpose::RagContext)
-                .await
-            else {
-                return Ok(UnifiedSearchResponse {
-                    results: Vec::new(),
-                });
+                .await;
+            let resolved = match resolved {
+                Ok(resolved) => resolved,
+                Err(error) => {
+                    let file_id = (resource.application.0 == FILES_APPLICATION
+                        && resource.resource_type == "file")
+                        .then(|| Uuid::parse_str(&resource.resource_id).ok())
+                        .flatten();
+                    let candidate = Candidate {
+                        source_application: resource.application.to_string(),
+                        source_type: resource.resource_type.clone(),
+                        resource_ref: resource.clone(),
+                        score: 1.0,
+                        title: String::new(),
+                        location: None,
+                        occurred_at: None,
+                        file_id,
+                        note_id: file_id,
+                        mime_type: None,
+                        cached_hint: None,
+                        message_id: None,
+                        community_id: None,
+                        channel_id: None,
+                        channel_kind: None,
+                        author_pubkey: None,
+                    };
+                    if self
+                        .record_retrieval_access(
+                            ctx,
+                            request_id,
+                            &candidate,
+                            if matches!(&error, SourceError::Unauthorized) {
+                                "denied"
+                            } else {
+                                "unavailable"
+                            },
+                            false,
+                        )
+                        .await
+                        .is_err()
+                    {
+                        return Err(UnifiedSearchError::AuditUnavailable);
+                    }
+                    return Ok(UnifiedSearchResponse {
+                        results: Vec::new(),
+                    });
+                }
             };
             candidates.retain(|candidate| candidate.resource_ref == *resource);
             if candidates.is_empty() {

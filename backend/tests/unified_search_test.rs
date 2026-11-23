@@ -3530,7 +3530,14 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         answer: "Both sources agree.".into(),
         citations: vec!["src-001".into(), "src-002".into()],
     }));
-    let ask = AskWorkspaceService::new(Arc::new(harness.service()), Some(provider.clone()));
+    let ask = AskWorkspaceService::new(
+        Arc::new(
+            harness
+                .service()
+                .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+        ),
+        Some(provider.clone()),
+    );
     let answer = ask
         .ask(
             &user_ctx(env.principal, tenant),
@@ -3575,8 +3582,14 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         answer: "The note contains the plan.".into(),
         citations: vec!["src-001".into()],
     }));
-    let note_ask =
-        AskWorkspaceService::new(Arc::new(harness.service()), Some(note_provider.clone()));
+    let note_ask = AskWorkspaceService::new(
+        Arc::new(
+            harness
+                .service()
+                .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+        ),
+        Some(note_provider.clone()),
+    );
     let note_answer = note_ask
         .ask_scoped(
             &user_ctx(env.principal, tenant),
@@ -3593,6 +3606,56 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
     assert!(note_provider.calls().await[0].sources[0]
         .text
         .contains("FILE-AUTHORIZED-BYTES"));
+    let note_audit: (Uuid, String, String, bool) = sqlx::query_as(
+        "SELECT principal_id, source_resource_ref, outcome, context_entered \
+         FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(note_answer.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("authorized current Note retrieval is attributable");
+    assert_eq!(note_audit.0, owner.id);
+    assert!(note_audit.1.contains(&file.id.to_string()));
+    assert_eq!(note_audit.2, "authorized");
+    assert!(note_audit.3);
+
+    let stranger = create_user(&harness.metadata_store, "ask-stranger", tenant.0).await;
+    let denied_provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "must not be called".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let denied_ask = AskWorkspaceService::new(
+        Arc::new(
+            harness
+                .service()
+                .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+        ),
+        Some(denied_provider.clone()),
+    );
+    let denied = denied_ask
+        .ask_scoped(
+            &user_ctx(PrincipalId::from(stranger.id), tenant),
+            "private plan",
+            &[SearchSource::Files],
+            8,
+            &SearchScope::Resource(file_ref(file.id)),
+        )
+        .await
+        .expect("denied Note retrieval degrades without exposing its content");
+    assert!(denied.insufficient_evidence);
+    assert!(denied_provider.calls().await.is_empty());
+    let denied_audit: (Uuid, String, String, bool) = sqlx::query_as(
+        "SELECT principal_id, source_resource_ref, outcome, context_entered \
+         FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(denied.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("denied current Note access is attributed");
+    assert_eq!(denied_audit.0, stranger.id);
+    assert!(denied_audit.1.contains(&file.id.to_string()));
+    assert_eq!(denied_audit.2, "denied");
+    assert!(!denied_audit.3);
 
     let folder_id = Uuid::new_v4();
     let outside = create_file_with_content(
