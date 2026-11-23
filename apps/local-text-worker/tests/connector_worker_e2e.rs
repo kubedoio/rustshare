@@ -992,6 +992,49 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         Some(first_v2_version.as_str())
     );
 
+    let missing_object_key = format!("memory-e2e/missing/{}", Uuid::new_v4());
+    let content_hash = first_v2_revision.trim_start_matches("sha256:");
+    let original_object_key: String = sqlx::query_scalar(
+        "SELECT storage_key FROM file_versions WHERE file_id=$1 AND content_hash=$2",
+    )
+    .bind(first_file_id)
+    .bind(content_hash)
+    .fetch_one(&pool)
+    .await
+    .expect("read authoritative Files object key");
+    sqlx::query("UPDATE file_versions SET storage_key=$3 WHERE file_id=$1 AND content_hash=$2")
+        .bind(first_file_id)
+        .bind(content_hash)
+        .bind(&missing_object_key)
+        .execute(&pool)
+        .await
+        .expect("make the live Files version unavailable");
+    let unavailable_source_search =
+        keyword_search(&client, &server, &owner_token, "alpha v2").await;
+    assert!(
+        unavailable_source_search["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|result| result["provenance"]["file_id"] != first_file_id.to_string()),
+        "a missing Files object cannot leak through a stale Memory search projection"
+    );
+    let stale_content_remains_indexed: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM note_index_chunks WHERE source_file_id=$1 AND content LIKE '%alpha v2%')",
+    )
+    .bind(first_file_id)
+    .fetch_one(&pool)
+    .await
+    .expect("confirm stale search content remains present");
+    assert!(stale_content_remains_indexed);
+    sqlx::query("UPDATE file_versions SET storage_key=$3 WHERE file_id=$1 AND content_hash=$2")
+        .bind(first_file_id)
+        .bind(content_hash)
+        .bind(original_object_key)
+        .execute(&pool)
+        .await
+        .expect("restore authoritative Files object key");
+
     let (recipient_email, recipient_password) = create_user(&client, &server, &owner_token).await;
     let recipient_token = login(
         &client,
