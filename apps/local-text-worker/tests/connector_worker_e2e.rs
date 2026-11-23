@@ -344,8 +344,33 @@ async fn wait_for_memory_projection(
     .fetch_all(pool)
     .await
     .expect("inspect recent Memory delivery state");
+    let tenant_id: Option<Uuid> = sqlx::query_scalar("SELECT tenant_id FROM files WHERE id=$1")
+        .bind(file_id)
+        .fetch_optional(pool)
+        .await
+        .expect("inspect Files tenant");
+    let reconcile = if let Some(tenant_id) = tenant_id {
+        sqlx::query_as::<_, (String, i32, i64, i64, i64, i64, Option<String>)>(
+            "SELECT status, retry_count, processed, indexed, removed, unavailable, last_error \
+             FROM memory_files_reconcile_jobs WHERE tenant_id=$1",
+        )
+        .bind(tenant_id)
+        .fetch_optional(pool)
+        .await
+        .expect("inspect Memory reconciliation state")
+    } else {
+        None
+    };
+    let source_audits: Vec<(String, String)> = sqlx::query_as(
+        "SELECT outcome, file_version FROM memory_files_source_access_audit \
+         WHERE file_id=$1 ORDER BY occurred_at DESC LIMIT 3",
+    )
+    .bind(file_id)
+    .fetch_all(pool)
+    .await
+    .expect("inspect content-free Memory source access outcomes");
     panic!(
-        "timed out waiting for authorized Memory Files projection: catalog={catalog:?}, chunks={chunk_count}, recent_deliveries={deliveries:?}"
+        "timed out waiting for authorized Memory Files projection: catalog={catalog:?}, chunks={chunk_count}, recent_deliveries={deliveries:?}, reconcile={reconcile:?}, source_audits={source_audits:?}"
     );
 }
 
