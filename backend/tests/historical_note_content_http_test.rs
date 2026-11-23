@@ -14,11 +14,18 @@ use bytes::Bytes;
 use chrono::Utc;
 use rustshare_core::domain::{Share, SharePermissions};
 use rustshare_server::{routes, state::AppState};
-use support::calendar_harness::{cleanup_tenant, create_auth_token, create_test_tenant, create_test_user, setup_test_env, SERIAL};
+use support::calendar_harness::{
+    cleanup_tenant, create_auth_token, create_test_tenant, create_test_user, setup_test_env, SERIAL,
+};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-async fn content(app: &Router, file_id: Uuid, version: Option<&str>, bearer: &str) -> (StatusCode, Bytes) {
+async fn content(
+    app: &Router,
+    file_id: Uuid,
+    version: Option<&str>,
+    bearer: &str,
+) -> (StatusCode, Bytes) {
     let version = version.map_or_else(String::new, |value| format!("?version=sha256%3A{value}"));
     let request = Request::builder()
         .method(Method::GET)
@@ -106,10 +113,18 @@ async fn historical_note_content_rechecks_authorization_and_never_falls_back() {
         .await
         .unwrap();
     let (status, _) = content(&app, file.id, Some(&historical_hash), &recipient_token).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "revocation applies to old versions");
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "revocation applies to old versions"
+    );
 
     let (status, _) = content(&app, file.id, Some(&historical_hash), &outsider_token).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "cross-tenant reads stay denied");
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "cross-tenant reads stay denied"
+    );
 
     let unavailable = "deadbeef".repeat(8);
     let (status, body) = content(&app, file.id, Some(&unavailable), &owner_token).await;
