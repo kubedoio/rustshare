@@ -1150,7 +1150,7 @@ jobs:
             require_line "${clean_install}" "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
             require_line "${evidence_dir}/ui.env" 'UI_STATUS=passed'
             require_line "${evidence_dir}/ui.env" 'UI_BROWSER_STATUS=passed'
-            require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_EXPECTED=2'
+            require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_EXPECTED=3'
             require_line "${evidence_dir}/ui.env" 'UI_INSTITUTIONAL_JOURNEY=passed'
             require_line "${evidence_dir}/ui.env" "UI_IMAGE_ID=${image_id}"
             require_line "${evidence_dir}/runtime-db.env" 'RUNTIME_DB_STATUS=passed'
