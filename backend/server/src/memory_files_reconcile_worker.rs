@@ -24,6 +24,29 @@ use rustshare_storage::MetadataStore;
 const MAX_RETRIES: i32 = 8;
 
 #[derive(Clone, Copy)]
+pub enum MemoryFilesReconcileFailureStage {
+    EmbeddedPage,
+    FilesSourcePage,
+    MemoryProjection,
+    Checkpoint,
+    PageTimeout,
+    LeaseHeartbeat,
+}
+
+impl MemoryFilesReconcileFailureStage {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::EmbeddedPage => "embedded_page",
+            Self::FilesSourcePage => "files_source_page",
+            Self::MemoryProjection => "memory_projection",
+            Self::Checkpoint => "checkpoint",
+            Self::PageTimeout => "page_timeout",
+            Self::LeaseHeartbeat => "lease_heartbeat",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct MemoryFilesReconcileConfig {
     pub interval: Duration,
     pub poll_interval: Duration,
@@ -273,7 +296,16 @@ async fn run_page(
         _ => {
             tracing::warn!(tenant_id = %tenant_id, "Memory reconciliation page failed or timed out");
             if !matches!(
-                tokio::time::timeout(config.lease / 3, fail_page(&metadata, &lease, owner)).await,
+                tokio::time::timeout(
+                    config.lease / 3,
+                    fail_page(
+                        &metadata,
+                        &lease,
+                        owner,
+                        MemoryFilesReconcileFailureStage::EmbeddedPage,
+                    ),
+                )
+                .await,
                 Ok(Ok(()))
             ) {
                 tracing::error!(tenant_id = %tenant_id, "Memory reconciliation retry update failed; page will replay");
@@ -306,10 +338,11 @@ pub async fn fail_page(
     metadata: &MetadataStore,
     lease: &MemoryFilesLease,
     owner: Uuid,
+    failure_stage: MemoryFilesReconcileFailureStage,
 ) -> anyhow::Result<()> {
     let mut tx = lease_transaction(metadata.pool()).await?;
-    let res = sqlx::query("UPDATE memory_files_reconcile_jobs SET retry_count=retry_count+1, last_error='reconciliation page failed', status=CASE WHEN retry_count+1 >= $4 THEN 'failed' ELSE 'idle' END, next_run_at=NOW()+(LEAST(3600, (30 * (1 << LEAST(retry_count, 7)))::int) * INTERVAL '1 second'), lease_owner=NULL, lease_until=NULL, heartbeat_at=NULL, updated_at=NOW() WHERE tenant_id=$1 AND lease_owner=$2 AND lease_generation=$3 AND lease_until>clock_timestamp()")
-        .bind(lease.tenant_id).bind(owner).bind(lease.generation).bind(MAX_RETRIES).execute(&mut *tx).await?;
+    let res = sqlx::query("UPDATE memory_files_reconcile_jobs SET retry_count=retry_count+1, last_error=$5, status=CASE WHEN retry_count+1 >= $4 THEN 'failed' ELSE 'idle' END, next_run_at=NOW()+(LEAST(3600, (30 * (1 << LEAST(retry_count, 7)))::int) * INTERVAL '1 second'), lease_owner=NULL, lease_until=NULL, heartbeat_at=NULL, updated_at=NOW() WHERE tenant_id=$1 AND lease_owner=$2 AND lease_generation=$3 AND lease_until>clock_timestamp()")
+        .bind(lease.tenant_id).bind(owner).bind(lease.generation).bind(MAX_RETRIES).bind(failure_stage.code()).execute(&mut *tx).await?;
     anyhow::ensure!(res.rows_affected() == 1, "lease lost before retry update");
     tx.commit().await?;
     metrics::counter!("memory_files_reconcile_pages_total", "outcome" => "failure").increment(1);

@@ -1103,10 +1103,7 @@ async fn files_reconcile_worker_automates_recovery_and_bounds_failures(db: PgPoo
     }
     let failed = wait_for_worker_job(&db, tenant, |r| r.get::<&str, _>("status") == "failed").await;
     assert_eq!(failed.get::<i32, _>("retry_count"), 8);
-    assert_eq!(
-        failed.get::<&str, _>("last_error"),
-        "reconciliation page failed"
-    );
+    assert_eq!(failed.get::<&str, _>("last_error"), "embedded_page");
     assert_eq!(count().await.unwrap(), 1);
     assert!(state
         .note_service

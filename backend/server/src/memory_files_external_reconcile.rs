@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     handlers::memory_reconcile::FilesReconcileResponse,
-    memory_files_reconcile_worker::{self, MemoryFilesLease},
+    memory_files_reconcile_worker::{self, MemoryFilesLease, MemoryFilesReconcileFailureStage},
     memory_files_worker_consumer::{MemoryFilesWorkerConsumer, SnapshotProjectionOutcome},
     memory_worker_files_client::MemoryWorkerFilesClient,
 };
@@ -165,7 +165,8 @@ async fn process_page(
     let work = async {
         let page = files
             .reconcile_page(lease.tenant_id, lease.cursor, PAGE_SIZE)
-            .await?;
+            .await
+            .map_err(|_| MemoryFilesReconcileFailureStage::FilesSourcePage)?;
         let mut counts = FilesReconcileResponse {
             processed: 0,
             indexed: 0,
@@ -201,7 +202,8 @@ async fn process_page(
             };
             let outcome = consumer
                 .project_snapshot(lease.tenant_id, file_id, snapshot)
-                .await?;
+                .await
+                .map_err(|_| MemoryFilesReconcileFailureStage::MemoryProjection)?;
             if outcome == SnapshotProjectionOutcome::Indexed {
                 counts.indexed += 1;
             }
@@ -214,6 +216,7 @@ async fn process_page(
         }
         memory_files_reconcile_worker::finish_page(metadata, &lease, owner, counts, config.interval)
             .await
+            .map_err(|_| MemoryFilesReconcileFailureStage::Checkpoint)
     };
     tokio::pin!(work);
     let deadline = tokio::time::sleep(config.page_timeout);
@@ -224,18 +227,21 @@ async fn process_page(
         tokio::select! {
             biased;
             result = &mut work => {
-                if let Err(error) = result {
-                    memory_files_reconcile_worker::fail_page(metadata, &lease, owner).await?;
-                    return Err(error);
+                if let Err(stage) = result {
+                    memory_files_reconcile_worker::fail_page(metadata, &lease, owner, stage).await?;
+                    anyhow::bail!("{}", stage.code());
                 }
                 return Ok(());
             }
             _ = &mut deadline => {
-                memory_files_reconcile_worker::fail_page(metadata, &lease, owner).await?;
-                anyhow::bail!("Memory reconciliation page timed out");
+                memory_files_reconcile_worker::fail_page(metadata, &lease, owner, MemoryFilesReconcileFailureStage::PageTimeout).await?;
+                anyhow::bail!("{}", MemoryFilesReconcileFailureStage::PageTimeout.code());
             }
             _ = &mut heartbeat => {
-                memory_files_reconcile_worker::heartbeat(metadata, &lease, owner, config.lease).await?;
+                if memory_files_reconcile_worker::heartbeat(metadata, &lease, owner, config.lease).await.is_err() {
+                    memory_files_reconcile_worker::fail_page(metadata, &lease, owner, MemoryFilesReconcileFailureStage::LeaseHeartbeat).await?;
+                    anyhow::bail!("{}", MemoryFilesReconcileFailureStage::LeaseHeartbeat.code());
+                }
                 heartbeat.as_mut().reset(tokio::time::Instant::now() + config.lease / 3);
             }
         }
