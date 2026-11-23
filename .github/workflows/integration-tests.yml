@@ -310,7 +310,10 @@ jobs:
           RUSTSHARE_MEMORY_WORKER_SECRET="$memory_worker_secret" \
           MEMORY_DATABASE_URL="$memory_database_url" \
           DATABASE_URL="$e2e_database_url" \
-            SQLX_OFFLINE=true cargo test -p local-text-worker --test connector_worker_e2e independent_worker_imports_retries_recovers_and_stops_after_revocation -- --ignored --exact --test-threads=1
+            SQLX_OFFLINE=true cargo test -p local-text-worker --test connector_worker_e2e independent_worker_imports_retries_recovers_and_stops_after_revocation -- --ignored --exact --test-threads=1 || {
+              tail -n 100 "${RUNNER_TEMP}/local-text-worker-backend.log"
+              exit 1
+            }
 
       - name: Run all integration tests
         # `-j 1` serializes Cargo's test processes, while
