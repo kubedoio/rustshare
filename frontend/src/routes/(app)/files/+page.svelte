@@ -2054,7 +2054,7 @@
 	onVersionRestored={handleVersionRestored}
 	{showFilePreviewModal}
 	{previewTarget}
-	{previewVersion}
+	sourceVersion={previewVersion}
 	onFilePreviewClose={() => {
 		showFilePreviewModal = false;
 		previewTarget = null;
