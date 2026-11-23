@@ -278,7 +278,7 @@ jobs:
           worker_acl_ok="$(psql "$memory_database_url" -v ON_ERROR_STOP=1 -Atc "SELECT has_table_privilege(current_user, 'public.memory_files_catalog', 'SELECT') AND has_table_privilege(current_user, 'public.integration_outbox', 'SELECT') AND NOT has_table_privilege(current_user, 'public.files', 'SELECT') AND NOT has_table_privilege(current_user, 'public.file_versions', 'SELECT') AND NOT has_table_privilege(current_user, 'public.connector_external_mappings', 'SELECT') AND NOT has_table_privilege(current_user, 'public.connector_worker_credentials', 'SELECT')")"
           [[ "$worker_acl_ok" == "t" ]]
           cargo build -p rustshare-server --bin elembra-memory-worker
-          SERVER_HOST=127.0.0.1 SERVER_PORT=18333 RUSTSHARE_CHAT_AUTHORITY=local \
+          RUST_LOG=warn SERVER_HOST=127.0.0.1 SERVER_PORT=18333 RUSTSHARE_CHAT_AUTHORITY=local \
             RUSTSHARE_CHAT_PROVISIONING=manual RUSTSHARE_MEMORY_EXECUTION_MODE=external \
             RUSTSHARE_MEMORY_WORKER_SECRET="$memory_worker_secret" \
             DATABASE_URL="$e2e_database_url" \
