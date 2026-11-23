@@ -53,13 +53,17 @@ async fn memory_worker_http_rejects_unbounded_unauthenticated_and_malformed_requ
         (
             "/internal/v1/memory/files/snapshot",
             json!({ "source": "files", "event_id": Uuid::new_v4(), "extra": true }),
-            vec![json!({ "source": "", "event_id": Uuid::nil() })],
+            vec![
+                json!({ "source": "", "event_id": Uuid::nil() }),
+                json!({ "source": "files", "event_id": "not-a-uuid" }),
+            ],
         ),
         (
             "/internal/v1/memory/files/reconcile/tenants",
             json!({ "after": null, "limit": 1, "extra": true }),
             vec![
                 json!({ "after": Uuid::nil(), "limit": 1 }),
+                json!({ "after": "not-a-uuid", "limit": 1 }),
                 json!({ "after": null, "limit": 101 }),
             ],
         ),
@@ -68,6 +72,8 @@ async fn memory_worker_http_rejects_unbounded_unauthenticated_and_malformed_requ
             json!({ "tenant_id": Uuid::new_v4(), "after_file_id": null, "limit": 1, "extra": true }),
             vec![
                 json!({ "tenant_id": Uuid::new_v4(), "after_file_id": Uuid::nil(), "limit": 1 }),
+                json!({ "tenant_id": "not-a-uuid", "after_file_id": null, "limit": 1 }),
+                json!({ "tenant_id": Uuid::new_v4(), "after_file_id": "not-a-uuid", "limit": 1 }),
                 json!({ "tenant_id": Uuid::new_v4(), "after_file_id": null, "limit": 101 }),
             ],
         ),
@@ -175,6 +181,30 @@ async fn memory_worker_http_rejects_unbounded_unauthenticated_and_malformed_requ
             "path binding: {path}"
         );
 
+        let signed_body = serde_json::to_vec(&json!({
+            "tenant_id": Uuid::new_v4(),
+            "after_file_id": null,
+            "limit": 1
+        }))
+        .unwrap();
+        let mutated_body = serde_json::to_vec(&json!({
+            "tenant_id": Uuid::new_v4(),
+            "after_file_id": null,
+            "limit": 1
+        }))
+        .unwrap();
+        let signature = auth.sign_request("POST", path, &signed_body).unwrap();
+        let response = app
+            .clone()
+            .oneshot(request(Method::POST, path, mutated_body, Some(signature)))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "body binding: {path}"
+        );
+
         let response = app
             .clone()
             .oneshot(request(Method::GET, path, Vec::new(), None))
@@ -184,6 +214,22 @@ async fn memory_worker_http_rejects_unbounded_unauthenticated_and_malformed_requ
             response.status(),
             StatusCode::METHOD_NOT_ALLOWED,
             "method: {path}"
+        );
+
+        let response = app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                "/internal/v1/memory/files/reconcile",
+                Vec::new(),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "no alternate route: {path}"
         );
     }
 
