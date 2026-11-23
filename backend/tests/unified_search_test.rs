@@ -3548,20 +3548,25 @@ async fn memory_source_audit_failure_prevents_llm_context_submission() {
     let suffix = Uuid::new_v4().simple().to_string();
     let function_name = format!("rs_memory_audit_fail_{suffix}");
     let trigger_name = format!("rs_memory_audit_fail_{suffix}");
+    let mut audit_setup = pool.begin().await.expect("begin audit failure setup");
     sqlx::query(&format!(
         "CREATE FUNCTION public.{function_name}() RETURNS trigger \
          LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected Memory audit failure'; END; $$"
     ))
-    .execute(&pool)
+    .execute(&mut *audit_setup)
     .await
     .expect("create an audit failure trigger function");
     sqlx::query(&format!(
         "CREATE TRIGGER {trigger_name} BEFORE INSERT ON memory_files_source_access_audit \
          FOR EACH ROW EXECUTE FUNCTION public.{function_name}()"
     ))
-    .execute(&pool)
+    .execute(&mut *audit_setup)
     .await
     .expect("inject Memory source audit failure");
+    audit_setup
+        .commit()
+        .await
+        .expect("commit audit failure setup");
 
     let provider = Arc::new(RecordingLlmProvider::new(LlmResult {
         answer: "must not be called".into(),
@@ -3575,20 +3580,15 @@ async fn memory_source_audit_failure_prevents_llm_context_submission() {
         ),
         Some(provider.clone()),
     );
-    assert!(matches!(
-        ask.ask(
+    let result = ask
+        .ask(
             &ctx,
             "SENSITIVE-AUDIT-FAILURE-CONTEXT",
             &[SearchSource::Files],
-            8
+            8,
         )
-        .await,
-        Err(LlmError::Failed)
-    ));
-    assert!(
-        provider.calls().await.is_empty(),
-        "source content must not reach the provider when its audit write fails"
-    );
+        .await;
+    let provider_calls = provider.calls().await;
 
     sqlx::query(&format!(
         "DROP TRIGGER {trigger_name} ON memory_files_source_access_audit"
@@ -3601,6 +3601,12 @@ async fn memory_source_audit_failure_prevents_llm_context_submission() {
         .await
         .expect("remove the audit failure function");
     cleanup(&pool, tenant).await;
+
+    assert!(matches!(result, Err(LlmError::Failed)));
+    assert!(
+        provider_calls.is_empty(),
+        "source content must not reach the provider when its audit write fails"
+    );
 }
 
 /// Proves the exact generation input: both owning sources are freshly fetched,
