@@ -1487,10 +1487,19 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .unwrap()
         .iter()
         .any(|result| {
-            result["provenance"]["file_id"] == offline_file_id.to_string()
-                && result["resource_ref"]
-                    .as_str()
-                    .is_some_and(|value| value.contains(&offline_version))
+            if result["provenance"]["file_id"] != offline_file_id.to_string() {
+                return false;
+            }
+            url::Url::parse(result["resource_ref"].as_str().unwrap_or_default())
+                .ok()
+                .and_then(|reference| {
+                    reference
+                        .query_pairs()
+                        .find(|(key, _)| key == "version")
+                        .map(|(_, value)| value.into_owned())
+                })
+                .as_deref()
+                == Some(offline_version.as_str())
         }));
 
     // A claimed event survives a worker kill and its expired outbox lease.
