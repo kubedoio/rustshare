@@ -233,6 +233,17 @@ test('Notes opens an exact historical Memory citation without changing Note iden
 		await expect(page.getByText(/Read-only view of cited version/)).toBeVisible();
 		await expect(page.getByRole('button', { name: `${title}, edit title` })).toHaveCount(0);
 	} finally {
-		if (noteId) await api.delete(`/api/v1/notes/${noteId}`, { headers });
+		if (noteId) {
+			try {
+				const deleted = await api.delete(`/api/v1/notes/${noteId}`, {
+					headers,
+					timeout: 5_000
+				});
+				if (!deleted.ok())
+					console.warn(`Citation fixture cleanup returned HTTP ${deleted.status()}`);
+			} catch {
+				console.warn('Citation fixture cleanup request failed');
+			}
+		}
 	}
 });
