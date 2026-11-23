@@ -170,17 +170,18 @@ test('Notes opens an exact historical Memory citation without changing Note iden
 		});
 		expect(created.ok()).toBeTruthy();
 		const note = await created.json();
-		noteId = note.id;
+		const createdNoteId: string = note.id;
+		noteId = createdNoteId;
 		const sourceVersion = `sha256:${createHash('sha256').update(note.content).digest('hex')}`;
 
-		const updated = await api.put(`/api/v1/notes/${noteId}`, {
+		const updated = await api.put(`/api/v1/notes/${createdNoteId}`, {
 			headers,
 			data: { content: '# Current H1\n\nCurrent Note body' }
 		});
 		expect(updated.ok()).toBeTruthy();
 
 		await page.goto(
-			`/apps/notes/${encodeURIComponent(noteId)}?sourceVersion=${encodeURIComponent(sourceVersion)}`
+			`/apps/notes/${encodeURIComponent(createdNoteId)}?sourceVersion=${encodeURIComponent(sourceVersion)}`
 		);
 		await expect(page.locator('h1.doc-title-wrapper')).toHaveText(title);
 		await expect(page.locator('.doc-subtitle')).toHaveText('Historical citation H1');
