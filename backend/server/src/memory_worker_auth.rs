@@ -89,7 +89,7 @@ impl MemoryWorkerRequestAuth {
         db_pool: &PgPool,
     ) -> Result<(), MemoryWorkerAuthError> {
         self.verify_request(signature, method, path, body)?;
-        let signature_hash = Sha256::digest(signature.as_bytes()).to_vec();
+        let signature_hash = signature_claim_hash(signature)?;
 
         sqlx::query(
             "DELETE FROM memory_worker_request_signatures WHERE expires_at <= clock_timestamp()",
@@ -187,6 +187,24 @@ fn signature_timestamp(signature: &str) -> Result<i64, MemoryWorkerAuthError> {
     timestamp[2..]
         .parse()
         .map_err(|_| MemoryWorkerAuthError::MalformedSignature)
+}
+
+fn signature_claim_hash(signature: &str) -> Result<Vec<u8>, MemoryWorkerAuthError> {
+    let timestamp = signature_timestamp(signature)?;
+    let (_, versioned_signature) = signature
+        .split_once(',')
+        .ok_or(MemoryWorkerAuthError::MalformedSignature)?;
+    let digest = versioned_signature
+        .strip_prefix("v1=")
+        .ok_or(MemoryWorkerAuthError::MalformedSignature)?;
+    let digest = hex::decode(digest).map_err(|_| MemoryWorkerAuthError::MalformedSignature)?;
+    if digest.len() != 32 {
+        return Err(MemoryWorkerAuthError::MalformedSignature);
+    }
+
+    let mut canonical = timestamp.to_be_bytes().to_vec();
+    canonical.extend_from_slice(&digest);
+    Ok(Sha256::digest(canonical).to_vec())
 }
 
 #[cfg(test)]

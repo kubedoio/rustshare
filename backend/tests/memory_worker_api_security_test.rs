@@ -213,13 +213,31 @@ async fn memory_worker_http_rejects_unbounded_unauthenticated_and_malformed_requ
     statuses.sort();
     assert_eq!(statuses, [StatusCode::OK, StatusCode::UNAUTHORIZED]);
 
-    let response = restart_app
-        .oneshot(request(Method::POST, path, body, Some(signed)))
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        StatusCode::UNAUTHORIZED,
-        "a claimed signature stays rejected by a fresh router sharing the database"
+    let (timestamp, digest) = signed.split_once(',').unwrap();
+    let leading_zero_timestamp = format!("t=000{},{}", &timestamp[2..], digest);
+    let uppercase_digest = format!(
+        "{timestamp},v1={}",
+        digest.strip_prefix("v1=").unwrap().to_ascii_uppercase()
     );
+    for (label, replay_signature) in [
+        ("exact replay", signed),
+        ("timestamp alias", leading_zero_timestamp),
+        ("hex case alias", uppercase_digest),
+    ] {
+        let response = restart_app
+            .clone()
+            .oneshot(request(
+                Method::POST,
+                path,
+                body.clone(),
+                Some(replay_signature),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "{label} stays rejected by a fresh router sharing the database"
+        );
+    }
 }
