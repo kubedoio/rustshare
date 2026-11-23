@@ -14606,6 +14606,16 @@
               }
             }
           },
+          "500": {
+            "description": "Source access audit unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Rate limited",
             "content": {
@@ -28659,10 +28669,16 @@
         "type": "object",
         "description": "Unified search response.",
         "required": [
+          "request_id",
           "results",
           "total"
         ],
         "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable identifier used to correlate this query with Memory source audit events."
+          },
           "results": {
             "type": "array",
             "items": {

@@ -353,12 +353,13 @@ impl AskWorkspaceService {
         };
         let search = self
             .search
-            .search_scoped(
+            .search_scoped_for_run(
                 ctx,
                 question,
                 sources,
                 result_limit.clamp(1, MAX_SOURCES),
                 scope,
+                run_id,
             )
             .await
             .map_err(|_| LlmError::Failed)?;
@@ -373,6 +374,25 @@ impl AskWorkspaceService {
                 MAX_CONTEXT_CHARS,
             )
             .await;
+        if let Err(error) = self
+            .search
+            .finalize_retrieval_context(
+                run_id,
+                &search
+                    .results
+                    .iter()
+                    .map(|source| source.resource_ref.clone())
+                    .collect::<Vec<_>>(),
+                &materialized
+                    .iter()
+                    .map(|source| source.resource.to_uri())
+                    .collect::<Vec<_>>(),
+            )
+            .await
+        {
+            tracing::error!(%error, %run_id, "ask workspace source access audit unavailable");
+            return Err(LlmError::Failed);
+        }
         tracing::info!(
             run_id = %run_id,
             principal = %ctx.principal_id,

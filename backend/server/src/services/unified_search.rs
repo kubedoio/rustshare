@@ -77,6 +77,8 @@ pub enum SearchScope {
 pub enum UnifiedSearchError {
     #[error("invalid query: {0}")]
     InvalidQuery(String),
+    #[error("source access audit unavailable")]
+    AuditUnavailable,
 }
 
 /// An internal, pre-authorization candidate.
@@ -263,6 +265,20 @@ impl UnifiedSearchService {
         limit: usize,
         scope: &SearchScope,
     ) -> Result<UnifiedSearchResponse, UnifiedSearchError> {
+        self.search_scoped_for_run(ctx, query, sources, limit, scope, Uuid::new_v4())
+            .await
+    }
+
+    /// Run a scoped search with the caller's durable Ask/Search request ID.
+    pub async fn search_scoped_for_run(
+        &self,
+        ctx: &PrincipalContext,
+        query: &str,
+        sources: &[SearchSource],
+        limit: usize,
+        scope: &SearchScope,
+        request_id: Uuid,
+    ) -> Result<UnifiedSearchResponse, UnifiedSearchError> {
         // Step 1: validate input.
         let query = validate_query(query)?;
         let limit = limit.clamp(1, 50);
@@ -438,7 +454,7 @@ impl UnifiedSearchService {
         let ranked = dedupe_and_rank(candidates, budget);
 
         // Step 4: current source reauthorization (fail closed per chunk).
-        let allowed = self.authorize_candidates(ctx, ranked).await;
+        let allowed = self.authorize_candidates(ctx, ranked, request_id).await?;
 
         // Step 5: final deterministic rank → top `limit`.
         let final_candidates = dedupe_and_rank(allowed, limit);
@@ -462,6 +478,23 @@ impl UnifiedSearchService {
                         %error,
                         "unified search: resolve failed; dropping result"
                     );
+                    if self
+                        .record_retrieval_access(
+                            ctx,
+                            request_id,
+                            &candidate,
+                            if matches!(&error, SourceError::Unauthorized) {
+                                "denied"
+                            } else {
+                                "unavailable"
+                            },
+                            false,
+                        )
+                        .await
+                        .is_err()
+                    {
+                        return Err(UnifiedSearchError::AuditUnavailable);
+                    }
                     continue;
                 }
             };
@@ -478,29 +511,26 @@ impl UnifiedSearchService {
                 .authorizer
                 .fetch(ctx, &reference, Representation::Text)
                 .await;
-            if let (Some(catalog), Some(file_id), Some(version)) = (
-                &self.memory_files_catalog,
-                candidate.file_id,
-                reference.version.as_deref(),
-            ) {
-                if let Err(error) = catalog
-                    .record_source_access(
-                        Uuid::new_v4(),
-                        ctx.tenant_id.0,
-                        file_id,
-                        ctx.principal_id.0,
-                        version,
-                        fetched.is_ok(),
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        %error,
-                        file_id = %file_id,
-                        "unified search: source access audit unavailable; dropping result"
-                    );
-                    continue;
-                }
+            if self
+                .record_retrieval_access(
+                    ctx,
+                    request_id,
+                    &candidate,
+                    match &fetched {
+                        Ok(_) => "authorized",
+                        Err(SourceError::Unauthorized) => "denied",
+                        Err(_) => "unavailable",
+                    },
+                    false,
+                )
+                .await
+                .is_err()
+            {
+                tracing::warn!(
+                    resource = %reference,
+                    "unified search: source access audit unavailable; dropping result"
+                );
+                return Err(UnifiedSearchError::AuditUnavailable);
             }
             let snippet = match fetched {
                 Ok(fetched) => Some(authorized_snippet(&fetched.data, query, SNIPPET_MAX_CHARS)),
@@ -558,6 +588,57 @@ impl UnifiedSearchService {
 
         // Step 7: return the normalized contract.
         Ok(UnifiedSearchResponse { results })
+    }
+
+    async fn record_retrieval_access(
+        &self,
+        ctx: &PrincipalContext,
+        request_id: Uuid,
+        candidate: &Candidate,
+        outcome: &str,
+        context_entered: bool,
+    ) -> anyhow::Result<()> {
+        let Some(catalog) = &self.memory_files_catalog else {
+            return Ok(());
+        };
+        let initiator = ctx
+            .delegation
+            .as_ref()
+            .map(|delegation| delegation.issuer_principal_id.0)
+            .unwrap_or(ctx.principal_id.0);
+        catalog
+            .record_retrieval_access(
+                request_id,
+                ctx.tenant_id.0,
+                candidate.file_id,
+                ctx.principal_id.0,
+                &format!("{:?}", ctx.principal_kind).to_lowercase(),
+                initiator,
+                &candidate.resource_ref.to_uri(),
+                candidate
+                    .resource_ref
+                    .version
+                    .as_deref()
+                    .unwrap_or_default(),
+                &candidate.source_application,
+                outcome,
+                context_entered,
+            )
+            .await
+    }
+
+    pub async fn finalize_retrieval_context(
+        &self,
+        request_id: Uuid,
+        searched_refs: &[String],
+        entered_refs: &[String],
+    ) -> anyhow::Result<()> {
+        if let Some(catalog) = &self.memory_files_catalog {
+            catalog
+                .finalize_retrieval_context(request_id, searched_refs, entered_refs)
+                .await?;
+        }
+        Ok(())
     }
 
     /// Reauthorize and fetch search results for RAG. Search output is only a
@@ -892,7 +973,8 @@ impl UnifiedSearchService {
         &self,
         ctx: &PrincipalContext,
         candidates: Vec<Candidate>,
-    ) -> Vec<Candidate> {
+        request_id: Uuid,
+    ) -> Result<Vec<Candidate>, UnifiedSearchError> {
         let files_action = ActionCapability::new(FILES_READ);
         let chat_action = ActionCapability::new(CHAT_READ);
 
@@ -928,17 +1010,54 @@ impl UnifiedSearchService {
                             %error,
                             "unified search: batch authorization failed; dropping chunk"
                         );
+                        for candidate in chunk {
+                            if self
+                                .record_retrieval_access(
+                                    ctx,
+                                    request_id,
+                                    candidate,
+                                    "unavailable",
+                                    false,
+                                )
+                                .await
+                                .is_err()
+                            {
+                                return Err(UnifiedSearchError::AuditUnavailable);
+                            }
+                        }
                         continue;
                     }
                 };
                 for (candidate, decision) in chunk.iter().zip(&decisions) {
                     if decision.decision.is_allow() {
-                        allowed.push(candidate.clone());
+                        if self
+                            .record_retrieval_access(
+                                ctx,
+                                request_id,
+                                candidate,
+                                "authorized",
+                                false,
+                            )
+                            .await
+                            .is_ok()
+                        {
+                            allowed.push(candidate.clone());
+                        } else {
+                            return Err(UnifiedSearchError::AuditUnavailable);
+                        }
+                    } else {
+                        if self
+                            .record_retrieval_access(ctx, request_id, candidate, "denied", false)
+                            .await
+                            .is_err()
+                        {
+                            return Err(UnifiedSearchError::AuditUnavailable);
+                        }
                     }
                 }
             }
         }
-        allowed
+        Ok(allowed)
     }
 }
 

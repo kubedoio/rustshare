@@ -73,6 +73,83 @@ impl MemoryFilesCatalogStore {
         Ok(())
     }
 
+    /// Record a content-free retrieval access under its Ask/Search request.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_retrieval_access(
+        &self,
+        request_id: Uuid,
+        tenant_id: Uuid,
+        file_id: Option<Uuid>,
+        principal_id: Uuid,
+        principal_kind: &str,
+        initiator_principal_id: Uuid,
+        resource_ref: &str,
+        source_version: &str,
+        owner_application: &str,
+        outcome: &str,
+        context_entered: bool,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO memory_files_source_access_audit \
+             (access_id, tenant_id, file_id, principal_id, file_version, outcome, request_id, principal_kind, initiator_principal_id, source_resource_ref, owner_application, context_entered) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+             ON CONFLICT (request_id, source_resource_ref) WHERE request_id IS NOT NULL AND source_resource_ref IS NOT NULL \
+             DO UPDATE SET outcome=EXCLUDED.outcome, context_entered=EXCLUDED.context_entered, occurred_at=NOW()",
+        )
+        .bind(Uuid::new_v4())
+        .bind(tenant_id)
+        .bind(file_id)
+        .bind(principal_id)
+        .bind(source_version)
+        .bind(outcome)
+        .bind(request_id)
+        .bind(principal_kind)
+        .bind(initiator_principal_id)
+        .bind(resource_ref)
+        .bind(owner_application)
+        .bind(context_entered)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Record which successful search sources reached the request's LLM prompt.
+    pub async fn finalize_retrieval_context(
+        &self,
+        request_id: Uuid,
+        searched_refs: &[String],
+        entered_refs: &[String],
+    ) -> Result<()> {
+        if !searched_refs.is_empty() {
+            let recorded: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM memory_files_source_access_audit WHERE request_id=$1 AND source_resource_ref=ANY($2)",
+            )
+            .bind(request_id)
+            .bind(searched_refs)
+            .fetch_one(&self.pool)
+            .await?;
+            anyhow::ensure!(
+                recorded as usize == searched_refs.len(),
+                "retrieval audit rows do not match searched sources"
+            );
+        }
+        if !entered_refs.is_empty() {
+            let entered = sqlx::query(
+                "UPDATE memory_files_source_access_audit SET context_entered=TRUE, occurred_at=NOW() \
+                 WHERE request_id=$1 AND source_resource_ref=ANY($2)",
+            )
+            .bind(request_id)
+            .bind(entered_refs)
+            .execute(&self.pool)
+            .await?;
+            anyhow::ensure!(
+                entered.rows_affected() as usize == entered_refs.len(),
+                "retrieval audit rows do not match materialized sources"
+            );
+        }
+        Ok(())
+    }
+
     /// Insert or refresh one Files projection row. A lower Files version is
     /// ignored; equal-version delivery refreshes metadata idempotently.
     pub async fn upsert_in_tx(

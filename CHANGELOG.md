@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Publish Connector Markdown through a durable Memory Files catalog and rebuildable keyword index, with current Files authorization and versioned citations.
 - Run Files-backed Memory event consumption and reconciliation in an opt-in, least-privilege worker process with a source-authorized Files API.
 - Open Memory citations at the exact historical Note or Files version that was cited.
+- Attribute Memory source reads to Search/Ask requests and record whether authorized sources entered an LLM context.
 - Distinguish deleted and permission-denied meeting resource links without exposing their metadata.
 - Search the paginated membership roster of an organization group by username or email.
 - Archive organization groups to suspend their derived access while retaining memberships and shares for audited restoration.

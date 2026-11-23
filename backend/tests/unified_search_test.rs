@@ -1821,12 +1821,15 @@ async fn revoked_files_share_disappears() {
         .service()
         .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone())));
 
+    let allowed_request = Uuid::new_v4();
     let before = service
-        .search(
+        .search_scoped_for_run(
             &recipient_ctx,
             "shared",
             &[SearchSource::Files, SearchSource::Chat],
             50,
+            &rustshare_server::services::unified_search::SearchScope::Workspace,
+            allowed_request,
         )
         .await
         .expect("the search succeeds");
@@ -1844,18 +1847,61 @@ async fn revoked_files_share_disappears() {
         "the shared Connector file carries its cataloged Files version"
     );
 
+    let allowed_audit: (Uuid, String, Uuid, String, String, String, bool) = sqlx::query_as(
+        "SELECT principal_id, principal_kind, initiator_principal_id, source_resource_ref, file_version, owner_application, context_entered \
+         FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(allowed_request)
+    .fetch_one(&pool)
+    .await
+    .expect("authorized access is attributed to the request");
+    assert_eq!(allowed_audit.0, recipient.id);
+    assert_eq!(allowed_audit.1, "user");
+    assert_eq!(allowed_audit.2, recipient.id);
+    assert_eq!(allowed_audit.3, before.results[0].resource_ref);
+    assert_eq!(allowed_audit.4, format!("sha256:{}", file.content_hash));
+    assert_eq!(allowed_audit.5, "io.elembra.files");
+    assert!(!allowed_audit.6);
+    service
+        .finalize_retrieval_context(
+            allowed_request,
+            &[before.results[0].resource_ref.clone()],
+            &[before.results[0].resource_ref.clone()],
+        )
+        .await
+        .expect("context entry is durably attributed");
+    let context_entered: bool = sqlx::query_scalar(
+        "SELECT context_entered FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(allowed_request)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(context_entered);
+    let outcome: String = sqlx::query_scalar(
+        "SELECT outcome FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(allowed_request)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(outcome, "authorized");
+
     harness
         .metadata_store
         .revoke_share(share.id, owner.id)
         .await
         .expect("revoke the share");
 
+    let denied_request = Uuid::new_v4();
     let after = service
-        .search(
+        .search_scoped_for_run(
             &recipient_ctx,
             "shared",
             &[SearchSource::Files, SearchSource::Chat],
             50,
+            &rustshare_server::services::unified_search::SearchScope::Workspace,
+            denied_request,
         )
         .await
         .expect("the search succeeds");
@@ -1863,6 +1909,18 @@ async fn revoked_files_share_disappears() {
         after.results.is_empty(),
         "the revoked recipient must no longer see the file: {after:?}"
     );
+    let denial: (Uuid, String, String, bool) = sqlx::query_as(
+        "SELECT principal_id, source_resource_ref, outcome, context_entered \
+         FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(denied_request)
+    .fetch_one(&pool)
+    .await
+    .expect("revoked access is recorded without source content");
+    assert_eq!(denial.0, recipient.id);
+    assert_eq!(denial.1, before.results[0].resource_ref);
+    assert_eq!(denial.2, "denied");
+    assert!(!denial.3);
 
     let owner_result = service
         .search(
