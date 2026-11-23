@@ -20,7 +20,7 @@ use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_memory::event::{ChatChannelKind, ObservedEventType};
 use rustshare_memory::project::rebuild_records;
 use rustshare_resource_auth::BuzzChannelKind;
-use rustshare_resource_auth::{PrincipalContext, Representation, ResourceRef, SourceAuthorizer};
+use rustshare_resource_auth::{PrincipalContext, ResourceRef, SourceAuthorizer};
 use rustshare_storage::{
     ChatIdentityStore, ChatObservationStore, MemoryCatalogStore, MemoryFilesCatalogStore,
     ReconcileCounts,
@@ -332,9 +332,12 @@ pub async fn reconcile_files_memory_page(
                     TenantId(tenant_id),
                     WorkspaceId(tenant_id),
                 );
-                let fetched = source_authorizer
-                    .fetch(&context, &file_ref, Representation::Text)
-                    .await;
+                let fetched = crate::services::note_service::read_authorized_source_text(
+                    source_authorizer,
+                    &context,
+                    &file_ref,
+                )
+                .await;
                 memory_files_catalog
                     .record_source_access(
                         Uuid::new_v4(),
@@ -350,7 +353,7 @@ pub async fn reconcile_files_memory_page(
                         internal_error()
                     })?;
                 match fetched {
-                    Ok(resource) => match String::from_utf8(resource.data.to_vec()) {
+                    Ok(bytes) => match String::from_utf8(bytes.to_vec()) {
                         Ok(content) => Some(
                             note_service
                                 .index_connector_markdown(

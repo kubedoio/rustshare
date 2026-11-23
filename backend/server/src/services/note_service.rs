@@ -19,11 +19,25 @@ use rustshare_core::{
         PermissionResolver,
     },
 };
+use rustshare_resource_auth::{
+    PrincipalContext, Representation, ResourceRef, SourceAuthorizer, SourceError,
+};
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
+
+pub async fn read_authorized_source_text(
+    authorizer: &SourceAuthorizer,
+    context: &PrincipalContext,
+    resource: &ResourceRef,
+) -> Result<Bytes, SourceError> {
+    authorizer
+        .fetch(context, resource, Representation::Text)
+        .await
+        .map(|fetched| fetched.data)
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct NoteAttachment {
