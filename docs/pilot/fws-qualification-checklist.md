@@ -39,7 +39,7 @@ Run against an isolated disposable deployment with synthetic data and unique Com
 - [ ] Verify user disable/revocation and that another tenant/user cannot open the revoked source or citation.
 - [ ] Restart services and host-equivalent containers; verify persisted data and readiness.
 - [ ] Upgrade from the previous pilot candidate with a pre-upgrade backup; run the same acceptance journey.
-- [ ] Roll back to the previous image/configuration and prove data remains readable. Record any one-way migration limitation.
+- [ ] Rehearse rollback. Do not start the previous binary against a candidate-upgraded database unless backward schema compatibility is explicitly supported and tested. Otherwise restore the pre-upgrade backup to fresh disposable volumes, start the previous image/configuration there, and prove data is readable. Record any one-way migration limitation.
 - [ ] Restore to new disposable volumes from the backup, verify Files/Notes/Chat references and login, and compare expected counts/checksums.
 - [ ] Capture sanitized browser report, workflow URLs, exact commit/image digest, timestamps and operator identities. Exclude credentials, source text and personal data.
 
