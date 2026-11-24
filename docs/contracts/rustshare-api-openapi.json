@@ -14563,7 +14563,7 @@
           "Search"
         ],
         "summary": "POST /api/v1/search",
-        "description": "Ranked, permission-aware search across Files/Notes and Buzz Chat. Results\nare reauthorized by their current owning sources; snippets come only from\nauthorized content.",
+        "description": "Ranked, permission-aware search across Files/Notes, Buzz Chat, and Mail. Results\nare reauthorized by their current owning sources; snippets come only from\nauthorized content.",
         "operationId": "unified_search",
         "requestBody": {
           "content": {
@@ -17873,7 +17873,8 @@
             ],
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Restrict candidates to Files, Chat, and/or Mail. Omitted or empty searches all."
           },
           "workspace_id": {
             "type": "string",
@@ -28596,7 +28597,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Restrict the search to specific sources: `\"files\"` and/or `\"chat\"`.\nOmitted or empty searches both."
+            "description": "Restrict the search to `\"files\"`, `\"chat\"`, and/or `\"mail\"`.\nOmitted or empty searches both."
           }
         }
       },

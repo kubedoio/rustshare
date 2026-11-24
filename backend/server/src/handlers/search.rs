@@ -1,6 +1,6 @@
 //! Unified search handler: `POST /api/v1/search`.
 //!
-//! Ranked, permission-aware search across Files/Notes and Buzz Chat. Every
+//! Ranked, permission-aware search across Files/Notes, Buzz Chat, and Mail. Every
 //! returned result is reauthorized by its current owning source and snippets
 //! come only from authorized content (see `services::unified_search`).
 
@@ -159,7 +159,7 @@ pub struct SearchResponse {
 
 /// POST /api/v1/search
 ///
-/// Ranked, permission-aware search across Files/Notes and Buzz Chat. Results
+/// Ranked, permission-aware search across Files/Notes, Buzz Chat, and Mail. Results
 /// are reauthorized by their current owning sources; snippets come only from
 /// authorized content.
 #[utoipa::path(
