@@ -8,7 +8,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use rustshare_core::{
-    domain::{Folder, SharePermissions, UserId},
+    domain::{File, Folder, SharePermissions, UserId},
     okf::frontmatter::{
         default_note_frontmatter, merge_required_okf_keys, parse_frontmatter, split_frontmatter,
         to_document, OkfNoteFrontmatter, RustshareFrontmatter,
@@ -247,6 +247,7 @@ impl From<rustshare_core::services::FileError> for NoteError {
 }
 
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use rustshare_memory::files_source::{ConnectorSource, FilesIndexSnapshot};
 
 /// Service for managing notes as files with sidecar metadata.
 #[derive(Clone)]
@@ -427,6 +428,71 @@ impl NoteService {
         }
         self.emit_index_note(&file, &metadata, content, tenant_id)
             .await
+    }
+
+    /// Prepare an owner-authorized Files snapshot for the independent Memory
+    /// worker. The caller supplies content already fetched through
+    /// `SourceAuthorizer`; identity, current version and ACL come from Files.
+    pub async fn prepare_connector_index_snapshot(
+        &self,
+        expected: &File,
+        observed_at: DateTime<Utc>,
+        connector: ConnectorSource,
+        content: String,
+    ) -> Result<Option<FilesIndexSnapshot>, NoteError> {
+        let file = self
+            .file_service
+            .get_file(expected.id, expected.owner_id)
+            .await?;
+        if file.tenant_id != expected.tenant_id {
+            return Err(NoteError::PermissionDenied);
+        }
+        if file.content_hash != expected.content_hash
+            || file.current_version != expected.current_version
+        {
+            return Err(NoteError::Conflict(
+                "Files source changed while preparing Memory snapshot".to_string(),
+            ));
+        }
+        if !file.name.to_lowercase().ends_with(".md")
+            || rustshare_core::services::is_hidden_file_for_path(&file.name, &file.path)
+        {
+            return Ok(None);
+        }
+        let metadata = self
+            .load_metadata(file.id, file.owner_id, file.tenant_id)
+            .await?
+            .unwrap_or_else(|| NoteMetadata::new(file.name.clone()));
+        if metadata.kind != "note" {
+            return Ok(None);
+        }
+        let read_acl = self
+            .resolve_note_read_principals(&file, file.tenant_id)
+            .await?;
+        let mut acl =
+            Self::build_acl_payload(&file, &metadata, &content, file.tenant_id, read_acl)?;
+        let computed_hash = compute_index_acl_hash(&acl);
+        if computed_hash != acl.acl_hash {
+            acl.acl_version += 1;
+        }
+        acl.acl_hash = computed_hash;
+        Ok(Some(FilesIndexSnapshot {
+            tenant_id: file.tenant_id,
+            file_id: file.id,
+            observed_at,
+            current_version: format!("sha256:{}", file.content_hash),
+            current_version_number: i64::from(file.current_version),
+            owner_id: file.owner_id,
+            name: file.name,
+            path: file.path,
+            mime_type: metadata.mime_type,
+            connector: Some(connector),
+            acl,
+            content: content
+                .chars()
+                .take(rustshare_core::services::ai::indexing::MAX_CONTENT_LENGTH)
+                .collect(),
+        }))
     }
 
     /// Remove a Connector-imported file from every configured Memory index.

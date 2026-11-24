@@ -27,5 +27,6 @@ uuid = { workspace = true }
 [dev-dependencies]
 base64 = { workspace = true }
 sqlx = { workspace = true }
+rustshare-storage = { path = "../../backend/crates/storage" }
 tempfile = { workspace = true }
 url = { workspace = true }

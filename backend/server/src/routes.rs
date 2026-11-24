@@ -1022,6 +1022,27 @@ pub fn buzz_observation_routes() -> Router<AppState> {
     )
 }
 
+/// Internal Memory-worker source contract. HMAC authenticates the workload;
+/// handlers derive one-file scope from current Files state.
+pub fn memory_worker_routes() -> Router<AppState> {
+    use axum::extract::DefaultBodyLimit;
+    use axum::routing::post;
+    Router::new()
+        .route(
+            "/internal/v1/memory/files/snapshot",
+            post(crate::memory_worker_files_api::files_snapshot),
+        )
+        .route(
+            "/internal/v1/memory/files/reconcile/tenants",
+            post(crate::memory_worker_reconcile_api::tenant_page),
+        )
+        .route(
+            "/internal/v1/memory/files/reconcile/page",
+            post(crate::memory_worker_reconcile_api::source_page),
+        )
+        .layer(DefaultBodyLimit::max(4 * 1024))
+}
+
 pub fn admin_routes() -> Router<AppState> {
     const MAX_BULK_ONBOARDING_REQUEST_BYTES: usize = 1024 * 1024;
     use axum::extract::DefaultBodyLimit;

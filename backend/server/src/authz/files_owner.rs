@@ -38,6 +38,9 @@ use uuid::Uuid;
 pub const RESOURCE_TYPE_FILE: &str = "file";
 pub const RESOURCE_TYPE_FOLDER: &str = "folder";
 
+const MEMORY_APPLICATION_ID: &str = "io.elembra.memory";
+const MEMORY_FILES_PROJECTOR_SUBJECT: &str = "memory-files-projector";
+
 /// Maximum TTL for short-lived delivery URLs (seconds).
 pub const MAX_DELIVERY_URL_TTL_SECS: u64 = 900;
 
@@ -139,10 +142,36 @@ impl FilesResourceOwner {
         }
     }
 
+    /// Files grants the authenticated Memory indexer a narrowly scoped read
+    /// path for Connector-backed resources. The service remains a Service
+    /// principal with no delegation; Files resolves the current owner from
+    /// its own tenant-scoped state and evaluates that owner's live permission
+    /// on every operation. This exception is deliberately limited to one
+    /// workload identity, `files.read`, and Files file resources.
+    fn memory_file_read_owner(
+        ctx: &PrincipalContext,
+        action: &ActionCapability,
+        resource: &ResourceRef,
+    ) -> bool {
+        ctx.principal_kind == rustshare_resource_auth::PrincipalKind::Service
+            && ctx.delegation.is_none()
+            && ctx
+                .authentication
+                .as_ref()
+                .is_some_and(|authentication| authentication.method == "workload_hmac")
+            && ctx.workload_identity.as_ref().is_some_and(|identity| {
+                identity.application_id.as_ref().is_some_and(|application| {
+                    application == &ApplicationId::new(MEMORY_APPLICATION_ID)
+                }) && identity.subject.as_deref() == Some(MEMORY_FILES_PROJECTOR_SUBJECT)
+            })
+            && action.0 == FILES_READ
+            && resource.application == ApplicationId::new("io.elembra.files")
+            && resource.resource_type == RESOURCE_TYPE_FILE
+    }
+
     async fn authorize_file(
         &self,
-        user_id: Uuid,
-        tenant_id: Uuid,
+        ctx: &PrincipalContext,
         action: &ActionCapability,
         resource: &ResourceRef,
     ) -> Decision {
@@ -150,18 +179,27 @@ impl FilesResourceOwner {
             tracing::debug!(action = %action, "unsupported action for Files file");
             return Decision::Invalid;
         };
+        let memory_owner_policy = Self::memory_file_read_owner(ctx, action, resource);
+        let delegated_user = (!memory_owner_policy)
+            .then(|| self.effective_user_id(ctx, action, resource))
+            .flatten();
+        if delegated_user.is_none() && !memory_owner_policy {
+            return Decision::Deny;
+        }
         let Ok(file_id) = Uuid::parse_str(&resource.resource_id) else {
             // Not a Files file id — the owner cannot resolve it.
             return Decision::NotFound;
         };
-        match self.repo.find_file_by_id(file_id, tenant_id).await {
-            Ok(Some(_)) => {}
+        let tenant_id = ctx.tenant_id.0;
+        let file = match self.repo.find_file_by_id(file_id, tenant_id).await {
+            Ok(Some(file)) => file,
             Ok(None) => return Decision::NotFound,
             Err(error) => {
                 tracing::error!(%error, %resource, "file existence check failed");
                 return Decision::Deny;
             }
-        }
+        };
+        let user_id = delegated_user.unwrap_or(file.owner_id);
         match self
             .resolver
             .check_file_permission(user_id, tenant_id, file_id, required)
@@ -220,11 +258,14 @@ impl FilesResourceOwner {
         ctx: &PrincipalContext,
         resource: &ResourceRef,
     ) -> Result<File, SourceError> {
-        let Some(user_id) =
-            self.effective_user_id(ctx, &ActionCapability::from(FILES_READ), resource)
-        else {
+        let action = ActionCapability::from(FILES_READ);
+        let memory_owner_policy = Self::memory_file_read_owner(ctx, &action, resource);
+        let delegated_user = (!memory_owner_policy)
+            .then(|| self.effective_user_id(ctx, &action, resource))
+            .flatten();
+        if delegated_user.is_none() && !memory_owner_policy {
             return Err(SourceError::Unauthorized);
-        };
+        }
         let Ok(file_id) = Uuid::parse_str(&resource.resource_id) else {
             return Err(SourceError::NotFound);
         };
@@ -241,6 +282,7 @@ impl FilesResourceOwner {
             .await
             .map_err(internal)?
             .ok_or(SourceError::NotFound)?;
+        let user_id = delegated_user.unwrap_or(file.owner_id);
         let allowed = self
             .resolver
             .check_file_permission(user_id, tenant_id, file_id, SharePermissions::View)
@@ -358,16 +400,13 @@ impl ResourceOwner for FilesResourceOwner {
         action: &ActionCapability,
         resource: &ResourceRef,
     ) -> Decision {
-        let Some(user_id) = self.effective_user_id(ctx, action, resource) else {
-            return Decision::Deny;
-        };
-        let tenant_id = ctx.tenant_id.0;
         match resource.resource_type.as_str() {
-            RESOURCE_TYPE_FILE => {
-                self.authorize_file(user_id, tenant_id, action, resource)
-                    .await
-            }
+            RESOURCE_TYPE_FILE => self.authorize_file(ctx, action, resource).await,
             RESOURCE_TYPE_FOLDER => {
+                let Some(user_id) = self.effective_user_id(ctx, action, resource) else {
+                    return Decision::Deny;
+                };
+                let tenant_id = ctx.tenant_id.0;
                 self.authorize_folder(user_id, tenant_id, action, resource)
                     .await
             }
@@ -527,6 +566,118 @@ fn internal(error: impl Display) -> SourceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
+    use rustshare_resource_auth::{AuthenticationContext, PrincipalKind, WorkloadIdentity};
+
+    fn memory_context() -> PrincipalContext {
+        PrincipalContext {
+            principal_id: PrincipalId(Uuid::new_v4()),
+            principal_kind: PrincipalKind::Service,
+            tenant_id: TenantId(Uuid::new_v4()),
+            workspace_id: WorkspaceId(Uuid::new_v4()),
+            group_ids: Vec::new(),
+            grants: Vec::new(),
+            authentication: Some(AuthenticationContext {
+                method: "workload_hmac".into(),
+                ..Default::default()
+            }),
+            delegation: None,
+            workload_identity: Some(WorkloadIdentity {
+                application_id: Some(ApplicationId::new(MEMORY_APPLICATION_ID)),
+                subject: Some(MEMORY_FILES_PROJECTOR_SUBJECT.into()),
+            }),
+            correlation_id: None,
+        }
+    }
+
+    fn memory_file_ref() -> ResourceRef {
+        ResourceRef::new(
+            ApplicationId::new("io.elembra.files"),
+            RESOURCE_TYPE_FILE,
+            Uuid::new_v4().to_string(),
+        )
+    }
+
+    #[test]
+    fn memory_owner_policy_matches_only_the_exact_workload_file_read_contract() {
+        let ctx = memory_context();
+        let resource = memory_file_ref();
+        let read = ActionCapability::from(FILES_READ);
+
+        assert!(FilesResourceOwner::memory_file_read_owner(
+            &ctx, &read, &resource
+        ));
+
+        let mut wrong_application = ctx.clone();
+        wrong_application
+            .workload_identity
+            .as_mut()
+            .unwrap()
+            .application_id = Some(ApplicationId::new("io.elembra.other"));
+        assert!(!FilesResourceOwner::memory_file_read_owner(
+            &wrong_application,
+            &read,
+            &resource
+        ));
+
+        let mut wrong_subject = ctx.clone();
+        wrong_subject.workload_identity.as_mut().unwrap().subject = Some("other".into());
+        assert!(!FilesResourceOwner::memory_file_read_owner(
+            &wrong_subject,
+            &read,
+            &resource
+        ));
+
+        let mut user_principal = ctx.clone();
+        user_principal.principal_kind = PrincipalKind::User;
+        assert!(!FilesResourceOwner::memory_file_read_owner(
+            &user_principal,
+            &read,
+            &resource
+        ));
+
+        let mut delegated_service = ctx.clone();
+        delegated_service.delegation = Some(rustshare_resource_auth::Delegation {
+            issuer_principal_id: PrincipalId(Uuid::new_v4()),
+            delegate_principal_id: delegated_service.principal_id,
+            actions: vec![read.clone()],
+            workspace_id: None,
+            resource_scope: None,
+            expires_at: None,
+            grant_id: None,
+        });
+        assert!(!FilesResourceOwner::memory_file_read_owner(
+            &delegated_service,
+            &read,
+            &resource
+        ));
+
+        assert!(!FilesResourceOwner::memory_file_read_owner(
+            &ctx,
+            &ActionCapability::from(FILES_WRITE),
+            &resource
+        ));
+
+        let folder = ResourceRef::new(
+            ApplicationId::new("io.elembra.files"),
+            RESOURCE_TYPE_FOLDER,
+            Uuid::new_v4().to_string(),
+        );
+        assert!(!FilesResourceOwner::memory_file_read_owner(
+            &ctx, &read, &folder
+        ));
+
+        let other_application_resource = ResourceRef::new(
+            ApplicationId::new("io.elembra.memory"),
+            RESOURCE_TYPE_FILE,
+            Uuid::new_v4().to_string(),
+        );
+        assert!(!FilesResourceOwner::memory_file_read_owner(
+            &ctx,
+            &read,
+            &other_application_resource
+        ));
+    }
     use rustshare_core::domain::ApplicationRegistry;
 
     /// The adapter's declared resource/action surface must exactly match the

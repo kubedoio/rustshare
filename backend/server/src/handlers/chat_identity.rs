@@ -859,14 +859,35 @@ pub async fn initiate_replacement(
             "challenge does not authorize replacement of this binding",
         ));
     }
-    let proof = challenge
-        .verify_proof(
-            TenantId(auth.tenant_id),
-            PrincipalId(auth.user_id),
-            &input.event,
-            Utc::now(),
-        )
-        .map_err(binding_error)?;
+    let proof = match challenge.verify_proof(
+        TenantId(auth.tenant_id),
+        PrincipalId(auth.user_id),
+        &input.event,
+        Utc::now(),
+    ) {
+        Ok(proof) => proof,
+        Err(error @ BindingError::ChallengeReplayed) => {
+            match db
+                .chat_identity_store
+                .replacement_request_matches(&start, input.challenge_id, &proof_event_id)
+                .await
+                .map_err(internal_db)?
+            {
+                Some(true) => {
+                    return Ok((
+                        StatusCode::ACCEPTED,
+                        Json(ReplacementInitiationResponse {
+                            operation_id: input.operation_id,
+                            state: "pending_revocation".into(),
+                        }),
+                    ));
+                }
+                Some(false) => return Err(AppError::conflict("operation ID is already in use")),
+                None => return Err(binding_error(error)),
+            }
+        }
+        Err(error) => return Err(binding_error(error)),
+    };
     if !db
         .chat_identity_store
         .chat_access(

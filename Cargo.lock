@@ -3108,6 +3108,7 @@ dependencies = [
  "notify",
  "reqwest",
  "rusqlite",
+ "rustshare-storage",
  "serde",
  "serde_json",
  "sha2 0.11.1",

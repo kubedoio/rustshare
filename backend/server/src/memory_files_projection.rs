@@ -12,9 +12,11 @@ use rustshare_integration_events::{
 use rustshare_resource_auth::{PrincipalContext, Representation, ResourceRef, SourceAuthorizer};
 use rustshare_storage::{MemoryFilesCatalogRecord, MemoryFilesCatalogStore, MetadataStore};
 use sqlx::PgPool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::memory_execution_lease::MemoryExecutionFence;
 use crate::services::note_service::NoteService;
 
 pub const MEMORY_FILES_PROJECTION_CONSUMER_ID: &str = "io.elembra.memory.files-connector.v1";
@@ -41,6 +43,8 @@ pub struct MemoryFilesProjectionConsumer {
     authorizer: Arc<SourceAuthorizer>,
     notes: Arc<NoteService>,
     catalog: MemoryFilesCatalogStore,
+    execution_active: Arc<AtomicBool>,
+    execution_fence: Option<MemoryExecutionFence>,
 }
 
 impl MemoryFilesProjectionConsumer {
@@ -57,7 +61,36 @@ impl MemoryFilesProjectionConsumer {
             authorizer,
             notes,
             catalog,
+            execution_active: Arc::new(AtomicBool::new(true)),
+            execution_fence: None,
         }
+    }
+
+    pub fn with_execution_guard(mut self, active: Arc<AtomicBool>) -> Self {
+        self.execution_active = active;
+        self
+    }
+
+    pub fn with_execution_fence(mut self, fence: MemoryExecutionFence) -> Self {
+        self.execution_fence = Some(fence);
+        self
+    }
+
+    async fn check_execution_fence(&self) -> anyhow::Result<()> {
+        if let Some(fence) = &self.execution_fence {
+            fence.check().await?;
+        }
+        Ok(())
+    }
+
+    async fn check_execution_fence_in_transaction(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> anyhow::Result<()> {
+        if let Some(fence) = &self.execution_fence {
+            fence.check_in_transaction(tx).await?;
+        }
+        Ok(())
     }
 
     async fn project_connector_record(
@@ -68,6 +101,7 @@ impl MemoryFilesProjectionConsumer {
         context: &PrincipalContext,
         record: MemoryFilesCatalogRecord,
     ) -> anyhow::Result<()> {
+        self.check_execution_fence().await?;
         let file_ref = ResourceRef::new(
             ApplicationId::new("io.elembra.files"),
             "file",
@@ -89,7 +123,9 @@ impl MemoryFilesProjectionConsumer {
             )
             .await?;
         let content = String::from_utf8(fetched?.data.to_vec())?;
+        self.check_execution_fence().await?;
         let mut tx = self.pool.begin().await?;
+        self.check_execution_fence_in_transaction(&mut tx).await?;
         if !self.catalog.upsert_in_tx(&mut tx, &record).await? {
             tx.commit().await?;
             return Ok(());
@@ -113,6 +149,7 @@ impl MemoryFilesProjectionConsumer {
     }
 
     async fn project(&self, event: &IntegrationEvent) -> anyhow::Result<()> {
+        self.check_execution_fence().await?;
         let resource = event
             .resource
             .as_ref()
@@ -135,7 +172,9 @@ impl MemoryFilesProjectionConsumer {
                 // A delayed delete must not hide a File that has since been restored.
                 return Ok(());
             }
+            self.check_execution_fence().await?;
             let mut tx = self.pool.begin().await?;
+            self.check_execution_fence_in_transaction(&mut tx).await?;
             self.catalog
                 .tombstone_in_tx(&mut tx, tenant_id, file_id)
                 .await?;
@@ -153,7 +192,9 @@ impl MemoryFilesProjectionConsumer {
         else {
             // A delete may overtake a queued create/update. Fence it so the
             // older event cannot recreate searchable content.
+            self.check_execution_fence().await?;
             let mut tx = self.pool.begin().await?;
+            self.check_execution_fence_in_transaction(&mut tx).await?;
             self.catalog
                 .tombstone_in_tx(&mut tx, tenant_id, file_id)
                 .await?;
@@ -227,7 +268,9 @@ impl MemoryFilesProjectionConsumer {
                 )
                 .await?;
             let content = String::from_utf8(fetched?.data.to_vec())?;
+            self.check_execution_fence().await?;
             let mut tx = self.pool.begin().await?;
+            self.check_execution_fence_in_transaction(&mut tx).await?;
             if !self
                 .catalog
                 .refresh_current_version_in_tx(
@@ -282,6 +325,7 @@ impl MemoryFilesProjectionConsumer {
             None if provenance.source_revision == current_version => MemoryFilesCatalogRecord {
                 tenant_id,
                 file_id,
+                projection_observed_at: self.catalog.projection_timestamp().await?,
                 current_version,
                 current_version_number: i64::from(file.current_version),
                 connector_instance_id: provenance.connector_instance_id,
@@ -311,6 +355,11 @@ impl OutboxConsumer for MemoryFilesProjectionConsumer {
     }
 
     async fn process(&self, event: &IntegrationEvent) -> ConsumerOutcome {
+        if !self.execution_active.load(Ordering::Acquire) {
+            return ConsumerOutcome::Retryable {
+                reason: "Memory execution mode lease is inactive".into(),
+            };
+        }
         if let Err(error) = event.validate() {
             return ConsumerOutcome::Permanent {
                 reason: redact_error(&error.to_string(), 512),

@@ -37,6 +37,10 @@ upstream-buzz-runtime = [
 name = "rustshare-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "elembra-memory-worker"
+path = "src/elembra_memory_worker.rs"
+
 [dependencies]
 rustshare-core = { path = "../crates/core" }
 rustshare-storage = { path = "../crates/storage" }
@@ -393,6 +397,10 @@ path = "../tests/memory_projection_test.rs"
 [[test]]
 name = "memory_reconcile_test"
 path = "../tests/memory_reconcile_test.rs"
+
+[[test]]
+name = "memory_worker_api_security_test"
+path = "../tests/memory_worker_api_security_test.rs"
 
 [[test]]
 name = "memory_orphan_cleanup_test"

@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 pub struct PgVectorStore {
     pool: PgPool,
+    files_source_check: bool,
 }
 
 #[derive(Debug, Default)]
@@ -30,7 +31,20 @@ pub struct OrphanCleanupPage {
 
 impl PgVectorStore {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            files_source_check: true,
+        }
+    }
+
+    /// Create a writer for snapshots already authorized by the Files owner.
+    /// This constructor is for the restricted Memory worker role, which must
+    /// not read Files tables; search still reauthorizes every result.
+    pub fn for_authorized_files_snapshots(pool: PgPool) -> Self {
+        Self {
+            pool,
+            files_source_check: false,
+        }
     }
 
     async fn upsert_chunk_with_embedding(
@@ -44,16 +58,18 @@ impl PgVectorStore {
         let mut tx = self.pool.begin().await?;
         set_index_timeouts(&mut tx).await?;
         lock_source_file(&mut tx, tenant_id, acl.source_file_id).await?;
-        let source_exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM files WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL)",
-        )
-        .bind(tenant_id)
-        .bind(acl.source_file_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if !source_exists {
-            tx.commit().await?;
-            return Ok(());
+        if self.files_source_check {
+            let source_exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM files WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL)",
+            )
+            .bind(tenant_id)
+            .bind(acl.source_file_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if !source_exists {
+                tx.commit().await?;
+                return Ok(());
+            }
         }
         sqlx::query(
             r#"

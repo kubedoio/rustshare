@@ -121,7 +121,7 @@ impl FromStr for IndexPrincipal {
 }
 
 /// Canonical ACL projection for an indexed object.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IndexAclProjection {
     pub tenant_id: Uuid,
     pub workspace_id: Uuid,
@@ -197,7 +197,7 @@ pub fn validate_and_project(acl: &NoteAclPayload) -> anyhow::Result<IndexAclProj
 }
 
 /// Maximum content length to index per document (to prevent memory issues).
-pub(crate) const MAX_CONTENT_LENGTH: usize = 100_000;
+pub const MAX_CONTENT_LENGTH: usize = 100_000;
 
 /// Truncate text to a maximum number of Unicode characters without splitting
 /// multi-byte code points.

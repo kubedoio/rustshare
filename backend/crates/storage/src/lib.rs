@@ -13,6 +13,7 @@ pub mod event_store;
 pub mod managed_identity_operations;
 pub mod managed_identity_vault;
 pub mod memory_catalog;
+pub mod memory_execution_mode;
 pub mod memory_files_catalog;
 pub mod metadata;
 pub mod object_store;
@@ -43,6 +44,9 @@ pub use managed_identity_vault::{
     ManagedIdentityVaultStore,
 };
 pub use memory_catalog::{content_match_terms, MemoryCatalogStore, ReconcileCounts};
+pub use memory_execution_mode::{
+    MemoryExecutionMode, MemoryExecutionModeError, MemoryExecutionModeStore,
+};
 pub use memory_files_catalog::{MemoryFilesCatalogRecord, MemoryFilesCatalogStore};
 pub use metadata::{
     BlobReferenceSummary, MemoryReconcileFile, MetadataStore, ObjectGcCandidate,

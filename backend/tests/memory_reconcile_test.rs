@@ -536,6 +536,7 @@ async fn files_reconcile_worker_leases_fence_checkpoints_and_resume_cursors(db: 
         handlers::memory_reconcile::FilesReconcileResponse,
         memory_files_reconcile_worker::{
             claim, discover_tenant_page, fail_page, finish_page, heartbeat,
+            MemoryFilesReconcileFailureStage,
         },
     };
     use std::time::Duration;
@@ -638,7 +639,14 @@ async fn files_reconcile_worker_leases_fence_checkpoints_and_resume_cursors(db: 
     )
     .await
     .is_err());
-    assert!(fail_page(&metadata, &first, first_owner).await.is_err());
+    assert!(fail_page(
+        &metadata,
+        &first,
+        first_owner,
+        MemoryFilesReconcileFailureStage::EmbeddedPage,
+    )
+    .await
+    .is_err());
     let saved: Option<Uuid> = sqlx::query_scalar(
         "SELECT cursor_file_id FROM memory_files_reconcile_jobs WHERE tenant_id=$1",
     )
@@ -648,7 +656,14 @@ async fn files_reconcile_worker_leases_fence_checkpoints_and_resume_cursors(db: 
     .unwrap();
     assert_eq!(saved, Some(initial));
 
-    fail_page(&metadata, &current, successor).await.unwrap();
+    fail_page(
+        &metadata,
+        &current,
+        successor,
+        MemoryFilesReconcileFailureStage::EmbeddedPage,
+    )
+    .await
+    .unwrap();
     let retries: i32 = sqlx::query_scalar(
         "SELECT retry_count FROM memory_files_reconcile_jobs WHERE tenant_id=$1",
     )
@@ -1103,10 +1118,7 @@ async fn files_reconcile_worker_automates_recovery_and_bounds_failures(db: PgPoo
     }
     let failed = wait_for_worker_job(&db, tenant, |r| r.get::<&str, _>("status") == "failed").await;
     assert_eq!(failed.get::<i32, _>("retry_count"), 8);
-    assert_eq!(
-        failed.get::<&str, _>("last_error"),
-        "reconciliation page failed"
-    );
+    assert_eq!(failed.get::<&str, _>("last_error"), "embedded_page");
     assert_eq!(count().await.unwrap(), 1);
     assert!(state
         .note_service
