@@ -6,6 +6,7 @@ use crate::services::{
 };
 use async_trait::async_trait;
 use bytes::Bytes;
+use futures_util::StreamExt;
 use rustshare_core::domain::{ActionCapability, ApplicationId};
 use rustshare_resource_auth::{
     BatchDecision, Decision, FetchedResource, PrincipalContext, Purpose, Representation,
@@ -195,20 +196,44 @@ impl ResourceOwner for MailResourceOwner {
             .into_iter()
             .filter(|part| part.is_body && part.content_type.starts_with("text/plain"))
         {
-            let (_, bytes) = self
-                .mail
-                .get_message_part(ctx.tenant_id.0, owner_id.0, message.id, part.id)
-                .await
-                .map_err(map_mail_error)?;
-            if data.len().saturating_add(bytes.len()) > MAX_MEMORY_BODY_BYTES {
+            let separator = usize::from(!data.is_empty());
+            let remaining = MAX_MEMORY_BODY_BYTES
+                .saturating_sub(data.len())
+                .saturating_sub(separator);
+            if part.size_bytes.is_some_and(|size| size > remaining as i64) {
                 return Err(SourceError::Internal(
                     "Mail body exceeds Memory fetch limit".into(),
                 ));
             }
-            if !data.is_empty() {
-                data.push(b'\n');
+            let (_, content_length, mut stream) = self
+                .mail
+                .get_message_part_stream(ctx.tenant_id.0, owner_id.0, message.id, part.id)
+                .await
+                .map_err(map_mail_error)?;
+            if content_length.is_some_and(|size| size > remaining as i64) {
+                return Err(SourceError::Internal(
+                    "Mail body exceeds Memory fetch limit".into(),
+                ));
             }
-            data.extend_from_slice(&bytes);
+            let mut needs_separator = separator > 0;
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|error| SourceError::Internal(error.to_string()))?;
+                if data
+                    .len()
+                    .saturating_add(usize::from(needs_separator))
+                    .saturating_add(chunk.len())
+                    > MAX_MEMORY_BODY_BYTES
+                {
+                    return Err(SourceError::Internal(
+                        "Mail body exceeds Memory fetch limit".into(),
+                    ));
+                }
+                if needs_separator && !chunk.is_empty() {
+                    data.push(b'\n');
+                    needs_separator = false;
+                }
+                data.extend_from_slice(&chunk);
+            }
         }
         if data.is_empty() {
             return Err(SourceError::VersionUnavailable);

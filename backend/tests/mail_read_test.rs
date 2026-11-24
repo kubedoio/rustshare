@@ -499,6 +499,48 @@ async fn memory_mail_search_reauthorizes_owner_tenant_and_enablement_before_body
         .unwrap_or_default()
         .contains("AUTHORIZED-MAIL-BODY"));
 
+    let oversized_body = "x".repeat(256 * 1024 + 1);
+    let oversized = state
+        .mail_service
+        .import_eml(
+            tenant_id,
+            user.id,
+            user.id,
+            format!(
+                "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: oversized-memory-search-needle\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{oversized_body}"
+            )
+            .into_bytes(),
+        )
+        .await
+        .expect("import oversized Mail search fixture");
+    let oversized_part = state
+        .mail_service
+        .list_parts(tenant_id, user.id, oversized.id)
+        .await
+        .expect("list oversized body parts")
+        .into_iter()
+        .find(|part| part.is_body && part.content_type.starts_with("text/plain"))
+        .expect("oversized plain-text body part");
+    sqlx::query("UPDATE mail_message_parts SET size_bytes = 1 WHERE id = $1")
+        .bind(oversized_part.id)
+        .execute(&state.db_pool)
+        .await
+        .expect("simulate understated Mail part metadata");
+    let oversized_search = state
+        .unified_search_service
+        .search(
+            &context,
+            "oversized-memory-search-needle",
+            &[rustshare_server::services::unified_search::SearchSource::Mail],
+            5,
+        )
+        .await
+        .expect("oversized body is dropped from Memory search");
+    assert!(!oversized_search
+        .results
+        .iter()
+        .any(|result| result.resource_ref.contains(&oversized.id.to_string())));
+
     let reference =
         rustshare_resource_auth::ResourceRef::from_uri(&searched.results[0].resource_ref).unwrap();
     let other_tenant = create_test_tenant(&state.db_pool).await;
