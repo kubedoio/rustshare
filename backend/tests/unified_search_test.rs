@@ -1802,7 +1802,10 @@ async fn cross_tenant_candidates_never_appear() {
             &[SearchSource::Files],
             8,
             &SearchScope::Resource(file_ref(file_b.id)),
-            cross_tenant_request,
+            rustshare_server::services::unified_search::SearchRunOptions {
+                request_id: cross_tenant_request,
+                include_resource_context: false,
+            },
         )
         .await
         .expect("cross-tenant Note access is denied without failing search");
@@ -1871,7 +1874,10 @@ async fn revoked_files_share_disappears() {
             &[SearchSource::Files, SearchSource::Chat],
             50,
             &rustshare_server::services::unified_search::SearchScope::Workspace,
-            allowed_request,
+            rustshare_server::services::unified_search::SearchRunOptions {
+                request_id: allowed_request,
+                include_resource_context: false,
+            },
         )
         .await
         .expect("the search succeeds");
@@ -1943,7 +1949,10 @@ async fn revoked_files_share_disappears() {
             &[SearchSource::Files, SearchSource::Chat],
             50,
             &rustshare_server::services::unified_search::SearchScope::Workspace,
-            denied_request,
+            rustshare_server::services::unified_search::SearchRunOptions {
+                request_id: denied_request,
+                include_resource_context: false,
+            },
         )
         .await
         .expect("the search succeeds");
@@ -3553,7 +3562,10 @@ async fn memory_source_audit_failure_prevents_llm_context_submission() {
             &[SearchSource::Files],
             8,
             &SearchScope::Workspace,
-            Uuid::new_v4(),
+            rustshare_server::services::unified_search::SearchRunOptions {
+                request_id: Uuid::new_v4(),
+                include_resource_context: false,
+            },
         )
         .await
         .expect("the source is authorized before injecting an audit failure");
@@ -3725,14 +3737,26 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         answer: "The note contains the plan.".into(),
         citations: vec!["src-001".into()],
     }));
-    let note_ask = AskWorkspaceService::new(
-        Arc::new(
-            harness
-                .service()
-                .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
-        ),
-        Some(note_provider.clone()),
-    );
+    let note_search = harness
+        .service()
+        .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone())));
+    let keyword_results = note_search
+        .search_scoped_for_run(
+            &user_ctx(env.principal, tenant),
+            "unrelated question",
+            &[SearchSource::Files],
+            8,
+            &SearchScope::Resource(file_ref(file.id)),
+            rustshare_server::services::unified_search::SearchRunOptions {
+                request_id: Uuid::new_v4(),
+                include_resource_context: false,
+            },
+        )
+        .await
+        .expect("keyword search in an exact Note scope succeeds");
+    assert!(keyword_results.results.is_empty());
+
+    let note_ask = AskWorkspaceService::new(Arc::new(note_search), Some(note_provider.clone()));
     let note_answer = note_ask
         .ask_scoped(
             &user_ctx(env.principal, tenant),

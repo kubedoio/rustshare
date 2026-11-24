@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::handlers::{AppError, AuthenticatedUser};
 use crate::services::unified_search::{
-    parse_source_filter, SearchProvenance, SearchScope, SearchSource, UnifiedSearchError,
-    MAX_QUERY_CHARS,
+    parse_source_filter, SearchProvenance, SearchRunOptions, SearchScope, SearchSource,
+    UnifiedSearchError, MAX_QUERY_CHARS,
 };
 use crate::AppState;
 use std::collections::HashSet;
@@ -203,7 +203,17 @@ pub async fn unified_search(
     let request_id = uuid::Uuid::new_v4();
     let response = state
         .unified_search_service
-        .search_scoped_for_run(&ctx, query, &sources, request.limit, &scope, request_id)
+        .search_scoped_for_run(
+            &ctx,
+            query,
+            &sources,
+            request.limit,
+            &scope,
+            SearchRunOptions {
+                request_id,
+                include_resource_context: false,
+            },
+        )
         .await
         .map_err(|error| match error {
             UnifiedSearchError::InvalidQuery(message) => AppError::bad_request(message),

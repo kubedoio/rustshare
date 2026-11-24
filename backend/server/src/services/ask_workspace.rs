@@ -11,7 +11,9 @@ use uuid::Uuid;
 
 use rustshare_resource_auth::PrincipalContext;
 
-use super::unified_search::{RagSource, SearchScope, SearchSource, UnifiedSearchService};
+use super::unified_search::{
+    RagSource, SearchRunOptions, SearchScope, SearchSource, UnifiedSearchService,
+};
 
 pub const MAX_QUESTION_CHARS: usize = super::unified_search::MAX_QUERY_CHARS;
 pub const MAX_OUTPUT_CHARS: usize = 8_000;
@@ -359,7 +361,10 @@ impl AskWorkspaceService {
                 sources,
                 result_limit.clamp(1, MAX_SOURCES),
                 scope,
-                run_id,
+                SearchRunOptions {
+                    request_id: run_id,
+                    include_resource_context: true,
+                },
             )
             .await
             .map_err(|_| LlmError::Failed)?;

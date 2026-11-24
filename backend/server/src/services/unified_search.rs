@@ -55,6 +55,11 @@ pub enum SearchSource {
     Chat,
 }
 
+pub struct SearchRunOptions {
+    pub request_id: Uuid,
+    pub include_resource_context: bool,
+}
+
 /// Candidate-discovery scope for Ask experiences. A scope narrows candidates;
 /// the owning source is still reauthorized during search and RAG materialization.
 #[derive(Debug, Clone)]
@@ -264,8 +269,18 @@ impl UnifiedSearchService {
         limit: usize,
         scope: &SearchScope,
     ) -> Result<UnifiedSearchResponse, UnifiedSearchError> {
-        self.search_scoped_for_run(ctx, query, sources, limit, scope, Uuid::new_v4())
-            .await
+        self.search_scoped_for_run(
+            ctx,
+            query,
+            sources,
+            limit,
+            scope,
+            SearchRunOptions {
+                request_id: Uuid::new_v4(),
+                include_resource_context: false,
+            },
+        )
+        .await
     }
 
     /// Run a scoped search with the caller's durable Ask/Search request ID.
@@ -276,7 +291,7 @@ impl UnifiedSearchService {
         sources: &[SearchSource],
         limit: usize,
         scope: &SearchScope,
-        request_id: Uuid,
+        options: SearchRunOptions,
     ) -> Result<UnifiedSearchResponse, UnifiedSearchError> {
         // Step 1: validate input.
         let query = validate_query(query)?;
@@ -369,7 +384,7 @@ impl UnifiedSearchService {
                     if self
                         .record_retrieval_access(
                             ctx,
-                            request_id,
+                            options.request_id,
                             &candidate,
                             if matches!(&error, SourceError::Unauthorized) {
                                 "denied"
@@ -389,7 +404,7 @@ impl UnifiedSearchService {
                 }
             };
             candidates.retain(|candidate| candidate.resource_ref == *resource);
-            if candidates.is_empty() {
+            if candidates.is_empty() && options.include_resource_context {
                 candidates.push(Candidate {
                     source_application: resource.application.to_string(),
                     source_type: resource.resource_type.clone(),
@@ -495,7 +510,9 @@ impl UnifiedSearchService {
         let ranked = dedupe_and_rank(candidates, budget);
 
         // Step 4: current source reauthorization (fail closed per chunk).
-        let allowed = self.authorize_candidates(ctx, ranked, request_id).await?;
+        let allowed = self
+            .authorize_candidates(ctx, ranked, options.request_id)
+            .await?;
 
         // Step 5: final deterministic rank → top `limit`.
         let final_candidates = dedupe_and_rank(allowed, limit);
@@ -522,7 +539,7 @@ impl UnifiedSearchService {
                     if self
                         .record_retrieval_access(
                             ctx,
-                            request_id,
+                            options.request_id,
                             &candidate,
                             if matches!(&error, SourceError::Unauthorized) {
                                 "denied"
@@ -548,7 +565,7 @@ impl UnifiedSearchService {
             if self
                 .record_retrieval_access(
                     ctx,
-                    request_id,
+                    options.request_id,
                     &candidate,
                     match &fetched {
                         Ok(_) => "authorized",
