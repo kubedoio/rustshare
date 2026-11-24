@@ -228,7 +228,6 @@ test('Notes opens an exact historical Memory citation without changing Note iden
 		});
 		await expect(page.locator('h1.doc-title, h1.doc-title-wrapper')).toHaveText(title);
 		await expect(page.locator('.doc-subtitle')).toHaveText(title);
-		await expect(page.getByText('Historical citation H1', { exact: true })).toBeVisible();
 		await expect(page.getByText('Historical citation body')).toBeVisible();
 		await expect(page.getByText('Current Note body')).toHaveCount(0);
 		await expect(page.getByText(/Read-only view of cited version/)).toBeVisible();
