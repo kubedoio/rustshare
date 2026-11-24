@@ -16,7 +16,7 @@ elembra-local-text-worker \
   --exclude 'private/**'
 ```
 
-To migrate an existing Unix mode-0600 credential file, run once with `--migrate-credential-file /secure/path/connector-credential`. The worker writes the credential to the native store before removing the source file. File removal does not guarantee forensic erasure on copy-on-write or solid-state storage. If Secret Service is unavailable, migration fails and the original file remains; use the explicit file fallback until an OS credential store is available.
+To migrate an existing Unix mode-0600 credential file, stop the Local Text worker and any process provisioning/rotating that Connector credential, then run once with `--migrate-credential-file /secure/path/connector-credential`. The worker writes the credential to the native store before removing the source file, and refuses to replace a different existing native credential. File removal does not guarantee forensic erasure on copy-on-write or solid-state storage. If Secret Service is unavailable, migration fails and the original file remains; use the explicit file fallback until an OS credential store is available.
 
 Windows builds are produced by the `Local Text Windows` workflow as an unsigned ZIP artifact for controlled installation testing. Keep the credential in Windows Credential Manager; do not use a plaintext credential file. Connected Windows filesystem and backend acceptance is still required before #99 can close.
 
