@@ -136,6 +136,11 @@ async fn historical_note_content_rechecks_authorization_and_never_falls_back() {
         .execute(&state.db_pool)
         .await
         .expect("clean up historical and current version rows");
+    sqlx::query("DELETE FROM shares WHERE file_id = $1")
+        .bind(file.id)
+        .execute(&state.db_pool)
+        .await
+        .expect("clean up citation share");
     cleanup_tenant(&state.db_pool, tenant).await;
     cleanup_tenant(&state.db_pool, other_tenant).await;
 }
