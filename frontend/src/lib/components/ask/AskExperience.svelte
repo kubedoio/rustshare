@@ -36,6 +36,8 @@
 	let openingCitation = $state<string | null>(null);
 	let requestGeneration = 0;
 	let scopeKey = $state('');
+	const maxKeywordQueryChars = 1_000;
+	let keywordQueryTooLong = $derived(Array.from(question.trim()).length > maxKeywordQueryChars);
 
 	$effect(() => {
 		const nextScopeKey = JSON.stringify(scope);
@@ -55,6 +57,10 @@
 	async function search() {
 		const trimmed = question.trim();
 		if (!trimmed || searching || loading || scope.type !== 'workspace') return;
+		if (Array.from(trimmed).length > maxKeywordQueryChars) {
+			error = `Keyword search supports up to ${maxKeywordQueryChars} characters. Shorten your query to search.`;
+			return;
+		}
 		const generation = ++requestGeneration;
 		searching = true;
 		error = '';
@@ -189,6 +195,11 @@
 			placeholder="What would you like to understand?"
 			class="w-full resize-none border-0 bg-transparent p-2 text-base outline-none placeholder:text-base-content/40"
 			disabled={loading || searching}></textarea>
+		{#if scope.type === 'workspace' && keywordQueryTooLong}
+			<p class="px-2 pb-2 text-sm text-base-content/60" aria-live="polite">
+				Keyword search supports up to {maxKeywordQueryChars} characters. Shorten your query to search.
+			</p>
+		{/if}
 		<div class="flex items-center justify-between gap-3 border-t border-base-200 pt-3">
 			<span class="text-xs text-base-content/50">{question.length}/4000 · Scope: {scopeLabel}</span>
 			<div class="flex gap-2">
@@ -196,7 +207,7 @@
 					<button
 						type="button"
 						class="btn btn-ghost btn-sm"
-						disabled={loading || searching || !question.trim()}
+						disabled={loading || searching || !question.trim() || keywordQueryTooLong}
 						onclick={() => void search()}
 					>
 						{searching ? 'Searching' : 'Search by keyword'}

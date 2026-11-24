@@ -112,6 +112,19 @@ describe('AskExperience', () => {
 		expect(screen.getByText('Current result')).toBeTruthy();
 	});
 
+	it('keeps Ask available when a keyword query exceeds the search limit', async () => {
+		render(AskExperience);
+		await fireEvent.input(screen.getByLabelText('Your question'), {
+			target: { value: 'a'.repeat(1_001) }
+		});
+		expect(screen.getByRole('button', { name: 'Search by keyword' }).hasAttribute('disabled')).toBe(
+			true
+		);
+		expect(screen.getByText(/Keyword search supports up to 1000 characters/)).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Ask' }).hasAttribute('disabled')).toBe(false);
+		expect(mocks.searchMemory).not.toHaveBeenCalled();
+	});
+
 	it('opens a cited Note at the exact authorized historical version', async () => {
 		mocks.askWorkspace.mockResolvedValue({
 			answer: 'Grounded answer',
