@@ -7,9 +7,10 @@ use uuid::Uuid;
 
 use rustshare_resource_auth::{PrincipalContext, Purpose, ResourceRef, SourceError};
 
+use crate::handlers::search::{parse_scope, SearchScopeRequest};
 use crate::handlers::{AppError, AuthenticatedUser};
 use crate::services::ask_workspace::{AskWorkspaceResponse, LlmError};
-use crate::services::unified_search::{parse_source_filter, SearchScope, SearchSource};
+use crate::services::unified_search::parse_source_filter;
 use crate::AppState;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -22,27 +23,7 @@ pub struct AskWorkspaceRequest {
     #[serde(default = "default_limit")]
     pub result_limit: usize,
     #[serde(default)]
-    pub scope: Option<AskScopeRequest>,
-}
-
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum AskScopeRequest {
-    Workspace,
-    Folder {
-        #[serde(rename = "resourceRef")]
-        resource_ref: String,
-    },
-    Note {
-        #[serde(rename = "resourceRef")]
-        resource_ref: String,
-    },
-    ChatChannel {
-        #[serde(rename = "communityId")]
-        community_id: String,
-        #[serde(rename = "channelId")]
-        channel_id: String,
-    },
+    pub scope: Option<SearchScopeRequest>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -92,60 +73,7 @@ pub async fn ask_workspace(
         rustshare_core::domain::TenantId(auth.tenant_id),
         rustshare_core::domain::WorkspaceId(request.workspace_id),
     );
-    let scope = match request.scope {
-        None | Some(AskScopeRequest::Workspace) => SearchScope::Workspace,
-        Some(AskScopeRequest::Folder { resource_ref }) => {
-            if !sources.is_empty() && !sources.contains(&SearchSource::Files) {
-                return Err(AppError::bad_request(
-                    "folder scope requires the Files source",
-                ));
-            }
-            let resource = ResourceRef::from_uri(&resource_ref)
-                .map_err(|error| AppError::bad_request(error.to_string()))?;
-            if resource.application.to_string() != "io.elembra.files"
-                || resource.resource_type != "folder"
-            {
-                return Err(AppError::bad_request("scope is not a Files folder"));
-            }
-            SearchScope::Folder(resource)
-        }
-        Some(AskScopeRequest::Note { resource_ref }) => {
-            if !sources.is_empty() && !sources.contains(&SearchSource::Files) {
-                return Err(AppError::bad_request(
-                    "note scope requires the Files source",
-                ));
-            }
-            let resource = ResourceRef::from_uri(&resource_ref)
-                .map_err(|error| AppError::bad_request(error.to_string()))?;
-            if resource.application.to_string() != "io.elembra.files"
-                || resource.resource_type != "file"
-            {
-                return Err(AppError::bad_request("scope is not a Files note"));
-            }
-            SearchScope::Resource(resource)
-        }
-        Some(AskScopeRequest::ChatChannel {
-            community_id,
-            channel_id,
-        }) => {
-            if !sources.is_empty() && !sources.contains(&SearchSource::Chat) {
-                return Err(AppError::bad_request(
-                    "channel scope requires the Chat source",
-                ));
-            }
-            if community_id.trim().is_empty()
-                || channel_id.trim().is_empty()
-                || community_id.chars().count() > 256
-                || channel_id.chars().count() > 256
-            {
-                return Err(AppError::bad_request("invalid chat channel scope"));
-            }
-            SearchScope::ChatChannel {
-                community_id,
-                channel_id,
-            }
-        }
-    };
+    let scope = parse_scope(request.scope, &sources).map_err(AppError::bad_request)?;
     let response = state
         .ask_workspace_service
         .ask_scoped(
@@ -222,7 +150,7 @@ mod tests {
         .expect("valid scoped request");
         assert!(matches!(
             request.scope,
-            Some(AskScopeRequest::ChatChannel { .. })
+            Some(SearchScopeRequest::ChatChannel { .. })
         ));
     }
 }
