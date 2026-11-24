@@ -684,6 +684,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions,
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let query = SimpleEmbeddingGenerator::new().generate("shared").await;
         let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
@@ -1283,6 +1285,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions,
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = store
             .keyword_search_with_acl(&principal, "shared", 10)

@@ -1240,6 +1240,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![engineering_id],
             min_acl_versions,
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = indexer.search_with_acl(&principal, "engineering", 10).await;
         assert!(results.is_empty());
