@@ -1802,7 +1802,10 @@ async fn cross_tenant_candidates_never_appear() {
             &[SearchSource::Files],
             8,
             &SearchScope::Resource(file_ref(file_b.id)),
-            cross_tenant_request,
+            rustshare_server::services::unified_search::SearchRunOptions {
+                request_id: cross_tenant_request,
+                include_resource_context: false,
+            },
         )
         .await
         .expect("cross-tenant Note access is denied without failing search");
@@ -1871,7 +1874,10 @@ async fn revoked_files_share_disappears() {
             &[SearchSource::Files, SearchSource::Chat],
             50,
             &rustshare_server::services::unified_search::SearchScope::Workspace,
-            allowed_request,
+            rustshare_server::services::unified_search::SearchRunOptions {
+                request_id: allowed_request,
+                include_resource_context: false,
+            },
         )
         .await
         .expect("the search succeeds");
@@ -1943,7 +1949,10 @@ async fn revoked_files_share_disappears() {
             &[SearchSource::Files, SearchSource::Chat],
             50,
             &rustshare_server::services::unified_search::SearchScope::Workspace,
-            denied_request,
+            rustshare_server::services::unified_search::SearchRunOptions {
+                request_id: denied_request,
+                include_resource_context: false,
+            },
         )
         .await
         .expect("the search succeeds");
@@ -3553,7 +3562,10 @@ async fn memory_source_audit_failure_prevents_llm_context_submission() {
             &[SearchSource::Files],
             8,
             &SearchScope::Workspace,
-            Uuid::new_v4(),
+            rustshare_server::services::unified_search::SearchRunOptions {
+                request_id: Uuid::new_v4(),
+                include_resource_context: false,
+            },
         )
         .await
         .expect("the source is authorized before injecting an audit failure");
@@ -3725,14 +3737,26 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         answer: "The note contains the plan.".into(),
         citations: vec!["src-001".into()],
     }));
-    let note_ask = AskWorkspaceService::new(
-        Arc::new(
-            harness
-                .service()
-                .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
-        ),
-        Some(note_provider.clone()),
-    );
+    let note_search = harness
+        .service()
+        .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone())));
+    let keyword_results = note_search
+        .search_scoped_for_run(
+            &user_ctx(env.principal, tenant),
+            "unrelated question",
+            &[SearchSource::Files],
+            8,
+            &SearchScope::Resource(file_ref(file.id)),
+            rustshare_server::services::unified_search::SearchRunOptions {
+                request_id: Uuid::new_v4(),
+                include_resource_context: false,
+            },
+        )
+        .await
+        .expect("keyword search in an exact Note scope succeeds");
+    assert!(keyword_results.results.is_empty());
+
+    let note_ask = AskWorkspaceService::new(Arc::new(note_search), Some(note_provider.clone()));
     let note_answer = note_ask
         .ask_scoped(
             &user_ctx(env.principal, tenant),
@@ -3826,6 +3850,56 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         .execute(&pool)
         .await
         .expect("place note in Ask folder");
+    for index in 0..5 {
+        let outside_name = format!("aaa-scope-needle-{index:02}.md");
+        let outside_path = format!("/{outside_name}");
+        create_file_with_content(
+            &harness,
+            owner.id,
+            &outside_name,
+            &outside_path,
+            b"OUTSIDE-SCOPE-NEEDLE",
+        )
+        .await;
+    }
+    let in_scope = create_file_with_content(
+        &harness,
+        owner.id,
+        "zzz-scope-needle-inside.md",
+        "/Ask folder/zzz-scope-needle-inside.md",
+        b"IN-SCOPE-NEEDLE",
+    )
+    .await;
+    sqlx::query("UPDATE files SET parent_folder_id = $1 WHERE id = $2")
+        .bind(folder_id)
+        .bind(in_scope.id)
+        .execute(&pool)
+        .await
+        .expect("place matching file in Ask folder");
+    let keyword_search = harness
+        .service()
+        .search_scoped(
+            &user_ctx(env.principal, tenant),
+            "scope-needle",
+            &[SearchSource::Files],
+            1,
+            &SearchScope::Folder(ResourceRef::new(
+                ApplicationId::new("io.elembra.files"),
+                "folder",
+                folder_id.to_string(),
+            )),
+        )
+        .await
+        .expect("folder keyword search applies scope before its result limit");
+    assert_eq!(keyword_search.results.len(), 1);
+    assert!(keyword_search.results[0]
+        .resource_ref
+        .contains(&in_scope.id.to_string()));
+    sqlx::query("UPDATE files SET deleted_at = NOW() WHERE id = $1")
+        .bind(in_scope.id)
+        .execute(&pool)
+        .await
+        .expect("remove scoped search fixture from later Ask assertions");
     let folder_provider = Arc::new(RecordingLlmProvider::new(LlmResult {
         answer: "The folder contains the plan.".into(),
         citations: vec!["src-001".into()],

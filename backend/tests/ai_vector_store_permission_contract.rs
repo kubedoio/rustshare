@@ -80,6 +80,8 @@ fn make_principal(
         user_id,
         group_ids,
         min_acl_versions: HashMap::new(),
+        source_file_ids: None,
+        source_folder_ids: None,
     }
 }
 

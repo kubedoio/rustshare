@@ -23,7 +23,7 @@ use crate::services::permission_resolver::{PermissionResolver, PermissionResolve
 
 use super::ai::indexing::{
     is_hidden_file_for_path, ContentIndexer, IndexAclProjection, IndexedDocument,
-    RetrievalPrincipal,
+    RetrievalPrincipal, RetrievalScope,
 };
 use super::ai::EmbeddingGenerator;
 
@@ -156,74 +156,17 @@ where
         tenant_id: Uuid,
         limit: usize,
     ) -> Result<Vec<SemanticSearchResult>, AiError> {
-        // Validate query
-        let query = query.trim();
-        if query.is_empty() {
-            return Err(AiError::InvalidQuery("Query cannot be empty".to_string()));
-        }
-        if query.len() > 1000 {
-            return Err(AiError::InvalidQuery(
-                "Query too long (max 1000 chars)".to_string(),
-            ));
-        }
-
-        // Resolve the caller's group IDs for ACL pre-filtering.
-        let group_ids = match self
-            .permission_resolver
-            .resolve_user_group_ids(user_id, tenant_id)
+        self.semantic_search_scoped(query, user_id, tenant_id, limit, &RetrievalScope::default())
             .await
-        {
-            Ok(ids) => ids,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to resolve group IDs for user {} in tenant {}: {}. Continuing with empty groups.",
-                    user_id,
-                    tenant_id,
-                    e
-                );
-                Vec::new()
-            }
-        };
-
-        // Build a retrieval principal for permission-aware search.
-        // In the current domain each tenant maps to exactly one workspace, so the
-        // caller's workspace scope is the tenant. `File::workspace_id()` documents
-        // this identity guarantee.
-        let principal = RetrievalPrincipal {
-            tenant_id,
-            workspace_id: Some(tenant_id),
-            user_id,
-            group_ids,
-            min_acl_versions: HashMap::new(),
-        };
-
-        // Perform semantic search
-        let raw_results = self
-            .indexer
-            .search_with_acl(&principal, query, limit * 3)
-            .await;
-
-        // Filter by permission and build results
-        let results = self
-            .build_search_results(user_id, tenant_id, limit, raw_results)
-            .await;
-
-        Ok(results)
     }
 
-    /// Perform permission-filtered keyword search.
-    ///
-    /// Same contract as [`Self::semantic_search`], but matches the query terms
-    /// against the indexed file name/path/content instead of vector similarity.
-    ///
-    /// # Contract A-01: Permission Filtering
-    /// Only returns files the user has View permission or higher on.
-    pub async fn keyword_search(
+    pub async fn semantic_search_scoped(
         &self,
         query: &str,
         user_id: UserId,
         tenant_id: Uuid,
         limit: usize,
+        scope: &RetrievalScope,
     ) -> Result<Vec<SemanticSearchResult>, AiError> {
         // Validate query
         let query = query.trim();
@@ -264,6 +207,91 @@ where
             user_id,
             group_ids,
             min_acl_versions: HashMap::new(),
+            source_file_ids: scope.file_ids.clone(),
+            source_folder_ids: scope.folder_ids.clone(),
+        };
+
+        // Perform semantic search
+        let raw_results = self
+            .indexer
+            .search_with_acl(&principal, query, limit * 3)
+            .await;
+
+        // Filter by permission and build results
+        let results = self
+            .build_search_results(user_id, tenant_id, limit, raw_results)
+            .await;
+
+        Ok(results)
+    }
+
+    /// Perform permission-filtered keyword search.
+    ///
+    /// Same contract as [`Self::semantic_search`], but matches the query terms
+    /// against the indexed file name/path/content instead of vector similarity.
+    ///
+    /// # Contract A-01: Permission Filtering
+    /// Only returns files the user has View permission or higher on.
+    pub async fn keyword_search(
+        &self,
+        query: &str,
+        user_id: UserId,
+        tenant_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<SemanticSearchResult>, AiError> {
+        self.keyword_search_scoped(query, user_id, tenant_id, limit, &RetrievalScope::default())
+            .await
+    }
+
+    pub async fn keyword_search_scoped(
+        &self,
+        query: &str,
+        user_id: UserId,
+        tenant_id: Uuid,
+        limit: usize,
+        scope: &RetrievalScope,
+    ) -> Result<Vec<SemanticSearchResult>, AiError> {
+        // Validate query
+        let query = query.trim();
+        if query.is_empty() {
+            return Err(AiError::InvalidQuery("Query cannot be empty".to_string()));
+        }
+        if query.len() > 1000 {
+            return Err(AiError::InvalidQuery(
+                "Query too long (max 1000 chars)".to_string(),
+            ));
+        }
+
+        // Resolve the caller's group IDs for ACL pre-filtering.
+        let group_ids = match self
+            .permission_resolver
+            .resolve_user_group_ids(user_id, tenant_id)
+            .await
+        {
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to resolve group IDs for user {} in tenant {}: {}. Continuing with empty groups.",
+                    user_id,
+                    tenant_id,
+                    e
+                );
+                Vec::new()
+            }
+        };
+
+        // Build a retrieval principal for permission-aware search.
+        // In the current domain each tenant maps to exactly one workspace, so the
+        // caller's workspace scope is the tenant. `File::workspace_id()` documents
+        // this identity guarantee.
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: Some(tenant_id),
+            user_id,
+            group_ids,
+            min_acl_versions: HashMap::new(),
+            source_file_ids: scope.file_ids.clone(),
+            source_folder_ids: scope.folder_ids.clone(),
         };
 
         // Perform keyword search. Candidates are fetched 3x over so the
@@ -408,6 +436,8 @@ where
             user_id,
             group_ids,
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
 
         // Get the indexed document

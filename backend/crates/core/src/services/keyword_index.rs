@@ -165,6 +165,8 @@ mod tests {
             user_id: owner_id,
             group_ids: Vec::new(),
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         assert!(indexer
             .search_with_acl(&principal, "private body", 10)

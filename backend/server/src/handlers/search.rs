@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::handlers::{AppError, AuthenticatedUser};
 use crate::services::unified_search::{
-    parse_source_filter, SearchProvenance, SearchSource, UnifiedSearchError, MAX_QUERY_CHARS,
+    parse_source_filter, SearchProvenance, SearchRunOptions, SearchScope, SearchSource,
+    UnifiedSearchError, MAX_QUERY_CHARS,
 };
 use crate::AppState;
 use std::collections::HashSet;
@@ -43,6 +44,83 @@ pub struct SearchRequest {
     /// Omitted or empty searches both.
     #[serde(default)]
     pub sources: Option<Vec<String>>,
+    /// Search the workspace (default), one Files folder/note, or a Chat channel.
+    #[serde(default)]
+    pub scope: Option<SearchScopeRequest>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum SearchScopeRequest {
+    Workspace,
+    Folder {
+        #[serde(rename = "resourceRef")]
+        resource_ref: String,
+    },
+    Note {
+        #[serde(rename = "resourceRef")]
+        resource_ref: String,
+    },
+    ChatChannel {
+        #[serde(rename = "communityId")]
+        community_id: String,
+        #[serde(rename = "channelId")]
+        channel_id: String,
+    },
+}
+
+pub(super) fn parse_scope(
+    scope: Option<SearchScopeRequest>,
+    sources: &[SearchSource],
+) -> Result<SearchScope, String> {
+    match scope {
+        None | Some(SearchScopeRequest::Workspace) => Ok(SearchScope::Workspace),
+        Some(SearchScopeRequest::Folder { resource_ref }) => {
+            if !sources.is_empty() && !sources.contains(&SearchSource::Files) {
+                return Err("folder scope requires the Files source".into());
+            }
+            let resource =
+                ResourceRef::from_uri(&resource_ref).map_err(|error| error.to_string())?;
+            if resource.application.to_string() != "io.elembra.files"
+                || resource.resource_type != "folder"
+            {
+                return Err("scope is not a Files folder".into());
+            }
+            Ok(SearchScope::Folder(resource))
+        }
+        Some(SearchScopeRequest::Note { resource_ref }) => {
+            if !sources.is_empty() && !sources.contains(&SearchSource::Files) {
+                return Err("note scope requires the Files source".into());
+            }
+            let resource =
+                ResourceRef::from_uri(&resource_ref).map_err(|error| error.to_string())?;
+            if resource.application.to_string() != "io.elembra.files"
+                || resource.resource_type != "file"
+            {
+                return Err("scope is not a Files note".into());
+            }
+            Ok(SearchScope::Resource(resource))
+        }
+        Some(SearchScopeRequest::ChatChannel {
+            community_id,
+            channel_id,
+        }) => {
+            if !sources.is_empty() && !sources.contains(&SearchSource::Chat) {
+                return Err("channel scope requires the Chat source".into());
+            }
+            if community_id.trim().is_empty()
+                || channel_id.trim().is_empty()
+                || community_id.chars().count() > 256
+                || channel_id.chars().count() > 256
+            {
+                return Err("invalid chat channel scope".into());
+            }
+            Ok(SearchScope::ChatChannel {
+                community_id,
+                channel_id,
+            })
+        }
+    }
 }
 
 fn default_limit() -> usize {
@@ -113,6 +191,7 @@ pub async fn unified_search(
 
     // Parse the requested sources; omitted or empty means both.
     let sources = parse_source_filter(request.sources.as_deref()).map_err(AppError::bad_request)?;
+    let scope = parse_scope(request.scope, &sources).map_err(AppError::bad_request)?;
 
     // The 1:1 tenant/workspace mapping: WorkspaceId == TenantId today.
     let ctx = PrincipalContext::user(
@@ -129,8 +208,11 @@ pub async fn unified_search(
             query,
             &sources,
             request.limit,
-            &crate::services::unified_search::SearchScope::Workspace,
-            request_id,
+            &scope,
+            SearchRunOptions {
+                request_id,
+                include_resource_context: false,
+            },
         )
         .await
         .map_err(|error| match error {
@@ -196,7 +278,9 @@ pub async fn unified_search(
         });
     }
 
-    let action_candidates = if sources.is_empty() || sources.contains(&SearchSource::Files) {
+    let action_candidates = if matches!(scope, SearchScope::Workspace)
+        && (sources.is_empty() || sources.contains(&SearchSource::Files))
+    {
         sqlx::query_as::<_, MeetingActionCandidate>(
             "SELECT id AS action_id, meeting_id FROM meeting_actions WHERE tenant_id=$1 AND to_tsvector('simple', title || ' ' || coalesce(description,'')) @@ plainto_tsquery('simple', $2) ORDER BY updated_at DESC, id ASC LIMIT $3",
         )
@@ -312,4 +396,46 @@ pub async fn unified_search(
         total: results.len(),
         results,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scoped_search_requests_require_the_matching_source_and_resource_type() {
+        let files = [SearchSource::Files];
+        let chat = [SearchSource::Chat];
+        let folder = SearchScopeRequest::Folder {
+            resource_ref: "elembra://io.elembra.files/folder/f-1".into(),
+        };
+        assert!(matches!(
+            parse_scope(Some(folder), &files),
+            Ok(SearchScope::Folder(_))
+        ));
+        assert!(parse_scope(
+            Some(SearchScopeRequest::Folder {
+                resource_ref: "elembra://io.elembra.files/folder/f-1".into()
+            }),
+            &chat
+        )
+        .is_err());
+        assert!(parse_scope(
+            Some(SearchScopeRequest::Note {
+                resource_ref: "elembra://io.elembra.files/folder/f-1".into()
+            }),
+            &files
+        )
+        .is_err());
+        assert!(matches!(
+            parse_scope(
+                Some(SearchScopeRequest::ChatChannel {
+                    community_id: "community".into(),
+                    channel_id: "channel".into()
+                }),
+                &chat
+            ),
+            Ok(SearchScope::ChatChannel { .. })
+        ));
+    }
 }

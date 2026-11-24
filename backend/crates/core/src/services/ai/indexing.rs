@@ -144,6 +144,15 @@ pub struct RetrievalPrincipal {
     pub group_ids: Vec<Uuid>,
     /// object_id -> minimum accepted acl_version.
     pub min_acl_versions: HashMap<Uuid, i64>,
+    /// Optional source filters applied by the index before candidate limits.
+    pub source_file_ids: Option<Vec<Uuid>>,
+    pub source_folder_ids: Option<Vec<Uuid>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RetrievalScope {
+    pub file_ids: Option<Vec<Uuid>>,
+    pub folder_ids: Option<Vec<Uuid>>,
 }
 
 impl RetrievalPrincipal {
@@ -821,6 +830,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = indexer
             .search_with_acl(&principal, "memory safety programming", 10)
@@ -911,6 +922,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let doc = indexer.get_document(file_id, &principal).await;
         assert!(doc.is_some());
@@ -997,6 +1010,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = indexer.search_with_acl(&filter, "confidential", 10).await;
         assert_eq!(results.len(), 1);
@@ -1074,6 +1089,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = indexer.search_with_acl(&principal, "content", 10).await;
         assert_eq!(results.len(), 1);
@@ -1113,6 +1130,8 @@ mod tests {
             user_id: stranger_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = indexer.search_with_acl(&filter, "private", 10).await;
         assert!(results.is_empty());
@@ -1124,6 +1143,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = indexer.search_with_acl(&owner_filter, "private", 10).await;
         assert_eq!(results.len(), 1);
@@ -1168,6 +1189,8 @@ mod tests {
             user_id: shared_user_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = indexer
             .search_with_acl(&filter, "shared user content", 10)
@@ -1217,6 +1240,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![engineering_id],
             min_acl_versions,
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = indexer.search_with_acl(&principal, "engineering", 10).await;
         assert!(results.is_empty());
@@ -1269,6 +1294,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = indexer.search_with_acl(&filter, "content", 10).await;
         assert_eq!(results.len(), 1);
@@ -1405,6 +1432,8 @@ mod tests {
             user_id,
             group_ids: vec![group_a],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
 
         let principals = principal.to_index_principals();
