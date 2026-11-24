@@ -357,9 +357,15 @@ fn migrate_credential(path: &std::path::Path, instance_id: Uuid) -> Result<Strin
     let credential = read_credential(path)?;
     let entry = keyring::Entry::new("io.elembra.local-text-worker", &instance_id.to_string())
         .context("unable to access the operating system credential store")?;
-    entry
-        .set_password(&credential)
-        .context("unable to save worker credential to the operating system credential store")?;
+    match entry.get_password() {
+        Ok(existing) => ensure_migration_target(Some(&existing), &credential)?,
+        Err(keyring::Error::NoEntry) => entry
+            .set_password(&credential)
+            .context("unable to save worker credential to the operating system credential store")?,
+        Err(error) => {
+            return Err(error).context("unable to read the operating system credential store")
+        }
+    }
     std::fs::remove_file(path).context("credential was stored in the operating system store, but the legacy file could not be removed")?;
     Ok(credential)
 }
@@ -390,9 +396,18 @@ fn is_loopback_http(server: &str) -> bool {
     })
 }
 
+fn ensure_migration_target(existing: Option<&str>, incoming: &str) -> Result<()> {
+    if existing.is_some_and(|current| current != incoming) {
+        bail!(
+            "native credential already exists and differs; refusing to replace it during migration"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod credential_tests {
-    use super::validate_credential;
+    use super::{ensure_migration_target, validate_credential};
 
     #[test]
     fn accepts_only_connector_worker_credentials() {
@@ -402,5 +417,12 @@ mod credential_tests {
         );
         assert!(validate_credential("owner-password".into()).is_err());
         assert!(validate_credential(format!("ecw1_{}", "x".repeat(124))).is_err());
+    }
+
+    #[test]
+    fn migration_never_replaces_a_different_native_credential() {
+        assert!(ensure_migration_target(None, "ecw1_old").is_ok());
+        assert!(ensure_migration_target(Some("ecw1_old"), "ecw1_old").is_ok());
+        assert!(ensure_migration_target(Some("ecw1_rotated"), "ecw1_old").is_err());
     }
 }
