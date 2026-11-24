@@ -18,6 +18,7 @@ pub struct AskWorkspaceRequest {
     pub question: String,
     /// Must equal the authenticated tenant/workspace in the current 1:1 model.
     pub workspace_id: Uuid,
+    /// Restrict candidates to Files, Chat, and/or Mail. Omitted or empty searches all.
     #[serde(default)]
     pub sources: Option<Vec<String>>,
     #[serde(default = "default_limit")]

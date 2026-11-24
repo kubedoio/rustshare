@@ -40,7 +40,7 @@ pub struct SearchRequest {
     /// Maximum number of results (default: 10, max: 50)
     #[serde(default = "default_limit")]
     pub limit: usize,
-    /// Restrict the search to specific sources: `"files"` and/or `"chat"`.
+    /// Restrict the search to `"files"`, `"chat"`, and/or `"mail"`.
     /// Omitted or empty searches both.
     #[serde(default)]
     pub sources: Option<Vec<String>>,
