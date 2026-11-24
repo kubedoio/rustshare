@@ -9,6 +9,7 @@ from pathlib import Path
 COUNTERS = ("expected", "skipped", "unexpected", "flaky")
 EXPECTED_TESTS = {
     "pilot administrator uses Files and edits a Note name independently from its H1": "tests/pilot.e2e.ts",
+    "Notes opens an exact historical Memory citation without changing Note identity": "tests/pilot.e2e.ts",
     "institutional Calendar journey preserves linked context and denies unavailable content": "tests/institutional.e2e.ts",
 }
 
@@ -52,14 +53,16 @@ def verify_report(path: Path) -> str:
         or stats["flaky"] != 0
     ):
         raise ValueError(
-            "pilot browser journeys require exactly two passes and zero skipped, "
+            f"pilot browser journeys require exactly {len(EXPECTED_TESTS)} passes and zero skipped, "
             "unexpected, or flaky tests"
         )
 
     suites = report.get("suites")
     cases = _test_cases(suites) if isinstance(suites, list) else []
     if len(cases) != len(EXPECTED_TESTS):
-        raise ValueError("Playwright report must contain exactly two browser tests")
+        raise ValueError(
+            f"Playwright report must contain exactly {len(EXPECTED_TESTS)} browser tests"
+        )
     seen = set()
     for spec, case in cases:
         title = spec.get("title")

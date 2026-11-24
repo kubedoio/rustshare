@@ -282,7 +282,7 @@ SMOKE_NOTE_TITLE=Pilot note
             "ui.env": f"""\
 UI_STATUS=passed
 UI_BROWSER_STATUS=passed
-UI_PLAYWRIGHT_EXPECTED=2
+UI_PLAYWRIGHT_EXPECTED=3
 UI_INSTITUTIONAL_JOURNEY=passed
 UI_IMAGE_ID={image_id}
 UI_PLAYWRIGHT_SKIPPED=0
@@ -767,7 +767,7 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
         )
         self.assertIn("E2E_BASE_URL: http://127.0.0.1", ui_step)
         self.assertIn("'UI_BROWSER_STATUS=passed'", summary_step)
-        self.assertIn("'UI_PLAYWRIGHT_EXPECTED=2'", summary_step)
+        self.assertIn("'UI_PLAYWRIGHT_EXPECTED=3'", summary_step)
         self.assertIn("'UI_PLAYWRIGHT_SKIPPED=0'", summary_step)
         self.assertIn("'UI_PLAYWRIGHT_UNEXPECTED=0'", summary_step)
         self.assertIn("'UI_PLAYWRIGHT_FLAKY=0'", summary_step)

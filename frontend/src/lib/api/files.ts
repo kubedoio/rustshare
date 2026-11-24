@@ -170,16 +170,18 @@ export async function getFile(fileId: string): Promise<File> {
 	return apiClient.get<File>(`/files/${fileId}`);
 }
 
-export async function downloadFile(fileId: string): Promise<{ url: string }> {
+export async function downloadFile(fileId: string, version?: string): Promise<{ url: string }> {
 	// Use the new /content endpoint which returns the file with proper Content-Disposition header
 	// This ensures downloaded files have their original filename instead of the storage ID
-	return { url: `${apiClient.getBaseURL()}/files/${fileId}/content` };
+	const query = version ? `?version=${encodeURIComponent(version)}` : '';
+	return { url: `${apiClient.getBaseURL()}/files/${fileId}/content${query}` };
 }
 
-export async function previewFile(fileId: string): Promise<{ url: string }> {
+export async function previewFile(fileId: string, version?: string): Promise<{ url: string }> {
 	// Use the /preview endpoint which returns the file with inline disposition
 	// This allows the browser to display the file (images, PDFs, videos) instead of downloading
-	return { url: `${apiClient.getBaseURL()}/files/${fileId}/preview` };
+	const query = version ? `?version=${encodeURIComponent(version)}` : '';
+	return { url: `${apiClient.getBaseURL()}/files/${fileId}/preview${query}` };
 }
 
 export async function renameFile(fileId: string, newName: string): Promise<void> {
@@ -281,8 +283,9 @@ export async function editFile(
 	});
 }
 
-export async function getFileContent(fileId: string): Promise<string> {
-	return apiClient.requestText(`/files/${fileId}/content`);
+export async function getFileContent(fileId: string, version?: string): Promise<string> {
+	const query = version ? `?version=${encodeURIComponent(version)}` : '';
+	return apiClient.requestText(`/files/${fileId}/content${query}`);
 }
 
 // Trash operations

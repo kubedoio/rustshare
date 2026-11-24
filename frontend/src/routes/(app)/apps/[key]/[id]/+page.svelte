@@ -17,7 +17,7 @@
 	import { askHref } from '$lib/api/ask';
 	import { calendarApi } from '$lib/api/calendar';
 	import { standupsApi } from '$lib/api/standups';
-	import { uploadFile, deleteFile } from '$lib/api/files';
+	import { uploadFile, deleteFile, getFileContent } from '$lib/api/files';
 	import { getFolderContents } from '$lib/api/folders';
 	import { applicationsStore } from '$lib/applications/registry';
 	import { goto, beforeNavigate } from '$app/navigation';
@@ -97,6 +97,9 @@
 
 	let key = $derived(($page.params.key || '') as string);
 	let id = $derived(($page.params.id || '') as string);
+	let citationVersion = $derived(
+		key === 'notes' ? $page.url.searchParams.get('sourceVersion') : null
+	);
 	let module = $derived($applicationsStore.find((application) => application.key === key));
 	let initialAttachmentsOpen = $derived(
 		$page.url.searchParams.get('attachments') === ATTACHMENTS_QUERY_PARAM
@@ -163,11 +166,41 @@
 			? result.item
 			: undefined;
 	});
-	let content = $derived(item?.content ?? '');
+	let historicalContent = $state<string | null>(null);
+	let historicalState = $state<'idle' | 'loading' | 'loaded' | 'unavailable'>('idle');
+	let historicalRequest = 0;
+	$effect(() => {
+		const version = citationVersion;
+		const fileId = id;
+		const request = ++historicalRequest;
+		historicalContent = null;
+		if (!version) {
+			historicalState = 'idle';
+			return;
+		}
+		if (!/^sha256:[a-f0-9]{64}$/.test(version)) {
+			historicalState = 'unavailable';
+			return;
+		}
+		historicalState = 'loading';
+		void getFileContent(fileId, version)
+			.then((text) => {
+				if (request !== historicalRequest) return;
+				historicalContent = text;
+				historicalState = 'loaded';
+			})
+			.catch(() => {
+				if (request === historicalRequest) historicalState = 'unavailable';
+			});
+		return () => {
+			historicalRequest += 1;
+		};
+	});
+	let content = $derived(citationVersion ? (historicalContent ?? '') : (item?.content ?? ''));
 	let title = $derived(item?.metadata?.title || item?.name || '');
 	let subtitle = $derived.by(() => {
 		if (key !== 'notes') return '';
-		const body = splitFrontmatter(item?.content ?? '').body;
+		const body = splitFrontmatter(content).body;
 		return extractH1(body) || item?.metadata?.excerpt || '';
 	});
 	let conflict = $derived(
@@ -290,9 +323,9 @@
 
 	// Preprocess content for editor/viewer: resolve relative paths to API URLs
 	let editorContent = $derived(
-		isFolderBacked && attachments.length > 0
-			? resolveAttachmentPaths(item?.content ?? '', attachments)
-			: (item?.content ?? '')
+		isFolderBacked && !citationVersion && attachments.length > 0
+			? resolveAttachmentPaths(content, attachments)
+			: content
 	);
 
 	let breadcrumb = $derived([
@@ -375,6 +408,7 @@
 			color?: string | null;
 		}>
 	) {
+		if (citationVersion) return;
 		if (event.detail.docId && event.detail.docId !== id) {
 			return;
 		}
@@ -844,29 +878,41 @@
 			</div>
 		{/if}
 
+		{#if citationVersion}
+			<div class="mb-4 alert" role="status">
+				{#if historicalState === 'loading'}
+					<span>Loading cited version…</span>
+				{:else if historicalState === 'unavailable'}
+					<span>The cited version is unavailable or you no longer have access to it.</span>
+				{:else}
+					<span>Read-only view of cited version {citationVersion}.</span>
+				{/if}
+			</div>
+		{/if}
+
 		<MarkdownDocumentPage
 			bind:this={documentPage}
 			{title}
 			{subtitle}
 			content={editorContent}
 			color={selectedNoteColor}
-			{mode}
+			mode={citationVersion ? 'read' : mode}
 			{saveStatus}
 			{breadcrumb}
-			{attachments}
-			metadata={modifiedAt}
+			attachments={citationVersion ? [] : attachments}
+			metadata={citationVersion ? `Cited source version ${citationVersion}` : modifiedAt}
 			permissions={{
 				canRead: true,
-				canEdit: true,
-				canUploadAttachments: true,
-				canDeleteAttachments: true,
+				canEdit: !citationVersion,
+				canUploadAttachments: !citationVersion,
+				canDeleteAttachments: !citationVersion,
 				canExport: true,
-				canShare: true
+				canShare: !citationVersion
 			}}
 			embedSketchesAsBase64={!isFolderBacked}
-			collab={key === 'notes'}
-			docId={id}
-			showNoteActions={key === 'notes'}
+			collab={key === 'notes' && !citationVersion}
+			docId={citationVersion ? `${id}:${citationVersion}` : id}
+			showNoteActions={key === 'notes' && !citationVersion}
 			{initialAttachmentsOpen}
 			on:save={handleSave}
 			on:back={handleBack}
@@ -927,10 +973,12 @@
 					</button>
 				{/if}
 
-				<button class="btn gap-1.5 btn-ghost btn-sm" onclick={handleOpenInFiles}>
-					<Folder size={14} />
-					<span>Open in Files</span>
-				</button>
+				{#if !citationVersion}
+					<button class="btn gap-1.5 btn-ghost btn-sm" onclick={handleOpenInFiles}>
+						<Folder size={14} />
+						<span>Open in Files</span>
+					</button>
+				{/if}
 			{/snippet}
 		</MarkdownDocumentPage>
 

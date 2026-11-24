@@ -86,6 +86,7 @@
 		// File Preview
 		showFilePreviewModal: boolean;
 		previewTarget: File | null;
+		sourceVersion?: string | null;
 		onFilePreviewClose: () => void;
 		onEditFile: (event: { file: File } | File) => void;
 
@@ -145,6 +146,7 @@
 		onVersionRestored,
 		showFilePreviewModal,
 		previewTarget,
+		sourceVersion = null,
 		onFilePreviewClose,
 		onEditFile,
 		showReplaceFileModal,
@@ -254,6 +256,7 @@
 	<FilePreviewModal
 		open={showFilePreviewModal}
 		file={previewTarget}
+		{sourceVersion}
 		onClose={onFilePreviewClose}
 		onEdit={onEditFile}
 	/>

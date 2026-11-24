@@ -20,11 +20,18 @@
 	interface Props {
 		open?: boolean;
 		file?: PreviewableFile | null;
+		sourceVersion?: string | null;
 		onClose?: () => void;
 		onEdit?: (payload: { file: File }) => void;
 	}
 
-	let { open = false, file = null, onClose = () => {}, onEdit = () => {} }: Props = $props();
+	let {
+		open = false,
+		file = null,
+		sourceVersion = null,
+		onClose = () => {},
+		onEdit = () => {}
+	}: Props = $props();
 
 	let previewUrl: string | null = $state(null);
 	let textContent: string | null = $state(null);
@@ -45,7 +52,7 @@
 
 	// Determine if the file can be edited
 	let capabilities = $derived(file ? detectFileCapabilities(file.name, file.mime_type) : null);
-	let canEdit = $derived(capabilities?.canEdit ?? false);
+	let canEdit = $derived(!sourceVersion && (capabilities?.canEdit ?? false));
 
 	async function loadPreview() {
 		if (!file) return;
@@ -63,16 +70,16 @@
 				isExcalidraw(file.name) ||
 				isDrawio(file.name)
 			) {
-				textContent = await getFileContent(file.id);
+				textContent = await getFileContent(file.id, sourceVersion ?? undefined);
 				// Still get preview URL for download/misc
 				try {
-					const response = await previewFile(file.id);
+					const response = await previewFile(file.id, sourceVersion ?? undefined);
 					previewUrl = response.url;
 				} catch (e) {
 					// Ignore if preview API fails for text files
 				}
 			} else {
-				const response = await previewFile(file.id);
+				const response = await previewFile(file.id, sourceVersion ?? undefined);
 				previewUrl = response.url;
 			}
 		} catch (err) {
@@ -151,7 +158,7 @@
 
 	async function handleDownload() {
 		if (!file) return;
-		const response = await downloadFile(file.id);
+		const response = await downloadFile(file.id, sourceVersion ?? undefined);
 		let downloadUrl = response.url;
 		// Handle storage URL rewrite if needed
 		if (downloadUrl.includes('/rustshare-files/')) {
@@ -171,6 +178,9 @@
 					<p class="text-sm text-base-content/60">
 						{formatFileSize(file.size)} &bull; {file.mime_type}
 					</p>
+					{#if sourceVersion}
+						<p class="text-xs text-base-content/50">Cited version {sourceVersion}</p>
+					{/if}
 				{/if}
 			</div>
 

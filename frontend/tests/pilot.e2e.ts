@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { createHash, randomUUID } from 'node:crypto';
 
 const adminEmail = process.env.ADMIN_EMAIL ?? '';
 const adminPassword = process.env.ADMIN_PASSWORD ?? '';
@@ -137,5 +138,112 @@ test('pilot administrator uses Files and edits a Note name independently from it
 		});
 	} finally {
 		if (noteOpened) await test.step('Restore pilot Note fixture', restoreSmokeNote);
+	}
+});
+
+test('Notes opens an exact historical Memory citation without changing Note identity', async ({
+	page
+}) => {
+	test.setTimeout(90_000);
+	const suffix = randomUUID();
+	const title = `Memory citation ${suffix}`;
+	const originalContent = `# ${title}\n\nHistorical citation H1\n\nHistorical citation body`;
+	let noteId: string | null = null;
+
+	await page.goto('/login');
+	await page.getByLabel('Email').fill(adminEmail);
+	await page.getByLabel('Password').fill(adminPassword);
+	await page.getByRole('button', { name: 'Sign in with password' }).click();
+	await page.waitForURL('**/files');
+
+	const api = page.context().request;
+	const csrf = (await page.context().cookies()).find(
+		(cookie) => cookie.name === 'rustshare_csrf_token'
+	)?.value;
+	expect(csrf).toBeTruthy();
+	const headers = { 'X-Rustshare-Csrf': decodeURIComponent(csrf!) };
+
+	try {
+		const created = await api.post('/api/v1/notes', {
+			headers,
+			data: { title, content: originalContent }
+		});
+		expect(created.ok()).toBeTruthy();
+		const note = await created.json();
+		const createdNoteId: string = note.id;
+		noteId = createdNoteId;
+		const sourceVersion = `sha256:${createHash('sha256').update(note.content).digest('hex')}`;
+
+		const updated = await api.put(`/api/v1/notes/${createdNoteId}`, {
+			headers,
+			data: { content: '# Current H1\n\nCurrent Note body' }
+		});
+		expect(updated.ok()).toBeTruthy();
+
+		const resourceRef = `elembra://io.elembra.files/file/${createdNoteId}?version=${encodeURIComponent(sourceVersion)}`;
+		await page.route('**/api/v1/memory/ask', (route) =>
+			route.fulfill({
+				json: {
+					answer: 'The historical Note contains the cited text.',
+					citations: [
+						{
+							resource_ref: resourceRef,
+							title,
+							location: 'Historical citation H1',
+							provenance: { note_id: createdNoteId, file_id: createdNoteId }
+						}
+					],
+					source_count: 1,
+					grounded: true,
+					insufficient_evidence: false,
+					run_id: randomUUID()
+				}
+			})
+		);
+
+		await page.goto('/ask');
+		await page.getByLabel('Your question').fill(`What did ${title} say?`);
+		await page.getByRole('button', { name: 'Ask' }).click();
+		const versionResponse = page.waitForResponse(
+			(response) =>
+				response.url().includes(`/api/v1/files/${createdNoteId}/content`) &&
+				response.url().includes(`version=${encodeURIComponent(sourceVersion)}`),
+			{ timeout: 15_000 }
+		);
+		await test.step('Open the authorized exact-version citation', async () => {
+			const openResponse = page.waitForResponse(
+				(response) =>
+					response.url().includes('/api/v1/memory/citations/open') &&
+					response.request().method() === 'POST',
+				{ timeout: 15_000 }
+			);
+			await page.getByRole('button', { name: new RegExp(title) }).click();
+			const response = await openResponse;
+			expect(response.status()).toBe(200);
+			await expect(response.json()).resolves.toMatchObject({ available: true });
+		});
+		await page.waitForURL(`**/apps/notes/${createdNoteId}?sourceVersion=*`, { timeout: 15_000 });
+		await test.step('Load the exact historical version', async () => {
+			expect((await versionResponse).status()).toBe(200);
+		});
+		await expect(page.locator('h1.doc-title, h1.doc-title-wrapper')).toHaveText(title);
+		await expect(page.locator('.doc-subtitle')).toHaveText(title);
+		await expect(page.locator('.doc-content').getByText('Historical citation body')).toBeVisible();
+		await expect(page.getByText('Current Note body')).toHaveCount(0);
+		await expect(page.getByText(/Read-only view of cited version/)).toBeVisible();
+		await expect(page.getByRole('button', { name: `${title}, edit title` })).toHaveCount(0);
+	} finally {
+		if (noteId) {
+			try {
+				const deleted = await api.delete(`/api/v1/notes/${noteId}`, {
+					headers,
+					timeout: 5_000
+				});
+				if (!deleted.ok())
+					console.warn(`Citation fixture cleanup returned HTTP ${deleted.status()}`);
+			} catch {
+				console.warn('Citation fixture cleanup request failed');
+			}
+		}
 	}
 });

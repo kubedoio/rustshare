@@ -2480,7 +2480,7 @@ impl NoteService {
                 file_id,
                 user_id,
                 Bytes::from(document.clone()),
-                "overwrite",
+                "new_version",
                 None,
             )
             .await?;

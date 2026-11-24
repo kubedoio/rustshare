@@ -6498,6 +6498,15 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Optional immutable sha256 source version",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -6544,6 +6553,15 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Optional immutable sha256 source version",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -6762,6 +6780,15 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Optional immutable sha256 source version",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],

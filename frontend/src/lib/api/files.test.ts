@@ -35,6 +35,19 @@ describe('files API', () => {
 		expect(apiClient.requestText).toHaveBeenCalledWith('/files/file-123/content');
 	});
 
+	it('requests the exact cited version instead of the current file content', async () => {
+		vi.mocked(apiClient.requestText).mockResolvedValue('Historical version');
+		await expect(
+			getFileContent(
+				'file-123',
+				'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+			)
+		).resolves.toBe('Historical version');
+		expect(apiClient.requestText).toHaveBeenCalledWith(
+			'/files/file-123/content?version=sha256%3Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+		);
+	});
+
 	it('fetches all file pages before returning aggregate file lists', async () => {
 		const firstPage = Array.from({ length: 100 }, (_, index) => ({
 			id: `file-${index}`,
@@ -106,6 +119,17 @@ describe('file URL construction', () => {
 	it('builds preview URLs from the configured API base URL', async () => {
 		await expect(previewFile('file-123')).resolves.toEqual({
 			url: 'https://api.example.com/api/v1/files/file-123/preview'
+		});
+	});
+
+	it('keeps an exact version in citation preview URLs', async () => {
+		await expect(
+			previewFile(
+				'file-123',
+				'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+			)
+		).resolves.toEqual({
+			url: 'https://api.example.com/api/v1/files/file-123/preview?version=sha256%3Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 		});
 	});
 });
