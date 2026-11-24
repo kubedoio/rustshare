@@ -48,26 +48,27 @@
 		// A stale in-flight request skips its own finally (generation mismatch),
 		// so reset these here or the form stays stuck in loading.
 		loading = false;
+		searching = false;
 		openingCitation = null;
 	});
 
 	async function search() {
 		const trimmed = question.trim();
 		if (!trimmed || searching || loading || scope.type !== 'workspace') return;
-		const scopeAtStart = JSON.stringify(scope);
+		const generation = ++requestGeneration;
 		searching = true;
 		error = '';
 		searchResults = null;
 		response = null;
 		try {
 			const results = await searchMemory(trimmed);
-			if (JSON.stringify(scope) === scopeAtStart) searchResults = results.results;
+			if (generation === requestGeneration) searchResults = results.results;
 		} catch {
-			if (JSON.stringify(scope) === scopeAtStart) {
+			if (generation === requestGeneration) {
 				error = 'Memory search could not be completed. Please try again.';
 			}
 		} finally {
-			searching = false;
+			if (generation === requestGeneration) searching = false;
 		}
 	}
 

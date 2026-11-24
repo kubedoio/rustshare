@@ -63,6 +63,55 @@ describe('AskExperience', () => {
 		expect(mocks.goto).toHaveBeenCalledWith('/files?preview=f-1');
 	});
 
+	it('ignores keyword search results from a previous scope after switching back', async () => {
+		let resolveFirst!: (value: { total: number; results: unknown[] }) => void;
+		let resolveSecond!: (value: { total: number; results: unknown[] }) => void;
+		mocks.searchMemory
+			.mockReturnValueOnce(new Promise((resolve) => (resolveFirst = resolve)))
+			.mockReturnValueOnce(new Promise((resolve) => (resolveSecond = resolve)));
+		const view = render(AskExperience);
+		await fireEvent.input(screen.getByLabelText('Your question'), { target: { value: 'term' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Search by keyword' }));
+
+		await view.rerender({
+			scope: { type: 'folder', resourceRef: 'elembra://io.elembra.files/folder/f-2' },
+			scopeLabel: 'Folder'
+		});
+		await view.rerender({ scope: { type: 'workspace' }, scopeLabel: 'Workspace' });
+		const searchButton = screen.getByRole('button', { name: 'Search by keyword' });
+		expect((searchButton as HTMLButtonElement).disabled).toBe(false);
+		await fireEvent.click(searchButton);
+		resolveSecond({
+			total: 1,
+			results: [
+				{
+					source_application: 'io.elembra.files',
+					source_type: 'note',
+					resource_ref: 'elembra://io.elembra.files/file/current',
+					title: 'Current result',
+					provenance: {}
+				}
+			]
+		});
+		await waitFor(() => expect(screen.getByText('Current result')).toBeTruthy());
+
+		resolveFirst({
+			total: 1,
+			results: [
+				{
+					source_application: 'io.elembra.files',
+					source_type: 'note',
+					resource_ref: 'elembra://io.elembra.files/file/stale',
+					title: 'Stale result',
+					provenance: {}
+				}
+			]
+		});
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(screen.queryByText('Stale result')).toBeNull();
+		expect(screen.getByText('Current result')).toBeTruthy();
+	});
+
 	it('opens a cited Note at the exact authorized historical version', async () => {
 		mocks.askWorkspace.mockResolvedValue({
 			answer: 'Grounded answer',
