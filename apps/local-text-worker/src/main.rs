@@ -4,7 +4,9 @@ use local_text_worker::{scan_root, OfflineQueue, RootConfig};
 use reqwest::{multipart, redirect::Policy, StatusCode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs::OpenOptions, io::Read, path::PathBuf, time::Duration};
+#[cfg(unix)]
+use std::{fs::OpenOptions, io::Read};
+use std::{path::PathBuf, time::Duration};
 use uuid::Uuid;
 
 #[derive(Debug, Parser)]
