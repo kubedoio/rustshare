@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use rustshare_core::domain::{ActionCapability, ApplicationId};
+use rustshare_core::domain::{ActionCapability, ApplicationId, MailSortOrder};
 use rustshare_core::services::is_hidden_file_for_path;
 #[cfg(test)]
 use rustshare_core::services::is_hidden_file_name;
@@ -24,7 +24,7 @@ use rustshare_infrastructure::repositories::PermissionResolverRepository;
 use rustshare_memory::MemoryCatalogRecord;
 use rustshare_resource_auth::{
     PrincipalContext, Purpose, Representation, ResourceRef, SourceAuthorizer, SourceError,
-    CHAT_READ, FILES_READ, MAX_BATCH_SIZE,
+    CHAT_READ, FILES_READ, MAIL_READ, MAX_BATCH_SIZE,
 };
 use rustshare_storage::{
     content_match_terms, MemoryCatalogStore, MemoryFilesCatalogStore, MetadataStore,
@@ -37,8 +37,10 @@ use crate::state::AppAiService;
 const FILES_APPLICATION: &str = "io.elembra.files";
 /// Canonical owning Application of Chat resources.
 const CHAT_APPLICATION: &str = "io.elembra.chat";
+/// Canonical owning Application of Mail messages.
+const MAIL_APPLICATION: &str = "io.elembra.mail";
 /// Maximum number of source filter values accepted by the HTTP contracts.
-pub const MAX_SOURCE_FILTERS: usize = 2;
+pub const MAX_SOURCE_FILTERS: usize = 3;
 /// Shared query bound used by Search and Ask Workspace.
 pub const MAX_QUERY_CHARS: usize = 1_000;
 /// Snippet length cap (in chars) applied to authorized `fetch` text.
@@ -53,6 +55,8 @@ pub enum SearchSource {
     Files,
     /// Buzz Chat memory catalog.
     Chat,
+    /// Imported Mail messages owned by the Mail Application.
+    Mail,
 }
 
 pub struct SearchRunOptions {
@@ -198,6 +202,7 @@ pub struct UnifiedSearchService {
     permission_resolver: Option<Arc<PermissionResolver<PermissionResolverRepository>>>,
     memory_catalog: Arc<MemoryCatalogStore>,
     memory_files_catalog: Option<Arc<MemoryFilesCatalogStore>>,
+    mail_service: Option<Arc<crate::services::mail_service::MailService>>,
 }
 
 impl UnifiedSearchService {
@@ -215,7 +220,16 @@ impl UnifiedSearchService {
             permission_resolver: None,
             memory_catalog,
             memory_files_catalog: None,
+            mail_service: None,
         }
+    }
+
+    pub fn with_mail_service(
+        mut self,
+        mail_service: Arc<crate::services::mail_service::MailService>,
+    ) -> Self {
+        self.mail_service = Some(mail_service);
+        self
     }
 
     pub fn with_keyword_indexer(
@@ -368,6 +382,8 @@ impl UnifiedSearchService {
             && !matches!(scope, SearchScope::ChatChannel { .. });
         let chat_requested = (sources.is_empty() || sources.contains(&SearchSource::Chat))
             && !matches!(scope, SearchScope::Folder(_) | SearchScope::Resource(_));
+        let mail_requested = (sources.is_empty() || sources.contains(&SearchSource::Mail))
+            && matches!(scope, SearchScope::Workspace);
         let mut candidates = Vec::new();
         if files_requested {
             candidates.extend(
@@ -383,6 +399,9 @@ impl UnifiedSearchService {
         }
         if chat_requested {
             candidates.extend(self.chat_candidates(ctx, query, budget, chat_channel).await);
+        }
+        if mail_requested {
+            candidates.extend(self.mail_candidates(ctx, query, budget).await);
         }
 
         if let SearchScope::Resource(resource) = scope {
@@ -1089,6 +1108,68 @@ impl UnifiedSearchService {
             .collect()
     }
 
+    /// Mail's own bounded search supplies header matches; message bodies are
+    /// fetched only after the Mail owner reauthorizes the result.
+    async fn mail_candidates(
+        &self,
+        ctx: &PrincipalContext,
+        query: &str,
+        budget: usize,
+    ) -> Vec<Candidate> {
+        let Some(mail) = &self.mail_service else {
+            return Vec::new();
+        };
+        let owner_id = match ctx.effective_user_authority(&ActionCapability::from(MAIL_READ), None)
+        {
+            Ok(authority) => authority.user_authority_id.0,
+            Err(error) => {
+                tracing::debug!(%error, "unified search: Mail authority unavailable");
+                return Vec::new();
+            }
+        };
+        match mail
+            .list_messages(
+                ctx.tenant_id.0,
+                owner_id,
+                Some(query),
+                None,
+                budget as i64,
+                MailSortOrder::DateDesc,
+            )
+            .await
+        {
+            Ok(messages) => messages
+                .into_iter()
+                .map(|message| Candidate {
+                    source_application: MAIL_APPLICATION.to_string(),
+                    source_type: "message".to_string(),
+                    resource_ref: ResourceRef::new(
+                        ApplicationId::new(MAIL_APPLICATION),
+                        "message",
+                        message.id.to_string(),
+                    ),
+                    score: 0.6,
+                    title: message.subject.unwrap_or_else(|| "Mail message".into()),
+                    location: message.from_address.map(|sender| format!("From: {sender}")),
+                    occurred_at: message.sent_at.or(Some(message.imported_at)),
+                    file_id: None,
+                    note_id: None,
+                    mime_type: Some("message/rfc822".to_string()),
+                    cached_hint: None,
+                    message_id: Some(message.id.to_string()),
+                    community_id: None,
+                    channel_id: None,
+                    channel_kind: None,
+                    author_pubkey: None,
+                })
+                .collect(),
+            Err(error) => {
+                tracing::warn!(%error, "unified search: Mail candidates unavailable; skipping source");
+                Vec::new()
+            }
+        }
+    }
+
     /// Batch reauthorization against the CURRENT owning source. Only
     /// `Decision::Allow` survives; a denied/missing/invalid ref never affects
     /// another, and an authorizer failure fails closed by dropping the chunk.
@@ -1100,16 +1181,19 @@ impl UnifiedSearchService {
     ) -> Result<Vec<Candidate>, UnifiedSearchError> {
         let files_action = ActionCapability::new(FILES_READ);
         let chat_action = ActionCapability::new(CHAT_READ);
+        let mail_action = ActionCapability::new(MAIL_READ);
 
         // Split by the owning Application's action. Unknown applications are
         // dropped (fail closed) rather than silently grouped into an action
         // they do not own.
         let mut files_group = Vec::new();
         let mut chat_group = Vec::new();
+        let mut mail_group = Vec::new();
         for candidate in candidates {
             match candidate.source_application.as_str() {
                 FILES_APPLICATION => files_group.push(candidate),
                 CHAT_APPLICATION => chat_group.push(candidate),
+                MAIL_APPLICATION => mail_group.push(candidate),
                 other => {
                     tracing::warn!(
                         source_application = other,
@@ -1119,8 +1203,13 @@ impl UnifiedSearchService {
             }
         }
 
-        let mut allowed = Vec::with_capacity(files_group.len() + chat_group.len());
-        for (action, group) in [(&files_action, &files_group), (&chat_action, &chat_group)] {
+        let mut allowed =
+            Vec::with_capacity(files_group.len() + chat_group.len() + mail_group.len());
+        for (action, group) in [
+            (&files_action, &files_group),
+            (&chat_action, &chat_group),
+            (&mail_action, &mail_group),
+        ] {
             for chunk in group.chunks(MAX_BATCH_SIZE) {
                 let refs: Vec<ResourceRef> = chunk.iter().map(|c| c.resource_ref.clone()).collect();
                 let decisions = match self.authorizer.authorize_batch(ctx, action, &refs).await {
@@ -1274,6 +1363,7 @@ pub fn parse_source_filter(names: Option<&[String]>) -> Result<Vec<SearchSource>
         let source = match name.as_str() {
             "files" => SearchSource::Files,
             "chat" => SearchSource::Chat,
+            "mail" => SearchSource::Mail,
             other => return Err(format!("Unknown source '{other}'")),
         };
         if parsed.contains(&source) {
@@ -1737,13 +1827,18 @@ mod tests {
 
     #[test]
     fn source_filter_is_bounded_and_rejects_duplicates() {
-        let both = vec!["files".to_string(), "chat".to_string()];
-        assert_eq!(parse_source_filter(Some(&both)).unwrap().len(), 2);
+        let all = vec!["files".to_string(), "chat".to_string(), "mail".to_string()];
+        assert_eq!(parse_source_filter(Some(&all)).unwrap().len(), 3);
 
         let duplicate = vec!["files".to_string(), "files".to_string()];
         assert!(parse_source_filter(Some(&duplicate)).is_err());
 
-        let too_many = vec!["files".to_string(), "chat".to_string(), "files".to_string()];
+        let too_many = vec![
+            "files".to_string(),
+            "chat".to_string(),
+            "mail".to_string(),
+            "files".to_string(),
+        ];
         assert!(parse_source_filter(Some(&too_many)).is_err());
     }
 }

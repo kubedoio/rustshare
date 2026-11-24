@@ -1,6 +1,6 @@
 //! Unified search handler: `POST /api/v1/search`.
 //!
-//! Ranked, permission-aware search across Files/Notes and Buzz Chat. Every
+//! Ranked, permission-aware search across Files/Notes, Buzz Chat, and Mail. Every
 //! returned result is reauthorized by its current owning source and snippets
 //! come only from authorized content (see `services::unified_search`).
 
@@ -40,7 +40,7 @@ pub struct SearchRequest {
     /// Maximum number of results (default: 10, max: 50)
     #[serde(default = "default_limit")]
     pub limit: usize,
-    /// Restrict the search to specific sources: `"files"` and/or `"chat"`.
+    /// Restrict the search to `"files"`, `"chat"`, and/or `"mail"`.
     /// Omitted or empty searches both.
     #[serde(default)]
     pub sources: Option<Vec<String>>,
@@ -159,7 +159,7 @@ pub struct SearchResponse {
 
 /// POST /api/v1/search
 ///
-/// Ranked, permission-aware search across Files/Notes and Buzz Chat. Results
+/// Ranked, permission-aware search across Files/Notes, Buzz Chat, and Mail. Results
 /// are reauthorized by their current owning sources; snippets come only from
 /// authorized content.
 #[utoipa::path(

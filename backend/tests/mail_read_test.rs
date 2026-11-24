@@ -252,13 +252,26 @@ async fn setup_test_env() -> AppState {
         ),
     );
 
+    let application_registry = rustshare_core::domain::ApplicationRegistry::first_party().unwrap();
+    let mut owners = rustshare_resource_auth::ResourceOwnerRegistry::new();
+    owners
+        .register(
+            Arc::new(rustshare_server::authz::MailResourceOwner::new(
+                mail_service.clone(),
+                application_service.clone(),
+            )),
+            &application_registry,
+        )
+        .expect("Mail owner registers against its Application manifest");
+    let source_authorizer = Arc::new(rustshare_resource_auth::SourceAuthorizer::new(owners));
     let unified_search_service = Arc::new(
         rustshare_server::services::unified_search::UnifiedSearchService::new(
-            Arc::new(rustshare_resource_auth::SourceAuthorizer::empty()),
+            source_authorizer.clone(),
             metadata_store.clone(),
             None,
             memory_catalog_store.clone(),
-        ),
+        )
+        .with_mail_service(mail_service.clone()),
     );
 
     let chat_owner = Arc::new(rustshare_server::authz::ChatResourceOwner::new(
@@ -278,7 +291,7 @@ async fn setup_test_env() -> AppState {
         share_service,
         thumbnail_service,
         permission_resolver,
-        source_authorizer: Arc::new(rustshare_resource_auth::SourceAuthorizer::empty()),
+        source_authorizer,
         notification_service,
         user_share_service,
         ai_service: None,
@@ -445,6 +458,132 @@ fn read_fixture(name: &str) -> Vec<u8> {
         .join("../crates/core/tests/fixtures/eml")
         .join(name);
     std::fs::read(&path).unwrap_or_else(|_| panic!("failed to read fixture {}", name))
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn memory_mail_search_reauthorizes_owner_tenant_and_enablement_before_body_fetch() {
+    let state = setup_test_env().await;
+    let tenant_id = create_test_tenant(&state.db_pool).await;
+    let user = create_test_user(&state, "mail_memory_search", tenant_id).await;
+    enable_mail_module(&state, tenant_id, user.id).await;
+    let raw = "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: memory-search-needle\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nAUTHORIZED-MAIL-BODY".to_string();
+    let message = state
+        .mail_service
+        .import_eml(tenant_id, user.id, user.id, raw.into_bytes())
+        .await
+        .expect("import Mail search fixture");
+    let context = rustshare_resource_auth::PrincipalContext::user(
+        rustshare_core::domain::PrincipalId(user.id),
+        rustshare_core::domain::TenantId(tenant_id),
+        rustshare_core::domain::WorkspaceId(tenant_id),
+    );
+    let searched = state
+        .unified_search_service
+        .search(
+            &context,
+            "memory-search-needle",
+            &[rustshare_server::services::unified_search::SearchSource::Mail],
+            5,
+        )
+        .await
+        .expect("search authorized Mail headers");
+    assert_eq!(searched.results.len(), 1);
+    assert_eq!(
+        searched.results[0].resource_ref,
+        format!("elembra://io.elembra.mail/message/{}", message.id)
+    );
+    assert!(searched.results[0]
+        .snippet
+        .as_deref()
+        .unwrap_or_default()
+        .contains("AUTHORIZED-MAIL-BODY"));
+
+    let oversized_body = "x".repeat(256 * 1024 + 1);
+    let oversized = state
+        .mail_service
+        .import_eml(
+            tenant_id,
+            user.id,
+            user.id,
+            format!(
+                "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: oversized-memory-search-needle\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{oversized_body}"
+            )
+            .into_bytes(),
+        )
+        .await
+        .expect("import oversized Mail search fixture");
+    let oversized_part = state
+        .mail_service
+        .list_parts(tenant_id, user.id, oversized.id)
+        .await
+        .expect("list oversized body parts")
+        .into_iter()
+        .find(|part| part.is_body && part.content_type.starts_with("text/plain"))
+        .expect("oversized plain-text body part");
+    sqlx::query("UPDATE mail_message_parts SET size_bytes = 1 WHERE id = $1")
+        .bind(oversized_part.id)
+        .execute(&state.db_pool)
+        .await
+        .expect("simulate understated Mail part metadata");
+    let oversized_search = state
+        .unified_search_service
+        .search(
+            &context,
+            "oversized-memory-search-needle",
+            &[rustshare_server::services::unified_search::SearchSource::Mail],
+            5,
+        )
+        .await
+        .expect("oversized body is dropped from Memory search");
+    assert!(!oversized_search
+        .results
+        .iter()
+        .any(|result| result.resource_ref.contains(&oversized.id.to_string())));
+
+    let reference =
+        rustshare_resource_auth::ResourceRef::from_uri(&searched.results[0].resource_ref).unwrap();
+    let other_tenant = create_test_tenant(&state.db_pool).await;
+    let other_user = create_test_user(&state, "mail_memory_intruder", other_tenant).await;
+    enable_mail_module(&state, other_tenant, other_user.id).await;
+    let cross_tenant = rustshare_resource_auth::PrincipalContext::user(
+        rustshare_core::domain::PrincipalId(other_user.id),
+        rustshare_core::domain::TenantId(other_tenant),
+        rustshare_core::domain::WorkspaceId(other_tenant),
+    );
+    assert_eq!(
+        state
+            .source_authorizer
+            .authorize(
+                &cross_tenant,
+                &rustshare_core::domain::ActionCapability::new("mail.read"),
+                &reference,
+            )
+            .await,
+        rustshare_resource_auth::Decision::Deny
+    );
+
+    state
+        .application_service
+        .disable_application("io.elembra.mail", user.id, tenant_id)
+        .await
+        .expect("disable Mail");
+    assert_eq!(
+        state
+            .source_authorizer
+            .authorize(
+                &context,
+                &rustshare_core::domain::ActionCapability::new("mail.read"),
+                &reference,
+            )
+            .await,
+        rustshare_resource_auth::Decision::NotFound
+    );
+
+    cleanup_user(&state.db_pool, user.id).await;
+    cleanup_tenant(&state.db_pool, tenant_id).await;
+    cleanup_user(&state.db_pool, other_user.id).await;
+    cleanup_tenant(&state.db_pool, other_tenant).await;
 }
 
 #[tokio::test]

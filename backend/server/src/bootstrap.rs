@@ -1083,6 +1083,8 @@ pub async fn init_app() -> Result<AppState> {
         Arc::clone(&metadata_store),
         Arc::clone(&object_store),
         Arc::clone(&services.note_service),
+        Arc::clone(&services.mail_service),
+        Arc::clone(&services.application_service),
         (*chat_identity_store).clone(),
         (*chat_observation_store).clone(),
         chat_buzz_authority,
@@ -1164,7 +1166,7 @@ pub async fn init_app() -> Result<AppState> {
 
     // Permission-aware unified search: candidates come from Files metadata,
     // the note index and the Memory catalog; final inclusion is gated by the
-    // source authorizer (Files → PermissionResolver; Chat → BuzzAuthority).
+    // owning source authorizer (Files, Mail, or Chat).
     let unified_search_service = Arc::new(
         crate::services::unified_search::UnifiedSearchService::new(
             Arc::clone(&source_authorizer),
@@ -1176,6 +1178,7 @@ pub async fn init_app() -> Result<AppState> {
             Arc::clone(&services.keyword_indexer),
             Arc::clone(&permission_resolver),
         )
+        .with_mail_service(Arc::clone(&services.mail_service))
         .with_memory_files_catalog(Arc::clone(&memory_files_catalog_store)),
     );
     let llm_provider = if config.ai_enabled {

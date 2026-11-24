@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::services::EmailService;
 use chrono::{DateTime, NaiveDate, Utc};
-use futures_util::stream::BoxStream;
+use futures_util::{stream::BoxStream, StreamExt};
 use rustshare_core::domain::{
     Folder, LinkTargetType, MailAccount, MailAccountId, MailAttachment, MailImportJob,
     MailImportJobId, MailImportJobStatus, MailLink, MailMessage, MailMessagePart, MailSmtpSettings,
@@ -1042,6 +1042,38 @@ impl MailService {
             .await
             .map_err(|e| MailError::Storage(e.to_string()))?;
         Ok((part, bytes))
+    }
+
+    pub async fn get_message_part_stream(
+        &self,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+        message_id: Uuid,
+        part_id: Uuid,
+    ) -> Result<
+        (
+            MailMessagePart,
+            Option<i64>,
+            BoxStream<'static, std::io::Result<bytes::Bytes>>,
+        ),
+        MailError,
+    > {
+        let part = self
+            .metadata_store
+            .find_mail_message_part_by_id(part_id, message_id, tenant_id, owner_id)
+            .await
+            .map_err(|e| MailError::Database(e.to_string()))?
+            .ok_or(MailError::NotFound(part_id))?;
+        let blob_key = part
+            .blob_key
+            .clone()
+            .ok_or_else(|| MailError::InvalidSource("part has no blob".to_string()))?;
+        let (_, content_length, stream) = self
+            .object_store
+            .get_stream(&blob_key)
+            .await
+            .map_err(|e| MailError::Storage(e.to_string()))?;
+        Ok((part, content_length, stream.boxed()))
     }
 
     /// Download the original raw `.eml` source for a message.

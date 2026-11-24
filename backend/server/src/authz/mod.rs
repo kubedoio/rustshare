@@ -12,10 +12,12 @@
 
 pub mod chat_owner;
 pub mod files_owner;
+pub mod mail_owner;
 pub mod notes_owner;
 
 pub use chat_owner::ChatResourceOwner;
 pub use files_owner::FilesResourceOwner;
+pub use mail_owner::MailResourceOwner;
 pub use notes_owner::NotesResourceOwner;
 
 use rustshare_core::domain::ApplicationRegistry;
@@ -47,6 +49,8 @@ pub fn build_source_authorizer(
     metadata_store: Arc<MetadataStore>,
     object_store: Arc<ObjectStore>,
     note_service: Arc<crate::services::note_service::NoteService>,
+    mail_service: Arc<crate::services::mail_service::MailService>,
+    application_service: Arc<crate::services::application_service::ApplicationService>,
     chat_identity_store: ChatIdentityStore,
     chat_observation_store: ChatObservationStore,
     buzz_authority: Box<dyn BuzzAuthority>,
@@ -63,6 +67,10 @@ pub fn build_source_authorizer(
     )?;
     registry.register(
         Arc::new(NotesResourceOwner::new(note_service)),
+        &application_registry,
+    )?;
+    registry.register(
+        Arc::new(MailResourceOwner::new(mail_service, application_service)),
         &application_registry,
     )?;
     // The Chat owner evaluates CURRENT Chat/Buzz admission/binding/enablement

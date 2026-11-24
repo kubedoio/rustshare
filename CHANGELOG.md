@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 - Open Memory citations at the exact historical Note or Files version that was cited.
 - Attribute Memory source reads to Search/Ask requests and record whether authorized sources entered an LLM context.
 - Allow permission-aware Memory search and Ask requests to stay within an authorized workspace, folder, note, or Chat channel scope.
+- Search Mail message headers in Memory and fetch bounded plain-text bodies only after current Mail ownership and enablement checks.
 - Distinguish deleted and permission-denied meeting resource links without exposing their metadata.
 - Search the paginated membership roster of an organization group by username or email.
 - Archive organization groups to suspend their derived access while retaining memberships and shares for audited restoration.

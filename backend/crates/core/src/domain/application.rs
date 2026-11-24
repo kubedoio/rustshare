@@ -555,6 +555,17 @@ pub fn first_party_manifests() -> Vec<ApplicationManifest> {
                 resource_type: "message".into(),
                 actions: vec![ActionCapability::new("chat.read")],
             }]
+        } else if slug == "mail" {
+            vec![
+                ApplicationResource {
+                    resource_type: "mail.resource".into(),
+                    actions: vec![ActionCapability::new("mail.read")],
+                },
+                ApplicationResource {
+                    resource_type: "message".into(),
+                    actions: vec![ActionCapability::new("mail.read")],
+                },
+            ]
         } else if slug == "calendar" {
             vec![
                 ApplicationResource {
