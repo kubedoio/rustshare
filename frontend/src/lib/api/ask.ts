@@ -29,6 +29,21 @@ export interface AskResponse {
 	run_id: string;
 }
 
+export interface MemorySearchResult {
+	source_application: string;
+	source_type: string;
+	resource_ref: string;
+	title: string;
+	snippet?: string | null;
+	location?: string | null;
+	provenance: Record<string, string | null | undefined>;
+}
+
+export interface MemorySearchResponse {
+	results: MemorySearchResult[];
+	total: number;
+}
+
 export interface OpenCitationResponse {
 	resource_ref: string;
 	display_name: string;
@@ -53,6 +68,10 @@ export function askHref(scope: Exclude<AskScope, { type: 'workspace' }>): string
 
 export function askWorkspace(request: AskRequest): Promise<AskResponse> {
 	return apiClient.post<AskResponse>('/memory/ask', request);
+}
+
+export function searchMemory(query: string): Promise<MemorySearchResponse> {
+	return apiClient.post<MemorySearchResponse>('/search', { query, limit: 10 });
 }
 
 export function openAskCitation(resource_ref: string): Promise<OpenCitationResponse> {

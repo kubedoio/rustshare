@@ -7,12 +7,14 @@ import { ApiError } from '$lib/api/types';
 const mocks = vi.hoisted(() => ({
 	askWorkspace: vi.fn(),
 	openAskCitation: vi.fn(),
+	searchMemory: vi.fn(),
 	goto: vi.fn()
 }));
 
 vi.mock('$lib/api/ask', () => ({
 	askWorkspace: mocks.askWorkspace,
-	openAskCitation: mocks.openAskCitation
+	openAskCitation: mocks.openAskCitation,
+	searchMemory: mocks.searchMemory
 }));
 vi.mock('$lib/stores/auth', () => ({ currentUser: readable({ tenant_id: 'tenant-1' }) }));
 vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
@@ -21,11 +23,44 @@ describe('AskExperience', () => {
 	beforeEach(() => {
 		mocks.askWorkspace.mockReset();
 		mocks.openAskCitation.mockReset();
+		mocks.searchMemory.mockReset();
 		mocks.goto.mockReset();
 		mocks.openAskCitation.mockResolvedValue({
 			available: true,
 			resource_ref: 'elembra://io.elembra.chat/message/m-1'
 		});
+	});
+
+	it('offers keyword search for workspace Memory without an LLM', async () => {
+		mocks.openAskCitation.mockResolvedValue({
+			available: true,
+			resource_ref: 'elembra://io.elembra.files/file/f-1'
+		});
+		mocks.searchMemory.mockResolvedValue({
+			total: 1,
+			results: [
+				{
+					source_application: 'io.elembra.files',
+					source_type: 'note',
+					resource_ref: 'elembra://io.elembra.files/file/f-1',
+					title: 'Runbook.md',
+					snippet: 'restart the service',
+					location: '/ops/Runbook.md',
+					provenance: {}
+				}
+			]
+		});
+		render(AskExperience);
+		await fireEvent.input(screen.getByLabelText('Your question'), {
+			target: { value: 'restart service' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Search by keyword' }));
+		await waitFor(() => expect(screen.getByText('Runbook.md')).toBeTruthy());
+		expect(mocks.searchMemory).toHaveBeenCalledWith('restart service');
+		expect(screen.getByText('restart the service')).toBeTruthy();
+		await fireEvent.click(screen.getByRole('button', { name: /Runbook\.md/ }));
+		expect(mocks.openAskCitation).toHaveBeenCalledWith('elembra://io.elembra.files/file/f-1');
+		expect(mocks.goto).toHaveBeenCalledWith('/files?preview=f-1');
 	});
 
 	it('opens a cited Note at the exact authorized historical version', async () => {
