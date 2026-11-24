@@ -63,6 +63,31 @@ describe('AskExperience', () => {
 		expect(mocks.goto).toHaveBeenCalledWith('/files?preview=f-1');
 	});
 
+	it('opens a reauthorized Mail result in the owning Mail application', async () => {
+		mocks.openAskCitation.mockResolvedValue({
+			available: true,
+			resource_ref: 'elembra://io.elembra.mail/message/mail-1'
+		});
+		mocks.searchMemory.mockResolvedValue({
+			total: 1,
+			results: [
+				{
+					source_application: 'io.elembra.mail',
+					source_type: 'message',
+					resource_ref: 'elembra://io.elembra.mail/message/mail-1',
+					title: 'Mail subject',
+					provenance: {}
+				}
+			]
+		});
+		render(AskExperience);
+		await fireEvent.input(screen.getByLabelText('Your question'), { target: { value: 'subject' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Search by keyword' }));
+		await fireEvent.click(await screen.findByRole('button', { name: /Mail subject/ }));
+		expect(mocks.openAskCitation).toHaveBeenCalledWith('elembra://io.elembra.mail/message/mail-1');
+		expect(mocks.goto).toHaveBeenCalledWith('/apps/mail/messages/mail-1');
+	});
+
 	it('ignores keyword search results from a previous scope after switching back', async () => {
 		let resolveFirst!: (value: { total: number; results: unknown[] }) => void;
 		let resolveSecond!: (value: { total: number; results: unknown[] }) => void;

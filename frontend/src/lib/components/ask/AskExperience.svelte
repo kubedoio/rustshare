@@ -118,6 +118,12 @@
 		return ref.startsWith(prefix) ? ref.slice(prefix.length) : null;
 	}
 
+	function mailMessageId(resourceRef: string): string | null {
+		const prefix = 'elembra://io.elembra.mail/message/';
+		const ref = resourceRef.split(/[?#]/, 1)[0];
+		return ref.startsWith(prefix) ? ref.slice(prefix.length) : null;
+	}
+
 	function sourceVersion(resourceRef: string): string | null {
 		try {
 			return new URL(resourceRef).searchParams.get('version');
@@ -128,6 +134,7 @@
 
 	function sourceApplication(citation: AskCitation): string {
 		if (citation.provenance.community_id || citation.provenance.channel_id) return 'Chat';
+		if (citation.resource_ref.startsWith('elembra://io.elembra.mail/message/')) return 'Mail';
 		if (citation.provenance.note_id) return 'Files · Note';
 		return citation.provenance.file_id ? 'Files' : 'Authorized source';
 	}
@@ -142,6 +149,7 @@
 			}
 			const file = fileId(opened.resource_ref, 'file');
 			const folder = fileId(opened.resource_ref, 'folder');
+			const mailMessage = mailMessageId(opened.resource_ref);
 			const version = sourceVersion(opened.resource_ref);
 			const noteId = citation.provenance.note_id;
 			if (file && noteId === file) {
@@ -156,6 +164,7 @@
 				const versionParam = version ? `&version=${encodeURIComponent(version)}` : '';
 				goto(`/files?preview=${encodeURIComponent(file)}${versionParam}`);
 			} else if (folder) goto(`/files?folder=${encodeURIComponent(folder)}`);
+			else if (mailMessage) goto(`/apps/mail/messages/${encodeURIComponent(mailMessage)}`);
 			else if (opened.resource_ref.startsWith('elembra://io.elembra.chat/')) {
 				onChatCitationOpen(opened);
 			}
