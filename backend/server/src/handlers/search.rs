@@ -73,6 +73,8 @@ pub struct SearchResultItem {
 /// Unified search response.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SearchResponse {
+    /// Stable identifier used to correlate this query with Memory source audit events.
+    pub request_id: uuid::Uuid,
     pub results: Vec<SearchResultItem>,
     pub total: usize,
 }
@@ -91,6 +93,7 @@ pub struct SearchResponse {
         (status = 200, description = "Search results", body = SearchResponse),
         (status = 400, description = "Invalid request", body = crate::handlers::ErrorResponse),
         (status = 401, description = "Unauthorized", body = crate::handlers::ErrorResponse),
+        (status = 500, description = "Source access audit unavailable", body = crate::handlers::ErrorResponse),
         (status = 429, description = "Rate limited", body = crate::handlers::ErrorResponse),
     ),
 )]
@@ -118,12 +121,23 @@ pub async fn unified_search(
         rustshare_core::domain::WorkspaceId(auth.tenant_id),
     );
 
+    let request_id = uuid::Uuid::new_v4();
     let response = state
         .unified_search_service
-        .search(&ctx, query, &sources, request.limit)
+        .search_scoped_for_run(
+            &ctx,
+            query,
+            &sources,
+            request.limit,
+            &crate::services::unified_search::SearchScope::Workspace,
+            request_id,
+        )
         .await
         .map_err(|error| match error {
             UnifiedSearchError::InvalidQuery(message) => AppError::bad_request(message),
+            UnifiedSearchError::AuditUnavailable => {
+                AppError::internal("Search source audit unavailable")
+            }
         })?;
 
     let mut results = Vec::with_capacity(response.results.len());
@@ -294,6 +308,7 @@ pub async fn unified_search(
     results.truncate(request.limit.clamp(1, 50));
 
     Ok(Json(SearchResponse {
+        request_id,
         total: results.len(),
         results,
     }))

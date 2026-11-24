@@ -83,9 +83,8 @@ use rustshare_server::buzz_gateway::{
 };
 #[cfg(feature = "test-recording-provider")]
 use rustshare_server::services::ask_workspace::{
-    AskWorkspaceService, LlmResult, RecordingLlmProvider, SYSTEM_POLICY,
+    AskWorkspaceService, LlmError, LlmResult, RecordingLlmProvider, SYSTEM_POLICY,
 };
-#[cfg(feature = "test-recording-provider")]
 use rustshare_server::services::unified_search::SearchScope;
 use rustshare_server::services::unified_search::{
     SearchSource, UnifiedSearchResponse, UnifiedSearchService,
@@ -1108,6 +1107,21 @@ async fn create_file_with_content(
         .create_file(&file)
         .await
         .expect("Failed to create test file");
+    sqlx::query(
+        "INSERT INTO file_versions (id, file_id, version_number, content_hash, storage_key, size, created_by, tenant_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(file.id)
+    .bind(file.current_version)
+    .bind(&file.content_hash)
+    .bind(file.storage_key())
+    .bind(file.size)
+    .bind(owner_id)
+    .bind(file.tenant_id)
+    .execute(&harness.pool)
+    .await
+    .expect("create the current Files version");
     file
 }
 
@@ -1778,6 +1792,34 @@ async fn cross_tenant_candidates_never_appear() {
         "tenant B's chat candidate must never surface in A's search"
     );
 
+    let cross_tenant_request = Uuid::new_v4();
+    let denied = harness
+        .service()
+        .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone())))
+        .search_scoped_for_run(
+            &ctx_a,
+            "confidential",
+            &[SearchSource::Files],
+            8,
+            &SearchScope::Resource(file_ref(file_b.id)),
+            cross_tenant_request,
+        )
+        .await
+        .expect("cross-tenant Note access is denied without failing search");
+    assert!(denied.results.is_empty());
+    let cross_tenant_audit: (Uuid, String, String, bool) = sqlx::query_as(
+        "SELECT principal_id, source_resource_ref, outcome, context_entered \
+         FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(cross_tenant_request)
+    .fetch_one(&pool)
+    .await
+    .expect("cross-tenant denial is attributed");
+    assert_eq!(cross_tenant_audit.0, owner_a.id);
+    assert!(cross_tenant_audit.1.contains(&file_b.id.to_string()));
+    assert_eq!(cross_tenant_audit.2, "denied");
+    assert!(!cross_tenant_audit.3);
+
     cleanup(&pool, tenant_a).await;
     cleanup(&pool, tenant_b).await;
 }
@@ -1821,12 +1863,15 @@ async fn revoked_files_share_disappears() {
         .service()
         .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone())));
 
+    let allowed_request = Uuid::new_v4();
     let before = service
-        .search(
+        .search_scoped_for_run(
             &recipient_ctx,
             "shared",
             &[SearchSource::Files, SearchSource::Chat],
             50,
+            &rustshare_server::services::unified_search::SearchScope::Workspace,
+            allowed_request,
         )
         .await
         .expect("the search succeeds");
@@ -1844,18 +1889,61 @@ async fn revoked_files_share_disappears() {
         "the shared Connector file carries its cataloged Files version"
     );
 
+    let allowed_audit: (Uuid, String, Uuid, String, String, String, bool) = sqlx::query_as(
+        "SELECT principal_id, principal_kind, initiator_principal_id, source_resource_ref, file_version, owner_application, context_entered \
+         FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(allowed_request)
+    .fetch_one(&pool)
+    .await
+    .expect("authorized access is attributed to the request");
+    assert_eq!(allowed_audit.0, recipient.id);
+    assert_eq!(allowed_audit.1, "user");
+    assert_eq!(allowed_audit.2, recipient.id);
+    assert_eq!(allowed_audit.3, before.results[0].resource_ref);
+    assert_eq!(allowed_audit.4, format!("sha256:{}", file.content_hash));
+    assert_eq!(allowed_audit.5, "io.elembra.files");
+    assert!(!allowed_audit.6);
+    service
+        .finalize_retrieval_context(
+            allowed_request,
+            &[before.results[0].resource_ref.clone()],
+            &[before.results[0].resource_ref.clone()],
+        )
+        .await
+        .expect("context entry is durably attributed");
+    let context_entered: bool = sqlx::query_scalar(
+        "SELECT context_entered FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(allowed_request)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(context_entered);
+    let outcome: String = sqlx::query_scalar(
+        "SELECT outcome FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(allowed_request)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(outcome, "authorized");
+
     harness
         .metadata_store
         .revoke_share(share.id, owner.id)
         .await
         .expect("revoke the share");
 
+    let denied_request = Uuid::new_v4();
     let after = service
-        .search(
+        .search_scoped_for_run(
             &recipient_ctx,
             "shared",
             &[SearchSource::Files, SearchSource::Chat],
             50,
+            &rustshare_server::services::unified_search::SearchScope::Workspace,
+            denied_request,
         )
         .await
         .expect("the search succeeds");
@@ -1863,6 +1951,18 @@ async fn revoked_files_share_disappears() {
         after.results.is_empty(),
         "the revoked recipient must no longer see the file: {after:?}"
     );
+    let denial: (Uuid, String, String, bool) = sqlx::query_as(
+        "SELECT principal_id, source_resource_ref, outcome, context_entered \
+         FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(denied_request)
+    .fetch_one(&pool)
+    .await
+    .expect("revoked access is recorded without source content");
+    assert_eq!(denial.0, recipient.id);
+    assert_eq!(denial.1, before.results[0].resource_ref);
+    assert_eq!(denial.2, "denied");
+    assert!(!denial.3);
 
     let owner_result = service
         .search(
@@ -3422,6 +3522,107 @@ async fn full_stack_buzz_gateway_end_to_end() {
 // Ask Workspace provider boundary
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "test-recording-provider")]
+#[tokio::test]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn memory_source_audit_failure_prevents_llm_context_submission() {
+    let _guard = SERIAL.lock().await;
+    let harness = harness_with_scripted_authority(pool().await, false).await;
+    let pool = harness.pool.clone();
+    let tenant = TenantId::from(harness.tenant);
+    cleanup(&pool, tenant).await;
+
+    let owner = create_user(&harness.metadata_store, "audit-failure-owner", tenant.0).await;
+    let file = create_file_with_content(
+        &harness,
+        owner.id,
+        "audit-failure.md",
+        "/docs/audit-failure.md",
+        b"SENSITIVE-AUDIT-FAILURE-CONTEXT",
+    )
+    .await;
+    insert_connector_file_projection(&pool, &file).await;
+    let ctx = user_ctx(PrincipalId::from(owner.id), tenant);
+    let source_ref = file_ref(file.id).with_version(format!("sha256:{}", file.content_hash));
+    let control = harness
+        .service()
+        .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone())))
+        .search_scoped_for_run(
+            &ctx,
+            "audit-failure",
+            &[SearchSource::Files],
+            8,
+            &SearchScope::Workspace,
+            Uuid::new_v4(),
+        )
+        .await
+        .expect("the source is authorized before injecting an audit failure");
+    assert_eq!(control.results.len(), 1);
+    assert_eq!(control.results[0].resource_ref, source_ref.to_uri());
+    assert!(control.results[0]
+        .snippet
+        .as_deref()
+        .is_some_and(|snippet| snippet.contains("SENSITIVE-AUDIT-FAILURE-CONTEXT")));
+
+    let suffix = Uuid::new_v4().simple().to_string();
+    let function_name = format!("rs_memory_audit_fail_{suffix}");
+    let trigger_name = format!("rs_memory_audit_fail_{suffix}");
+    let mut audit_setup = pool.begin().await.expect("begin audit failure setup");
+    sqlx::query(&format!(
+        "CREATE FUNCTION public.{function_name}() RETURNS trigger \
+         LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected Memory audit failure'; END; $$"
+    ))
+    .execute(&mut *audit_setup)
+    .await
+    .expect("create an audit failure trigger function");
+    sqlx::query(&format!(
+        "CREATE TRIGGER {trigger_name} BEFORE INSERT ON memory_files_source_access_audit \
+         FOR EACH ROW EXECUTE FUNCTION public.{function_name}()"
+    ))
+    .execute(&mut *audit_setup)
+    .await
+    .expect("inject Memory source audit failure");
+    audit_setup
+        .commit()
+        .await
+        .expect("commit audit failure setup");
+
+    let provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "must not be called".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let ask = AskWorkspaceService::new(
+        Arc::new(
+            harness
+                .service()
+                .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+        ),
+        Some(provider.clone()),
+    );
+    let result = ask
+        .ask(&ctx, "audit-failure", &[SearchSource::Files], 8)
+        .await;
+    let provider_calls = provider.calls().await;
+
+    sqlx::query(&format!(
+        "DROP TRIGGER {trigger_name} ON memory_files_source_access_audit"
+    ))
+    .execute(&pool)
+    .await
+    .expect("remove the audit failure trigger");
+    sqlx::query(&format!("DROP FUNCTION public.{function_name}()"))
+        .execute(&pool)
+        .await
+        .expect("remove the audit failure function");
+    cleanup(&pool, tenant).await;
+
+    assert!(matches!(result, Err(LlmError::Failed)));
+    assert!(
+        provider_calls.is_empty(),
+        "source content must not reach the provider when its audit write fails"
+    );
+}
+
 /// Proves the exact generation input: both owning sources are freshly fetched,
 /// stable source IDs are assigned by the server, and the provider sees no
 /// candidate snippets or Memory-only content.
@@ -3472,7 +3673,14 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         answer: "Both sources agree.".into(),
         citations: vec!["src-001".into(), "src-002".into()],
     }));
-    let ask = AskWorkspaceService::new(Arc::new(harness.service()), Some(provider.clone()));
+    let ask = AskWorkspaceService::new(
+        Arc::new(
+            harness
+                .service()
+                .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+        ),
+        Some(provider.clone()),
+    );
     let answer = ask
         .ask(
             &user_ctx(env.principal, tenant),
@@ -3517,8 +3725,14 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         answer: "The note contains the plan.".into(),
         citations: vec!["src-001".into()],
     }));
-    let note_ask =
-        AskWorkspaceService::new(Arc::new(harness.service()), Some(note_provider.clone()));
+    let note_ask = AskWorkspaceService::new(
+        Arc::new(
+            harness
+                .service()
+                .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+        ),
+        Some(note_provider.clone()),
+    );
     let note_answer = note_ask
         .ask_scoped(
             &user_ctx(env.principal, tenant),
@@ -3535,6 +3749,56 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
     assert!(note_provider.calls().await[0].sources[0]
         .text
         .contains("FILE-AUTHORIZED-BYTES"));
+    let note_audit: (Uuid, String, String, bool) = sqlx::query_as(
+        "SELECT principal_id, source_resource_ref, outcome, context_entered \
+         FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(note_answer.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("authorized current Note retrieval is attributable");
+    assert_eq!(note_audit.0, owner.id);
+    assert!(note_audit.1.contains(&file.id.to_string()));
+    assert_eq!(note_audit.2, "authorized");
+    assert!(note_audit.3);
+
+    let stranger = create_user(&harness.metadata_store, "ask-stranger", tenant.0).await;
+    let denied_provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "must not be called".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let denied_ask = AskWorkspaceService::new(
+        Arc::new(
+            harness
+                .service()
+                .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+        ),
+        Some(denied_provider.clone()),
+    );
+    let denied = denied_ask
+        .ask_scoped(
+            &user_ctx(PrincipalId::from(stranger.id), tenant),
+            "private plan",
+            &[SearchSource::Files],
+            8,
+            &SearchScope::Resource(file_ref(file.id)),
+        )
+        .await
+        .expect("denied Note retrieval degrades without exposing its content");
+    assert!(denied.insufficient_evidence);
+    assert!(denied_provider.calls().await.is_empty());
+    let denied_audit: (Uuid, String, String, bool) = sqlx::query_as(
+        "SELECT principal_id, source_resource_ref, outcome, context_entered \
+         FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(denied.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("denied current Note access is attributed");
+    assert_eq!(denied_audit.0, stranger.id);
+    assert!(denied_audit.1.contains(&file.id.to_string()));
+    assert_eq!(denied_audit.2, "denied");
+    assert!(!denied_audit.3);
 
     let folder_id = Uuid::new_v4();
     let outside = create_file_with_content(
@@ -3721,7 +3985,11 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         citations: vec!["src-001".into()],
     }));
     let deleted_note = AskWorkspaceService::new(
-        Arc::new(harness.service()),
+        Arc::new(
+            harness
+                .service()
+                .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+        ),
         Some(deleted_note_provider.clone()),
     )
     .ask_scoped(
@@ -3735,6 +4003,18 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
     .expect("deleted note Ask degrades cleanly");
     assert!(deleted_note.insufficient_evidence);
     assert!(deleted_note_provider.calls().await.is_empty());
+    let deleted_audit: (Uuid, String, String, bool) = sqlx::query_as(
+        "SELECT principal_id, source_resource_ref, outcome, context_entered \
+         FROM memory_files_source_access_audit WHERE request_id=$1",
+    )
+    .bind(deleted_note.run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("deleted Note access is attributed");
+    assert_eq!(deleted_audit.0, owner.id);
+    assert!(deleted_audit.1.contains(&file.id.to_string()));
+    assert_eq!(deleted_audit.2, "unavailable");
+    assert!(!deleted_audit.3);
 
     cleanup(&pool, tenant).await;
 }
