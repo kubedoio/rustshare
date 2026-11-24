@@ -7,12 +7,14 @@ import { ApiError } from '$lib/api/types';
 const mocks = vi.hoisted(() => ({
 	askWorkspace: vi.fn(),
 	openAskCitation: vi.fn(),
+	searchMemory: vi.fn(),
 	goto: vi.fn()
 }));
 
 vi.mock('$lib/api/ask', () => ({
 	askWorkspace: mocks.askWorkspace,
-	openAskCitation: mocks.openAskCitation
+	openAskCitation: mocks.openAskCitation,
+	searchMemory: mocks.searchMemory
 }));
 vi.mock('$lib/stores/auth', () => ({ currentUser: readable({ tenant_id: 'tenant-1' }) }));
 vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
@@ -21,11 +23,131 @@ describe('AskExperience', () => {
 	beforeEach(() => {
 		mocks.askWorkspace.mockReset();
 		mocks.openAskCitation.mockReset();
+		mocks.searchMemory.mockReset();
 		mocks.goto.mockReset();
 		mocks.openAskCitation.mockResolvedValue({
 			available: true,
 			resource_ref: 'elembra://io.elembra.chat/message/m-1'
 		});
+	});
+
+	it('offers keyword search for workspace Memory without an LLM', async () => {
+		mocks.openAskCitation.mockResolvedValue({
+			available: true,
+			resource_ref: 'elembra://io.elembra.files/file/f-1'
+		});
+		mocks.searchMemory.mockResolvedValue({
+			total: 1,
+			results: [
+				{
+					source_application: 'io.elembra.files',
+					source_type: 'note',
+					resource_ref: 'elembra://io.elembra.files/file/f-1',
+					title: 'Runbook.md',
+					snippet: 'restart the service',
+					location: '/ops/Runbook.md',
+					provenance: {}
+				}
+			]
+		});
+		render(AskExperience);
+		await fireEvent.input(screen.getByLabelText('Your question'), {
+			target: { value: 'restart service' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Search by keyword' }));
+		await waitFor(() => expect(screen.getByText('Runbook.md')).toBeTruthy());
+		expect(mocks.searchMemory).toHaveBeenCalledWith('restart service');
+		expect(screen.getByText('restart the service')).toBeTruthy();
+		await fireEvent.click(screen.getByRole('button', { name: /Runbook\.md/ }));
+		expect(mocks.openAskCitation).toHaveBeenCalledWith('elembra://io.elembra.files/file/f-1');
+		expect(mocks.goto).toHaveBeenCalledWith('/files?preview=f-1');
+	});
+
+	it('opens a reauthorized Mail result in the owning Mail application', async () => {
+		mocks.openAskCitation.mockResolvedValue({
+			available: true,
+			resource_ref: 'elembra://io.elembra.mail/message/mail-1'
+		});
+		mocks.searchMemory.mockResolvedValue({
+			total: 1,
+			results: [
+				{
+					source_application: 'io.elembra.mail',
+					source_type: 'message',
+					resource_ref: 'elembra://io.elembra.mail/message/mail-1',
+					title: 'Mail subject',
+					provenance: {}
+				}
+			]
+		});
+		render(AskExperience);
+		await fireEvent.input(screen.getByLabelText('Your question'), { target: { value: 'subject' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Search by keyword' }));
+		await fireEvent.click(await screen.findByRole('button', { name: /Mail subject/ }));
+		expect(mocks.openAskCitation).toHaveBeenCalledWith('elembra://io.elembra.mail/message/mail-1');
+		expect(mocks.goto).toHaveBeenCalledWith('/apps/mail/messages/mail-1');
+	});
+
+	it('ignores keyword search results from a previous scope after switching back', async () => {
+		let resolveFirst!: (value: { total: number; results: unknown[] }) => void;
+		let resolveSecond!: (value: { total: number; results: unknown[] }) => void;
+		mocks.searchMemory
+			.mockReturnValueOnce(new Promise((resolve) => (resolveFirst = resolve)))
+			.mockReturnValueOnce(new Promise((resolve) => (resolveSecond = resolve)));
+		const view = render(AskExperience);
+		await fireEvent.input(screen.getByLabelText('Your question'), { target: { value: 'term' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Search by keyword' }));
+
+		await view.rerender({
+			scope: { type: 'folder', resourceRef: 'elembra://io.elembra.files/folder/f-2' },
+			scopeLabel: 'Folder'
+		});
+		await view.rerender({ scope: { type: 'workspace' }, scopeLabel: 'Workspace' });
+		const searchButton = screen.getByRole('button', { name: 'Search by keyword' });
+		expect((searchButton as HTMLButtonElement).disabled).toBe(false);
+		await fireEvent.click(searchButton);
+		resolveSecond({
+			total: 1,
+			results: [
+				{
+					source_application: 'io.elembra.files',
+					source_type: 'note',
+					resource_ref: 'elembra://io.elembra.files/file/current',
+					title: 'Current result',
+					provenance: {}
+				}
+			]
+		});
+		await waitFor(() => expect(screen.getByText('Current result')).toBeTruthy());
+
+		resolveFirst({
+			total: 1,
+			results: [
+				{
+					source_application: 'io.elembra.files',
+					source_type: 'note',
+					resource_ref: 'elembra://io.elembra.files/file/stale',
+					title: 'Stale result',
+					provenance: {}
+				}
+			]
+		});
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(screen.queryByText('Stale result')).toBeNull();
+		expect(screen.getByText('Current result')).toBeTruthy();
+	});
+
+	it('keeps Ask available when a keyword query exceeds the search limit', async () => {
+		render(AskExperience);
+		await fireEvent.input(screen.getByLabelText('Your question'), {
+			target: { value: 'a'.repeat(1_001) }
+		});
+		expect(screen.getByRole('button', { name: 'Search by keyword' }).hasAttribute('disabled')).toBe(
+			true
+		);
+		expect(screen.getByText(/Keyword search supports up to 1000 characters/)).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Ask' }).hasAttribute('disabled')).toBe(false);
+		expect(mocks.searchMemory).not.toHaveBeenCalled();
 	});
 
 	it('opens a cited Note at the exact authorized historical version', async () => {

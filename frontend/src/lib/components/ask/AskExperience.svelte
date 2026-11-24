@@ -4,10 +4,12 @@
 	import {
 		askWorkspace,
 		openAskCitation,
+		searchMemory,
 		type AskCitation,
 		type OpenCitationResponse,
 		type AskResponse,
-		type AskScope
+		type AskScope,
+		type MemorySearchResult
 	} from '$lib/api/ask';
 	import { currentUser } from '$lib/stores/auth';
 	import { ArrowUp, BookOpen, ExternalLink, LoaderCircle } from 'lucide-svelte';
@@ -27,11 +29,15 @@
 	}: Props = $props();
 	let question = $state('');
 	let response = $state<AskResponse | null>(null);
+	let searchResults = $state<MemorySearchResult[] | null>(null);
 	let error = $state('');
 	let loading = $state(false);
+	let searching = $state(false);
 	let openingCitation = $state<string | null>(null);
 	let requestGeneration = 0;
 	let scopeKey = $state('');
+	const maxKeywordQueryChars = 1_000;
+	let keywordQueryTooLong = $derived(Array.from(question.trim()).length > maxKeywordQueryChars);
 
 	$effect(() => {
 		const nextScopeKey = JSON.stringify(scope);
@@ -39,12 +45,38 @@
 		scopeKey = nextScopeKey;
 		requestGeneration += 1;
 		response = null;
+		searchResults = null;
 		error = '';
 		// A stale in-flight request skips its own finally (generation mismatch),
 		// so reset these here or the form stays stuck in loading.
 		loading = false;
+		searching = false;
 		openingCitation = null;
 	});
+
+	async function search() {
+		const trimmed = question.trim();
+		if (!trimmed || searching || loading || scope.type !== 'workspace') return;
+		if (Array.from(trimmed).length > maxKeywordQueryChars) {
+			error = `Keyword search supports up to ${maxKeywordQueryChars} characters. Shorten your query to search.`;
+			return;
+		}
+		const generation = ++requestGeneration;
+		searching = true;
+		error = '';
+		searchResults = null;
+		response = null;
+		try {
+			const results = await searchMemory(trimmed);
+			if (generation === requestGeneration) searchResults = results.results;
+		} catch {
+			if (generation === requestGeneration) {
+				error = 'Memory search could not be completed. Please try again.';
+			}
+		} finally {
+			if (generation === requestGeneration) searching = false;
+		}
+	}
 
 	function errorMessage(value: unknown): string {
 		if (value instanceof ApiError) {
@@ -64,6 +96,7 @@
 		loading = true;
 		error = '';
 		response = null;
+		searchResults = null;
 		try {
 			const result = await askWorkspace({
 				question: trimmed,
@@ -85,6 +118,12 @@
 		return ref.startsWith(prefix) ? ref.slice(prefix.length) : null;
 	}
 
+	function mailMessageId(resourceRef: string): string | null {
+		const prefix = 'elembra://io.elembra.mail/message/';
+		const ref = resourceRef.split(/[?#]/, 1)[0];
+		return ref.startsWith(prefix) ? ref.slice(prefix.length) : null;
+	}
+
 	function sourceVersion(resourceRef: string): string | null {
 		try {
 			return new URL(resourceRef).searchParams.get('version');
@@ -95,6 +134,7 @@
 
 	function sourceApplication(citation: AskCitation): string {
 		if (citation.provenance.community_id || citation.provenance.channel_id) return 'Chat';
+		if (citation.resource_ref.startsWith('elembra://io.elembra.mail/message/')) return 'Mail';
 		if (citation.provenance.note_id) return 'Files · Note';
 		return citation.provenance.file_id ? 'Files' : 'Authorized source';
 	}
@@ -109,6 +149,7 @@
 			}
 			const file = fileId(opened.resource_ref, 'file');
 			const folder = fileId(opened.resource_ref, 'folder');
+			const mailMessage = mailMessageId(opened.resource_ref);
 			const version = sourceVersion(opened.resource_ref);
 			const noteId = citation.provenance.note_id;
 			if (file && noteId === file) {
@@ -123,6 +164,7 @@
 				const versionParam = version ? `&version=${encodeURIComponent(version)}` : '';
 				goto(`/files?preview=${encodeURIComponent(file)}${versionParam}`);
 			} else if (folder) goto(`/files?folder=${encodeURIComponent(folder)}`);
+			else if (mailMessage) goto(`/apps/mail/messages/${encodeURIComponent(mailMessage)}`);
 			else if (opened.resource_ref.startsWith('elembra://io.elembra.chat/')) {
 				onChatCitationOpen(opened);
 			}
@@ -161,23 +203,69 @@
 			rows="4"
 			placeholder="What would you like to understand?"
 			class="w-full resize-none border-0 bg-transparent p-2 text-base outline-none placeholder:text-base-content/40"
-			disabled={loading}></textarea>
+			disabled={loading || searching}></textarea>
+		{#if scope.type === 'workspace' && keywordQueryTooLong}
+			<p class="px-2 pb-2 text-sm text-base-content/60" aria-live="polite">
+				Keyword search supports up to {maxKeywordQueryChars} characters. Shorten your query to search.
+			</p>
+		{/if}
 		<div class="flex items-center justify-between gap-3 border-t border-base-200 pt-3">
 			<span class="text-xs text-base-content/50">{question.length}/4000 · Scope: {scopeLabel}</span>
-			<button
-				type="submit"
-				class="btn gap-2 btn-primary btn-sm"
-				disabled={loading || !question.trim() || !$currentUser?.tenant_id}
-			>
-				{#if loading}<LoaderCircle size={15} class="animate-spin" />{:else}<ArrowUp
-						size={15}
-					/>{/if}
-				{loading ? 'Generating' : 'Ask'}
-			</button>
+			<div class="flex gap-2">
+				{#if scope.type === 'workspace'}
+					<button
+						type="button"
+						class="btn btn-ghost btn-sm"
+						disabled={loading || searching || !question.trim() || keywordQueryTooLong}
+						onclick={() => void search()}
+					>
+						{searching ? 'Searching' : 'Search by keyword'}
+					</button>
+				{/if}
+				<button
+					type="submit"
+					class="btn gap-2 btn-primary btn-sm"
+					disabled={loading || searching || !question.trim() || !$currentUser?.tenant_id}
+				>
+					{#if loading}<LoaderCircle size={15} class="animate-spin" />{:else}<ArrowUp
+							size={15}
+						/>{/if}
+					{loading ? 'Generating' : 'Ask'}
+				</button>
+			</div>
 		</div>
 	</form>
 
 	{#if error}<div class="mt-5 alert alert-warning" role="alert"><span>{error}</span></div>{/if}
+	{#if searchResults}
+		<section class="mt-8" aria-label="Memory keyword search results" aria-live="polite">
+			<h2 class="mb-3 text-sm font-semibold text-base-content">
+				Search results ({searchResults.length})
+			</h2>
+			{#if searchResults.length}
+				<div class="grid gap-2 sm:grid-cols-2">
+					{#each searchResults as result (result.resource_ref)}
+						<button
+							type="button"
+							class="w-full rounded-xl border border-base-300/70 p-3 text-left hover:bg-base-200/50"
+							onclick={() => void openCitation(result)}
+						>
+							<h3 class="text-sm font-medium">{result.title}</h3>
+							<p class="mt-1 text-xs text-base-content/50">
+								{result.source_application} · {result.source_type}{#if result.location}
+									· {result.location}{/if}
+							</p>
+							{#if result.snippet}<p class="mt-2 text-sm text-base-content/70">
+									{result.snippet}
+								</p>{/if}
+						</button>
+					{/each}
+				</div>
+			{:else}
+				<p class="text-sm text-base-content/60">No matching authorized sources.</p>
+			{/if}
+		</section>
+	{/if}
 	{#if response}
 		<article class="mt-8" aria-live="polite">
 			<div class="mb-4 flex items-center gap-2 text-sm font-medium text-base-content/60">
