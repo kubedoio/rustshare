@@ -2832,6 +2832,18 @@ impl MetadataStore {
         query: &str,
         limit: usize,
     ) -> Result<Vec<File>> {
+        self.search_files_by_name_path_scoped(tenant_id, query, None, None, limit)
+            .await
+    }
+
+    pub async fn search_files_by_name_path_scoped(
+        &self,
+        tenant_id: Uuid,
+        query: &str,
+        source_file_ids: Option<&[Uuid]>,
+        source_folder_ids: Option<&[Uuid]>,
+        limit: usize,
+    ) -> Result<Vec<File>> {
         let query = query.trim();
         if query.is_empty() {
             return Ok(Vec::new());
@@ -2846,6 +2858,8 @@ impl MetadataStore {
             FROM files
             WHERE tenant_id = $1 AND deleted_at IS NULL
               AND (name ILIKE '%' || $2 || '%' OR path ILIKE '%' || $2 || '%')
+              AND ($4::uuid[] IS NULL OR id = ANY($4))
+              AND ($5::uuid[] IS NULL OR parent_folder_id = ANY($5))
             ORDER BY (name ILIKE $2) DESC, (name ILIKE '%' || $2 || '%') DESC, path
             LIMIT $3
             "#,
@@ -2853,6 +2867,8 @@ impl MetadataStore {
         .bind(tenant_id)
         .bind(&pattern)
         .bind(limit)
+        .bind(source_file_ids.map(|ids| ids.to_vec()))
+        .bind(source_folder_ids.map(|ids| ids.to_vec()))
         .fetch_all(&self.pool)
         .await?;
         let files = rows

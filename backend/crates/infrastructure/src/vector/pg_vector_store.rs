@@ -299,6 +299,19 @@ fn row_to_indexed_doc(row: &PgRow, tenant_id: Uuid) -> Result<IndexedDocument> {
     })
 }
 
+fn matches_retrieval_scope(doc: &IndexedDocument, principal: &RetrievalPrincipal) -> bool {
+    principal.source_file_ids.as_ref().is_none_or(|ids| {
+        doc.acl
+            .as_ref()
+            .is_some_and(|acl| ids.contains(&acl.source_file_id))
+    }) && principal.source_folder_ids.as_ref().is_none_or(|ids| {
+        doc.acl
+            .as_ref()
+            .and_then(|acl| acl.source_folder_id)
+            .is_some_and(|folder_id| ids.contains(&folder_id))
+    })
+}
+
 /// Convert a returned `note_index_chunks` row into an indexed document and similarity score.
 fn row_to_doc(row: &PgRow, tenant_id: Uuid) -> Result<(IndexedDocument, f32)> {
     let doc = row_to_indexed_doc(row, tenant_id)?;
@@ -393,8 +406,10 @@ impl VectorStore for PgVectorStore {
                   OR (visibility = 'workspace' AND workspace_id = $5)
                   OR read_acl && $4::text[]
               )
+              AND ($6::uuid[] IS NULL OR source_file_id = ANY($6))
+              AND ($7::uuid[] IS NULL OR source_folder_id = ANY($7))
             ORDER BY embedding <=> $1::vector
-            LIMIT $6
+            LIMIT $8
             "#,
         )
         .bind(&query_vector_text)
@@ -402,6 +417,8 @@ impl VectorStore for PgVectorStore {
         .bind(principal.user_id)
         .bind(&caller_principals)
         .bind(principal.workspace_id)
+        .bind(&principal.source_file_ids)
+        .bind(&principal.source_folder_ids)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
@@ -411,7 +428,9 @@ impl VectorStore for PgVectorStore {
             match row_to_doc(&row, tenant_id) {
                 Ok((doc, similarity)) => {
                     if let Some(projection) = validate_chunk_acl(&doc) {
-                        if can_access(&projection, principal) {
+                        if can_access(&projection, principal)
+                            && matches_retrieval_scope(&doc, principal)
+                        {
                             results.push((doc, similarity));
                         }
                     }
@@ -456,7 +475,7 @@ impl VectorStore for PgVectorStore {
             if offset > 0 {
                 term_clause.push_str(" OR ");
             }
-            let index = 6 + offset;
+            let index = 8 + offset;
             term_clause.push_str(&format!(
                 "(content ILIKE '%' || ${index} || '%' \
                  OR file_name ILIKE '%' || ${index} || '%' \
@@ -480,8 +499,10 @@ impl VectorStore for PgVectorStore {
                   OR (visibility = 'workspace' AND workspace_id = $4)
                   OR read_acl && $3::text[]
               )
+              AND ($6::uuid[] IS NULL OR source_file_id = ANY($6))
+              AND ($7::uuid[] IS NULL OR source_folder_id = ANY($7))
               AND ( {term_clause} )
-            ORDER BY (file_name ILIKE '%' || $6 || '%') DESC, id
+            ORDER BY (file_name ILIKE '%' || $8 || '%') DESC, id
             LIMIT $5
             "#
         );
@@ -493,7 +514,9 @@ impl VectorStore for PgVectorStore {
             .bind(principal.user_id)
             .bind(&caller_principals)
             .bind(principal.workspace_id)
-            .bind(limit);
+            .bind(limit)
+            .bind(&principal.source_file_ids)
+            .bind(&principal.source_folder_ids);
         for term in &terms {
             query_builder = query_builder.bind(term);
         }
@@ -504,7 +527,9 @@ impl VectorStore for PgVectorStore {
             match row_to_indexed_doc(&row, tenant_id) {
                 Ok(doc) => {
                     if let Some(projection) = validate_chunk_acl(&doc) {
-                        if can_access(&projection, principal) {
+                        if can_access(&projection, principal)
+                            && matches_retrieval_scope(&doc, principal)
+                        {
                             let score = keyword_score(&doc, query);
                             if score > 0.0 {
                                 results.push((doc, score));

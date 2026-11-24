@@ -416,6 +416,29 @@ impl MemoryCatalogStore {
         query: &str,
         limit: usize,
     ) -> Result<Vec<MemoryCatalogRecord>> {
+        self.search_with_channel(tenant_id, query, None, limit)
+            .await
+    }
+
+    pub async fn search_in_channel(
+        &self,
+        tenant_id: TenantId,
+        query: &str,
+        community_id: &str,
+        channel_id: &str,
+        limit: usize,
+    ) -> Result<Vec<MemoryCatalogRecord>> {
+        self.search_with_channel(tenant_id, query, Some((community_id, channel_id)), limit)
+            .await
+    }
+
+    async fn search_with_channel(
+        &self,
+        tenant_id: TenantId,
+        query: &str,
+        channel_scope: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<Vec<MemoryCatalogRecord>> {
         let query = query.trim();
         if query.is_empty() {
             return Ok(Vec::new());
@@ -433,7 +456,9 @@ impl MemoryCatalogStore {
             .collect();
         let channel_param = terms.len() + 2;
         let exact_param = channel_param + 1;
-        let limit_param = exact_param + 1;
+        let community_filter_param = exact_param + 1;
+        let channel_filter_param = community_filter_param + 1;
+        let limit_param = channel_filter_param + 1;
         let limit = limit as i64;
         let sql = format!(
             "SELECT {RECORD_COLUMNS} FROM memory_catalog
@@ -441,6 +466,7 @@ impl MemoryCatalogStore {
                AND source_application = 'io.elembra.chat'
                AND source_type = 'message'
                AND indexing_status <> 'tombstoned'
+               AND (${community_filter_param}::text IS NULL OR (community_id = ${community_filter_param} AND channel_id = ${channel_filter_param}))
                AND ({}
                     OR message_id = ${}
                     OR author_pubkey = ${}
@@ -460,6 +486,8 @@ impl MemoryCatalogStore {
         let rows = query_builder
             .bind(escape_ilike(query))
             .bind(query)
+            .bind(channel_scope.map(|(community_id, _)| community_id.to_string()))
+            .bind(channel_scope.map(|(_, channel_id)| channel_id.to_string()))
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;

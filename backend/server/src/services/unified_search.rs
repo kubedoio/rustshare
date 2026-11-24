@@ -299,17 +299,6 @@ impl UnifiedSearchService {
         // Per-source candidate budget (integer math).
         let budget = limit * 4;
 
-        // Step 2: collect candidates per source.
-        let files_requested = sources.is_empty() || sources.contains(&SearchSource::Files);
-        let chat_requested = sources.is_empty() || sources.contains(&SearchSource::Chat);
-        let mut candidates = Vec::new();
-        if files_requested {
-            candidates.extend(self.files_candidates(ctx, query, budget).await);
-        }
-        if chat_requested {
-            candidates.extend(self.chat_candidates(ctx, query, budget).await);
-        }
-
         let allowed_folders = match scope {
             SearchScope::Folder(folder) => {
                 let Ok(resolved) = self
@@ -340,16 +329,61 @@ impl UnifiedSearchService {
                         results: Vec::new(),
                     });
                 };
-                Some(
-                    folders
-                        .into_iter()
-                        .filter(|folder| folder.tenant_id == ctx.tenant_id.0)
-                        .map(|folder| folder.id)
-                        .collect::<std::collections::HashSet<_>>(),
-                )
+                let mut ids = folders
+                    .into_iter()
+                    .filter(|folder| folder.tenant_id == ctx.tenant_id.0)
+                    .map(|folder| folder.id)
+                    .collect::<std::collections::HashSet<_>>();
+                ids.insert(folder_id);
+                Some(ids)
             }
             _ => None,
         };
+        let source_file_ids = match scope {
+            SearchScope::Resource(resource)
+                if resource.application.0 == FILES_APPLICATION
+                    && resource.resource_type == "file" =>
+            {
+                Uuid::parse_str(&resource.resource_id)
+                    .ok()
+                    .map(|id| vec![id])
+            }
+            _ => None,
+        };
+        let source_folder_ids = allowed_folders.as_ref().map(|ids| {
+            let mut ids = ids.iter().copied().collect::<Vec<_>>();
+            ids.sort_unstable();
+            ids
+        });
+        let chat_channel = match scope {
+            SearchScope::ChatChannel {
+                community_id,
+                channel_id,
+            } => Some((community_id.as_str(), channel_id.as_str())),
+            _ => None,
+        };
+
+        // Step 2: collect candidates per source.
+        let files_requested = (sources.is_empty() || sources.contains(&SearchSource::Files))
+            && !matches!(scope, SearchScope::ChatChannel { .. });
+        let chat_requested = (sources.is_empty() || sources.contains(&SearchSource::Chat))
+            && !matches!(scope, SearchScope::Folder(_) | SearchScope::Resource(_));
+        let mut candidates = Vec::new();
+        if files_requested {
+            candidates.extend(
+                self.files_candidates(
+                    ctx,
+                    query,
+                    budget,
+                    source_file_ids.as_deref(),
+                    source_folder_ids.as_deref(),
+                )
+                .await,
+            );
+        }
+        if chat_requested {
+            candidates.extend(self.chat_candidates(ctx, query, budget, chat_channel).await);
+        }
 
         if let SearchScope::Resource(resource) = scope {
             let resolved = self
@@ -844,11 +878,19 @@ impl UnifiedSearchService {
         ctx: &PrincipalContext,
         query: &str,
         budget: usize,
+        source_file_ids: Option<&[Uuid]>,
+        source_folder_ids: Option<&[Uuid]>,
     ) -> Vec<Candidate> {
         // Name/path candidates from the files table (tenant-scoped, live rows).
         let files = match self
             .metadata
-            .search_files_by_name_path(ctx.tenant_id.0, query, budget)
+            .search_files_by_name_path_scoped(
+                ctx.tenant_id.0,
+                query,
+                source_file_ids,
+                source_folder_ids,
+                budget,
+            )
             .await
         {
             Ok(files) => files,
@@ -912,6 +954,8 @@ impl UnifiedSearchService {
                         user_id: ctx.principal_id.0,
                         group_ids,
                         min_acl_versions: HashMap::new(),
+                        source_file_ids: source_file_ids.map(<[Uuid]>::to_vec),
+                        source_folder_ids: source_folder_ids.map(<[Uuid]>::to_vec),
                     };
                     match indexer.search_with_acl(&principal, query, budget).await {
                         Ok(results) => {
@@ -958,7 +1002,14 @@ impl UnifiedSearchService {
         if let Some(ai) = &self.ai {
             let user_id = ctx.principal_id.0;
             let tenant_id = ctx.tenant_id.0;
-            match ai.semantic_search(query, user_id, tenant_id, budget).await {
+            let scope = rustshare_core::services::ai::RetrievalScope {
+                file_ids: source_file_ids.map(<[Uuid]>::to_vec),
+                folder_ids: source_folder_ids.map(<[Uuid]>::to_vec),
+            };
+            match ai
+                .semantic_search_scoped(query, user_id, tenant_id, budget, &scope)
+                .await
+            {
                 Ok(results) => candidates.extend(results.into_iter().map(semantic_candidate)),
                 Err(error) => {
                     tracing::warn!(
@@ -968,7 +1019,10 @@ impl UnifiedSearchService {
                 }
             }
             if self.keyword_indexer.is_none() || self.permission_resolver.is_none() {
-                match ai.keyword_search(query, user_id, tenant_id, budget).await {
+                match ai
+                    .keyword_search_scoped(query, user_id, tenant_id, budget, &scope)
+                    .await
+                {
                     Ok(results) => candidates.extend(results.into_iter().map(semantic_candidate)),
                     Err(error) => tracing::warn!(
                         %error,
@@ -990,12 +1044,23 @@ impl UnifiedSearchService {
         ctx: &PrincipalContext,
         query: &str,
         budget: usize,
+        channel_scope: Option<(&str, &str)>,
     ) -> Vec<Candidate> {
-        let records = match self
-            .memory_catalog
-            .search(ctx.tenant_id, query, budget)
-            .await
-        {
+        let search = async {
+            match channel_scope {
+                Some((community_id, channel_id)) => {
+                    self.memory_catalog
+                        .search_in_channel(ctx.tenant_id, query, community_id, channel_id, budget)
+                        .await
+                }
+                None => {
+                    self.memory_catalog
+                        .search(ctx.tenant_id, query, budget)
+                        .await
+                }
+            }
+        };
+        let records = match search.await {
             Ok(records) => records,
             Err(error) => {
                 tracing::warn!(

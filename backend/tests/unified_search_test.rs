@@ -3850,6 +3850,56 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         .execute(&pool)
         .await
         .expect("place note in Ask folder");
+    for index in 0..5 {
+        let outside_name = format!("aaa-scope-needle-{index:02}.md");
+        let outside_path = format!("/{outside_name}");
+        create_file_with_content(
+            &harness,
+            owner.id,
+            &outside_name,
+            &outside_path,
+            b"OUTSIDE-SCOPE-NEEDLE",
+        )
+        .await;
+    }
+    let in_scope = create_file_with_content(
+        &harness,
+        owner.id,
+        "zzz-scope-needle-inside.md",
+        "/Ask folder/zzz-scope-needle-inside.md",
+        b"IN-SCOPE-NEEDLE",
+    )
+    .await;
+    sqlx::query("UPDATE files SET parent_folder_id = $1 WHERE id = $2")
+        .bind(folder_id)
+        .bind(in_scope.id)
+        .execute(&pool)
+        .await
+        .expect("place matching file in Ask folder");
+    let keyword_search = harness
+        .service()
+        .search_scoped(
+            &user_ctx(env.principal, tenant),
+            "scope-needle",
+            &[SearchSource::Files],
+            1,
+            &SearchScope::Folder(ResourceRef::new(
+                ApplicationId::new("io.elembra.files"),
+                "folder",
+                folder_id.to_string(),
+            )),
+        )
+        .await
+        .expect("folder keyword search applies scope before its result limit");
+    assert_eq!(keyword_search.results.len(), 1);
+    assert!(keyword_search.results[0]
+        .resource_ref
+        .contains(&in_scope.id.to_string()));
+    sqlx::query("UPDATE files SET deleted_at = NOW() WHERE id = $1")
+        .bind(in_scope.id)
+        .execute(&pool)
+        .await
+        .expect("remove scoped search fixture from later Ask assertions");
     let folder_provider = Arc::new(RecordingLlmProvider::new(LlmResult {
         answer: "The folder contains the plan.".into(),
         citations: vec!["src-001".into()],

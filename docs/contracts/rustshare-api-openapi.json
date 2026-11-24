@@ -17817,82 +17817,6 @@
           }
         }
       },
-      "AskScopeRequest": {
-        "oneOf": [
-          {
-            "type": "object",
-            "required": [
-              "type"
-            ],
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "workspace"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "resourceRef",
-              "type"
-            ],
-            "properties": {
-              "resourceRef": {
-                "type": "string"
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "folder"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "resourceRef",
-              "type"
-            ],
-            "properties": {
-              "resourceRef": {
-                "type": "string"
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "note"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "communityId",
-              "channelId",
-              "type"
-            ],
-            "properties": {
-              "channelId": {
-                "type": "string"
-              },
-              "communityId": {
-                "type": "string"
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "chatChannel"
-                ]
-              }
-            }
-          }
-        ]
-      },
       "AskWorkspaceCitation": {
         "type": "object",
         "required": [
@@ -17938,7 +17862,7 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/AskScopeRequest"
+                "$ref": "#/components/schemas/SearchScopeRequest"
               }
             ]
           },
@@ -28653,6 +28577,17 @@
             "type": "string",
             "description": "The search query"
           },
+          "scope": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SearchScopeRequest",
+                "description": "Search the workspace (default), one Files folder/note, or a Chat channel."
+              }
+            ]
+          },
           "sources": {
             "type": [
               "array",
@@ -28750,6 +28685,82 @@
             "format": "date-time"
           }
         }
+      },
+      "SearchScopeRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "resourceRef",
+              "type"
+            ],
+            "properties": {
+              "resourceRef": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "folder"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "resourceRef",
+              "type"
+            ],
+            "properties": {
+              "resourceRef": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "note"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "communityId",
+              "channelId",
+              "type"
+            ],
+            "properties": {
+              "channelId": {
+                "type": "string"
+              },
+              "communityId": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "chatChannel"
+                ]
+              }
+            }
+          }
+        ]
       },
       "SecurityConfigResponse": {
         "type": "object",

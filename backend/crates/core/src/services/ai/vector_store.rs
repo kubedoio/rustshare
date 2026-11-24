@@ -235,6 +235,19 @@ pub fn keyword_score(doc: &IndexedDocument, query: &str) -> f32 {
     (capped / (capped + 10.0)) as f32
 }
 
+fn matches_retrieval_scope(doc: &IndexedDocument, principal: &RetrievalPrincipal) -> bool {
+    principal.source_file_ids.as_ref().is_none_or(|ids| {
+        doc.acl
+            .as_ref()
+            .is_some_and(|acl| ids.contains(&acl.source_file_id))
+    }) && principal.source_folder_ids.as_ref().is_none_or(|ids| {
+        doc.acl
+            .as_ref()
+            .and_then(|acl| acl.source_folder_id)
+            .is_some_and(|folder_id| ids.contains(&folder_id))
+    })
+}
+
 #[async_trait::async_trait]
 impl VectorStore for InMemoryVectorStore {
     async fn upsert_chunk(
@@ -262,7 +275,9 @@ impl VectorStore for InMemoryVectorStore {
 
         let allowed = tenant_docs.into_values().filter(|doc| match &doc.acl {
             Some(acl) => match validate_and_project(acl) {
-                Ok(projection) => can_access(&projection, principal),
+                Ok(projection) => {
+                    can_access(&projection, principal) && matches_retrieval_scope(doc, principal)
+                }
                 Err(e) => {
                     tracing::warn!(
                         chunk_id = %doc.chunk_id,
@@ -298,7 +313,9 @@ impl VectorStore for InMemoryVectorStore {
 
         let allowed = tenant_docs.into_values().filter(|doc| match &doc.acl {
             Some(acl) => match validate_and_project(acl) {
-                Ok(projection) => can_access(&projection, principal),
+                Ok(projection) => {
+                    can_access(&projection, principal) && matches_retrieval_scope(doc, principal)
+                }
                 Err(e) => {
                     tracing::warn!(
                         chunk_id = %doc.chunk_id,
@@ -535,6 +552,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let query = SimpleEmbeddingGenerator::new().generate("rust").await;
         let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
@@ -572,6 +591,8 @@ mod tests {
             user_id: stranger_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let query = SimpleEmbeddingGenerator::new().generate("secret").await;
         let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
@@ -615,6 +636,8 @@ mod tests {
             user_id: Uuid::new_v4(),
             group_ids: vec![group_id],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let query = SimpleEmbeddingGenerator::new()
             .generate("engineering")
@@ -698,6 +721,8 @@ mod tests {
             user_id: Uuid::new_v4(),
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let query = SimpleEmbeddingGenerator::new().generate("content").await;
         let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
@@ -831,6 +856,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let query = SimpleEmbeddingGenerator::new()
             .generate("legacy content")
@@ -874,6 +901,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let query = SimpleEmbeddingGenerator::new().generate("malformed").await;
         let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
@@ -920,6 +949,8 @@ mod tests {
             user_id: member_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let query = SimpleEmbeddingGenerator::new()
             .generate("workspace visible")
@@ -977,6 +1008,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let query = SimpleEmbeddingGenerator::new().generate("content").await;
         let results = store.search_with_acl(&principal, &query, 10).await.unwrap();
@@ -990,6 +1023,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results_b = store
             .search_with_acl(&principal_b, &query, 10)
@@ -1114,6 +1149,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = store
             .keyword_search_with_acl(&principal, "budget", 10)
@@ -1122,6 +1159,50 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.file_id, file_id);
         assert!(results[0].1 > 0.0);
+    }
+
+    #[tokio::test]
+    async fn in_memory_keyword_search_filters_scope_before_limit() {
+        let store = InMemoryVectorStore::new();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let folder_id = Uuid::new_v4();
+        let outside_id = Uuid::new_v4();
+        let inside_id = Uuid::new_v4();
+        for (file_id, folder_id) in [(outside_id, Uuid::new_v4()), (inside_id, folder_id)] {
+            let mut acl = make_acl(
+                tenant_id, file_id, file_id, owner_id, "private", "allowed", 1,
+            );
+            acl.source_folder_id = Some(folder_id);
+            let doc = make_doc(
+                file_id,
+                tenant_id,
+                owner_id,
+                "shared keyword content",
+                Some(acl.clone()),
+            )
+            .await;
+            store
+                .upsert_chunk(tenant_id, file_id, &doc, &acl)
+                .await
+                .unwrap();
+        }
+
+        let principal = RetrievalPrincipal {
+            tenant_id,
+            workspace_id: None,
+            user_id: owner_id,
+            group_ids: vec![],
+            min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: Some(vec![folder_id]),
+        };
+        let results = store
+            .keyword_search_with_acl(&principal, "keyword", 1)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.file_id, inside_id);
     }
 
     #[tokio::test]
@@ -1154,6 +1235,8 @@ mod tests {
             user_id: stranger_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = store
             .keyword_search_with_acl(&principal, "secret", 10)
@@ -1252,6 +1335,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let results = store
             .keyword_search_with_acl(&principal, "keyword", 10)
@@ -1296,6 +1381,8 @@ mod tests {
             user_id: owner_id,
             group_ids: vec![],
             min_acl_versions: HashMap::new(),
+            source_file_ids: None,
+            source_folder_ids: None,
         };
         let first = store
             .keyword_search_with_acl(&principal, "keyword", 3)
