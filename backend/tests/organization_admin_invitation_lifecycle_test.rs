@@ -443,6 +443,47 @@ async fn invitation_list_resend_cancel_and_retry_are_tenant_safe_and_redacted() 
     .await;
     assert_eq!(foreign_resend.0, StatusCode::NOT_FOUND);
     assert_eq!(foreign_resend.2, missing_cancel.2);
+    let foreign_state: (
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        String,
+    ) = sqlx::query_as(
+        "SELECT cancelled_at, revoked_at, bulk_delivery_status
+         FROM invite_tokens WHERE tenant_id=$1 AND id=$2",
+    )
+    .bind(foreign_tenant_id)
+    .bind(foreign_id)
+    .fetch_one(&pool)
+    .await
+    .expect("inspect foreign invitation after denied mutations");
+    assert!(foreign_state.0.is_none());
+    assert!(foreign_state.1.is_none());
+    assert_eq!(foreign_state.2, "sent");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM organization_invite_resend_attempts
+             WHERE tenant_id=$1 AND invite_token_id=$2",
+        )
+        .bind(foreign_tenant_id)
+        .bind(foreign_id)
+        .fetch_one(&pool)
+        .await
+        .expect("check that foreign resend wrote no attempt"),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM admin_actions
+             WHERE tenant_id=$1 AND target_id=$2
+               AND action_type LIKE 'organization_admin.invitation_%'",
+        )
+        .bind(tenant_id)
+        .bind(foreign_id)
+        .fetch_one(&pool)
+        .await
+        .expect("check denied foreign mutations wrote no audit"),
+        0
+    );
 
     let mut no_key = HeaderMap::new();
     let no_idempotency = request(
