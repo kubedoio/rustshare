@@ -4,7 +4,9 @@ use local_text_worker::{scan_root, OfflineQueue, RootConfig};
 use reqwest::{multipart, redirect::Policy, StatusCode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs::OpenOptions, io::Read, path::PathBuf, time::Duration};
+#[cfg(unix)]
+use std::{fs::OpenOptions, io::Read};
+use std::{path::PathBuf, time::Duration};
 use uuid::Uuid;
 
 #[derive(Debug, Parser)]
@@ -14,8 +16,12 @@ struct Args {
     instance_id: Uuid,
     #[arg(long)]
     server: String,
+    #[arg(long, conflicts_with_all = ["credential_keyring", "migrate_credential_file"])]
+    credential_file: Option<PathBuf>,
+    #[arg(long, conflicts_with = "migrate_credential_file")]
+    credential_keyring: bool,
     #[arg(long)]
-    credential_file: PathBuf,
+    migrate_credential_file: Option<PathBuf>,
     #[arg(long, required = true)]
     root: Vec<PathBuf>,
     #[arg(long)]
@@ -75,7 +81,12 @@ async fn main() -> Result<()> {
     if args.reconcile_seconds == 0 || args.reconcile_seconds > 86_400 {
         bail!("reconcile interval must be between 1 and 86400 seconds");
     }
-    let credential = read_credential(&args.credential_file)?;
+    let credential = match (args.credential_file, args.credential_keyring, args.migrate_credential_file) {
+        (Some(path), false, None) => read_credential(&path)?,
+        (None, true, None) => read_keyring_credential(args.instance_id)?,
+        (None, false, Some(path)) => migrate_credential(&path, args.instance_id)?,
+        _ => bail!("choose exactly one of --credential-file, --credential-keyring, or --migrate-credential-file"),
+    };
     let server = args.server.trim_end_matches('/');
     if !server.starts_with("https://") && !is_loopback_http(server) {
         bail!("Connector worker requires HTTPS except for loopback development");
@@ -299,32 +310,72 @@ async fn report_failure(
 }
 
 fn read_credential(path: &std::path::Path) -> Result<String> {
-    let mut options = OpenOptions::new();
-    options.read(true);
+    #[cfg(not(unix))]
+    bail!("credential files are supported only on Unix; use --credential-keyring on this platform");
+
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        }
+        let mut file = options
+            .open(path)
+            .context("unable to open worker credential file")?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.len() > 128 {
+            bail!("worker credential file is not a small regular file");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                bail!("worker credential file must not be accessible by group or others");
+            }
+        }
+        let mut credential = String::new();
+        file.read_to_string(&mut credential)?;
+        let credential = credential.trim().to_owned();
+        if !credential.starts_with("ecw1_") || credential.len() > 128 {
+            bail!("worker credential file contains an invalid credential");
+        }
+        Ok(credential)
     }
-    let mut file = options
-        .open(path)
-        .context("unable to open worker credential file")?;
-    let metadata = file.metadata()?;
-    if !metadata.is_file() || metadata.len() > 128 {
-        bail!("worker credential file is not a small regular file");
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            bail!("worker credential file must not be accessible by group or others");
+}
+
+fn read_keyring_credential(instance_id: Uuid) -> Result<String> {
+    let entry = keyring::Entry::new("io.elembra.local-text-worker", &instance_id.to_string())
+        .context("unable to access the operating system credential store")?;
+    let credential = entry
+        .get_password()
+        .context("no worker credential is stored in the operating system credential store")?;
+    validate_credential(credential)
+}
+
+fn migrate_credential(path: &std::path::Path, instance_id: Uuid) -> Result<String> {
+    let credential = read_credential(path)?;
+    let entry = keyring::Entry::new("io.elembra.local-text-worker", &instance_id.to_string())
+        .context("unable to access the operating system credential store")?;
+    match entry.get_password() {
+        Ok(existing) => ensure_migration_target(Some(&existing), &credential)?,
+        Err(keyring::Error::NoEntry) => entry
+            .set_password(&credential)
+            .context("unable to save worker credential to the operating system credential store")?,
+        Err(error) => {
+            return Err(error).context("unable to read the operating system credential store")
         }
     }
-    let mut credential = String::new();
-    file.read_to_string(&mut credential)?;
+    std::fs::remove_file(path).context("credential was stored in the operating system store, but the legacy file could not be removed")?;
+    Ok(credential)
+}
+
+fn validate_credential(credential: String) -> Result<String> {
     let credential = credential.trim().to_owned();
     if !credential.starts_with("ecw1_") || credential.len() > 128 {
-        bail!("worker credential file contains an invalid credential");
+        bail!("worker credential contains an invalid credential");
     }
     Ok(credential)
 }
@@ -345,4 +396,35 @@ fn is_loopback_http(server: &str) -> bool {
             || host.starts_with("127.0.0.1:")
             || host.starts_with("[::1]:")
     })
+}
+
+fn ensure_migration_target(existing: Option<&str>, incoming: &str) -> Result<()> {
+    if existing.is_some_and(|current| current != incoming) {
+        bail!(
+            "native credential already exists and differs; refusing to replace it during migration"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::{ensure_migration_target, validate_credential};
+
+    #[test]
+    fn accepts_only_connector_worker_credentials() {
+        assert_eq!(
+            validate_credential("ecw1_test".into()).unwrap(),
+            "ecw1_test"
+        );
+        assert!(validate_credential("owner-password".into()).is_err());
+        assert!(validate_credential(format!("ecw1_{}", "x".repeat(124))).is_err());
+    }
+
+    #[test]
+    fn migration_never_replaces_a_different_native_credential() {
+        assert!(ensure_migration_target(None, "ecw1_old").is_ok());
+        assert!(ensure_migration_target(Some("ecw1_old"), "ecw1_old").is_ok());
+        assert!(ensure_migration_target(Some("ecw1_rotated"), "ecw1_old").is_err());
+    }
 }

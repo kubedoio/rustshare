@@ -1,0 +1,45 @@
+name: Local Text Windows
+
+on:
+  pull_request:
+    paths:
+      - "apps/local-text-worker/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/local-text-windows.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/local-text-worker/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/local-text-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Build Windows worker
+        run: cargo build --locked --release -p local-text-worker
+      - name: Run Windows worker tests
+        run: cargo test --locked -p local-text-worker
+      - name: Package unsigned Windows ZIP
+        shell: pwsh
+        run: |
+          $package = Join-Path $env:RUNNER_TEMP "elembra-local-text-worker"
+          New-Item -ItemType Directory -Path $package | Out-Null
+          Copy-Item target/release/elembra-local-text-worker.exe $package
+          Copy-Item apps/local-text-worker/README.md $package/README.md
+          Compress-Archive -Path "$package/*" -DestinationPath "$env:RUNNER_TEMP/elembra-local-text-worker-windows-x86_64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elembra-local-text-worker-windows-x86_64
+          path: ${{ runner.temp }}/elembra-local-text-worker-windows-x86_64.zip
+          if-no-files-found: error
+          retention-days: 14
