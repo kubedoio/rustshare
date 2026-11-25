@@ -48,9 +48,10 @@ class PilotUiResultsTests(unittest.TestCase):
         )
         self.assertIn(f"UI_PLAYWRIGHT_EXPECTED={len(EXPECTED_TESTS)}", result)
         self.assertIn("UI_PLAYWRIGHT_SKIPPED=0", result)
+        self.assertIn("UI_ADMIN_SCALE_100=passed", result)
 
     def test_skipped_browser_test_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ValueError, "exactly 3 passes"):
+        with self.assertRaisesRegex(ValueError, "exactly 4 passes"):
             report = self.make_report(
                 {
                     "expectedStatus": "skipped",
@@ -60,7 +61,7 @@ class PilotUiResultsTests(unittest.TestCase):
             )
             report["stats"] = {
                 "expected": 0,
-                "skipped": 2,
+                "skipped": 4,
                 "unexpected": 0,
                 "flaky": 0,
             }
@@ -91,21 +92,21 @@ class PilotUiResultsTests(unittest.TestCase):
 
     def test_additional_or_flaky_test_is_rejected(self) -> None:
         for stats in (
-            {"expected": 4, "skipped": 0, "unexpected": 0, "flaky": 0},
+            {"expected": 5, "skipped": 0, "unexpected": 0, "flaky": 0},
             {"expected": 0, "skipped": 0, "unexpected": 1, "flaky": 0},
             {"expected": 1, "skipped": 0, "unexpected": 0, "flaky": 1},
         ):
             with self.subTest(stats=stats), self.assertRaisesRegex(
-                ValueError, "exactly 3 passes"
+                ValueError, "exactly 4 passes"
             ):
                 self.verify({"stats": stats})
 
-    def test_duplicate_canonical_test_cannot_replace_institutional_journey(self) -> None:
+    def test_duplicate_canonical_test_cannot_replace_admin_scale_journey(self) -> None:
         report = self.make_report({
             "expectedStatus": "passed", "status": "expected",
             "results": [{"status": "passed"}],
         })
-        report["suites"][0]["specs"][1] = report["suites"][0]["specs"][0]
+        report["suites"][0]["specs"][3] = report["suites"][0]["specs"][0]
         with self.assertRaisesRegex(ValueError, "canonical pilot browser tests"):
             self.verify(report)
 

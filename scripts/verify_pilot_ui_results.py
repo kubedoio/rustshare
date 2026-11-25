@@ -11,6 +11,7 @@ EXPECTED_TESTS = {
     "pilot administrator uses Files and edits a Note name independently from its H1": "tests/pilot.e2e.ts",
     "Notes opens an exact historical Memory citation without changing Note identity": "tests/pilot.e2e.ts",
     "institutional Calendar journey preserves linked context and denies unavailable content": "tests/institutional.e2e.ts",
+    "organization admins manage a 100-user synthetic organization safely": "tests/organization-admin-scale.e2e.ts",
 }
 
 
@@ -87,9 +88,9 @@ def verify_report(path: Path) -> str:
         ):
             raise ValueError("pilot browser test did not actually pass")
 
-    return "\n".join(
-        f"UI_PLAYWRIGHT_{counter.upper()}={stats[counter]}" for counter in COUNTERS
-    )
+    counters = [f"UI_PLAYWRIGHT_{counter.upper()}={stats[counter]}" for counter in COUNTERS]
+    counters.append("UI_ADMIN_SCALE_100=passed")
+    return "\n".join(counters)
 
 
 def main() -> int:

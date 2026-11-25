@@ -403,7 +403,8 @@ jobs:
             PILOT_NOTE_ID="${pilot_note_id}" \
             PILOT_NOTE_TITLE="${pilot_note_title}" \
             npm run test:e2e -- \
-            tests/pilot.e2e.ts tests/institutional.e2e.ts --workers=1 --reporter=line,json
+            tests/pilot.e2e.ts tests/institutional.e2e.ts tests/organization-admin-scale.e2e.ts \
+            --workers=1 --reporter=line,json
           ui_playwright_status="$(python3 ../scripts/verify_pilot_ui_results.py \
             "${PLAYWRIGHT_JSON_OUTPUT_NAME}")"
           printf 'UI_STATUS=passed\nUI_STATIC_STATUS=passed\nUI_BROWSER_STATUS=passed\nUI_URL=http://127.0.0.1/\nUI_FILE_NAME=%s\nUI_NOTE_ID=%s\nUI_NOTE_TITLE=%s\nUI_NOTE_H1=Beta Smoke H1\nUI_SOURCE_SHA=%s\nUI_BUILD_VERSION=%s\nUI_DEPLOYMENT_ID=%s\nUI_CONFIG_ID=%s\nUI_WORKFLOW_RUN_ID=%s\nUI_WORKFLOW_RUN_ATTEMPT=%s\nUI_STARTED_AT=%s\nUI_FINISHED_AT=%s\n' \
@@ -1414,7 +1415,8 @@ jobs:
             require_line "${clean_install}" "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
             require_line "${evidence_dir}/ui.env" 'UI_STATUS=passed'
             require_line "${evidence_dir}/ui.env" 'UI_BROWSER_STATUS=passed'
-            require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_EXPECTED=3'
+            require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_EXPECTED=4'
+            require_line "${evidence_dir}/ui.env" 'UI_ADMIN_SCALE_100=passed'
             require_line "${evidence_dir}/ui.env" 'UI_INSTITUTIONAL_JOURNEY=passed'
             require_line "${evidence_dir}/ui.env" "UI_IMAGE_ID=${image_id}"
             require_line "${evidence_dir}/runtime-db.env" 'RUNTIME_DB_STATUS=passed'
