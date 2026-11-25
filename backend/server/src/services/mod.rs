@@ -1,4 +1,5 @@
 pub mod admin_audit_projection;
+pub mod admin_user_queries;
 pub mod brainstorming_service;
 pub mod decision_service;
 pub mod email_service;

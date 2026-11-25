@@ -21,6 +21,10 @@ path = "../tests/meeting_decisions_test.rs"
 name = "folder_metadata_error_test"
 path = "../tests/folder_metadata_error_test.rs"
 
+[[test]]
+name = "admin_user_read_auth"
+path = "tests/admin_user_read_auth.rs"
+
 [features]
 test-recording-provider = []
 # Non-distributable debug acceptance build. Fixture code is also gated on
