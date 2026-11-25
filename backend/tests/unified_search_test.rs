@@ -75,9 +75,9 @@ use rustshare_memory::{IndexingStatus, MemoryCatalogRecord};
 use rustshare_resource_auth::{
     BuzzAuthority, BuzzAuthorityError, BuzzChannelKind, BuzzReadDecision, BuzzReadRequest,
     Decision, PrincipalContext, Representation, ResourceOwnerRegistry, ResourceRef,
-    SourceAuthorizer, SourceError, CHAT_READ, FILES_READ,
+    SourceAuthorizer, SourceError, CHAT_READ, FILES_READ, MAIL_READ,
 };
-use rustshare_server::authz::{ChatResourceOwner, FilesResourceOwner};
+use rustshare_server::authz::{ChatResourceOwner, FilesResourceOwner, MailResourceOwner};
 use rustshare_server::buzz_gateway::{
     BuzzGatewayAuthority, BuzzGatewayClient, BuzzStateContext, BuzzStateEntry,
 };
@@ -1284,6 +1284,66 @@ impl TestHarness {
     }
 }
 
+/// Build the real Mail service and source owner over the shared search fixture.
+/// This keeps the general Files/Chat harness lightweight while the focused Mail
+/// acceptance case exercises Mail's live owner authorization and body fetch.
+fn build_mail_search_components(
+    harness: &TestHarness,
+) -> (
+    Arc<rustshare_server::services::mail_service::MailService>,
+    Arc<rustshare_server::services::application_service::ApplicationService>,
+    Arc<SourceAuthorizer>,
+) {
+    let event_store = Arc::new(rustshare_storage::EventStore::new(harness.pool.clone()));
+    let broadcaster = Arc::new(rustshare_core::events::EventBroadcaster::new(32));
+    let file_service = Arc::new(rustshare_core::services::FileService::new(
+        event_store.clone(),
+        Arc::clone(&harness.metadata_store),
+        Arc::clone(&harness.object_store),
+        Arc::clone(&broadcaster),
+        Arc::clone(&harness.permission_resolver),
+    ));
+    let folder_service = Arc::new(rustshare_core::services::FolderService::new(
+        event_store.clone(),
+        Arc::clone(&harness.metadata_store),
+        Arc::clone(&broadcaster),
+        Arc::clone(&harness.permission_resolver),
+    ));
+    let application_service = Arc::new(
+        rustshare_server::services::application_service::ApplicationService::new(
+            Arc::clone(&folder_service),
+            Arc::clone(&harness.metadata_store),
+        ),
+    );
+    let mail_service = Arc::new(rustshare_server::services::mail_service::MailService::new(
+        Arc::clone(&harness.metadata_store),
+        Arc::clone(&harness.object_store),
+        file_service,
+        folder_service,
+        Arc::clone(&harness.permission_resolver),
+        event_store,
+        broadcaster,
+        Arc::new(rustshare_crypto::SecretEncryptionKey::from_bytes([0; 32])),
+    ));
+
+    let registry = ApplicationRegistry::first_party().expect("first-party manifests are valid");
+    let mut owners = ResourceOwnerRegistry::new();
+    owners
+        .register(
+            Arc::new(MailResourceOwner::new(
+                Arc::clone(&mail_service),
+                Arc::clone(&application_service),
+            )),
+            &registry,
+        )
+        .expect("Mail owner registers against the canonical registry");
+    (
+        mail_service,
+        application_service,
+        Arc::new(SourceAuthorizer::new(owners)),
+    )
+}
+
 /// Build the metadata/object/permission stores over `pool`.
 async fn build_stores(
     pool: PgPool,
@@ -1476,6 +1536,13 @@ async fn harness_with_real_gateway(
 /// chat Application enablement, the note index, shares, files, folders and
 /// users (FK-safe order).
 async fn cleanup(pool: &PgPool, tenant_id: TenantId) {
+    for table in ["mail_message_parts", "mail_attachments", "mail_messages"] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE tenant_id = $1"))
+            .bind(tenant_id.0)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
     for table in [
         "memory_catalog",
         "memory_files_source_access_audit",
@@ -2915,6 +2982,180 @@ async fn keyword_search_works_without_embeddings() {
     );
 
     cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
+// 11a. Mail workspace search reauthorizes live ownership before Ask materialization
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn mail_workspace_search_reauthorizes_live_owner_and_ask_context() {
+    let _guard = SERIAL.lock().await;
+    let harness = harness_with_scripted_authority(pool().await, false).await;
+    let pool = harness.pool.clone();
+    let tenant = TenantId::from(harness.tenant);
+    let other_tenant = TenantId::from(Uuid::new_v4());
+    cleanup(&pool, tenant).await;
+    cleanup(&pool, other_tenant).await;
+
+    let owner = create_user(&harness.metadata_store, "mail_search_owner", tenant.0).await;
+    let other_user =
+        create_user(&harness.metadata_store, "mail_search_other", other_tenant.0).await;
+    let (mail_service, applications, authorizer) = build_mail_search_components(&harness);
+    for (tenant_id, user_id) in [(tenant.0, owner.id), (other_tenant.0, other_user.id)] {
+        applications
+            .ensure_default_applications(tenant_id)
+            .await
+            .expect("default applications exist for the test workspace");
+        applications
+            .enable_application("io.elembra.mail", user_id, tenant_id)
+            .await
+            .expect("Mail is enabled in the test workspace");
+    }
+
+    let body_marker = "H3-MAIL-AUTHORIZED-BODY-7b2e";
+    let message = mail_service
+        .import_eml(
+            tenant.0,
+            owner.id,
+            owner.id,
+            format!(
+                "From: sender@example.test\r\nTo: owner@example.test\r\nSubject: h3-mail-search-needle\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body_marker}"
+            )
+            .into_bytes(),
+        )
+        .await
+        .expect("import the synthetic Mail source");
+
+    let search = Arc::new(
+        UnifiedSearchService::new(
+            Arc::clone(&authorizer),
+            Arc::clone(&harness.metadata_store),
+            None,
+            Arc::clone(&harness.memory_catalog_store),
+        )
+        .with_mail_service(Arc::clone(&mail_service)),
+    );
+    let owner_context = user_ctx(PrincipalId::from(owner.id), tenant);
+    let authorized = search
+        .search(
+            &owner_context,
+            "h3-mail-search-needle",
+            &[SearchSource::Mail],
+            5,
+        )
+        .await
+        .expect("authorized workspace Mail search succeeds");
+    assert_eq!(authorized.results.len(), 1);
+    assert_eq!(
+        authorized.results[0].resource_ref,
+        format!("elembra://io.elembra.mail/message/{}", message.id)
+    );
+    let mail_ref = ResourceRef::from_uri(&authorized.results[0].resource_ref)
+        .expect("search returns a canonical Mail ResourceRef");
+    assert!(
+        mail_ref.version.is_none(),
+        "Mail references are non-versioned"
+    );
+    assert!(authorized.results[0]
+        .snippet
+        .as_deref()
+        .unwrap_or_default()
+        .contains(body_marker));
+
+    let other_context = user_ctx(PrincipalId::from(other_user.id), other_tenant);
+    let cross_tenant = search
+        .search(
+            &other_context,
+            "h3-mail-search-needle",
+            &[SearchSource::Mail],
+            5,
+        )
+        .await
+        .expect("cross-tenant Mail search fails closed");
+    assert!(cross_tenant.results.is_empty());
+
+    #[cfg(feature = "test-recording-provider")]
+    {
+        let provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+            answer: "The authorized message contains the requested subject.".into(),
+            citations: vec!["src-001".into()],
+        }));
+        let ask = AskWorkspaceService::new(Arc::clone(&search), Some(provider.clone()));
+        let answer = ask
+            .ask(
+                &owner_context,
+                "h3-mail-search-needle",
+                &[SearchSource::Mail],
+                5,
+            )
+            .await
+            .expect("authorized Mail context reaches the recording provider");
+        assert!(answer.grounded);
+        assert_eq!(answer.source_count, 1);
+        assert_eq!(answer.citations[0].resource_ref, mail_ref.to_uri());
+        let calls = provider.calls().await;
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].sources[0].text.contains(body_marker));
+
+        let cross_tenant_answer = ask
+            .ask(
+                &other_context,
+                "h3-mail-search-needle",
+                &[SearchSource::Mail],
+                5,
+            )
+            .await
+            .expect("cross-tenant Ask returns insufficient evidence");
+        assert!(cross_tenant_answer.insufficient_evidence);
+        assert_eq!(provider.calls().await.len(), 1);
+
+        applications
+            .disable_application("io.elembra.mail", owner.id, tenant.0)
+            .await
+            .expect("disable Mail to simulate a live authorization revocation");
+        let revoked_answer = ask
+            .ask(
+                &owner_context,
+                "h3-mail-search-needle",
+                &[SearchSource::Mail],
+                5,
+            )
+            .await
+            .expect("revoked Mail context returns insufficient evidence");
+        assert!(revoked_answer.insufficient_evidence);
+        assert_eq!(provider.calls().await.len(), 1);
+    }
+
+    #[cfg(not(feature = "test-recording-provider"))]
+    applications
+        .disable_application("io.elembra.mail", owner.id, tenant.0)
+        .await
+        .expect("disable Mail after the search assertions");
+    let revoked = search
+        .search(
+            &owner_context,
+            "h3-mail-search-needle",
+            &[SearchSource::Mail],
+            5,
+        )
+        .await
+        .expect("revoked Mail search fails closed");
+    assert!(revoked.results.is_empty());
+    assert_eq!(
+        authorizer
+            .authorize(
+                &owner_context,
+                &ActionCapability::from(MAIL_READ),
+                &mail_ref
+            )
+            .await,
+        Decision::NotFound
+    );
+
+    cleanup(&pool, tenant).await;
+    cleanup(&pool, other_tenant).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
