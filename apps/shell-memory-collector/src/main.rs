@@ -189,7 +189,7 @@ async fn run(config_path: &PathBuf) -> Result<()> {
         .timeout(Duration::from_secs(30))
         .build()?;
     loop {
-        match upload_round(&client, &config, || {
+        let delay = match upload_round(&client, &config, || {
             read_keyring_credential(config.instance_id)
         })
         .await
@@ -197,13 +197,15 @@ async fn run(config_path: &PathBuf) -> Result<()> {
             Ok(UploadRound::Disabled) => {
                 bail!("collector is disabled; run enable before starting the uploader");
             }
-            Ok(UploadRound::Idle | UploadRound::Completed) => {}
+            Ok(UploadRound::Completed) => Duration::from_millis(100),
+            Ok(UploadRound::Idle) => Duration::from_secs(15),
             Err(error) => {
                 eprintln!("Shell Memory upload deferred; queued events remain local: {error:#}");
+                Duration::from_secs(15)
             }
-        }
+        };
         tokio::select! {
-            _ = tokio::time::sleep(Duration::from_secs(15)) => {},
+            _ = tokio::time::sleep(delay) => {},
             signal = tokio::signal::ctrl_c() => { signal?; return Ok(()); }
         }
     }
