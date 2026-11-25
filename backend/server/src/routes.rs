@@ -875,7 +875,11 @@ pub fn brainstorming_routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/applications/brainstorming/boards/{board_id}/source",
-            put(crate::handlers::save_brainstorm_board_source),
+            put(crate::handlers::save_brainstorm_board_source).layer(
+                axum::extract::DefaultBodyLimit::max(
+                    crate::services::brainstorming_service::MAX_BRAINSTORM_SOURCE_BYTES,
+                ),
+            ),
         )
         .route(
             "/api/v1/applications/brainstorming/boards/{board_id}/preview",

@@ -20,6 +20,13 @@ use uuid::Uuid;
 
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
 
+/// Maximum serialized Excalidraw source accepted for one board.
+///
+/// The source payload can be submitted before board authorization, so the
+/// endpoint and service reject oversized input before allocating the parsed
+/// JSON value.
+pub const MAX_BRAINSTORM_SOURCE_BYTES: usize = 16 * 1024 * 1024;
+
 // ============================================================================
 // Errors
 // ============================================================================
@@ -308,9 +315,22 @@ impl BrainstormingService {
     ) -> Result<BrainstormBoard, BrainstormError> {
         tracing::info!(board_id = %board_id, user_id = %user_id, tenant_id = %tenant_id, source_len = source.len(), "save_board_source: start");
 
-        // Validate Excalidraw JSON structure
-        let parsed: serde_json::Value = serde_json::from_str(&source)
-            .map_err(|e| BrainstormError::InvalidData(e.to_string()))?;
+        // Reject oversized source before parsing or loading the target board.
+        check_board_source_size(&source)?;
+
+        // Authorize access before parsing user-provided Excalidraw JSON.
+        let folder = self
+            .folder_service
+            .get_folder(board_id, user_id)
+            .await
+            .map_err(BrainstormError::from)?;
+
+        if folder.tenant_id != tenant_id {
+            return Err(BrainstormError::PermissionDenied);
+        }
+
+        // Validate Excalidraw JSON structure after access is established.
+        let parsed = parse_board_source(&source)?;
 
         if parsed.get("type").and_then(|v| v.as_str()) != Some("excalidraw") {
             tracing::info!("save_board_source: validation failed - missing type field");
@@ -328,20 +348,6 @@ impl BrainstormingService {
             return Err(BrainstormError::InvalidData(
                 "Invalid Excalidraw JSON: missing elements array".to_string(),
             ));
-        }
-
-        tracing::info!(board_id = %board_id, user_id = %user_id, "save_board_source: looking up folder");
-        let folder = self
-            .folder_service
-            .get_folder(board_id, user_id)
-            .await
-            .map_err(|e| {
-                tracing::info!(board_id = %board_id, user_id = %user_id, error = %e, "save_board_source: folder lookup failed");
-                BrainstormError::from(e)
-            })?;
-
-        if folder.tenant_id != tenant_id {
-            return Err(BrainstormError::PermissionDenied);
         }
 
         tracing::info!(folder_id = %folder.id, folder_path = %folder.path, "save_board_source: folder found");
@@ -817,6 +823,21 @@ impl BrainstormingService {
     }
 }
 
+fn parse_board_source(source: &str) -> Result<serde_json::Value, BrainstormError> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(source).map_err(|e| BrainstormError::InvalidData(e.to_string()))?;
+    Ok(parsed)
+}
+
+fn check_board_source_size(source: &str) -> Result<(), BrainstormError> {
+    if source.len() > MAX_BRAINSTORM_SOURCE_BYTES {
+        return Err(BrainstormError::InvalidData(
+            "Excalidraw source exceeds the maximum size".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 // ============================================================================
 // Utilities
 // ============================================================================
@@ -834,6 +855,24 @@ fn slugify(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn board_source_parser_rejects_oversized_input_before_deserialization() {
+        let source = " ".repeat(MAX_BRAINSTORM_SOURCE_BYTES + 1);
+
+        assert!(matches!(
+            check_board_source_size(&source),
+            Err(BrainstormError::InvalidData(message))
+                if message == "Excalidraw source exceeds the maximum size"
+        ));
+    }
+
+    #[test]
+    fn board_source_parser_accepts_valid_excalidraw_json() {
+        let source = r#"{"type":"excalidraw","elements":[]}"#;
+
+        assert!(parse_board_source(source).is_ok());
+    }
 
     #[test]
     fn test_slugify_basic() {
