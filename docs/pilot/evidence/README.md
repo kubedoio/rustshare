@@ -1,6 +1,6 @@
 # Pilot evidence
 
-The latest exact-protected-main disposable pilot baseline is [candidate 91ac914a](candidate-91ac914a-disposable-pilot-2026-11-25.md), tied to Pilot Release run 45711231246 and its immutable image/evidence digests. It passed clean install, browser, failure, backup and fresh-volume restore checks. The workflow explicitly records upgrade as not applicable; 100-user administration and FWS target acceptance are not qualified.
+The latest exact-protected-main disposable pilot baseline is [candidate 592c9188](candidate-592c9188-disposable-pilot-2026-11-26.md), tied to Pilot Release run 45717748617 and its immutable image/evidence digests. It passed clean install, browser, failure, backup and fresh-volume restore checks. The workflow explicitly records upgrade as not applicable; 100-user administration, release scanning, and FWS target acceptance are not qualified. Publication was skipped.
 
 [Candidate 219d1d18](candidate-219d1d18-disposable-pilot-2026-11-25.md) and [candidate c2157181](candidate-c2157181-disposable-recovery-2026-11-25.md) are historical source snapshots and must not be treated as the current candidate.
 
