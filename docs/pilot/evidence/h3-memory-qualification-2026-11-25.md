@@ -1,6 +1,8 @@
 # H3 Memory qualification evidence — 2026-11-25
 
-Candidate: protected `main` `267b9f14dc180af79b1cf0522949f1159258ffc9`.
+Evidence baseline: protected `main` `267b9f14dc180af79b1cf0522949f1159258ffc9`.
+
+Protected main has since advanced to `91ac914a8bc011fb59a723f7f253adbfdc213494` through dependency-only PR #547. The exact-main Pilot Release run [45711231246](https://github.com/kubedoio/rustshare/actions/runs/45711231246) is still in progress, so this record makes no qualification claim for the newer candidate yet.
 
 Status: **PARTIAL**. This record combines source/code inspection with exact-main integration and disposable pilot evidence. It does not claim a complete all-source browser/API acceptance journey or release qualification. Issue [#119](https://github.com/kubedoio/rustshare/issues/119) remains open.
 
