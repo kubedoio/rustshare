@@ -50,6 +50,54 @@ pub struct Queue {
     connection: Connection,
 }
 
+/// Cross-process exclusion for queue mutations and remote uploads.
+pub struct QueueLock {
+    _file: fs::File,
+}
+
+impl QueueLock {
+    /// Acquires an exclusive lock shared by recording, uploading, and forget.
+    pub fn acquire(queue_path: &Path) -> Result<Self> {
+        if let Some(parent) = queue_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let lock_path = queue_path.with_extension("lock");
+        let file = open_lock_file(&lock_path)?;
+        file.lock()?;
+        Ok(Self { _file: file })
+    }
+}
+
+#[cfg(unix)]
+fn open_lock_file(path: &Path) -> Result<fs::File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        bail!("queue lock path must be a regular file");
+    }
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn open_lock_file(path: &Path) -> Result<fs::File> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        bail!("queue lock path must be a regular file");
+    }
+    Ok(file)
+}
+
 impl Queue {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
@@ -429,6 +477,58 @@ mod tests {
         let queue = Queue::open(&path)?;
         assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
         drop(queue);
+        Ok(())
+    }
+
+    #[test]
+    fn queue_lock_serializes_forget_after_an_in_flight_upload() -> Result<()> {
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("queue.sqlite3");
+        let instance_id = Uuid::new_v4();
+        let mut queue = Queue::open(&path)?;
+        queue.record(instance_id, input("echo synthetic-race"), &[])?;
+        drop(queue);
+
+        let upload_path = path.clone();
+        let (upload_started_tx, upload_started_rx) = mpsc::channel();
+        let (finish_upload_tx, finish_upload_rx) = mpsc::channel();
+        let uploader = thread::spawn(move || -> Result<()> {
+            let _lock = QueueLock::acquire(&upload_path)?;
+            let queue = Queue::open(&upload_path)?;
+            if !queue.disabled() && !queue.pending(instance_id, 1)?.is_empty() {
+                upload_started_tx.send(()).map_err(anyhow::Error::from)?;
+                finish_upload_rx.recv().map_err(anyhow::Error::from)?;
+            }
+            Ok(())
+        });
+        upload_started_rx.recv()?;
+
+        let forget_path = path.clone();
+        let (forget_done_tx, forget_done_rx) = mpsc::channel();
+        let forgetter = thread::spawn(move || -> Result<()> {
+            let _lock = QueueLock::acquire(&forget_path)?;
+            Queue::open(&forget_path)?.forget()?;
+            forget_done_tx.send(()).map_err(anyhow::Error::from)?;
+            Ok(())
+        });
+        assert!(forget_done_rx
+            .recv_timeout(Duration::from_millis(50))
+            .is_err());
+        finish_upload_tx.send(())?;
+        uploader
+            .join()
+            .map_err(|_| anyhow::anyhow!("uploader panicked"))??;
+        forget_done_rx.recv_timeout(Duration::from_secs(2))?;
+        forgetter
+            .join()
+            .map_err(|_| anyhow::anyhow!("forgetter panicked"))??;
+
+        let _lock = QueueLock::acquire(&path)?;
+        let queue = Queue::open(&path)?;
+        assert!(queue.disabled());
+        assert!(queue.pending(instance_id, 1)?.is_empty());
         Ok(())
     }
 }

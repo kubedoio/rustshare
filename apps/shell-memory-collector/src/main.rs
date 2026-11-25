@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use reqwest::{multipart, redirect::Policy, StatusCode};
 use serde::{Deserialize, Serialize};
-use shell_memory_collector::{Config, Queue, RecordInput};
+use shell_memory_collector::{Config, Queue, QueueLock, RecordInput};
 use std::{io::Read, net::IpAddr, path::PathBuf, time::Duration};
 use url::Url;
 use uuid::Uuid;
@@ -150,6 +150,7 @@ fn load_config(path: &PathBuf) -> Result<Config> {
 
 fn record(config_path: &PathBuf) -> Result<()> {
     let config = load_config(config_path)?;
+    let _lock = QueueLock::acquire(&config.queue)?;
     let mut queue = Queue::open(&config.queue)?;
     if queue.disabled() {
         return Ok(());
@@ -186,13 +187,18 @@ async fn run(config_path: &PathBuf) -> Result<()> {
         .timeout(Duration::from_secs(30))
         .build()?;
     loop {
-        let queue = Queue::open(&config.queue)?;
-        if queue.disabled() {
-            bail!("collector is disabled; run enable before starting the uploader");
-        }
-        if !queue.paused() {
-            if let Err(error) = upload_pending(&client, &config, &credential, &queue).await {
-                eprintln!("Shell Memory upload deferred; queued events remain local: {error:#}");
+        {
+            let _lock = QueueLock::acquire(&config.queue)?;
+            let queue = Queue::open(&config.queue)?;
+            if queue.disabled() {
+                bail!("collector is disabled; run enable before starting the uploader");
+            }
+            if !queue.paused() {
+                if let Err(error) = upload_pending(&client, &config, &credential, &queue).await {
+                    eprintln!(
+                        "Shell Memory upload deferred; queued events remain local: {error:#}"
+                    );
+                }
             }
         }
         tokio::select! {
@@ -267,14 +273,19 @@ async fn upload_pending(
             .send()
             .await?;
         if !response.status().is_success() {
-            report_failure(
+            if let Err(error) = report_failure(
                 client,
                 config,
                 credential,
                 &lease,
                 failure_category(response.status()),
             )
-            .await;
+            .await
+            {
+                eprintln!(
+                    "Shell Memory failure report was rejected; queued event retained: {error}"
+                );
+            }
             bail!("Files import failed with HTTP {}", response.status());
         }
         let imported: ImportResponse = response.json().await?;
@@ -314,8 +325,8 @@ async fn report_failure(
     credential: &str,
     lease: &ExecutionLease,
     error: &str,
-) {
-    let _ = client
+) -> Result<()> {
+    let response = client
         .post(format!(
             "{}/api/v1/connectors/worker/lease/{}/fail",
             config.server, lease.lease_id
@@ -323,16 +334,24 @@ async fn report_failure(
         .header("Authorization", format!("Connector {credential}"))
         .json(&serde_json::json!({ "fence": lease.fence, "error": error }))
         .send()
-        .await;
+        .await
+        .map_err(|_| anyhow::anyhow!("Connector failure report request failed"))?;
+    if response.status() != StatusCode::NO_CONTENT {
+        bail!(
+            "Connector failure report rejected with HTTP {}",
+            response.status()
+        );
+    }
+    Ok(())
 }
 
 fn failure_category(status: StatusCode) -> &'static str {
     match status {
-        StatusCode::UNAUTHORIZED => "Authentication",
-        StatusCode::FORBIDDEN => "PolicyDenied",
-        StatusCode::TOO_MANY_REQUESTS => "RateLimit",
-        StatusCode::BAD_REQUEST => "InvalidContent",
-        _ => "SourceUnavailable",
+        StatusCode::UNAUTHORIZED => "authentication",
+        StatusCode::FORBIDDEN => "policy_denied",
+        StatusCode::TOO_MANY_REQUESTS => "rate_limit",
+        StatusCode::BAD_REQUEST => "invalid_content",
+        _ => "source_unavailable",
     }
 }
 
@@ -342,6 +361,7 @@ enum Control {
 }
 fn set_control(config_path: &PathBuf, control: Control, value: bool) -> Result<()> {
     let config = load_config(config_path)?;
+    let _lock = QueueLock::acquire(&config.queue)?;
     let queue = Queue::open(&config.queue)?;
     match control {
         Control::Pause => queue.set_paused(value),
@@ -351,6 +371,7 @@ fn set_control(config_path: &PathBuf, control: Control, value: bool) -> Result<(
 
 fn store_credential(config_path: &PathBuf) -> Result<()> {
     let config = load_config(config_path)?;
+    let _lock = QueueLock::acquire(&config.queue)?;
     let mut credential = String::new();
     std::io::stdin().read_to_string(&mut credential)?;
     let credential = credential.trim();
@@ -370,6 +391,7 @@ fn read_keyring_credential(instance_id: Uuid) -> Result<String> {
 
 fn forget(config_path: &PathBuf) -> Result<()> {
     let config = load_config(config_path)?;
+    let _lock = QueueLock::acquire(&config.queue)?;
     let queue = Queue::open(&config.queue)?;
     queue.forget()?;
     match keyring::Entry::new(CREDENTIAL_SERVICE, &config.instance_id.to_string())?
@@ -407,7 +429,8 @@ fn normalize_server(server: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_server;
+    use super::{failure_category, normalize_server};
+    use reqwest::StatusCode;
 
     #[test]
     fn server_url_rejects_credentials_query_fragment_and_path() {
@@ -433,5 +456,20 @@ mod tests {
             "http://127.0.0.1:18333"
         );
         assert!(normalize_server("http://example.test").is_err());
+    }
+
+    #[test]
+    fn failure_categories_match_connector_status_error_values() {
+        assert_eq!(failure_category(StatusCode::UNAUTHORIZED), "authentication");
+        assert_eq!(failure_category(StatusCode::FORBIDDEN), "policy_denied");
+        assert_eq!(
+            failure_category(StatusCode::TOO_MANY_REQUESTS),
+            "rate_limit"
+        );
+        assert_eq!(failure_category(StatusCode::BAD_REQUEST), "invalid_content");
+        assert_eq!(
+            failure_category(StatusCode::SERVICE_UNAVAILABLE),
+            "source_unavailable"
+        );
     }
 }
