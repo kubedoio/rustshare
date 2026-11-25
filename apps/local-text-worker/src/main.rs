@@ -428,9 +428,9 @@ mod credential_tests {
         assert!(ensure_migration_target(Some("ecw1_rotated"), "ecw1_old").is_err());
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
-    fn windows_credential_manager_provisions_reads_rotates_and_deletes() {
+    fn native_credential_store_provisions_reads_rotates_and_deletes() {
         let instance_id = uuid::Uuid::new_v4();
         let entry =
             keyring::Entry::new("io.elembra.local-text-worker", &instance_id.to_string()).unwrap();
