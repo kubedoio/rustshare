@@ -14,7 +14,7 @@ use rustshare_core::{
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde::{
-    de::{DeserializeSeed, MapAccess, SeqAccess, Visitor},
+    de::{MapAccess, SeqAccess, Visitor},
     Deserialize, Serialize,
 };
 use sha2::{Digest, Sha256};
@@ -849,11 +849,11 @@ impl<'de> Deserialize<'de> for BoardSourceEnvelope {
                             if has_elements {
                                 return Err(serde::de::Error::duplicate_field("elements"));
                             }
-                            map.next_value_seed(IgnoredArraySeed { depth: 1 })?;
+                            map.next_value::<IgnoredArray>()?;
                             has_elements = true;
                         }
                         _ => {
-                            map.next_value_seed(BoundedJsonSeed { depth: 1 })?;
+                            map.next_value::<serde::de::IgnoredAny>()?;
                         }
                     }
                 }
@@ -870,28 +870,18 @@ impl<'de> Deserialize<'de> for BoardSourceEnvelope {
 }
 
 /// Validate `elements` as an array while discarding entries without building a
-/// JSON tree. The depth counter also bounds nested values that Serde skips.
-struct IgnoredArraySeed {
-    depth: usize,
-}
+/// JSON tree. `parse_board_source` checks nesting before invoking Serde.
+struct IgnoredArray;
 
-impl<'de> DeserializeSeed<'de> for IgnoredArraySeed {
-    type Value = ();
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+impl<'de> Deserialize<'de> for IgnoredArray {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        if self.depth > MAX_BOARD_SOURCE_JSON_DEPTH {
-            return Err(serde::de::Error::custom("JSON nesting limit exceeded"));
-        }
-
-        struct ArrayVisitor {
-            depth: usize,
-        }
+        struct ArrayVisitor;
 
         impl<'de> Visitor<'de> for ArrayVisitor {
-            type Value = ();
+            type Value = IgnoredArray;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 formatter.write_str("an array")
@@ -901,110 +891,18 @@ impl<'de> DeserializeSeed<'de> for IgnoredArraySeed {
             where
                 A: SeqAccess<'de>,
             {
-                while seq
-                    .next_element_seed(BoundedJsonSeed {
-                        depth: self.depth + 1,
-                    })?
-                    .is_some()
-                {}
-                Ok(())
+                while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+                Ok(IgnoredArray)
             }
         }
 
-        deserializer.deserialize_seq(ArrayVisitor { depth: self.depth })
-    }
-}
-
-struct BoundedJsonSeed {
-    depth: usize,
-}
-
-impl<'de> DeserializeSeed<'de> for BoundedJsonSeed {
-    type Value = ();
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        if self.depth > MAX_BOARD_SOURCE_JSON_DEPTH {
-            return Err(serde::de::Error::custom("JSON nesting limit exceeded"));
-        }
-
-        deserializer.deserialize_any(BoundedJsonVisitor { depth: self.depth })
-    }
-}
-
-struct BoundedJsonVisitor {
-    depth: usize,
-}
-
-impl<'de> Visitor<'de> for BoundedJsonVisitor {
-    type Value = ();
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("a JSON value")
-    }
-
-    fn visit_bool<E>(self, _value: bool) -> Result<Self::Value, E> {
-        Ok(())
-    }
-
-    fn visit_i64<E>(self, _value: i64) -> Result<Self::Value, E> {
-        Ok(())
-    }
-
-    fn visit_u64<E>(self, _value: u64) -> Result<Self::Value, E> {
-        Ok(())
-    }
-
-    fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E> {
-        Ok(())
-    }
-
-    fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E> {
-        Ok(())
-    }
-
-    fn visit_borrowed_str<E>(self, _value: &'de str) -> Result<Self::Value, E> {
-        Ok(())
-    }
-
-    fn visit_string<E>(self, _value: String) -> Result<Self::Value, E> {
-        Ok(())
-    }
-
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(())
-    }
-
-    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        while seq
-            .next_element_seed(BoundedJsonSeed {
-                depth: self.depth + 1,
-            })?
-            .is_some()
-        {}
-        Ok(())
-    }
-
-    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        while map.next_key::<serde::de::IgnoredAny>()?.is_some() {
-            map.next_value_seed(BoundedJsonSeed {
-                depth: self.depth + 1,
-            })?;
-        }
-        Ok(())
+        deserializer.deserialize_seq(ArrayVisitor)
     }
 }
 
 fn parse_board_source(source: &str) -> Result<(), BrainstormError> {
     check_board_source_size(source)?;
+    check_board_source_json_depth(source)?;
     let parsed: BoardSourceEnvelope =
         serde_json::from_str(source).map_err(|e| BrainstormError::InvalidData(e.to_string()))?;
 
@@ -1020,6 +918,41 @@ fn parse_board_source(source: &str) -> Result<(), BrainstormError> {
         return Err(BrainstormError::InvalidData(
             "Invalid Excalidraw JSON: missing elements array".to_string(),
         ));
+    }
+
+    Ok(())
+}
+
+fn check_board_source_json_depth(source: &str) -> Result<(), BrainstormError> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for byte in source.bytes() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                depth += 1;
+                if depth > MAX_BOARD_SOURCE_JSON_DEPTH {
+                    return Err(BrainstormError::InvalidData(
+                        "JSON nesting limit exceeded".to_string(),
+                    ));
+                }
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
     }
 
     Ok(())
@@ -1132,12 +1065,27 @@ mod tests {
     }
 
     #[test]
-    fn board_source_parser_preserves_json_depth_limit_when_skipping_fields() {
-        let nested = format!("{}null{}", "[".repeat(129), "]".repeat(129));
-        let source = format!("{{\"type\":\"excalidraw\",\"elements\":[],\"extra\":{nested}}}");
+    fn board_source_parser_bounds_depth_and_ignores_brackets_inside_strings() {
+        let within_limit = format!(
+            "{}null{}",
+            "[".repeat(MAX_BOARD_SOURCE_JSON_DEPTH - 1),
+            "]".repeat(MAX_BOARD_SOURCE_JSON_DEPTH - 1)
+        );
+        let at_limit =
+            format!("{{\"type\":\"excalidraw\",\"elements\":[],\"extra\":{within_limit}}}");
+        let escaped_brackets = r#"{"type":"excalidraw","elements":[],"extra":"[[[\"{}]]]"}"#;
+        let over_limit = format!(
+            "{}null{}",
+            "[".repeat(MAX_BOARD_SOURCE_JSON_DEPTH),
+            "]".repeat(MAX_BOARD_SOURCE_JSON_DEPTH)
+        );
+        let too_deep =
+            format!("{{\"type\":\"excalidraw\",\"elements\":[],\"extra\":{over_limit}}}");
 
+        assert!(matches!(parse_board_source(&at_limit), Ok(())));
+        assert!(matches!(parse_board_source(escaped_brackets), Ok(())));
         assert!(matches!(
-            parse_board_source(&source),
+            parse_board_source(&too_deep),
             Err(BrainstormError::InvalidData(_))
         ));
     }
