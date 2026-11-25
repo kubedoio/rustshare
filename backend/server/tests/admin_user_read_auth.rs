@@ -12,6 +12,7 @@ use uuid::Uuid;
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL and RustFS"]
 async fn admin_user_reads_require_installation_admin_and_preserve_system_scope() {
+    assert_disposable_test_destinations();
     let (state, _) = common::setup_test_server().await;
     let pool = state.db_pool.clone();
     let fixture = Uuid::new_v4();
@@ -104,6 +105,51 @@ async fn admin_user_reads_require_installation_admin_and_preserve_system_scope()
         .execute(&pool)
         .await
         .unwrap();
+}
+
+fn assert_disposable_test_destinations() {
+    // Match setup_test_server's dotenv loading, then refuse the common
+    // production defaults before opening a database or object-store client.
+    dotenvy::dotenv().ok();
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_DB")
+            .ok()
+            .as_deref(),
+        Some("1"),
+        "set RUSTSHARE_TEST_DISPOSABLE_DB=1 only for the disposable test database"
+    );
+    assert_eq!(
+        std::env::var("RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE")
+            .ok()
+            .as_deref(),
+        Some("1"),
+        "set RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE=1 only for the disposable object store"
+    );
+    let database_url = rustshare_server::test_guard::disposable_database_url_from_env()
+        .expect("DATABASE_URL must name a loopback rustshare_test database");
+    rustshare_server::test_guard::validate_disposable_database_url(&database_url)
+        .expect("DATABASE_URL must remain pointed at a loopback rustshare_test database");
+
+    let endpoint = std::env::var("S3_ENDPOINT")
+        .or_else(|_| std::env::var("RUSTFS_ENDPOINT"))
+        .expect("set S3_ENDPOINT or RUSTFS_ENDPOINT to the disposable local object store");
+    let endpoint = url::Url::parse(&endpoint).expect("object-store endpoint must be a URL");
+    assert!(
+        matches!(endpoint.scheme(), "http" | "https")
+            && matches!(endpoint.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
+            && endpoint.username().is_empty()
+            && endpoint.password().is_none(),
+        "object-store endpoint must use loopback without embedded credentials"
+    );
+    let bucket = std::env::var("S3_BUCKET")
+        .or_else(|_| std::env::var("RUSTFS_BUCKET"))
+        .expect("set S3_BUCKET or RUSTFS_BUCKET to a rustshare-test bucket");
+    assert!(
+        bucket == "rustshare-test"
+            || bucket.starts_with("rustshare-test-")
+            || bucket.starts_with("rustshare-test_"),
+        "object-store bucket must be rustshare-test or rustshare-test-*"
+    );
 }
 
 async fn admin_user_read(

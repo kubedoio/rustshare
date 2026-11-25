@@ -183,17 +183,18 @@ impl AdminUserQueries {
             return Ok(None);
         };
 
-        let storage_used_bytes = sqlx::query_scalar::<_, i64>(
+        let storage_used_bytes = sqlx::query_scalar!(
             "SELECT COALESCE(SUM(size), 0)::BIGINT FROM (
-                 SELECT DISTINCT ON (fv.storage_key) fv.size
-                 FROM file_versions fv
-                 JOIN files f ON f.id = fv.file_id
-                 WHERE f.owner_id = $1
-             ) sub",
+             SELECT DISTINCT ON (fv.storage_key) fv.size
+             FROM file_versions fv
+             JOIN files f ON f.id = fv.file_id
+             WHERE f.owner_id = $1
+         ) sub",
+            user_id
         )
-        .bind(user_id)
         .fetch_one(&self.pool)
-        .await?;
+        .await?
+        .unwrap_or(0);
 
         Ok(Some(AdminUserDetailRow {
             user,
