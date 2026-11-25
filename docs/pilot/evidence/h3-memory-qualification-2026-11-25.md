@@ -4,6 +4,8 @@ Evidence baseline: protected `main` `592c918880d230367c7fa924d2d19218c84ada28`. 
 
 Status: **PARTIAL**. This record combines source/code inspection with exact-main integration and disposable pilot evidence. It does not claim a complete all-source browser/API acceptance journey or release qualification. Issue [#119](https://github.com/kubedoio/rustshare/issues/119) remains open.
 
+Dependency and release dispositions are recorded separately in [H3 dependency and release status](h3-dependency-release-status-2026-11-26.md).
+
 ## Source acceptance matrix
 
 | Source | Owner and retrieval | Scopes and identity | Authorization and citations | Deletion, recovery and availability | Audit |
