@@ -423,7 +423,7 @@ impl BuzzObservationService {
             workspace,
             &data,
             body,
-            extract_attachment_refs(&event),
+            extract_attachment_refs(event),
         );
         Ok((tenant, workspace, row, data))
     }
