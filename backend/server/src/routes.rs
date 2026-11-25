@@ -1768,9 +1768,9 @@ mod buzz_body_limit_tests {
             .split("pub fn memory_worker_routes")
             .next()
             .unwrap();
+        let buzz_routes = buzz_routes.split_whitespace().collect::<String>();
 
-        assert!(buzz_routes.contains("receive_buzz_event).layer("));
-        assert!(buzz_routes.contains("buzz_event_body_limit()"));
+        assert!(buzz_routes.contains("receive_buzz_event).layer(buzz_event_body_limit())"));
     }
 
     #[tokio::test]
