@@ -44,7 +44,7 @@ dbus-run-session -- bash --noprofile --norc -euo pipefail -c '
       echo "worker did not remain running (exit $status)" >&2
       return 1
     fi
-    if ! grep -Eq '^Scanned [0-9]+ eligible observations, uploaded [0-9]+, excluded [0-9]+$' "$HOME/worker.log"; then
+    if ! grep -Eq "^Scanned [0-9]+ eligible observations, uploaded [0-9]+, excluded [0-9]+$" "$HOME/worker.log"; then
       cat "$HOME/worker.log"
       echo "worker did not complete a scan after reading its credential" >&2
       return 1
