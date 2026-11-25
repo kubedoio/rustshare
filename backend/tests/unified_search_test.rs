@@ -3064,6 +3064,27 @@ async fn mail_workspace_search_reauthorizes_live_owner_and_ask_context() {
         .unwrap_or_default()
         .contains(body_marker));
 
+    let unrelated_user =
+        create_user(&harness.metadata_store, "mail_search_unrelated", tenant.0).await;
+    let unrelated_context = user_ctx(PrincipalId::from(unrelated_user.id), tenant);
+    assert_eq!(
+        authorizer
+            .authorize(
+                &unrelated_context,
+                &ActionCapability::from(MAIL_READ),
+                &mail_ref,
+            )
+            .await,
+        Decision::NotFound,
+        "a different workspace user must not discover another user's Mail message"
+    );
+    assert!(matches!(
+        authorizer
+            .fetch(&unrelated_context, &mail_ref, Representation::Text)
+            .await,
+        Err(SourceError::NotFound)
+    ));
+
     let other_context = user_ctx(PrincipalId::from(other_user.id), other_tenant);
     let cross_tenant = search
         .search(
