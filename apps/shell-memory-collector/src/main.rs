@@ -3,7 +3,9 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use reqwest::{multipart, redirect::Policy, StatusCode};
 use serde::{Deserialize, Serialize};
-use shell_memory_collector::{Config, Queue, QueueLock, RecordInput};
+use shell_memory_collector::{
+    record_if_enabled, Config, Event, Queue, QueueLock, RecordInput, UploadLock,
+};
 use std::{io::Read, net::IpAddr, path::PathBuf, time::Duration};
 use url::Url;
 use uuid::Uuid;
@@ -150,11 +152,6 @@ fn load_config(path: &PathBuf) -> Result<Config> {
 
 fn record(config_path: &PathBuf) -> Result<()> {
     let config = load_config(config_path)?;
-    let _lock = QueueLock::acquire(&config.queue)?;
-    let mut queue = Queue::open(&config.queue)?;
-    if queue.disabled() {
-        return Ok(());
-    }
     let mut bytes = Vec::new();
     std::io::stdin().read_to_end(&mut bytes)?;
     let fields = bytes
@@ -175,30 +172,33 @@ fn record(config_path: &PathBuf) -> Result<()> {
             .parse()
             .context("invalid command duration")?,
     };
-    queue.record(config.instance_id, input, &config.exclude_commands)?;
+    record_if_enabled(
+        &config.queue,
+        config.instance_id,
+        input,
+        &config.exclude_commands,
+    )?;
     Ok(())
 }
 
 async fn run(config_path: &PathBuf) -> Result<()> {
     let config = load_config(config_path)?;
-    let credential = read_keyring_credential(config.instance_id)?;
     let client = reqwest::Client::builder()
         .redirect(Policy::none())
         .timeout(Duration::from_secs(30))
         .build()?;
     loop {
+        match upload_round(&client, &config, || {
+            read_keyring_credential(config.instance_id)
+        })
+        .await
         {
-            let _lock = QueueLock::acquire(&config.queue)?;
-            let queue = Queue::open(&config.queue)?;
-            if queue.disabled() {
+            Ok(UploadRound::Disabled) => {
                 bail!("collector is disabled; run enable before starting the uploader");
             }
-            if !queue.paused() {
-                if let Err(error) = upload_pending(&client, &config, &credential, &queue).await {
-                    eprintln!(
-                        "Shell Memory upload deferred; queued events remain local: {error:#}"
-                    );
-                }
+            Ok(UploadRound::Idle | UploadRound::Completed) => {}
+            Err(error) => {
+                eprintln!("Shell Memory upload deferred; queued events remain local: {error:#}");
             }
         }
         tokio::select! {
@@ -208,11 +208,47 @@ async fn run(config_path: &PathBuf) -> Result<()> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum UploadRound {
+    Disabled,
+    Idle,
+    Completed,
+}
+
+async fn upload_round<F>(
+    client: &reqwest::Client,
+    config: &Config,
+    credential: F,
+) -> Result<UploadRound>
+where
+    F: FnOnce() -> Result<String>,
+{
+    let _upload_lock = UploadLock::acquire(&config.queue)?;
+    let events = {
+        let _queue_lock = QueueLock::acquire(&config.queue)?;
+        if Queue::is_disabled(&config.queue)? {
+            return Ok(UploadRound::Disabled);
+        }
+        let queue = Queue::open(&config.queue)?;
+        if queue.paused() {
+            Vec::new()
+        } else {
+            queue.pending(config.instance_id, 100)?
+        }
+    };
+    if events.is_empty() {
+        return Ok(UploadRound::Idle);
+    }
+    let credential = credential()?;
+    upload_pending(client, config, &credential, events).await?;
+    Ok(UploadRound::Completed)
+}
+
 async fn upload_pending(
     client: &reqwest::Client,
     config: &Config,
     credential: &str,
-    queue: &Queue,
+    events: Vec<Event>,
 ) -> Result<()> {
     let session: WorkerSession = client
         .get(format!(
@@ -227,10 +263,6 @@ async fn upload_pending(
         .await?;
     if session.id != config.instance_id || session.connector_id != CONNECTOR_ID {
         bail!("credential is not bound to the configured Shell Memory Connector instance");
-    }
-    let events = queue.pending(config.instance_id, 100)?;
-    if events.is_empty() {
-        return Ok(());
     }
     let Some(lease) = client
         .post(format!("{}/api/v1/connectors/worker/lease", config.server))
@@ -313,6 +345,8 @@ async fn upload_pending(
             response.status()
         );
     }
+    let _queue_lock = QueueLock::acquire(&config.queue)?;
+    let queue = Queue::open(&config.queue)?;
     for (id, _) in completed {
         queue.acknowledge(id)?;
     }
@@ -361,6 +395,7 @@ enum Control {
 }
 fn set_control(config_path: &PathBuf, control: Control, value: bool) -> Result<()> {
     let config = load_config(config_path)?;
+    let _upload_lock = UploadLock::acquire(&config.queue)?;
     let _lock = QueueLock::acquire(&config.queue)?;
     let queue = Queue::open(&config.queue)?;
     match control {
@@ -371,7 +406,7 @@ fn set_control(config_path: &PathBuf, control: Control, value: bool) -> Result<(
 
 fn store_credential(config_path: &PathBuf) -> Result<()> {
     let config = load_config(config_path)?;
-    let _lock = QueueLock::acquire(&config.queue)?;
+    let _upload_lock = UploadLock::acquire(&config.queue)?;
     let mut credential = String::new();
     std::io::stdin().read_to_string(&mut credential)?;
     let credential = credential.trim();
@@ -391,6 +426,7 @@ fn read_keyring_credential(instance_id: Uuid) -> Result<String> {
 
 fn forget(config_path: &PathBuf) -> Result<()> {
     let config = load_config(config_path)?;
+    let _upload_lock = UploadLock::acquire(&config.queue)?;
     let _lock = QueueLock::acquire(&config.queue)?;
     let queue = Queue::open(&config.queue)?;
     queue.forget()?;
@@ -429,8 +465,131 @@ fn normalize_server(server: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{failure_category, normalize_server};
+    use super::{failure_category, normalize_server, upload_round, UploadRound};
+    use anyhow::Result;
     use reqwest::StatusCode;
+    use shell_memory_collector::{
+        record_if_enabled, Config, Queue, QueueLock, RecordInput, UploadLock,
+    };
+    use std::time::Duration;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+        sync::{mpsc, oneshot},
+    };
+    use uuid::Uuid;
+
+    async fn read_request(stream: &mut TcpStream) -> std::io::Result<(String, Vec<u8>)> {
+        let mut header = Vec::new();
+        let mut byte = [0_u8; 1];
+        while !header.ends_with(b"\r\n\r\n") {
+            stream.read_exact(&mut byte).await?;
+            header.push(byte[0]);
+        }
+        let header_text = String::from_utf8_lossy(&header);
+        let request_line = header_text.lines().next().unwrap_or_default().to_owned();
+        let content_length = header_text
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or(0);
+        let mut body = vec![0; content_length];
+        stream.read_exact(&mut body).await?;
+        Ok((request_line, body))
+    }
+
+    async fn respond(stream: &mut TcpStream, status: &str, body: &[u8], content_type: &str) {
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: {content_type}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+        stream.write_all(body).await.unwrap();
+    }
+
+    async fn fake_connector(
+        listener: TcpListener,
+        instance_id: Uuid,
+        import_started: mpsc::Sender<Vec<u8>>,
+        import_release: oneshot::Receiver<()>,
+        acknowledged: oneshot::Sender<()>,
+    ) -> std::io::Result<()> {
+        let mut import_release = Some(import_release);
+        let mut acknowledged = Some(acknowledged);
+        loop {
+            let (mut stream, _) = listener.accept().await?;
+            let (request, body) = read_request(&mut stream).await?;
+            let path = request.split_whitespace().nth(1).unwrap_or_default();
+            match path {
+                "/api/v1/connectors/worker/session" => {
+                    let body = serde_json::json!({
+                        "id": instance_id,
+                        "connectorId": "io.elembra.connector.shell-memory"
+                    });
+                    respond(
+                        &mut stream,
+                        "200 OK",
+                        body.to_string().as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+                "/api/v1/connectors/worker/lease" => {
+                    let body = serde_json::json!({
+                        "leaseId": Uuid::new_v4(),
+                        "fence": 7,
+                        "checkpointVersion": 0,
+                        "expiresAt": chrono::Utc::now() + chrono::Duration::minutes(1),
+                        "cursor": null
+                    });
+                    respond(
+                        &mut stream,
+                        "200 OK",
+                        body.to_string().as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+                "/api/v1/connectors/worker/files/import" => {
+                    import_started
+                        .send(body)
+                        .await
+                        .map_err(std::io::Error::other)?;
+                    import_release
+                        .take()
+                        .expect("only one event is imported")
+                        .await
+                        .map_err(std::io::Error::other)?;
+                    let body = serde_json::json!({
+                        "sourceResourceRef": "elembra://io.elembra.connector.shell-memory/file/synthetic",
+                        "sourceRevision": "sha256:synthetic",
+                        "targetResourceRef": "elembra://io.elembra.files/file/synthetic"
+                    });
+                    respond(
+                        &mut stream,
+                        "200 OK",
+                        body.to_string().as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+                path if path.ends_with("/ack") => {
+                    respond(&mut stream, "204 No Content", b"", "application/json").await;
+                    if let Some(done) = acknowledged.take() {
+                        let _ = done.send(());
+                    }
+                    return Ok(());
+                }
+                _ => {
+                    respond(&mut stream, "404 Not Found", b"{}", "application/json").await;
+                }
+            }
+        }
+    }
 
     #[test]
     fn server_url_rejects_credentials_query_fragment_and_path() {
@@ -471,5 +630,133 @@ mod tests {
             failure_category(StatusCode::SERVICE_UNAVAILABLE),
             "source_unavailable"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn forget_waits_for_real_upload_round_while_record_stays_unblocked() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let queue_path = directory.path().join("queue.sqlite3");
+        let instance_id = Uuid::new_v4();
+        let config = Config {
+            server: String::new(),
+            instance_id,
+            queue: queue_path.clone(),
+            exclude_commands: Vec::new(),
+        };
+        assert!(record_if_enabled(
+            &queue_path,
+            instance_id,
+            RecordInput {
+                command: "echo synthetic-upload".into(),
+                cwd: "/tmp/synthetic".into(),
+                host: "synthetic-host".into(),
+                exit_code: 0,
+                duration_ms: 1,
+            },
+            &[]
+        )?);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let mut config = config;
+        config.server = format!("http://{address}");
+        let (import_started_tx, mut import_started_rx) = mpsc::channel(1);
+        let (import_release_tx, import_release_rx) = oneshot::channel();
+        let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
+        let server = tokio::spawn(fake_connector(
+            listener,
+            instance_id,
+            import_started_tx,
+            import_release_rx,
+            acknowledged_tx,
+        ));
+        let client = reqwest::Client::new();
+        let upload_config = config.clone();
+        let uploader = tokio::spawn(async move {
+            upload_round(&client, &upload_config, || {
+                Ok("synthetic-worker-credential".into())
+            })
+            .await
+        });
+        let import_body = tokio::time::timeout(Duration::from_secs(2), import_started_rx.recv())
+            .await?
+            .expect("fake server receives Files import");
+        let import_body = String::from_utf8_lossy(&import_body);
+        assert!(import_body.contains("echo synthetic-upload"));
+        assert!(import_body.contains("io.elembra.connector.shell-memory"));
+
+        let record_path = queue_path.clone();
+        let record_task = tokio::task::spawn_blocking(move || {
+            record_if_enabled(
+                &record_path,
+                instance_id,
+                RecordInput {
+                    command: "echo queued-during-upload".into(),
+                    cwd: "/tmp/synthetic".into(),
+                    host: "synthetic-host".into(),
+                    exit_code: 0,
+                    duration_ms: 2,
+                },
+                &[],
+            )
+        });
+        let recorded = tokio::time::timeout(Duration::from_secs(2), record_task)
+            .await
+            .expect("zsh capture is not blocked by HTTP")??;
+        assert!(recorded);
+
+        let forget_path = queue_path.clone();
+        let (forget_attempt_tx, forget_attempt_rx) = oneshot::channel();
+        let (forget_acquired_tx, mut forget_acquired_rx) = mpsc::channel(1);
+        let forgetter = tokio::task::spawn_blocking(move || -> Result<()> {
+            let _ = forget_attempt_tx.send(());
+            let _upload_lock = UploadLock::acquire(&forget_path)?;
+            let _queue_lock = QueueLock::acquire(&forget_path)?;
+            let _ = forget_acquired_tx.blocking_send(());
+            Queue::open(&forget_path)?.forget()
+        });
+        tokio::time::timeout(Duration::from_secs(2), forget_attempt_rx)
+            .await?
+            .expect("forget task started");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), forget_acquired_rx.recv())
+                .await
+                .is_err()
+        );
+        assert!(!forgetter.is_finished());
+
+        import_release_tx
+            .send(())
+            .expect("release fake import response");
+        assert_eq!(uploader.await??, UploadRound::Completed);
+        tokio::time::timeout(Duration::from_secs(2), acknowledged_rx)
+            .await?
+            .expect("fake server observes worker ack");
+        forgetter.await??;
+        server.await??;
+
+        assert!(Queue::is_disabled(&queue_path)?);
+        assert!(!queue_path.exists());
+        assert!(!record_if_enabled(
+            &queue_path,
+            instance_id,
+            RecordInput {
+                command: "echo after-forget".into(),
+                cwd: "/tmp/synthetic".into(),
+                host: "synthetic-host".into(),
+                exit_code: 0,
+                duration_ms: 3,
+            },
+            &[]
+        )?);
+        assert!(!queue_path.exists());
+        assert_eq!(
+            upload_round(&reqwest::Client::new(), &config, || {
+                anyhow::bail!("credential must not be read after forget")
+            })
+            .await?,
+            UploadRound::Disabled
+        );
+        Ok(())
     }
 }
