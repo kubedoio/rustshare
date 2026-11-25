@@ -1759,6 +1759,22 @@ mod webhook_body_limit_tests {
     };
     use tower::ServiceExt;
 
+    #[test]
+    fn production_chat_event_registration_uses_the_tested_body_limit() {
+        let routes = include_str!("routes.rs");
+        let chat_routes = routes
+            .split("pub fn chat_integration_routes")
+            .nth(1)
+            .unwrap()
+            .split("pub fn buzz_observation_routes")
+            .next()
+            .unwrap();
+        let chat_routes = chat_routes.split_whitespace().collect::<String>();
+
+        assert!(chat_routes.contains("receive_chat_event).layer(chat_event_body_limit())"));
+        assert!(chat_routes.contains("chat_event_body_limit()"));
+    }
+
     #[tokio::test]
     async fn oversized_chat_event_body_is_rejected_before_handler_authentication() {
         let app = Router::new().route(
