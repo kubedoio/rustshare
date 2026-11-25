@@ -15,7 +15,7 @@ Owner decision required: whether optional import/archive is in scope, which mess
 
 ## #329 Calendar interoperability
 
-Current mainline has bounded single-event iCalendar export/import and subscription/feed work, but full interoperability is incomplete. The remaining acceptance is recurrence and timezone round-trip for supported cases, stable-UID duplicate behavior, permission-aware and revocable feeds with secret-safe logs, and a committed CalDAV feasibility decision. Unsupported recurrence overrides/custom zones must fail closed rather than silently change event meaning. Native Apple/Outlook/Google client acceptance and live Google/Microsoft provider sync (#507) remain separate gates requiring operator credentials.
+Current mainline has owner-scoped single-event export and bounded `.ics` import, but full interoperability is incomplete. Recurrence and timezone round-trip for supported cases and stable-UID duplicate behavior remain to be qualified. Permission-aware, revocable subscription/feed acceptance is deferred pending end-to-end secret-redaction evidence, and the CalDAV feasibility decision remains open. Unsupported recurrence overrides/custom zones must fail closed rather than silently change event meaning. Native Apple/Outlook/Google client acceptance and live Google/Microsoft provider sync (#507) remain separate gates requiring operator credentials.
 
 **Recommendation:** retain the current bounded iCalendar contract for the pilot; defer full CalDAV and provider-specific live sync until named clients, recurring-event semantics, secret-redaction evidence and operator test accounts are available. Keep #329 and #507 open.
 
