@@ -197,8 +197,7 @@ async fn run(config_path: &PathBuf) -> Result<()> {
             Ok(UploadRound::Disabled) => {
                 bail!("collector is disabled; run enable before starting the uploader");
             }
-            Ok(UploadRound::Completed) => Duration::from_millis(100),
-            Ok(UploadRound::Idle) => Duration::from_secs(15),
+            Ok(outcome) => outcome.next_delay(),
             Err(error) => {
                 eprintln!("Shell Memory upload deferred; queued events remain local: {error:#}");
                 Duration::from_secs(15)
@@ -215,6 +214,22 @@ async fn run(config_path: &PathBuf) -> Result<()> {
 enum UploadRound {
     Disabled,
     Idle,
+    NoLease,
+    Completed,
+}
+
+impl UploadRound {
+    fn next_delay(&self) -> Duration {
+        match self {
+            Self::Completed => Duration::from_millis(100),
+            Self::Disabled | Self::Idle | Self::NoLease => Duration::from_secs(15),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum UploadResult {
+    NoLease,
     Completed,
 }
 
@@ -243,8 +258,10 @@ where
         return Ok(UploadRound::Idle);
     }
     let credential = credential()?;
-    upload_pending(client, config, &credential, events).await?;
-    Ok(UploadRound::Completed)
+    match upload_pending(client, config, &credential, events).await? {
+        UploadResult::NoLease => Ok(UploadRound::NoLease),
+        UploadResult::Completed => Ok(UploadRound::Completed),
+    }
 }
 
 async fn upload_pending(
@@ -252,7 +269,7 @@ async fn upload_pending(
     config: &Config,
     credential: &str,
     events: Vec<Event>,
-) -> Result<()> {
+) -> Result<UploadResult> {
     let session: WorkerSession = client
         .get(format!(
             "{}/api/v1/connectors/worker/session",
@@ -276,7 +293,7 @@ async fn upload_pending(
         .json::<Option<ExecutionLease>>()
         .await?
     else {
-        return Ok(());
+        return Ok(UploadResult::NoLease);
     };
     let mut completed = Vec::with_capacity(events.len());
     for event in events {
@@ -327,7 +344,7 @@ async fn upload_pending(
         completed.push((event.id, imported.target_resource_ref));
     }
     let Some((queue_id, _)) = completed.last() else {
-        return Ok(());
+        bail!("upload round completed without a Files import");
     };
     let response = client
         .post(format!(
@@ -353,7 +370,7 @@ async fn upload_pending(
     for (id, _) in completed {
         queue.acknowledge(id)?;
     }
-    Ok(())
+    Ok(UploadResult::Completed)
 }
 
 async fn report_failure(
@@ -482,14 +499,14 @@ mod tests {
     };
     use uuid::Uuid;
 
-    async fn read_request(stream: &mut TcpStream) -> std::io::Result<(String, Vec<u8>)> {
+    async fn read_request(stream: &mut TcpStream) -> std::io::Result<(String, String, Vec<u8>)> {
         let mut header = Vec::new();
         let mut byte = [0_u8; 1];
         while !header.ends_with(b"\r\n\r\n") {
             stream.read_exact(&mut byte).await?;
             header.push(byte[0]);
         }
-        let header_text = String::from_utf8_lossy(&header);
+        let header_text = String::from_utf8_lossy(&header).into_owned();
         let request_line = header_text.lines().next().unwrap_or_default().to_owned();
         let content_length = header_text
             .lines()
@@ -502,7 +519,7 @@ mod tests {
             .unwrap_or(0);
         let mut body = vec![0; content_length];
         stream.read_exact(&mut body).await?;
-        Ok((request_line, body))
+        Ok((request_line, header_text, body))
     }
 
     async fn respond(stream: &mut TcpStream, status: &str, body: &[u8], content_type: &str) {
@@ -525,7 +542,7 @@ mod tests {
         let mut acknowledged = Some(acknowledged);
         loop {
             let (mut stream, _) = listener.accept().await?;
-            let (request, body) = read_request(&mut stream).await?;
+            let (request, _, body) = read_request(&mut stream).await?;
             let path = request.split_whitespace().nth(1).unwrap_or_default();
             match path {
                 "/api/v1/connectors/worker/session" => {
@@ -594,6 +611,59 @@ mod tests {
         }
     }
 
+    async fn fake_connector_without_lease(
+        listener: TcpListener,
+        instance_id: Uuid,
+        sessions_remaining: usize,
+        authorizations: mpsc::Sender<String>,
+    ) -> std::io::Result<()> {
+        let mut sessions_remaining = sessions_remaining;
+        loop {
+            let (mut stream, _) = listener.accept().await?;
+            let (request, headers, _) = read_request(&mut stream).await?;
+            let path = request.split_whitespace().nth(1).unwrap_or_default();
+            match path {
+                "/api/v1/connectors/worker/session" => {
+                    let authorization = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("authorization")
+                                .then(|| value.trim().to_owned())
+                        })
+                        .ok_or_else(|| std::io::Error::other("authorization header missing"))?;
+                    authorizations
+                        .send(authorization)
+                        .await
+                        .map_err(std::io::Error::other)?;
+                    let body = serde_json::json!({
+                        "id": instance_id,
+                        "connectorId": "io.elembra.connector.shell-memory"
+                    });
+                    respond(
+                        &mut stream,
+                        "200 OK",
+                        body.to_string().as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+                "/api/v1/connectors/worker/lease" => {
+                    respond(&mut stream, "200 OK", b"null", "application/json").await;
+                    sessions_remaining -= 1;
+                    if sessions_remaining == 0 {
+                        return Ok(());
+                    }
+                }
+                _ => {
+                    return Err(std::io::Error::other(
+                        "no-lease flow must not import or acknowledge",
+                    ));
+                }
+            }
+        }
+    }
+
     #[test]
     fn server_url_rejects_credentials_query_fragment_and_path() {
         for server in [
@@ -633,6 +703,75 @@ mod tests {
             failure_category(StatusCode::SERVICE_UNAVAILABLE),
             "source_unavailable"
         );
+    }
+
+    #[test]
+    fn no_lease_uses_backoff() {
+        assert_eq!(UploadRound::NoLease.next_delay(), Duration::from_secs(15));
+        assert_eq!(
+            UploadRound::Completed.next_delay(),
+            Duration::from_millis(100)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn no_lease_rounds_reuse_pending_event_and_reread_rotated_credentials() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let queue_path = directory.path().join("queue.sqlite3");
+        let instance_id = Uuid::new_v4();
+        let config = Config {
+            server: String::new(),
+            instance_id,
+            queue: queue_path.clone(),
+            exclude_commands: Vec::new(),
+        };
+        assert!(record_if_enabled(
+            &queue_path,
+            instance_id,
+            RecordInput {
+                command: "echo pending-without-lease".into(),
+                cwd: "/tmp/synthetic".into(),
+                host: "synthetic-host".into(),
+                exit_code: 0,
+                duration_ms: 1,
+            },
+            &[]
+        )?);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let mut config = config;
+        config.server = format!("http://{}", listener.local_addr()?);
+        let (authorization_tx, mut authorization_rx) = mpsc::channel(2);
+        let server = tokio::spawn(fake_connector_without_lease(
+            listener,
+            instance_id,
+            2,
+            authorization_tx,
+        ));
+        let client = reqwest::Client::new();
+
+        assert_eq!(
+            upload_round(&client, &config, || Ok("ecw1_synthetic_first".into())).await?,
+            UploadRound::NoLease
+        );
+        assert_eq!(
+            upload_round(&client, &config, || Ok("ecw1_synthetic_rotated".into())).await?,
+            UploadRound::NoLease
+        );
+        server.await??;
+
+        assert_eq!(
+            authorization_rx.recv().await.as_deref(),
+            Some("Connector ecw1_synthetic_first")
+        );
+        assert_eq!(
+            authorization_rx.recv().await.as_deref(),
+            Some("Connector ecw1_synthetic_rotated")
+        );
+        let queue = Queue::open(&queue_path)?;
+        assert_eq!(queue.pending(instance_id, 10)?.len(), 1);
+        assert_eq!(UploadRound::NoLease.next_delay(), Duration::from_secs(15));
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
