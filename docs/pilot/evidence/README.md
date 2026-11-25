@@ -1,6 +1,8 @@
 # Pilot evidence
 
-The exact-current-main CI qualification after #560 is summarized in [candidate 219d1d18 disposable pilot evidence](candidate-219d1d18-disposable-pilot-2026-11-25.md). It covers clean install, canonical/UI journeys, failure drills, runtime database role, backup and restore; the workflow explicitly records upgrade status as not applicable for this first clean-install baseline.
+The latest exact-protected-main disposable pilot baseline is [candidate 91ac914a](candidate-91ac914a-disposable-pilot-2026-11-25.md), tied to Pilot Release run 45711231246 and its immutable image/evidence digests. It passed clean install, browser, failure, backup and fresh-volume restore checks. The workflow explicitly records upgrade as not applicable; 100-user administration and FWS target acceptance are not qualified.
+
+[Candidate 219d1d18](candidate-219d1d18-disposable-pilot-2026-11-25.md) and [candidate c2157181](candidate-c2157181-disposable-recovery-2026-11-25.md) are historical source snapshots and must not be treated as the current candidate.
 
 See [candidate c2157181 disposable recovery and authorization evidence](candidate-c2157181-disposable-recovery-2026-11-25.md) for the 2026-11-25 synthetic recovery, browser, restore/rollback, and protected-main organization authorization results. It is separate from PR #560 head CI and does not qualify the FWS target or a release.
 
