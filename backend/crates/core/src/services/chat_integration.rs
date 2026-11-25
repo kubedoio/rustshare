@@ -194,7 +194,6 @@ pub struct UnfurlResponse {
 
 /// Incoming chat event from external chat system.
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(deny_unknown_fields)]
 pub struct IncomingChatEvent {
     pub event_type: String,
     pub timestamp: DateTime<Utc>,
@@ -1103,10 +1102,12 @@ mod tests {
     }
 
     #[test]
-    fn incoming_chat_event_rejects_unknown_envelope_fields() {
-        let body = r#"{"event_type":"vendor.event","timestamp":"2026-01-01T00:00:00Z","user_id":null,"data":null,"unexpected":true}"#;
+    fn incoming_chat_event_accepts_extension_fields_and_preserves_data() {
+        let body = r#"{"event_type":"vendor.event","timestamp":"2026-01-01T00:00:00Z","user_id":null,"data":{"opaque":true},"extension":{"version":2}}"#;
 
-        assert!(serde_json::from_str::<IncomingChatEvent>(body).is_err());
+        let event: IncomingChatEvent = serde_json::from_str(body).unwrap();
+        assert_eq!(event.event_type, "vendor.event");
+        assert_eq!(event.data.get(), r#"{"opaque":true}"#);
     }
 
     #[tokio::test]
