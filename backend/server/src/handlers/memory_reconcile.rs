@@ -735,8 +735,21 @@ pub async fn reconcile_chat_memory_from_buzz_for_tenant(
                 );
                 continue;
             }
+            let event = match serde_json::from_value(entry.event.clone()) {
+                Ok(event) => event,
+                Err(error) => {
+                    skipped += 1;
+                    tracing::warn!(
+                        tenant = %tenant_id,
+                        event_id = event_id.unwrap_or("<missing>"),
+                        error = %error,
+                        "reconcile-from-buzz: skipping malformed Nostr event"
+                    );
+                    continue;
+                }
+            };
             let push = BuzzEventPush {
-                event: entry.event.clone(),
+                event,
                 context: BuzzPushContext {
                     community_id: entry.context.community_id.clone(),
                     channel_id: entry.context.channel_id.clone(),

@@ -55,10 +55,10 @@ const MAX_CREATED_AT_FUTURE_SKEW_SECS: i64 = 15 * 60;
 /// was observed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuzzEventPush {
-    /// The Nostr event as raw JSON; parsed into [`nostr::Event`] for
-    /// cryptographic verification. The raw `id` string is never trusted — it
-    /// is only ever compared against the parsed, verified event id.
-    pub event: serde_json::Value,
+    /// The signed Nostr event, decoded to its fixed protocol schema before
+    /// cryptographic verification. Its id and signature remain untrusted
+    /// until [`nostr::Event::verify`] succeeds.
+    pub event: NostrEvent,
     pub context: BuzzPushContext,
 }
 
@@ -295,24 +295,13 @@ impl BuzzObservationService {
         validate_context(push)?;
 
         // 4. Cryptographic verification of the signed Nostr event.
-        let raw_event_id = push
-            .event
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| BuzzPushError::Malformed("Nostr event missing `id`".to_string()))?;
-        let event: NostrEvent = serde_json::from_value(push.event.clone())
-            .map_err(|e| BuzzPushError::Malformed(format!("invalid Nostr event: {e}")))?;
+        let event = &push.event;
         if !is_chat_message_kind(event.kind) {
             return Err(BuzzPushError::VerificationFailed);
         }
-        // The raw JSON `id` must equal the parsed event id. `Event::verify`
-        // recomputes the id from the canonical serialization (so a lying raw
-        // field can never survive verification), but be explicit: the
-        // observation identity is derived from the parsed event only.
+        // The observation identity is derived from the typed event only;
+        // `Event::verify` recomputes its id from canonical serialization.
         let event_id_hex = event.id.to_hex();
-        if raw_event_id != event_id_hex {
-            return Err(BuzzPushError::VerificationFailed);
-        }
         event
             .verify()
             .map_err(|_| BuzzPushError::VerificationFailed)?;
@@ -652,18 +641,14 @@ fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
             ));
         }
     }
-    // The raw `id` field is only ever a comparison input here; the parsed,
-    // cryptographically verified event id is authoritative (step 4).
-    let raw_event_id = push
-        .event
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| BuzzPushError::Malformed("Nostr event missing `id`".to_string()))?;
+    // The typed event id is only a comparison input here; cryptographic
+    // verification later establishes it as authoritative.
+    let event_id = push.event.id.to_hex();
     match context.event_type {
         // A created event IS the message root: its id must equal the message
         // id, and there is nothing it can supersede.
         ObservedEventType::Created => {
-            if raw_event_id != context.message_id {
+            if event_id != context.message_id {
                 return Err(BuzzPushError::Malformed(
                     "created event message_id must equal the Nostr event id".to_string(),
                 ));
@@ -679,13 +664,13 @@ fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
         // `supersedes == message_id` is the correct first-edit contract;
         // only self-supersede (`supersedes == this event's id`) is invalid.
         ObservedEventType::Edited => {
-            if raw_event_id == context.message_id {
+            if event_id == context.message_id {
                 return Err(BuzzPushError::Malformed(
                     "edited event message_id must differ from the Nostr event id".to_string(),
                 ));
             }
             if let Some(supersedes) = &context.supersedes_event_id {
-                if supersedes == raw_event_id {
+                if supersedes == &event_id {
                     return Err(BuzzPushError::Malformed(
                         "context.supersedes_event_id must not equal the Nostr event id".to_string(),
                     ));
@@ -694,14 +679,14 @@ fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
         }
         // A deletion has TWO accepted forms:
         // 1. Webhook form: a separate deletion event superseding the message
-        //    — `raw_event_id != message_id` (same identity rules as Edited).
+        //    — `event_id != message_id` (same identity rules as Edited).
         // 2. Snapshot form (the relay's `state/events` tombstone): the
         //    message itself is the entry, marked deleted —
-        //    `raw_event_id == message_id` with `supersedes_event_id: null`
+        //    `event_id == message_id` with `supersedes_event_id: null`
         //    (a snapshot tombstone supersedes nothing). Reconcile applies it
         //    by re-ingesting the same event id as a Deleted observation.
         ObservedEventType::Deleted => {
-            if raw_event_id == context.message_id {
+            if event_id == context.message_id {
                 // Snapshot form.
                 if context.supersedes_event_id.is_some() {
                     return Err(BuzzPushError::Malformed(
@@ -710,7 +695,7 @@ fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
                     ));
                 }
             } else if let Some(supersedes) = &context.supersedes_event_id {
-                if supersedes == raw_event_id {
+                if supersedes == &event_id {
                     return Err(BuzzPushError::Malformed(
                         "context.supersedes_event_id must not equal the Nostr event id".to_string(),
                     ));
@@ -748,7 +733,7 @@ mod tests {
 
     fn push(event: &NostrEvent, message_id: &str, event_type: ObservedEventType) -> BuzzEventPush {
         BuzzEventPush {
-            event: serde_json::to_value(event).expect("serialize nostr event"),
+            event: event.clone(),
             context: BuzzPushContext {
                 community_id: "community-1".to_string(),
                 channel_id: "channel-1".to_string(),
@@ -767,10 +752,21 @@ mod tests {
         let original = push(&event, &event.id.to_hex(), ObservedEventType::Created);
         let json = serde_json::to_value(&original).unwrap();
         let back: BuzzEventPush = serde_json::from_value(json).unwrap();
-        assert_eq!(back.event, original.event);
+        assert_eq!(back.event.id, original.event.id);
+        assert_eq!(back.event.sig, original.event.sig);
         assert_eq!(back.context.community_id, "community-1");
         assert_eq!(back.context.event_type, ObservedEventType::Created);
         assert_eq!(back.context.message_id, event.id.to_hex());
+    }
+
+    #[test]
+    fn buzz_event_push_rejects_malformed_nostr_event_fields() {
+        let (_, event) = signed_text_note("hello buzz");
+        let original = push(&event, &event.id.to_hex(), ObservedEventType::Created);
+        let mut value = serde_json::to_value(original).unwrap();
+        value["event"]["id"] = json!(17);
+
+        assert!(serde_json::from_value::<BuzzEventPush>(value).is_err());
     }
 
     #[test]
