@@ -224,12 +224,22 @@ class PilotEvidenceWorkflowTests(unittest.TestCase):
     def write_valid_summary_evidence(self, evidence_dir: Path) -> None:
         source_sha = "a" * 40
         image_id = f"sha256:{'c' * 64}"
+        previous_sha = "fd6cfba71f1cd3c07ec4729b6a9521bd821a4c67"
+        previous_image_id = f"sha256:{'e' * 64}"
+        previous_image_digest = "sha256:42ba8f0c8efad65aabe655ae29e296999ac93c54ae7e7823b641b333b97f2059"
+        previous_tag = "v0.8.0-alpha.7"
+        previous_migration = "20261107000000"
+        candidate_migration = "20261125000000"
+        previous_release_workflow_run = "42421199320"
+        backup_manifest_sha = "f" * 64
         archive_sha = "d" * 64
         image_version = f"pilot-{source_sha[:12]}"
         deployment_id = "pilot-deployment"
         config_id = "pilot-config"
         run_id = "1234"
         run_attempt = "2"
+        upgrade_project = f"rustshare-pilot-upgrade-{run_id}-{run_attempt}"
+        rollback_project = f"rustshare-pilot-rollback-{run_id}-{run_attempt}"
         started = "2026-10-05T12:00:00Z"
         finished = "2026-10-05T12:01:00Z"
 
@@ -347,7 +357,104 @@ BETA_SMOKE_DEPLOYMENT_ID=rustshare-restore-drill
 BETA_SMOKE_CONFIG_ID={config_id}
 BETA_SMOKE_PERSISTENCE_STATE_VERIFIED=passed
 """,
-            "upgrade.env": "UPGRADE_STATUS=not_applicable\nUPGRADE_REASON=first_clean_install_baseline\n",
+            "upgrade-previous.env": f"""\
+BETA_SMOKE_STATUS=passed
+BETA_SMOKE_MODE=upgrade-previous
+BETA_SMOKE_FAILURE_PHASE=complete
+BETA_SMOKE_WORKFLOW_RUN_ID={run_id}
+BETA_SMOKE_WORKFLOW_RUN_ATTEMPT={run_attempt}
+BETA_SMOKE_STARTED_AT={started}
+BETA_SMOKE_FINISHED_AT={finished}
+BETA_SMOKE_SOURCE_SHA={previous_sha}
+BETA_SMOKE_BUILD_VERSION={previous_tag}
+BETA_SMOKE_DEPLOYMENT_ID={upgrade_project}
+BETA_SMOKE_CONFIG_ID=upgrade-isolated
+BETA_SMOKE_FILE_SHARE_ACCESS=passed
+""",
+            "upgrade-candidate.env": f"""\
+BETA_SMOKE_STATUS=passed
+BETA_SMOKE_MODE=upgrade-candidate
+BETA_SMOKE_FAILURE_PHASE=complete
+BETA_SMOKE_WORKFLOW_RUN_ID={run_id}
+BETA_SMOKE_WORKFLOW_RUN_ATTEMPT={run_attempt}
+BETA_SMOKE_STARTED_AT={started}
+BETA_SMOKE_FINISHED_AT={finished}
+BETA_SMOKE_SOURCE_SHA={source_sha}
+BETA_SMOKE_BUILD_VERSION={image_version}
+BETA_SMOKE_DEPLOYMENT_ID={upgrade_project}
+BETA_SMOKE_CONFIG_ID=upgrade-isolated
+BETA_SMOKE_PERSISTENCE_STATE_VERIFIED=passed
+""",
+            "upgrade-backup.env": f"""\
+UPGRADE_BACKUP_STATUS=passed
+UPGRADE_BACKUP_DIAGNOSTIC_SECRET_SCAN=passed
+UPGRADE_BACKUP_CHECKSUM_MANIFEST_SHA256={backup_manifest_sha}
+UPGRADE_BACKUP_SOURCE_SHA={previous_sha}
+UPGRADE_BACKUP_IMAGE_ID={previous_image_id}
+UPGRADE_BACKUP_IMAGE_DIGEST={previous_image_digest}
+UPGRADE_BACKUP_IMAGE_REVISION={previous_sha}
+PREVIOUS_RELEASE_WORKFLOW_RUN_ID={previous_release_workflow_run}
+""",
+            "upgrade-backup.log": "Pre-upgrade backup completed.\n",
+            "upgrade-backup-verify.log": "Backup bundle verification passed.\n",
+            "upgrade.env": f"""\
+UPGRADE_STATUS=passed
+PREVIOUS_TAG={previous_tag}
+PREVIOUS_SHA={previous_sha}
+PREVIOUS_IMAGE_ID={previous_image_id}
+PREVIOUS_IMAGE_DIGEST={previous_image_digest}
+PREVIOUS_IMAGE_REVISION={previous_sha}
+PREVIOUS_LATEST_MIGRATION={previous_migration}
+PREVIOUS_RELEASE_WORKFLOW_RUN_ID={previous_release_workflow_run}
+CANDIDATE_IMAGE_ID={image_id}
+CANDIDATE_IMAGE_REVISION={source_sha}
+CANDIDATE_LATEST_MIGRATION={candidate_migration}
+PRE_UPGRADE_BACKUP_CHECKSUM_MANIFEST_SHA256={backup_manifest_sha}
+ROLLBACK_STATUS=passed
+""",
+            "rollback.env": f"""\
+ROLLBACK_STATUS=passed
+ROLLBACK_BACKUP_CHECKSUM_MANIFEST_SHA256={backup_manifest_sha}
+ROLLBACK_PRE_UPGRADE_SOURCE_SHA={previous_sha}
+ROLLBACK_PRE_UPGRADE_IMAGE_ID={previous_image_id}
+ROLLBACK_PRE_UPGRADE_IMAGE_DIGEST={previous_image_digest}
+ROLLBACK_PREVIOUS_RELEASE_WORKFLOW_RUN_ID={previous_release_workflow_run}
+ROLLBACK_PRE_UPGRADE_IMAGE_REVISION={previous_sha}
+ROLLBACK_CANDIDATE_SOURCE_SHA={source_sha}
+ROLLBACK_CANDIDATE_IMAGE_ID={image_id}
+ROLLBACK_RESTORED_SOURCE_SHA={previous_sha}
+ROLLBACK_RESTORED_IMAGE_ID={previous_image_id}
+ROLLBACK_RESTORED_IMAGE_DIGEST={previous_image_digest}
+ROLLBACK_RESTORE_PROJECT={rollback_project}
+ROLLBACK_FRESH_VOLUME_RESTORE=passed
+WORKFLOW_RUN_ID={run_id}
+WORKFLOW_RUN_ATTEMPT={run_attempt}
+""",
+            "rollback-persistence.env": f"""\
+BETA_SMOKE_STATUS=passed
+BETA_SMOKE_MODE=restore-verify
+BETA_SMOKE_FAILURE_PHASE=complete
+BETA_SMOKE_WORKFLOW_RUN_ID={run_id}
+BETA_SMOKE_WORKFLOW_RUN_ATTEMPT={run_attempt}
+BETA_SMOKE_STARTED_AT={started}
+BETA_SMOKE_FINISHED_AT={finished}
+BETA_SMOKE_SOURCE_SHA={previous_sha}
+BETA_SMOKE_BUILD_VERSION={previous_tag}
+BETA_SMOKE_DEPLOYMENT_ID={rollback_project}
+BETA_SMOKE_CONFIG_ID=upgrade-isolated
+BETA_SMOKE_PERSISTENCE_STATE_VERIFIED=passed
+""",
+            "rollback-restore.env": f"""\
+RESTORE_DRILL_STATUS=passed
+RESTORE_DRILL_SOURCE_SHA={previous_sha}
+RESTORE_DRILL_BACKEND_IMAGE_ID={previous_image_id}
+RESTORE_DRILL_IMAGE_REVISION={previous_sha}
+RESTORE_DRILL_BUILD_VERSION={previous_tag}
+RESTORE_DRILL_DEPLOYMENT_ID={rollback_project}
+RESTORE_DRILL_CONFIG_ID=upgrade-isolated
+RESTORE_DRILL_WORKFLOW_RUN_ID={run_id}
+RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
+""",
             "migration.env": "MIGRATION_STATUS=passed\nMIGRATION_DIAGNOSTIC_SECRET_SCAN=passed\n",
             "runtime-db.env": f"""\
 RUNTIME_DB_STATUS=passed
@@ -468,6 +575,31 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
                 lambda value: value.replace("RUNTIME_DB_CLEANUP=passed", "RUNTIME_DB_CLEANUP=failed"),
             ),
             ("missing phase report", "persistence.env", None),
+            ("missing rollback evidence", "rollback.env", None),
+            (
+                "candidate migration did not advance",
+                "upgrade.env",
+                lambda value: value.replace(
+                    "CANDIDATE_LATEST_MIGRATION=20261125000000",
+                    "CANDIDATE_LATEST_MIGRATION=20261107000000",
+                ),
+            ),
+            (
+                "rollback used a different backup manifest",
+                "rollback.env",
+                lambda value: value.replace(
+                    "ROLLBACK_BACKUP_CHECKSUM_MANIFEST_SHA256=" + "f" * 64,
+                    "ROLLBACK_BACKUP_CHECKSUM_MANIFEST_SHA256=" + "d" * 64,
+                ),
+            ),
+            (
+                "rollback did not attest fresh volumes",
+                "rollback.env",
+                lambda value: value.replace(
+                    "ROLLBACK_FRESH_VOLUME_RESTORE=passed",
+                    "ROLLBACK_FRESH_VOLUME_RESTORE=failed",
+                ),
+            ),
             (
                 "malformed phase timestamp",
                 "canonical-smoke.env",
@@ -807,16 +939,19 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
     def test_file_share_evidence_gate_only_requires_full_journey_modes(self) -> None:
         step = workflow_step("Write pilot workflow summary")
 
-        self.assertIn("for report in canonical-smoke.env; do", step)
-        share_gate_start = step.index("for report in canonical-smoke.env; do")
+        self.assertIn("for report in canonical-smoke.env upgrade-previous.env; do", step)
+        share_gate_start = step.index(
+            "for report in canonical-smoke.env upgrade-previous.env; do"
+        )
         share_gate_end = step.index("\n            done", share_gate_start)
         share_gate = step[share_gate_start:share_gate_end]
         self.assertIn("'BETA_SMOKE_FILE_SHARE_ACCESS=passed'", share_gate)
         self.assertNotIn("persistence.env", share_gate)
         self.assertNotIn("restore-persistence.env", share_gate)
-        self.assertNotIn("upgrade-previous.env", step)
-        self.assertNotIn("upgrade-candidate.env", step)
-        self.assertIn("UPGRADE_STATUS=not_applicable", step)
+        self.assertNotIn("upgrade-candidate.env", share_gate)
+        self.assertNotIn("rollback-persistence.env", share_gate)
+        self.assertIn("UPGRADE_STATUS=passed", step)
+        self.assertNotIn("UPGRADE_STATUS=not_applicable", step)
 
     def test_failure_diagnostics_do_not_print_compose_logs(self) -> None:
         step = workflow_step("Show service status on failure")
@@ -1026,15 +1161,40 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn(secret, result.stderr)
 
-    def test_first_baseline_does_not_claim_a_pre_release_upgrade(self) -> None:
-        baseline_step = workflow_step("Record first supported release baseline")
+    def test_installed_release_upgrade_and_fresh_volume_rollback_are_required(self) -> None:
+        upgrade_step = workflow_step(
+            "Upgrade installed release and roll back from its pre-upgrade backup"
+        )
+        cleanup_step = workflow_step("Clean up installed upgrade and rollback resources")
         workflow = WORKFLOW.read_text(encoding="utf-8")
-
-        self.assertIn("UPGRADE_STATUS=not_applicable", baseline_step)
-        self.assertIn("UPGRADE_REASON=first_clean_install_baseline", baseline_step)
-        self.assertNotIn("upgrade-previous.env", workflow)
-        self.assertNotIn("upgrade-candidate.env", workflow)
-        self.assertNotIn("v0.8.0-alpha.5", workflow)
+        ordered_steps = (
+            "PILOT_MODE=upgrade-previous PILOT_PRESERVE_DATA=1",
+            '"${compose[@]}" stop backend nginx',
+            "scripts/backup-stack.sh",
+            "PILOT_MODE=upgrade-candidate",
+            '"${compose[@]}" down -v --remove-orphans',
+            'scripts/run-restore-drill.sh "${backup_dir}"',
+        )
+        positions = [upgrade_step.index(marker) for marker in ordered_steps]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("previous_tag=v0.8.0-alpha.7", upgrade_step)
+        self.assertIn(
+            "previous_image_ref=ghcr.io/kubedoio/rustshare-backend@sha256:"
+            "42ba8f0c8efad65aabe655ae29e296999ac93c54ae7e7823b641b333b97f2059",
+            upgrade_step,
+        )
+        self.assertIn("previous_release_workflow_run=42421199320", upgrade_step)
+        self.assertIn("candidate_migration > previous_migration", upgrade_step)
+        self.assertIn("RESTORE_DRILL_STATE_FILE=", upgrade_step)
+        self.assertIn("ROLLBACK_FRESH_VOLUME_RESTORE=passed", upgrade_step)
+        self.assertIn("ROLLBACK_BACKUP_CHECKSUM_MANIFEST_SHA256=", upgrade_step)
+        self.assertIn("ROLLBACK_CANDIDATE_IMAGE_ID=", upgrade_step)
+        self.assertIn("ROLLBACK_RESTORED_IMAGE_DIGEST=", upgrade_step)
+        self.assertIn("if: always()", cleanup_step)
+        self.assertIn("down -v --remove-orphans", cleanup_step)
+        self.assertNotIn("UPGRADE_STATUS=not_applicable", workflow)
+        self.assertIn("upgrade-previous.env", workflow)
+        self.assertIn("upgrade-candidate.env", workflow)
 
     def test_critical_image_findings_block_publication(self) -> None:
         scan_step = workflow_step("Scan image with Trivy")

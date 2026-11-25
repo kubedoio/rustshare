@@ -912,7 +912,7 @@ jobs:
           previous_sha=fd6cfba71f1cd3c07ec4729b6a9521bd821a4c67
           previous_image_ref=ghcr.io/kubedoio/rustshare-backend@sha256:42ba8f0c8efad65aabe655ae29e296999ac93c54ae7e7823b641b333b97f2059
           previous_image_digest="${previous_image_ref##*@}"
-          previous_qualification_run=42421199320
+          previous_release_workflow_run=42421199320
           project="rustshare-pilot-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           backup_root="/tmp/rustshare-pilot-private-upgrade-backups-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           ports_file="/tmp/rustshare-pilot-upgrade-ports-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.yml"
@@ -1032,8 +1032,8 @@ jobs:
             exit 1
           }
           backup_manifest_sha="$(sha256sum "${backup_dir}/SHA256SUMS" | cut -d' ' -f1)"
-          printf 'UPGRADE_BACKUP_STATUS=passed\nUPGRADE_BACKUP_DIAGNOSTIC_SECRET_SCAN=passed\nUPGRADE_BACKUP_CHECKSUM_MANIFEST_SHA256=%s\nUPGRADE_BACKUP_SOURCE_SHA=%s\nUPGRADE_BACKUP_IMAGE_ID=%s\nUPGRADE_BACKUP_IMAGE_DIGEST=%s\nUPGRADE_BACKUP_IMAGE_REVISION=%s\nPREVIOUS_QUALIFICATION_RUN_ID=%s\n' \
-            "${backup_manifest_sha}" "${previous_sha}" "${previous_image_id}" "${previous_image_digest}" "${previous_image_revision}" "${previous_qualification_run}" \
+          printf 'UPGRADE_BACKUP_STATUS=passed\nUPGRADE_BACKUP_DIAGNOSTIC_SECRET_SCAN=passed\nUPGRADE_BACKUP_CHECKSUM_MANIFEST_SHA256=%s\nUPGRADE_BACKUP_SOURCE_SHA=%s\nUPGRADE_BACKUP_IMAGE_ID=%s\nUPGRADE_BACKUP_IMAGE_DIGEST=%s\nUPGRADE_BACKUP_IMAGE_REVISION=%s\nPREVIOUS_RELEASE_WORKFLOW_RUN_ID=%s\n' \
+            "${backup_manifest_sha}" "${previous_sha}" "${previous_image_id}" "${previous_image_digest}" "${previous_image_revision}" "${previous_release_workflow_run}" \
             > /tmp/rustshare-pilot-evidence/upgrade-backup.env
 
           RUSTSHARE_BACKEND_IMAGE=rustshare-backend:pilot \
@@ -1097,7 +1097,7 @@ jobs:
           ROLLBACK_PRE_UPGRADE_SOURCE_SHA=${previous_sha}
           ROLLBACK_PRE_UPGRADE_IMAGE_ID=${previous_image_id}
           ROLLBACK_PRE_UPGRADE_IMAGE_DIGEST=${previous_image_digest}
-          ROLLBACK_PREVIOUS_QUALIFICATION_RUN_ID=${previous_qualification_run}
+          ROLLBACK_PREVIOUS_RELEASE_WORKFLOW_RUN_ID=${previous_release_workflow_run}
           ROLLBACK_PRE_UPGRADE_IMAGE_REVISION=${previous_image_revision}
           ROLLBACK_CANDIDATE_SOURCE_SHA=${GITHUB_SHA}
           ROLLBACK_CANDIDATE_IMAGE_ID=${candidate_image_id}
@@ -1109,10 +1109,10 @@ jobs:
           WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
           WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
           EOF
-          printf 'UPGRADE_STATUS=passed\nPREVIOUS_TAG=%s\nPREVIOUS_SHA=%s\nPREVIOUS_IMAGE_ID=%s\nPREVIOUS_IMAGE_DIGEST=%s\nPREVIOUS_IMAGE_REVISION=%s\nPREVIOUS_LATEST_MIGRATION=%s\nPREVIOUS_QUALIFICATION_RUN_ID=%s\nCANDIDATE_IMAGE_ID=%s\nCANDIDATE_IMAGE_REVISION=%s\nCANDIDATE_LATEST_MIGRATION=%s\nPRE_UPGRADE_BACKUP_CHECKSUM_MANIFEST_SHA256=%s\nROLLBACK_STATUS=passed\n' \
+          printf 'UPGRADE_STATUS=passed\nPREVIOUS_TAG=%s\nPREVIOUS_SHA=%s\nPREVIOUS_IMAGE_ID=%s\nPREVIOUS_IMAGE_DIGEST=%s\nPREVIOUS_IMAGE_REVISION=%s\nPREVIOUS_LATEST_MIGRATION=%s\nPREVIOUS_RELEASE_WORKFLOW_RUN_ID=%s\nCANDIDATE_IMAGE_ID=%s\nCANDIDATE_IMAGE_REVISION=%s\nCANDIDATE_LATEST_MIGRATION=%s\nPRE_UPGRADE_BACKUP_CHECKSUM_MANIFEST_SHA256=%s\nROLLBACK_STATUS=passed\n' \
             "${previous_tag}" "${previous_sha}" "${previous_image_id}" \
             "${previous_image_digest}" "${previous_image_revision}" "${previous_migration}" \
-            "${previous_qualification_run}" "${candidate_image_id}" "${GITHUB_SHA}" "${candidate_migration}" \
+            "${previous_release_workflow_run}" "${candidate_image_id}" "${GITHUB_SHA}" "${candidate_migration}" \
             "${backup_manifest_sha}" \
             > /tmp/rustshare-pilot-evidence/upgrade.env
 
@@ -1502,7 +1502,7 @@ jobs:
             require_line "${evidence_dir}/upgrade.env" "PREVIOUS_LATEST_MIGRATION=${previous_migration}"
             require_line "${evidence_dir}/upgrade.env" 'PREVIOUS_TAG=v0.8.0-alpha.7'
             require_line "${evidence_dir}/upgrade.env" 'PREVIOUS_IMAGE_DIGEST=sha256:42ba8f0c8efad65aabe655ae29e296999ac93c54ae7e7823b641b333b97f2059'
-            require_line "${evidence_dir}/upgrade.env" 'PREVIOUS_QUALIFICATION_RUN_ID=42421199320'
+            require_line "${evidence_dir}/upgrade.env" 'PREVIOUS_RELEASE_WORKFLOW_RUN_ID=42421199320'
             require_line "${evidence_dir}/upgrade.env" "CANDIDATE_IMAGE_REVISION=${GITHUB_SHA}"
             require_line "${evidence_dir}/upgrade.env" "CANDIDATE_LATEST_MIGRATION=${candidate_migration}"
             require_line "${evidence_dir}/upgrade.env" "PRE_UPGRADE_BACKUP_CHECKSUM_MANIFEST_SHA256=${upgrade_backup_sha}"
@@ -1511,12 +1511,12 @@ jobs:
             require_line "${evidence_dir}/upgrade-backup.env" "UPGRADE_BACKUP_IMAGE_ID=${previous_image_id}"
             require_line "${evidence_dir}/upgrade-backup.env" 'UPGRADE_BACKUP_IMAGE_DIGEST=sha256:42ba8f0c8efad65aabe655ae29e296999ac93c54ae7e7823b641b333b97f2059'
             require_line "${evidence_dir}/upgrade-backup.env" "UPGRADE_BACKUP_IMAGE_REVISION=${previous_sha}"
-            require_line "${evidence_dir}/upgrade-backup.env" 'PREVIOUS_QUALIFICATION_RUN_ID=42421199320'
+            require_line "${evidence_dir}/upgrade-backup.env" 'PREVIOUS_RELEASE_WORKFLOW_RUN_ID=42421199320'
             require_line "${evidence_dir}/rollback.env" "ROLLBACK_BACKUP_CHECKSUM_MANIFEST_SHA256=${upgrade_backup_sha}"
             require_line "${evidence_dir}/rollback.env" "ROLLBACK_PRE_UPGRADE_SOURCE_SHA=${previous_sha}"
             require_line "${evidence_dir}/rollback.env" "ROLLBACK_PRE_UPGRADE_IMAGE_ID=${previous_image_id}"
             require_line "${evidence_dir}/rollback.env" 'ROLLBACK_PRE_UPGRADE_IMAGE_DIGEST=sha256:42ba8f0c8efad65aabe655ae29e296999ac93c54ae7e7823b641b333b97f2059'
-            require_line "${evidence_dir}/rollback.env" 'ROLLBACK_PREVIOUS_QUALIFICATION_RUN_ID=42421199320'
+            require_line "${evidence_dir}/rollback.env" 'ROLLBACK_PREVIOUS_RELEASE_WORKFLOW_RUN_ID=42421199320'
             require_line "${evidence_dir}/rollback.env" "ROLLBACK_PRE_UPGRADE_IMAGE_REVISION=${previous_sha}"
             require_line "${evidence_dir}/rollback.env" "ROLLBACK_CANDIDATE_SOURCE_SHA=${GITHUB_SHA}"
             require_line "${evidence_dir}/rollback.env" "ROLLBACK_CANDIDATE_IMAGE_ID=${image_id}"
@@ -1550,7 +1550,7 @@ jobs:
               upgrade-previous.env upgrade-candidate.env rollback-persistence.env; do
               require_smoke_passed "${evidence_dir}/${report}"
             done
-            for report in canonical-smoke.env; do
+            for report in canonical-smoke.env upgrade-previous.env; do
               require_line "${evidence_dir}/${report}" 'BETA_SMOKE_FILE_SHARE_ACCESS=passed'
             done
             for report in persistence.env restore-persistence.env upgrade-candidate.env rollback-persistence.env; do

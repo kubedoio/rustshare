@@ -332,10 +332,12 @@ run the restore helper with that deployment's Docker privileges.
    a migrated database.
 
 The disposable Pilot Release workflow exercises this sequence from the
-`v0.8.0-alpha.7` image pinned by digest and qualified in [Pilot Release run
-42421199320](https://github.com/kubedoio/rustshare/actions/runs/42421199320).
-It records the previous and candidate image identities, backs up
-representative data before migration, verifies the candidate upgrade, then
+`v0.8.0-alpha.7` image pinned by digest. Its scan and attestation provenance
+comes from the standard [Release workflow run
+42421199320](https://github.com/kubedoio/rustshare/actions/runs/42421199320),
+not from a Pilot Release runtime run. The pilot run records the previous and
+candidate image identities, backs up representative data before migration,
+verifies the candidate upgrade, then
 restores that backup into a fresh isolated Compose project running the previous
 image. This is CI rollback evidence only; it does not perform or authorize an
 FWS upgrade or restore.

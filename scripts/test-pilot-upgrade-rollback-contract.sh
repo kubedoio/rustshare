@@ -18,7 +18,7 @@ required = (
     "previous_tag=v0.8.0-alpha.7",
     "previous_sha=fd6cfba71f1cd3c07ec4729b6a9521bd821a4c67",
     "ghcr.io/kubedoio/rustshare-backend@sha256:42ba8f0c8efad65aabe655ae29e296999ac93c54ae7e7823b641b333b97f2059",
-    "previous_qualification_run=42421199320",
+    "previous_release_workflow_run=42421199320",
     "PILOT_MODE=upgrade-previous PILOT_PRESERVE_DATA=1",
     '"${compose[@]}" stop backend nginx',
     "scripts/backup-stack.sh",
@@ -33,7 +33,7 @@ required = (
     "ROLLBACK_BACKUP_CHECKSUM_MANIFEST_SHA256=${backup_manifest_sha}",
     "ROLLBACK_CANDIDATE_IMAGE_ID=${candidate_image_id}",
     "ROLLBACK_RESTORED_IMAGE_DIGEST=${previous_image_digest}",
-    "ROLLBACK_PREVIOUS_QUALIFICATION_RUN_ID=${previous_qualification_run}",
+    "ROLLBACK_PREVIOUS_RELEASE_WORKFLOW_RUN_ID=${previous_release_workflow_run}",
     "ROLLBACK_FRESH_VOLUME_RESTORE=passed",
 )
 missing = [marker for marker in required if marker not in upgrade]
