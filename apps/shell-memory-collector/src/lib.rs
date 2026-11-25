@@ -349,7 +349,7 @@ fn excluded(command: &str, patterns: &[Pattern]) -> bool {
     let first = tokens.first().copied().unwrap_or("");
     let kubectl_secrets = tokens
         .iter()
-        .position(|token| *token == "kubectl")
+        .position(|token| is_kubectl(token))
         .and_then(|kubectl| {
             tokens[kubectl + 1..]
                 .iter()
@@ -361,6 +361,14 @@ fn excluded(command: &str, patterns: &[Pattern]) -> bool {
         || tokens.contains(&"sshpass")
         || kubectl_secrets
         || patterns.iter().any(|pattern| pattern.matches(command))
+}
+
+fn is_kubectl(token: &str) -> bool {
+    token
+        .trim_matches(|ch| ch == '\'' || ch == '"')
+        .rsplit('/')
+        .next()
+        == Some("kubectl")
 }
 
 fn render_markdown(
@@ -508,6 +516,11 @@ mod tests {
         assert!(!queue.record(
             instance_id,
             input("kubectl -n prod create secret generic db --from-literal=db=synthetic-unlabelled-secret"),
+            &[]
+        )?);
+        assert!(!queue.record(
+            instance_id,
+            input("/usr/local/bin/kubectl -n prod create secret generic db --from-literal=db=synthetic-path-secret"),
             &[]
         )?);
         assert!(queue.pending(instance_id, 10)?.is_empty());
