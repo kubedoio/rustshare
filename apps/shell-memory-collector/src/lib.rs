@@ -345,8 +345,13 @@ fn authenticated_url(token: &str) -> bool {
 
 fn excluded(command: &str, patterns: &[Pattern]) -> bool {
     let trimmed = command.trim_start();
-    let first = trimmed.split_whitespace().next().unwrap_or("");
+    let tokens = trimmed.split_whitespace().collect::<Vec<_>>();
+    let first = tokens.first().copied().unwrap_or("");
     ["env", "printenv", "set", "export"].contains(&first)
+        || tokens.contains(&"sshpass")
+        || tokens
+            .windows(3)
+            .any(|window| window == ["kubectl", "create", "secret"])
         || patterns.iter().any(|pattern| pattern.matches(command))
 }
 
@@ -473,6 +478,26 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(String::from_utf8_lossy(&events[0].content).contains("<redacted command>"));
         assert!(!String::from_utf8_lossy(&events[0].content).contains("synthetic-shell-secret"));
+        Ok(())
+    }
+
+    #[test]
+    fn excludes_commands_that_directly_provision_or_pass_secrets() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut queue = Queue::open(&directory.path().join("queue.sqlite3"))?;
+        let instance_id = Uuid::new_v4();
+
+        assert!(!queue.record(
+            instance_id,
+            input("sshpass -p synthetic-secret ssh user@example.test"),
+            &[]
+        )?);
+        assert!(!queue.record(
+            instance_id,
+            input("kubectl create secret generic db --from-literal=password=synthetic-secret"),
+            &[]
+        )?);
+        assert!(queue.pending(instance_id, 10)?.is_empty());
         Ok(())
     }
 
