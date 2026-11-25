@@ -430,6 +430,7 @@ mod credential_tests {
 
     #[cfg(any(windows, target_os = "macos"))]
     #[test]
+    #[ignore = "writes to the platform credential store; run only with an isolated test keyring"]
     fn native_credential_store_provisions_reads_rotates_and_deletes() {
         let instance_id = uuid::Uuid::new_v4();
         let entry =
