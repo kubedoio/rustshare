@@ -32,6 +32,15 @@ The following evidence is tied to the stated commits and runs:
 | [Linux Secret Service job](https://github.com/kubedoio/rustshare/actions/runs/45665747903) on PR #565 head `313f60ae` | Passed | Native secret-service credential provision, lookup, rotation and deletion on a Linux CI runner. |
 | [macOS Keychain](https://github.com/kubedoio/rustshare/actions/runs/45703480561) and [Windows Credential Manager](https://github.com/kubedoio/rustshare/actions/runs/45703480503) on PR #566 head `aa060749` | Passed | Provision, lookup, rotation and deletion on isolated platform runners. The emitted Windows ZIP is unsigned and is not a production installer. These are PR-head tests, not exact-main or FWS-host acceptance. |
 
+## Local Text platform acceptance
+
+| Platform / path | Executed evidence | Result | Remaining acceptance |
+| --- | --- | --- | --- |
+| Windows Credential Manager | [PR #566 exact-head Windows CI](https://github.com/kubedoio/rustshare/actions/runs/45703480503) on `windows-latest`; normal tests, explicit synthetic provision/read/rotate/delete test and ZIP packaging | Passed; ZIP is unsigned | User-interactive credential provisioning, connected Windows ingestion/revocation, credential migration, package installation/upgrade and a signed production installer |
+| macOS Keychain | [PR #566 exact-head macOS job](https://github.com/kubedoio/rustshare/actions/runs/45703480561) with a temporary isolated Keychain; provision/read/rotate/delete | Passed | User-interactive and connected ingestion acceptance, package installation/upgrade, migration of an existing credential and signed/notarized distribution |
+| Linux Secret Service | [PR #565 exact-head job](https://github.com/kubedoio/rustshare/actions/runs/45665747903) on `313f60ae` | Passed | Acceptance against the target desktop session/service configuration, connected ingestion and package installation/upgrade |
+| Connected connector path | Exact-main Local Text E2E in Integration Tests run `45697982362`, using synthetic PostgreSQL/RustFS | Passed for import, Files/Memory mapping, offline retry, worker restart, credential rotation/revocation, deletion, restoration and reconciliation | Repeat the connected workflow on native Windows and macOS; exercise real Notepad++-style directory use, exclusions/privacy, credential-safe log review and supported installer upgrade |
+
 The Local Text E2E is ignored by default and requires a disposable backend, PostgreSQL, object store, and synthetic owner token. It ran in the exact-main Integration Tests workflow above. Its reproducible command is:
 
 ```sh
