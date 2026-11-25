@@ -1,5 +1,7 @@
 # Pilot evidence
 
+See [candidate c2157181 disposable recovery and authorization evidence](candidate-c2157181-disposable-recovery-2026-11-25.md) for the 2026-11-25 synthetic recovery, browser, restore/rollback, and protected-main organization authorization results. It is separate from PR #560 head CI and does not qualify the FWS target or a release.
+
 The Pilot Release workflow writes a machine-generated evidence bundle for each
 tested revision. The bundle is uploaded as the rustshare-pilot-evidence
 workflow artifact and should be retained with the release record.
