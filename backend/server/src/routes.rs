@@ -1,6 +1,8 @@
 use crate::state::AppState;
 use axum::Router;
 
+const MAX_BUZZ_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
+
 pub fn health_routes() -> Router<AppState> {
     use axum::routing::get;
     Router::new()
@@ -1017,14 +1019,15 @@ pub fn chat_integration_routes() -> Router<AppState> {
 pub fn buzz_observation_routes() -> Router<AppState> {
     // The request is buffered before its HMAC is checked; bound unauthenticated
     // traffic independently of the global upload allowance.
-    const MAX_BUZZ_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
     use axum::routing::post;
     Router::new().route(
         "/api/v1/integrations/buzz/events",
-        post(crate::handlers::buzz_events::receive_buzz_event).layer(
-            axum::extract::DefaultBodyLimit::max(MAX_BUZZ_EVENT_REQUEST_BYTES),
-        ),
+        post(crate::handlers::buzz_events::receive_buzz_event).layer(buzz_event_body_limit()),
     )
+}
+
+fn buzz_event_body_limit() -> axum::extract::DefaultBodyLimit {
+    axum::extract::DefaultBodyLimit::max(MAX_BUZZ_EVENT_REQUEST_BYTES)
 }
 
 /// Internal Memory-worker source contract. HMAC authenticates the workload;
@@ -1743,4 +1746,44 @@ pub fn sync_routes() -> Router<AppState> {
         .route("/api/ws/collab", get(crate::handlers::collab_handler))
         .route("/api/v1/sync/cursor", get(crate::handlers::get_sync_cursor))
         .route("/api/v1/sync/delta", get(crate::handlers::get_sync_delta))
+}
+
+#[cfg(test)]
+mod buzz_body_limit_tests {
+    use super::*;
+    use axum::{
+        body::{Body, Bytes},
+        http::{Request, StatusCode},
+        routing::post,
+    };
+    use tower::ServiceExt;
+
+    #[test]
+    fn production_buzz_event_registration_uses_the_tested_body_limit() {
+        let routes = include_str!("routes.rs");
+        let buzz_routes = routes
+            .split("pub fn buzz_observation_routes")
+            .nth(1)
+            .unwrap()
+            .split("pub fn memory_worker_routes")
+            .next()
+            .unwrap();
+
+        assert!(buzz_routes.contains("receive_buzz_event).layer("));
+        assert!(buzz_routes.contains("buzz_event_body_limit()"));
+    }
+
+    #[tokio::test]
+    async fn oversized_buzz_body_is_rejected_before_missing_signature_response() {
+        let app = Router::new().route(
+            "/api/v1/integrations/buzz/events",
+            post(|_: Bytes| async { StatusCode::UNAUTHORIZED }).layer(buzz_event_body_limit()),
+        );
+        let request = Request::post("/api/v1/integrations/buzz/events")
+            .body(Body::from(vec![0; MAX_BUZZ_EVENT_REQUEST_BYTES + 1]))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
 }
