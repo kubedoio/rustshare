@@ -522,64 +522,37 @@ pub async fn remove_member(
     headers: HeaderMap,
     Path((group_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
-    // Verify group exists and capture tenant for ACL refresh.
-    let group_tenant: Option<Uuid> =
-        sqlx::query_scalar("SELECT tenant_id FROM user_groups WHERE id = $1")
-            .bind(group_id)
-            .fetch_optional(&state.db_pool)
-            .await
-            .map_err(db_error)?;
-    let tenant_id = group_tenant.ok_or_else(|| admin_not_found("Group not found"))?;
-
-    // Verify the target user exists and belongs to the group's organization
-    // (ADR-0040: organization = tenant, strict equality). The AdminUser
-    // extractor is installation-wide, so the membership itself must enforce
-    // the organization boundary. Mismatched legacy rows are left for the
-    // separately scoped reconciliation work.
-    let user_tenant: Option<Uuid> =
-        sqlx::query_scalar!("SELECT tenant_id FROM users WHERE id = $1", user_id)
-            .fetch_optional(&state.db_pool)
-            .await
-            .map_err(db_error)?;
-    let user_tenant = user_tenant.ok_or_else(|| admin_not_found("User not found"))?;
-    if user_tenant != tenant_id {
-        return Err(admin_bad_request(
-            "User belongs to a different organization than the group",
-        ));
-    }
-
-    let mut tx = state.db_pool.begin().await.map_err(db_error)?;
-    let result = sqlx::query!(
-        "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2",
+    match organization_groups::remove_member(
+        &state.db_pool,
         group_id,
-        user_id
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(db_error)?;
-
-    if result.rows_affected() == 0 {
-        return Err(admin_not_found("Membership not found"));
-    }
-
-    insert_scoped_admin_action(
-        &mut tx,
-        tenant_id,
+        user_id,
         actor_id,
-        "group.member_removed",
-        Some("group"),
-        Some(group_id),
-        json!({"user_id": user_id}),
         request_correlation_id(&headers),
     )
     .await
-    .map_err(db_error)?;
-    tx.commit().await.map_err(db_error)?;
-
-    // Best-effort ACL refresh so removed member stops seeing group-shared notes in search.
-    note_service::dispatch_group_index_acl_refresh(Arc::clone(&state.note_service), group_id);
-
-    Ok(StatusCode::NO_CONTENT)
+    .map_err(db_error)?
+    {
+        organization_groups::RemoveMemberOutcome::Removed => {
+            // Refresh only after the membership and mandatory audit commit.
+            note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&state.note_service),
+                group_id,
+            );
+            Ok(StatusCode::NO_CONTENT)
+        }
+        organization_groups::RemoveMemberOutcome::GroupNotFound => {
+            Err(admin_not_found("Group not found"))
+        }
+        organization_groups::RemoveMemberOutcome::UserNotFound => {
+            Err(admin_not_found("User not found"))
+        }
+        organization_groups::RemoveMemberOutcome::DifferentTenant => Err(admin_bad_request(
+            "User belongs to a different organization than the group",
+        )),
+        organization_groups::RemoveMemberOutcome::MembershipNotFound => {
+            Err(admin_not_found("Membership not found"))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
