@@ -832,10 +832,19 @@ async fn authorize_and_parse_board_source(
     source: &str,
     authorization: impl Future<Output = Result<Folder, BrainstormError>>,
 ) -> Result<(Folder, serde_json::Value), BrainstormError> {
-    let folder = authorization.await?;
+    let folder = authorization.await.map_err(hide_board_access_error)?;
     check_board_source_size(source)?;
     let parsed = parse_board_source(source)?;
     Ok((folder, parsed))
+}
+
+fn hide_board_access_error(error: BrainstormError) -> BrainstormError {
+    match error {
+        BrainstormError::BoardNotFound | BrainstormError::PermissionDenied => {
+            BrainstormError::BoardNotFound
+        }
+        other => other,
+    }
 }
 
 fn check_board_source_size(source: &str) -> Result<(), BrainstormError> {
@@ -885,12 +894,17 @@ mod tests {
 
     #[tokio::test]
     async fn unauthorized_board_rejects_before_malformed_source_parsing() {
-        let result = authorize_and_parse_board_source("not valid JSON", async {
+        let inaccessible = authorize_and_parse_board_source("not valid JSON", async {
             Err::<Folder, _>(BrainstormError::PermissionDenied)
         })
         .await;
+        let nonexistent = authorize_and_parse_board_source("not valid JSON", async {
+            Err::<Folder, _>(BrainstormError::BoardNotFound)
+        })
+        .await;
 
-        assert!(matches!(result, Err(BrainstormError::PermissionDenied)));
+        assert!(matches!(inaccessible, Err(BrainstormError::BoardNotFound)));
+        assert!(matches!(nonexistent, Err(BrainstormError::BoardNotFound)));
     }
 
     #[test]
