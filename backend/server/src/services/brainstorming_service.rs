@@ -809,12 +809,12 @@ impl BrainstormingService {
 
 const MAX_BOARD_SOURCE_JSON_DEPTH: usize = 128;
 
-struct BoardSourceEnvelope<'a> {
-    source_type: Option<&'a str>,
+struct BoardSourceEnvelope {
+    source_type: Option<String>,
     has_elements: bool,
 }
 
-impl<'de> Deserialize<'de> for BoardSourceEnvelope<'de> {
+impl<'de> Deserialize<'de> for BoardSourceEnvelope {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -822,7 +822,7 @@ impl<'de> Deserialize<'de> for BoardSourceEnvelope<'de> {
         struct EnvelopeVisitor;
 
         impl<'de> Visitor<'de> for EnvelopeVisitor {
-            type Value = BoardSourceEnvelope<'de>;
+            type Value = BoardSourceEnvelope;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 formatter.write_str("an Excalidraw object")
@@ -836,14 +836,14 @@ impl<'de> Deserialize<'de> for BoardSourceEnvelope<'de> {
                 let mut has_type = false;
                 let mut has_elements = false;
 
-                while let Some(key) = map.next_key::<&str>()? {
-                    match key {
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
                         "type" => {
                             if has_type {
                                 return Err(serde::de::Error::duplicate_field("type"));
                             }
                             has_type = true;
-                            source_type = map.next_value::<Option<&'de str>>()?;
+                            source_type = map.next_value::<Option<String>>()?;
                         }
                         "elements" => {
                             if has_elements {
@@ -994,7 +994,7 @@ impl<'de> Visitor<'de> for BoundedJsonVisitor {
     where
         A: MapAccess<'de>,
     {
-        while map.next_key::<&str>()?.is_some() {
+        while map.next_key::<serde::de::IgnoredAny>()?.is_some() {
             map.next_value_seed(BoundedJsonSeed {
                 depth: self.depth + 1,
             })?;
@@ -1005,10 +1005,10 @@ impl<'de> Visitor<'de> for BoundedJsonVisitor {
 
 fn parse_board_source(source: &str) -> Result<(), BrainstormError> {
     check_board_source_size(source)?;
-    let parsed: BoardSourceEnvelope<'_> =
+    let parsed: BoardSourceEnvelope =
         serde_json::from_str(source).map_err(|e| BrainstormError::InvalidData(e.to_string()))?;
 
-    if parsed.source_type != Some("excalidraw") {
+    if parsed.source_type.as_deref() != Some("excalidraw") {
         tracing::info!("save_board_source: validation failed - missing type field");
         return Err(BrainstormError::InvalidData(
             "Invalid Excalidraw JSON: missing type field".to_string(),
@@ -1084,16 +1084,25 @@ mod tests {
     #[test]
     fn board_source_parser_accepts_valid_excalidraw_with_arbitrary_fields() {
         let source = r##"{"type":"excalidraw","elements":[{"id":"1","nested":{"items":[1,2,3]}}],"appState":{"viewBackgroundColor":"#ffffff"},"files":{"image":{}}}"##;
+        let escaped_fields =
+            r#"{"ty\u0070e":"excali\u0064raw","elements":[],"extra":{"es\u0063aped":true}}"#;
 
         assert!(parse_board_source(source).is_ok());
+        assert!(parse_board_source(escaped_fields).is_ok());
     }
 
     #[test]
     fn board_source_parser_rejects_wrong_type_and_missing_elements() {
         let wrong_type = parse_board_source(r#"{"type":"not-excalidraw","elements":[]}"#);
+        let missing_type = parse_board_source(r#"{"elements":[]}"#);
         let missing_elements = parse_board_source(r#"{"type":"excalidraw"}"#);
 
         assert!(matches!(wrong_type, Err(BrainstormError::InvalidData(_))));
+        assert!(matches!(
+            missing_type,
+            Err(BrainstormError::InvalidData(message))
+                if message == "Invalid Excalidraw JSON: missing type field"
+        ));
         assert!(matches!(
             missing_elements,
             Err(BrainstormError::InvalidData(message))
@@ -1105,9 +1114,21 @@ mod tests {
     fn board_source_parser_rejects_non_array_elements_and_malformed_json() {
         let non_array = parse_board_source(r#"{"type":"excalidraw","elements":{}}"#);
         let malformed = parse_board_source(r#"{"type":"excalidraw","elements":[}"#);
+        let duplicate_type =
+            parse_board_source(r#"{"type":null,"type":"excalidraw","elements":[]}"#);
+        let duplicate_elements =
+            parse_board_source(r#"{"type":"excalidraw","elements":[],"elements":[]}"#);
 
         assert!(matches!(non_array, Err(BrainstormError::InvalidData(_))));
         assert!(matches!(malformed, Err(BrainstormError::InvalidData(_))));
+        assert!(matches!(
+            duplicate_type,
+            Err(BrainstormError::InvalidData(_))
+        ));
+        assert!(matches!(
+            duplicate_elements,
+            Err(BrainstormError::InvalidData(_))
+        ));
     }
 
     #[test]
