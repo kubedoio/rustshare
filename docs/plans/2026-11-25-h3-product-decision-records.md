@@ -1,6 +1,6 @@
 # H3 product decision records — 2026-11-25
 
-These records reconcile open product issues against protected main at `219d1d1858c037c79716d9791dcb4096c7980c42`, including the bounded organization group-member removal changes in PR #560. Recommendations below preserve the current supported pilot scope; pending owner choices are not implementation authorization.
+These records reconcile open product issues against protected main at `267b9f14dc180af79b1cf0522949f1159258ffc9`, including the bounded organization group-member removal changes in PR #560. Recommendations below preserve the current supported pilot scope; pending owner choices are not implementation authorization.
 
 ## #325 Mail persistence
 
@@ -33,4 +33,4 @@ Mainline supports deployment-wide build-time product name, same-origin logo path
 
 ## Long-term Chat authority
 
-The evidence-based A–D comparison and recommendation are in [`chat-retain-migrate-drop.md`](../architecture/chat-retain-migrate-drop.md). Recommendation: **D now**—preserve the current supported deployment and defer the long-term decision, with B-like bounded maintenance of the fork-backed Buzz path. Do not migrate, enable managed publishing, change production identity mappings or remove legacy data. Owner approval is required after the #309 deployment/data inventory; #442, #458 and #460 remain independent gates.
+The evidence-based A–D comparison and recommendation are in [`chat-retain-migrate-drop.md`](../architecture/chat-retain-migrate-drop.md). ADR-0044 records the owner-selected strategic target as **A: managed Elembra identities on unmodified upstream Buzz**. The current operational posture is **D**: retain the supported fork-backed deployment with bounded B maintenance until the deployment/data inventory and independent gates pass. Confirm only interim retention and cutover timing under the existing A target; this record does not ask the owner to select a new long-term architecture. Do not migrate, enable managed publishing, change production identity mappings or remove legacy data. #309 inventory and #442, #458 and #460 remain independent gates.
