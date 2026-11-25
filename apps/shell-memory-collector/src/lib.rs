@@ -357,18 +357,28 @@ fn excluded(command: &str, patterns: &[Pattern]) -> bool {
                 .map(|create| kubectl + 1 + create)
         })
         .is_some_and(|create| tokens[create + 1..].contains(&"secret"));
+    let literal_secret = tokens.iter().any(|token| {
+        token
+            .trim_matches(|ch| ch == '\'' || ch == '"')
+            .starts_with("--from-literal")
+    });
     ["env", "printenv", "set", "export"].contains(&first)
-        || tokens.contains(&"sshpass")
+        || tokens.iter().any(|token| is_program(token, "sshpass"))
         || kubectl_secrets
+        || literal_secret
         || patterns.iter().any(|pattern| pattern.matches(command))
 }
 
 fn is_kubectl(token: &str) -> bool {
+    is_program(token, "kubectl")
+}
+
+fn is_program(token: &str, program: &str) -> bool {
     token
         .trim_matches(|ch| ch == '\'' || ch == '"')
         .rsplit('/')
         .next()
-        == Some("kubectl")
+        == Some(program)
 }
 
 fn render_markdown(
@@ -510,6 +520,11 @@ mod tests {
         )?);
         assert!(!queue.record(
             instance_id,
+            input("/usr/bin/sshpass -p synthetic-path-secret ssh user@example.test"),
+            &[]
+        )?);
+        assert!(!queue.record(
+            instance_id,
             input("kubectl create secret generic db --from-literal=password=synthetic-secret"),
             &[]
         )?);
@@ -521,6 +536,11 @@ mod tests {
         assert!(!queue.record(
             instance_id,
             input("/usr/local/bin/kubectl -n prod create secret generic db --from-literal=db=synthetic-path-secret"),
+            &[]
+        )?);
+        assert!(!queue.record(
+            instance_id,
+            input("k create secret generic db '--from-literal=db=synthetic-alias-secret'"),
             &[]
         )?);
         assert!(queue.pending(instance_id, 10)?.is_empty());
