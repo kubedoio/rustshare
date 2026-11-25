@@ -4,7 +4,7 @@
 
 Create a worker credential for a registered Connector instance. Windows uses Credential Manager, macOS uses Keychain, and Linux uses Secret Service when available. Store the one-time credential in that native store and run with `--credential-keyring`. Linux headless installations without Secret Service must explicitly use `--credential-file`; that fallback is supported only on Unix, requires a regular file with mode 0600, and is not equivalent to a native keyring. Configure `destinationFolderId` in the instance's `sourceConfig` to restrict imports to an approved Files folder; unset or `null` selects the account root.
 
-For manual provisioning, use a Generic Password item with service `io.elembra.local-text-worker` and account equal to the Connector instance UUID. On Linux with Secret Service installed, `secret-tool store --label='Elembra Local Text' service io.elembra.local-text-worker account <connector-instance-uuid>` prompts for the secret without putting it in shell history.
+For manual provisioning, use a Generic Password item with service `io.elembra.local-text-worker` and username equal to the Connector instance UUID. On Linux with Secret Service installed, `secret-tool store --label='Elembra Local Text' service io.elembra.local-text-worker username <connector-instance-uuid>` prompts for the secret without putting it in shell history.
 
 ```sh
 elembra-local-text-worker \
