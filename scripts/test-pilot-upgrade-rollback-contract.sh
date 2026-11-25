@@ -9,10 +9,17 @@ import sys
 
 workflow = Path(sys.argv[1]).read_text(encoding="utf-8")
 step_start = "      - name: Upgrade installed release and roll back from its pre-upgrade backup"
+login_step = "      - name: Log in to GHCR for previous pilot image"
 step_end = "      - name: Clean up installed upgrade and rollback resources"
 start = workflow.index(step_start)
 end = workflow.index(step_end, start)
 upgrade = workflow[start:end]
+login_start = workflow.index(login_step)
+if login_start > start or "packages: read" not in workflow[:start]:
+    raise SystemExit("Pilot previous image pull must have GHCR package-read authentication")
+login = workflow[login_start:start]
+if "uses: docker/login-action@v4" not in login or "password: ${{ secrets.GITHUB_TOKEN }}" not in login:
+    raise SystemExit("Pilot previous image pull must use the workflow token to authenticate to GHCR")
 
 required = (
     "previous_tag=v0.8.0-alpha.7",

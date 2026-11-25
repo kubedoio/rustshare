@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 180
     permissions:
       contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -881,6 +882,13 @@ jobs:
             [[ "${PILOT_PRIVATE_BACKUP_ROOT}" == "${expected_root}" ]]
             rm -rf -- "${expected_root}"
           fi
+
+      - name: Log in to GHCR for previous pilot image
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upgrade installed release and roll back from its pre-upgrade backup
         env:
