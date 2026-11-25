@@ -212,6 +212,15 @@ jobs:
           cargo test -p rustshare-server --test note_visibility_http_test features_endpoint_rejects_unauthenticated_requests -- --exact --test-threads=1
           cargo test -p rustshare-server --test note_visibility_http_test features_endpoint_returns_current_workflow_state -- --exact --test-threads=1
 
+      - name: Organization invitation lifecycle tenant isolation (PostgreSQL and RustFS)
+        env:
+          RUSTSHARE_TEST_DISPOSABLE_DB: "1"
+          RUSTSHARE_TEST_DISPOSABLE_OBJECT_STORE: "1"
+        run: |
+          cargo test -p rustshare-server --test organization_admin_invitation_lifecycle_test invitation_list_resend_cancel_and_retry_are_tenant_safe_and_redacted -- --ignored --exact --test-threads=1
+          cargo test -p rustshare-server --test organization_admin_invitation_lifecycle_test invitation_cancellation_and_acceptance_serialize_on_the_same_tenant_invite -- --ignored --exact --test-threads=1
+          cargo test -p rustshare-server --test organization_admin_invitation_lifecycle_test invitation_mutation_rolls_back_when_mandatory_audit_fails -- --ignored --exact --test-threads=1
+
       - name: Notes keyword search without AI (PostgreSQL)
         run: |
           cargo test -p rustshare-server --test unified_search_test keyword_search_works_without_embeddings -- --ignored --exact --test-threads=1
