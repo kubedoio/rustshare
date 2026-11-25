@@ -1,6 +1,6 @@
 # H3 product decision records — 2026-11-25
 
-These records reconcile open product issues against protected main at `c2157181cad37ed130c02b90e0fb5f08d0970b84`. Recommendations below preserve the current supported pilot scope; pending owner choices are not implementation authorization.
+These records reconcile open product issues against protected main at `219d1d1858c037c79716d9791dcb4096c7980c42`, including the bounded organization group-member removal changes in PR #560. Recommendations below preserve the current supported pilot scope; pending owner choices are not implementation authorization.
 
 ## #325 Mail persistence
 
