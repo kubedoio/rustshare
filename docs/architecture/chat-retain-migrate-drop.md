@@ -44,6 +44,21 @@ Inventory each live deployment before a migration decision. Repository inspectio
 
 Until then, retain existing functionality and data. Do not run two authoritative Chat backends, mutate production mappings, archive legacy data or implement H4 cutover code.
 
+## H4 architecture recommendation (2026-11-25)
+
+Repository evidence was checked at protected-main `c2157181cad37ed130c02b90e0fb5f08d0970b84`. The tracked tree contains the Elembra Chat application and Buzz bridge, but no separately identified RustChat server/client implementation. Issue #309 still requires inventory of any deployed RustChat data, identities, external clients and backup dependencies; source inspection cannot establish that no live legacy data exists.
+
+| Option | Evidence-based fit and cost | Decision |
+| --- | --- | --- |
+| A. Unmodified upstream Buzz | Reduces downstream code, but stock Buzz does not expose the fork-specific signed authorization/state/channel APIs currently used by the application. Desktop/keychain interoperability, revocation, history parity and independent security acceptance remain gated (#442, #458, #460). Switching would require an adapter and full parity, recovery and rollback proof. | Not a drop-in replacement. Revisit only after those gates pass. |
+| B. Existing fork-backed Buzz | Matches the supported deployment: Elembra-owned principal/workspace bindings, live membership reauthorization, signed message flow, current Files reauthorization for attachments, and existing channel/thread/reply/reaction behavior. It carries downstream rebase, vulnerability-fix and release maintenance cost; upstream responsiveness is limited. | Acceptable bounded maintenance path; pin reviewed source/image, track upstream fixes, and allow only required security/compatibility fixes. |
+| C. Native authoritative RustChat | No native RustChat implementation is present in the tracked tree. It would need identity/SSO, tenant and channel ACLs, realtime messaging/history/search, threads/reactions/moderation, Files integration, key custody, recovery, desktop interoperability, and migration/rollback. | Not justified before #309 live-data inventory and an approved product case. Highest build and migration risk. |
+| D. Keep the supported deployment and defer the long-term choice | Preserves current user behavior and the existing Buzz authority while the #309 inventory, independent security acceptance and upstream gates are completed. It does not remove the fork's maintenance burden. | **Recommended now.** Use B's bounded maintenance policy during the deferral; do not migrate, activate managed publishing, or remove legacy data. |
+
+The supported flow has one Buzz history authority; Memory stores derived references/projections, and Files remains authoritative for attachments. Browser-held keys and managed signing have different custody and revocation properties. Managed publishing remains disabled, the current identity mappings remain untouched, and the existing deployment profile is preserved.
+
+**Owner decision requested:** accept D with bounded B maintenance until the missing deployment/data inventory and independent gates are complete, or name a different target and fund its parity, migration and rollback evidence. This recommendation does not authorize implementation or migration. Chat migration remains blocked pending that decision and the required security/data evidence.
+
 ## Related records
 
 - [Issue #309](https://github.com/kubedoio/rustshare/issues/309)
