@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 const CREDENTIAL_SERVICE: &str = "io.elembra.shell-memory";
 const CONNECTOR_ID: &str = "io.elembra.connector.shell-memory";
+const EVENTS_PER_UPLOAD_ROUND: usize = 1;
 
 #[derive(Debug, Parser)]
 #[command(name = "elembra-shell-memory")]
@@ -233,7 +234,7 @@ where
         if queue.paused() {
             Vec::new()
         } else {
-            queue.pending(config.instance_id, 100)?
+            queue.pending(config.instance_id, EVENTS_PER_UPLOAD_ROUND)?
         }
     };
     if events.is_empty() {
@@ -406,13 +407,13 @@ fn set_control(config_path: &PathBuf, control: Control, value: bool) -> Result<(
 
 fn store_credential(config_path: &PathBuf) -> Result<()> {
     let config = load_config(config_path)?;
-    let _upload_lock = UploadLock::acquire(&config.queue)?;
     let mut credential = String::new();
     std::io::stdin().read_to_string(&mut credential)?;
     let credential = credential.trim();
     if !credential.starts_with("ecw1_") || credential.len() > 128 {
         bail!("invalid Connector worker credential");
     }
+    let _upload_lock = UploadLock::acquire(&config.queue)?;
     keyring::Entry::new(CREDENTIAL_SERVICE, &config.instance_id.to_string())?
         .set_password(credential)?;
     Ok(())
@@ -655,6 +656,18 @@ mod tests {
             },
             &[]
         )?);
+        assert!(record_if_enabled(
+            &queue_path,
+            instance_id,
+            RecordInput {
+                command: "echo synthetic-next-round".into(),
+                cwd: "/tmp/synthetic".into(),
+                host: "synthetic-host".into(),
+                exit_code: 0,
+                duration_ms: 1,
+            },
+            &[]
+        )?);
 
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
@@ -683,6 +696,7 @@ mod tests {
             .expect("fake server receives Files import");
         let import_body = String::from_utf8_lossy(&import_body);
         assert!(import_body.contains("echo synthetic-upload"));
+        assert!(!import_body.contains("echo synthetic-next-round"));
         assert!(import_body.contains("io.elembra.connector.shell-memory"));
 
         let record_path = queue_path.clone();

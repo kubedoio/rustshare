@@ -8,10 +8,11 @@ _elembra_shell_memory_preexec() {
 }
 
 _elembra_shell_memory_precmd() {
-  local status=$?
+  local command_status=$?
   if [[ -n "${_ELEMBRA_SHELL_MEMORY_COMMAND-}" ]]; then
-    local duration_ms=$(( int((EPOCHREALTIME - _ELEMBRA_SHELL_MEMORY_STARTED) * 1000) ))
-    printf '%s\0' "$_ELEMBRA_SHELL_MEMORY_COMMAND" "$PWD" "$HOST" "$status" "$duration_ms" |
+    local -i duration_ms
+    (( duration_ms = (EPOCHREALTIME - _ELEMBRA_SHELL_MEMORY_STARTED) * 1000 ))
+    printf '%s\0' "$_ELEMBRA_SHELL_MEMORY_COMMAND" "$PWD" "$HOST" "$command_status" "$duration_ms" |
       elembra-shell-memory record >/dev/null 2>&1 || print -u2 -- "Elembra Shell Memory: command was not queued"
   fi
   _ELEMBRA_SHELL_MEMORY_COMMAND=
