@@ -15,7 +15,7 @@ use rustshare_core::{
 use rustshare_storage::{MetadataStore, ObjectStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 use uuid::Uuid;
 
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
@@ -315,22 +315,21 @@ impl BrainstormingService {
     ) -> Result<BrainstormBoard, BrainstormError> {
         tracing::info!(board_id = %board_id, user_id = %user_id, tenant_id = %tenant_id, source_len = source.len(), "save_board_source: start");
 
-        // Reject oversized source before parsing or loading the target board.
-        check_board_source_size(&source)?;
-
         // Authorize access before parsing user-provided Excalidraw JSON.
-        let folder = self
-            .folder_service
-            .get_folder(board_id, user_id)
-            .await
-            .map_err(BrainstormError::from)?;
+        let (folder, parsed) = authorize_and_parse_board_source(&source, async {
+            let folder = self
+                .folder_service
+                .get_folder(board_id, user_id)
+                .await
+                .map_err(BrainstormError::from)?;
 
-        if folder.tenant_id != tenant_id {
-            return Err(BrainstormError::PermissionDenied);
-        }
+            if folder.tenant_id != tenant_id {
+                return Err(BrainstormError::PermissionDenied);
+            }
 
-        // Validate Excalidraw JSON structure after access is established.
-        let parsed = parse_board_source(&source)?;
+            Ok(folder)
+        })
+        .await?;
 
         if parsed.get("type").and_then(|v| v.as_str()) != Some("excalidraw") {
             tracing::info!("save_board_source: validation failed - missing type field");
@@ -829,6 +828,16 @@ fn parse_board_source(source: &str) -> Result<serde_json::Value, BrainstormError
     Ok(parsed)
 }
 
+async fn authorize_and_parse_board_source(
+    source: &str,
+    authorization: impl Future<Output = Result<Folder, BrainstormError>>,
+) -> Result<(Folder, serde_json::Value), BrainstormError> {
+    let folder = authorization.await?;
+    check_board_source_size(source)?;
+    let parsed = parse_board_source(source)?;
+    Ok((folder, parsed))
+}
+
 fn check_board_source_size(source: &str) -> Result<(), BrainstormError> {
     if source.len() > MAX_BRAINSTORM_SOURCE_BYTES {
         return Err(BrainstormError::InvalidData(
@@ -872,6 +881,16 @@ mod tests {
         let source = r#"{"type":"excalidraw","elements":[]}"#;
 
         assert!(parse_board_source(source).is_ok());
+    }
+
+    #[tokio::test]
+    async fn unauthorized_board_rejects_before_malformed_source_parsing() {
+        let result = authorize_and_parse_board_source("not valid JSON", async {
+            Err::<Folder, _>(BrainstormError::PermissionDenied)
+        })
+        .await;
+
+        assert!(matches!(result, Err(BrainstormError::PermissionDenied)));
     }
 
     #[test]
