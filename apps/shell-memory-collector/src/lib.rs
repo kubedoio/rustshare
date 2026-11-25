@@ -389,7 +389,7 @@ fn render_markdown(
 ) -> Result<Vec<u8>> {
     let fence = "`".repeat(command.split('`').map(str::len).max().unwrap_or(0).max(3) + 1);
     Ok(format!(
-        "---\nsource: shell-memory\nevent_id: {id}\noccurred_at: {}\nhost: {}\nworking_directory: {}\nexit_code: {}\nduration_ms: {}\n---\n\n{fence}text\n{command}\n{fence}\n",
+        "---\nsource: shell-memory\nshell: zsh\nevent_id: {id}\noccurred_at: {}\nhost: {}\nworking_directory: {}\nexit_code: {}\nduration_ms: {}\n---\n\n{fence}text\n{command}\n{fence}\n",
         created_at.to_rfc3339(), serde_json::to_string(&input.host)?,
         serde_json::to_string(&input.cwd)?, input.exit_code, input.duration_ms,
     ).into_bytes())
@@ -502,8 +502,10 @@ mod tests {
         )?);
         let events = queue.pending(id, 10)?;
         assert_eq!(events.len(), 1);
-        assert!(String::from_utf8_lossy(&events[0].content).contains("<redacted command>"));
-        assert!(!String::from_utf8_lossy(&events[0].content).contains("synthetic-shell-secret"));
+        let content = String::from_utf8_lossy(&events[0].content);
+        assert!(content.contains("shell: zsh\n"));
+        assert!(content.contains("<redacted command>"));
+        assert!(!content.contains("synthetic-shell-secret"));
         Ok(())
     }
 
