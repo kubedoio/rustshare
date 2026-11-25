@@ -888,6 +888,9 @@ pub fn brainstorming_routes() -> Router<AppState> {
 }
 
 pub fn chat_integration_routes() -> Router<AppState> {
+    // Webhook bytes are buffered before the handler can authenticate their
+    // signature, so keep this public request path tightly bounded.
+    const MAX_CHAT_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
     use axum::routing::{get, patch, post};
     Router::new()
         .route(
@@ -996,7 +999,9 @@ pub fn chat_integration_routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/integrations/chat/events",
-            post(crate::handlers::chat_integration::receive_chat_event),
+            post(crate::handlers::chat_integration::receive_chat_event).layer(
+                axum::extract::DefaultBodyLimit::max(MAX_CHAT_EVENT_REQUEST_BYTES),
+            ),
         )
         .route(
             "/api/v1/integrations/webhooks/dispatch",
