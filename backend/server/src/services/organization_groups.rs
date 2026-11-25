@@ -13,6 +13,14 @@ pub(crate) enum AddMemberOutcome {
     AlreadyMember,
 }
 
+pub(crate) enum RemoveMemberOutcome {
+    Removed,
+    GroupNotFound,
+    UserNotFound,
+    DifferentTenant,
+    MembershipNotFound,
+}
+
 pub(crate) async fn add_member(
     pool: &PgPool,
     group_id: Uuid,
@@ -69,6 +77,60 @@ pub(crate) async fn add_member(
     tx.commit().await?;
 
     Ok(AddMemberOutcome::Added)
+}
+
+pub(crate) async fn remove_member(
+    pool: &PgPool,
+    group_id: Uuid,
+    user_id: Uuid,
+    actor_id: Uuid,
+    correlation_id: Option<&str>,
+) -> Result<RemoveMemberOutcome, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let tenant_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT tenant_id FROM user_groups WHERE id = $1 FOR UPDATE")
+            .bind(group_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(tenant_id) = tenant_id else {
+        return Ok(RemoveMemberOutcome::GroupNotFound);
+    };
+
+    let user_tenant: Option<Uuid> =
+        sqlx::query_scalar("SELECT tenant_id FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(user_tenant) = user_tenant else {
+        return Ok(RemoveMemberOutcome::UserNotFound);
+    };
+    if user_tenant != tenant_id {
+        return Ok(RemoveMemberOutcome::DifferentTenant);
+    }
+
+    let result = sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
+        .bind(group_id)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Ok(RemoveMemberOutcome::MembershipNotFound);
+    }
+
+    insert_scoped_admin_action(
+        &mut tx,
+        tenant_id,
+        actor_id,
+        "group.member_removed",
+        Some("group"),
+        Some(group_id),
+        json!({"user_id": user_id}),
+        correlation_id,
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(RemoveMemberOutcome::Removed)
 }
 
 #[derive(sqlx::FromRow)]
