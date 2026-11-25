@@ -42,6 +42,7 @@ test('organization admins manage a 100-user synthetic organization safely', asyn
 }) => {
 	test.setTimeout(300_000);
 	page.setDefaultTimeout(20_000);
+	expect(process.env.PILOT_ACCEPTANCE_MUTATIONS).toBe('authorized');
 	expect(adminEmail && adminPassword).toBeTruthy();
 
 	const suffix = randomUUID().replaceAll('-', '').slice(0, 12);

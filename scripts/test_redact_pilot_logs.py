@@ -899,6 +899,7 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
         self.assertIn("await editH1(editedH1)", e2e)
         self.assertIn("await rename(pilotNoteTitle, renamedNote)", e2e)
         self.assertIn("create synthetic account", scale_e2e)
+        self.assertIn("PILOT_ACCEPTANCE_MUTATIONS).toBe('authorized')", scale_e2e)
         self.assertIn("100 users · Page 1 of 2", scale_e2e)
         self.assertIn("ordinary.api.get('/api/v1/organization-admin/users", scale_e2e)
         self.assertIn("Preview offboarding", scale_e2e)
