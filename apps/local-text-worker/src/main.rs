@@ -427,4 +427,31 @@ mod credential_tests {
         assert!(ensure_migration_target(Some("ecw1_old"), "ecw1_old").is_ok());
         assert!(ensure_migration_target(Some("ecw1_rotated"), "ecw1_old").is_err());
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_credential_manager_provisions_reads_rotates_and_deletes() {
+        let instance_id = uuid::Uuid::new_v4();
+        let entry =
+            keyring::Entry::new("io.elembra.local-text-worker", &instance_id.to_string()).unwrap();
+
+        entry
+            .set_password("ecw1_synthetic-local-text-token")
+            .unwrap();
+        assert_eq!(
+            super::read_keyring_credential(instance_id).unwrap(),
+            "ecw1_synthetic-local-text-token"
+        );
+
+        entry
+            .set_password("ecw1_synthetic-local-text-rotated")
+            .unwrap();
+        assert_eq!(
+            super::read_keyring_credential(instance_id).unwrap(),
+            "ecw1_synthetic-local-text-rotated"
+        );
+
+        entry.delete_credential().unwrap();
+        assert!(super::read_keyring_credential(instance_id).is_err());
+    }
 }
