@@ -1,6 +1,6 @@
 # H3 product decision records — 2026-11-25
 
-These records use protected main `267b9f14dc180af79b1cf0522949f1159258ffc9` as their product/source snapshot, including the bounded organization group-member removal changes in PR #560. Protected main has since advanced to `91ac914a8bc011fb59a723f7f253adbfdc213494` through dependency-only PR #547; the issue scope and product contracts summarized here are unchanged. Recommendations preserve the current supported pilot scope; pending owner choices are not implementation authorization.
+These records use protected main `267b9f14dc180af79b1cf0522949f1159258ffc9` as their product/source snapshot, including the bounded organization group-member removal changes in PR #560. As of this record's 2026-11-25 review, protected main had advanced to `91ac914a8bc011fb59a723f7f253adbfdc213494` through dependency-only PR #547. It subsequently advanced to `592c918880d230367c7fa924d2d19218c84ada28` through PR #568; the issue scope and product contracts summarized here are unchanged. Recommendations preserve the current supported pilot scope; pending owner choices are not implementation authorization.
 
 ## #325 Mail persistence
 
