@@ -1015,10 +1015,15 @@ pub fn chat_integration_routes() -> Router<AppState> {
 /// Buzz event ingestion (observation half of the Buzz → Elembra Memory
 /// projection, ADR-0033/ADR-0034).
 pub fn buzz_observation_routes() -> Router<AppState> {
+    // The request is buffered before its HMAC is checked; bound unauthenticated
+    // traffic independently of the global upload allowance.
+    const MAX_BUZZ_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
     use axum::routing::post;
     Router::new().route(
         "/api/v1/integrations/buzz/events",
-        post(crate::handlers::buzz_events::receive_buzz_event),
+        post(crate::handlers::buzz_events::receive_buzz_event).layer(
+            axum::extract::DefaultBodyLimit::max(MAX_BUZZ_EVENT_REQUEST_BYTES),
+        ),
     )
 }
 
