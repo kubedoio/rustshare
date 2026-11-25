@@ -198,7 +198,8 @@ pub struct IncomingChatEvent {
     pub event_type: String,
     pub timestamp: DateTime<Utc>,
     pub user_id: Option<String>,
-    pub data: serde_json::Value,
+    #[schema(value_type = serde_json::Value)]
+    pub data: Box<serde_json::value::RawValue>,
 }
 
 /// Trait for metadata store operations needed by ChatIntegrationService.
@@ -1073,7 +1074,30 @@ mod tests {
             event_type: "share.revoked".to_string(),
             timestamp: Utc::now(),
             user_id: Some(Uuid::new_v4().to_string()),
-            data: serde_json::json!({"share_token": "abc123"}),
+            data: serde_json::value::RawValue::from_string(
+                r#"{"share_token":"abc123"}"#.to_string(),
+            )
+            .unwrap(),
+        }
+    }
+
+    #[test]
+    fn incoming_chat_event_preserves_arbitrary_json_data_without_decoding_a_value_tree() {
+        for data in [
+            r#"{"share_token":"abc123"}"#,
+            r#"["future","payload"]"#,
+            r#"null"#,
+            r#"17"#,
+            r#""vendor-specific""#,
+        ] {
+            let body = format!(
+                r#"{{"event_type":"vendor.event","timestamp":"2026-01-01T00:00:00Z","user_id":"opaque-principal","data":{data}}}"#
+            );
+            let event: IncomingChatEvent = serde_json::from_str(&body).unwrap();
+
+            assert_eq!(event.event_type, "vendor.event");
+            assert_eq!(event.user_id.as_deref(), Some("opaque-principal"));
+            assert_eq!(event.data.get(), data);
         }
     }
 
