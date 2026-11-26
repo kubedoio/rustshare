@@ -58,10 +58,13 @@ retained for 90 days.
 
 ## Decision and limits
 
-**Disposable pilot: GO** for this exact revision and synthetic environment.
-FWS remains **NO-GO** pending operator-owned DNS, HTTPS/certificate,
-authentication, secret custody, backup destination and restore access,
-monitoring/alert routing, and authorized pilot-user selection.
+**Core disposable Pilot Release workflow: PASS** for this exact revision and
+synthetic environment. **Overall disposable pilot: NO-GO** until the separate
+approximately 100-user journey on current PR #569 and the d4 main CI and
+Integration Tests finish successfully. FWS remains **NO-GO** pending
+operator-owned DNS, HTTPS/certificate, authentication, secret custody, backup
+destination and restore access, monitoring/alert routing, and authorized
+pilot-user selection.
 
 This is not release qualification. No release image scan, SBOM, or provenance
 was produced for d4; image publication was skipped. It does not authorize an
