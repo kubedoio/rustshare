@@ -1,7 +1,6 @@
 use crate::state::AppState;
 use axum::Router;
-
-const MAX_CHAT_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
+use rustshare_core::services::MAX_CHAT_EVENT_REQUEST_BYTES;
 
 pub fn health_routes() -> Router<AppState> {
     use axum::routing::get;

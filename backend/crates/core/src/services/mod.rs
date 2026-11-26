@@ -34,7 +34,7 @@ pub use chat_integration::{
     ChatEventType, ChatIntegrationError, ChatIntegrationService,
     EventStoreOps as ChatEventStoreOps, IncomingChatEvent,
     MetadataStoreOps as ChatMetadataStoreOps, UnfurlMetadata, UnfurlRequest, UnfurlResponse,
-    WebhookDispatcher,
+    WebhookDispatcher, MAX_CHAT_EVENT_REQUEST_BYTES,
 };
 pub use email_service::{EmailError, OutboundEmail, OutboundMailMessage, SmtpAttachment};
 pub use eml_parser::{EmlParseError, ParsedAddress, ParsedAttachment, ParsedMail};

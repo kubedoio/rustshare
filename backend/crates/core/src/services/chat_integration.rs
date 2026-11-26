@@ -192,6 +192,9 @@ pub struct UnfurlResponse {
     pub metadata: UnfurlMetadata,
 }
 
+/// Maximum body size accepted for an incoming Chat event webhook.
+pub const MAX_CHAT_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
+
 /// Incoming chat event from external chat system.
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct IncomingChatEvent {
@@ -596,7 +599,7 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
         body: &[u8],
         signature: &str,
     ) -> Result<(), ChatIntegrationError> {
-        if signature.is_empty() {
+        if signature.is_empty() || body.len() > MAX_CHAT_EVENT_REQUEST_BYTES {
             return Err(ChatIntegrationError::SignatureVerificationFailed);
         }
 
@@ -1200,6 +1203,42 @@ mod tests {
             .sign_with_timestamp(event.timestamp.timestamp(), &body)
             .unwrap();
         (body, signature)
+    }
+
+    fn sign_incoming_event_with_body_size(size: usize) -> (Vec<u8>, String) {
+        let event = sample_incoming_event();
+        let mut body = serde_json::to_vec(&event).unwrap();
+        assert!(body.len() <= size);
+        body.resize(size, b' ');
+        let signer = WebhookSigner::new("test_secret");
+        let signature = signer
+            .sign_with_timestamp(event.timestamp.timestamp(), &body)
+            .unwrap();
+        (body, signature)
+    }
+
+    #[tokio::test]
+    async fn process_incoming_event_accepts_body_at_size_limit() {
+        let service = test_service_with_max_age(300);
+        let (body, signature) = sign_incoming_event_with_body_size(MAX_CHAT_EVENT_REQUEST_BYTES);
+
+        assert_eq!(body.len(), MAX_CHAT_EVENT_REQUEST_BYTES);
+        assert!(service
+            .process_incoming_event(&body, &signature)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn process_incoming_event_rejects_oversized_valid_body_before_deserialization() {
+        let service = test_service_with_max_age(300);
+        let (body, signature) =
+            sign_incoming_event_with_body_size(MAX_CHAT_EVENT_REQUEST_BYTES + 1);
+
+        assert!(matches!(
+            service.process_incoming_event(&body, &signature).await,
+            Err(ChatIntegrationError::SignatureVerificationFailed)
+        ));
     }
 
     #[tokio::test]
