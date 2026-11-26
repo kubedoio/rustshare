@@ -1357,6 +1357,7 @@ mod tests {
                 host: "synthetic-host".into(),
                 exit_code: 0,
                 duration_ms: 1,
+                session_id: None,
             },
             &[]
         )?);
@@ -1584,6 +1585,7 @@ mod tests {
                         host: "synthetic-host".into(),
                         exit_code: 0,
                         duration_ms: 1,
+                        session_id: None,
                     },
                     &[]
                 )?);

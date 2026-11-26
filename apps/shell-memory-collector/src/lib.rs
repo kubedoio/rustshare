@@ -444,11 +444,11 @@ impl Queue {
     pub fn request_forget_session(&self, instance_id: Uuid, session_id: Uuid) -> Result<usize> {
         let ids = {
             let mut stmt = self.connection.prepare("SELECT id FROM shell_events WHERE instance_id=?1 AND session_id=?2 UNION SELECT id FROM shell_imports WHERE instance_id=?1 AND session_id=?2")?;
-            stmt.query_map(
+            let rows = stmt.query_map(
                 params![instance_id.to_string(), session_id.to_string()],
                 |row| row.get::<_, String>(0),
-            )?
-            .collect::<std::result::Result<Vec<_>, _>>()?
+            )?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
         };
         let mut count = 0;
         for id in ids {
@@ -937,9 +937,8 @@ mod tests {
             let mut statement = queue
                 .connection
                 .prepare("SELECT name FROM pragma_table_info('shell_imports')")?;
-            statement
-                .query_map([], |row| row.get::<_, String>(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
         };
         assert_eq!(
             columns.join(","),
