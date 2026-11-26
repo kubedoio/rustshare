@@ -451,7 +451,7 @@
 	<div class="modal-box max-w-2xl">
 		<h3 class="mb-4 text-lg font-bold">Share "{resourceName}"</h3>
 
-		<div class="tabs-boxed tabs mb-6">
+		<div class="tabs-boxed mb-6 tabs">
 			<button
 				type="button"
 				class:tab-active={activeTab === 'public'}
