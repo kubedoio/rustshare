@@ -100,7 +100,7 @@ async fn admin_user_reads_require_installation_admin_and_preserve_system_scope()
     )
     .await;
     assert_eq!(detail_status, StatusCode::OK);
-    assert_eq!(detail_body["user"]["id"], cross_tenant_target.to_string());
+    assert_eq!(detail_body["id"], cross_tenant_target.to_string());
 
     sqlx::query("DELETE FROM organization_administrators WHERE user_id = $1")
         .bind(organization_admin)
