@@ -59,6 +59,77 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         Uuid::new_v4(),
     )
     .await;
+    let owned_file_id = insert_file(&pool, owner_id, tenant_id, Uuid::new_v4()).await;
+    let unrelated_owned_file_id = insert_file(&pool, owner_id, tenant_id, Uuid::new_v4()).await;
+    let owned_source = source_ref(Uuid::new_v4());
+    let owned_target = target_ref(owned_file_id);
+    let store = ConnectorStore::new(pool.clone());
+    store
+        .record_mapping(
+            tenant_id,
+            Uuid::from(primary.instance_id),
+            &owned_source,
+            REVISION,
+            &owned_target,
+            ConnectorMappingProvenance::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        forget(&state, &primary.credential, &owned_source).await,
+        StatusCode::NO_CONTENT
+    );
+    assert!(!file_is_active(&pool, owned_file_id).await);
+    assert!(file_is_active(&pool, unrelated_owned_file_id).await);
+    let forgotten_mapping: bool = sqlx::query_scalar(
+        "SELECT forget_requested_at IS NOT NULL AND forgotten_at IS NOT NULL FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
+    )
+    .bind(tenant_id)
+    .bind(Uuid::from(primary.instance_id))
+    .bind(&owned_source)
+    .bind(REVISION)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(forgotten_mapping);
+    let delete_events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM events WHERE aggregate_id=$1 AND event_type=$2 AND user_id=$3",
+    )
+    .bind(owned_file_id)
+    .bind("\"FileDeleted\"")
+    .bind(owner_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(delete_events, 1, "Files lifecycle event is durable and owner-attributed");
+    assert_eq!(
+        forget(&state, &primary.credential, &owned_source).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM events WHERE aggregate_id=$1 AND event_type=$2 AND user_id=$3",
+        )
+        .bind(owned_file_id)
+        .bind("\"FileDeleted\"")
+        .bind(owner_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        1,
+        "repeated forget must not append another delete event"
+    );
+    assert!(state
+        .metadata_store
+        .restore_file(owned_file_id, owner_id, tenant_id)
+        .await
+        .unwrap());
+    assert_eq!(
+        forget(&state, &primary.credential, &owned_source).await,
+        StatusCode::NO_CONTENT
+    );
+    assert!(file_is_active(&pool, owned_file_id).await);
+
     let foreign_file_id = insert_file(&pool, foreign_owner_id, foreign_tenant_id, fixture).await;
     let foreign_source = source_ref(Uuid::new_v4());
     let foreign_target = target_ref(foreign_file_id);
@@ -145,6 +216,16 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
 
     sqlx::query("DELETE FROM files WHERE id=$1")
         .bind(foreign_file_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM files WHERE id=$1")
+        .bind(owned_file_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM files WHERE id=$1")
+        .bind(unrelated_owned_file_id)
         .execute(&pool)
         .await
         .unwrap();
