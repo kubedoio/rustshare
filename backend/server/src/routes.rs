@@ -1,6 +1,7 @@
 use crate::buzz_observation::MAX_BUZZ_EVENT_REQUEST_BYTES;
 use crate::state::AppState;
 use axum::Router;
+use rustshare_core::services::MAX_CHAT_EVENT_REQUEST_BYTES;
 
 pub fn health_routes() -> Router<AppState> {
     use axum::routing::get;
@@ -889,6 +890,8 @@ pub fn brainstorming_routes() -> Router<AppState> {
 }
 
 pub fn chat_integration_routes() -> Router<AppState> {
+    // Webhook bytes are buffered before the handler can authenticate their
+    // signature, so keep this public request path tightly bounded.
     use axum::routing::{get, patch, post};
     Router::new()
         .route(
@@ -997,7 +1000,8 @@ pub fn chat_integration_routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/integrations/chat/events",
-            post(crate::handlers::chat_integration::receive_chat_event),
+            post(crate::handlers::chat_integration::receive_chat_event)
+                .layer(chat_event_body_limit()),
         )
         .route(
             "/api/v1/integrations/webhooks/dispatch",
@@ -1011,6 +1015,10 @@ pub fn chat_integration_routes() -> Router<AppState> {
             "/api/v1/admin/integrations/chat/webhooks",
             post(crate::handlers::chat_integration::register_chat_webhook),
         )
+}
+
+fn chat_event_body_limit() -> axum::extract::DefaultBodyLimit {
+    axum::extract::DefaultBodyLimit::max(MAX_CHAT_EVENT_REQUEST_BYTES)
 }
 
 /// Buzz event ingestion (observation half of the Buzz → Elembra Memory
@@ -1748,7 +1756,7 @@ pub fn sync_routes() -> Router<AppState> {
 }
 
 #[cfg(test)]
-mod buzz_body_limit_tests {
+mod webhook_body_limit_tests {
     use super::*;
     use axum::{
         body::{Body, Bytes},
@@ -1758,18 +1766,43 @@ mod buzz_body_limit_tests {
     use tower::ServiceExt;
 
     #[test]
-    fn production_buzz_event_registration_uses_the_tested_body_limit() {
+    fn production_chat_and_buzz_routes_use_the_tested_body_limits() {
         let routes = include_str!("routes.rs");
+        let chat_routes = routes
+            .split("pub fn chat_integration_routes")
+            .nth(1)
+            .unwrap()
+            .split("pub fn chat_event_body_limit")
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .collect::<String>();
         let buzz_routes = routes
             .split("pub fn buzz_observation_routes")
             .nth(1)
             .unwrap()
-            .split("pub fn memory_worker_routes")
+            .split("pub fn buzz_event_body_limit")
             .next()
-            .unwrap();
-        let buzz_routes = buzz_routes.split_whitespace().collect::<String>();
+            .unwrap()
+            .split_whitespace()
+            .collect::<String>();
 
+        assert!(chat_routes.contains("receive_chat_event).layer(chat_event_body_limit())"));
         assert!(buzz_routes.contains("receive_buzz_event).layer(buzz_event_body_limit())"));
+    }
+
+    #[tokio::test]
+    async fn oversized_chat_event_body_is_rejected_before_handler_authentication() {
+        let app = Router::new().route(
+            "/api/v1/integrations/chat/events",
+            post(|_: Bytes| async { StatusCode::UNAUTHORIZED }).layer(chat_event_body_limit()),
+        );
+        let request = Request::post("/api/v1/integrations/chat/events")
+            .body(Body::from(vec![0; MAX_CHAT_EVENT_REQUEST_BYTES + 1]))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[tokio::test]
