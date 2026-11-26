@@ -131,6 +131,36 @@ async fn grant_direct(
     .expect("create direct view grant");
 }
 
+async fn grant_organization_admin(pool: &PgPool, tenant_id: Uuid, user_id: Uuid) {
+    let grant_id = Uuid::new_v4();
+    let granted_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT now()")
+        .fetch_one(pool)
+        .await
+        .expect("database time");
+    let mut tx = pool.begin().await.expect("grant transaction");
+    sqlx::query(
+        "INSERT INTO admin_actions (tenant_id,actor_id,actor_principal_id,action_type,target_type,target_id,detail,performed_at,outcome) VALUES ($1,$2,$2,'organization_admin.bootstrap','user',$2,$3,$4,'success')",
+    )
+    .bind(tenant_id)
+    .bind(user_id)
+    .bind(json!({"grant_id": grant_id}))
+    .bind(granted_at)
+    .execute(&mut *tx)
+    .await
+    .expect("grant audit");
+    sqlx::query(
+        "INSERT INTO organization_administrators (id,tenant_id,user_id,granted_by,granted_at) VALUES ($1,$2,$3,$3,$4)",
+    )
+    .bind(grant_id)
+    .bind(tenant_id)
+    .bind(user_id)
+    .bind(granted_at)
+    .execute(&mut *tx)
+    .await
+    .expect("organization admin grant");
+    tx.commit().await.expect("grant commit");
+}
+
 async fn create_meeting(
     state: &rustshare_server::state::AppState,
     user_id: Uuid,
@@ -611,6 +641,8 @@ async fn revoked_direct_and_group_grants_hide_linked_metadata_immediately() {
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let owner = create_test_user(&state, "meeting_group_owner", tenant_id).await;
     let attendee = create_test_user(&state, "meeting_group_attendee", tenant_id).await;
+    let org_admin = create_test_user(&state, "meeting_group_admin", tenant_id).await;
+    grant_organization_admin(&state.db_pool, tenant_id, org_admin.id).await;
     let file_id = create_file(&state, owner.id, tenant_id, "private-budget.xlsx").await;
     let group_id = Uuid::new_v4();
     sqlx::query(
@@ -669,12 +701,19 @@ async fn revoked_direct_and_group_grants_hide_linked_metadata_immediately() {
     assert_eq!(still_available["items"][0]["available"], true);
     assert_eq!(still_available["items"][0]["availability"], "available");
 
-    sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
-        .bind(group_id)
-        .bind(attendee.id)
-        .execute(&state.db_pool)
-        .await
-        .expect("remove attendee from group");
+    let admin_token = create_auth_token(&state, org_admin.id, tenant_id);
+    let (status, _) = request_json(
+        &api,
+        &admin_token,
+        "DELETE",
+        &format!(
+            "/api/v1/organization-admin/groups/{group_id}/members/{}",
+            attendee.id
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
     let (status, unavailable) = request_json(&api, &token, "GET", &uri, None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(unavailable["items"][0]["available"], false);
@@ -699,6 +738,20 @@ async fn revoked_direct_and_group_grants_hide_linked_metadata_immediately() {
         StatusCode::OK,
         "Files HTTP and meeting auth must agree"
     );
+
+    let audit: (Uuid, Uuid, String, Uuid, serde_json::Value) = sqlx::query_as(
+        "SELECT actor_id, tenant_id, action_type, target_id, detail FROM admin_actions WHERE tenant_id = $1 AND action_type = 'group.member_removed' AND target_id = $2",
+    )
+    .bind(tenant_id)
+    .bind(group_id)
+    .fetch_one(&state.db_pool)
+    .await
+    .expect("group removal audit event");
+    assert_eq!(audit.0, org_admin.id, "audit actor");
+    assert_eq!(audit.1, tenant_id, "audit tenant");
+    assert_eq!(audit.2, "group.member_removed");
+    assert_eq!(audit.3, group_id, "audit group target");
+    assert_eq!(audit.4["user_id"], attendee.id.to_string(), "audit member");
 
     cleanup_tenant_with_versions(&state.db_pool, tenant_id).await;
 }
