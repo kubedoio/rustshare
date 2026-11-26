@@ -87,6 +87,7 @@ test('organization admins manage a 100-user synthetic organization safely', asyn
 
 		const firstOrganizationAdmin = users[98];
 		const secondOrganizationAdmin = users[99];
+		const firstOffboardTarget = users[96];
 		const offboardTarget = users[97];
 		const ordinaryUser = users[0];
 		const existingAdmins = await adminApi.get(
@@ -115,6 +116,39 @@ test('organization admins manage a 100-user synthetic organization safely', asyn
 			expect(denied.status()).toBe(403);
 		} finally {
 			await ordinaryContext.close();
+		}
+
+		const firstOrganizationAdminContext = await browser.newContext({
+			baseURL: process.env.E2E_BASE_URL ?? 'http://127.0.0.1'
+		});
+		try {
+			const firstAdmin = await login(
+				await firstOrganizationAdminContext.newPage(),
+				firstOrganizationAdmin.email,
+				firstOrganizationAdmin.password
+			);
+			const offboardUrl = '/api/v1/organization-admin/users/offboard';
+			const previewResponse = await firstAdmin.api.post(offboardUrl, {
+				headers: firstAdmin.headers,
+				data: { user_ids: [firstOffboardTarget.id], dry_run: true }
+			});
+			expect(previewResponse.ok()).toBeTruthy();
+			expect(await previewResponse.json()).toMatchObject({
+				dry_run: true,
+				rows: [{ user_id: firstOffboardTarget.id, outcome: 'ready' }]
+			});
+
+			const applyResponse = await firstAdmin.api.post(offboardUrl, {
+				headers: firstAdmin.headers,
+				data: { user_ids: [firstOffboardTarget.id], dry_run: false }
+			});
+			expect(applyResponse.ok()).toBeTruthy();
+			expect(await applyResponse.json()).toMatchObject({
+				dry_run: false,
+				rows: [{ user_id: firstOffboardTarget.id, outcome: 'disabled' }]
+			});
+		} finally {
+			await firstOrganizationAdminContext.close();
 		}
 
 		const organizationAdminContext = await browser.newContext({
@@ -188,11 +222,16 @@ test('organization admins manage a 100-user synthetic organization safely', asyn
 			await expect(
 				organizationAdminPage.getByRole('heading', { name: 'Organization audit' })
 			).toBeVisible();
-			const auditRow = organizationAdminPage
+			const offboardAuditRows = organizationAdminPage
 				.locator('tbody tr')
 				.filter({ hasText: 'organization_admin.user_offboarded' });
-			await expect(auditRow.first()).toContainText(offboardTarget.id);
-			await expect(auditRow.first()).toContainText(secondOrganizationAdmin.id);
+			await expect(offboardAuditRows).toHaveCount(2);
+			await expect(offboardAuditRows.filter({ hasText: firstOffboardTarget.id })).toContainText(
+				firstOrganizationAdmin.id
+			);
+			await expect(offboardAuditRows.filter({ hasText: offboardTarget.id })).toContainText(
+				secondOrganizationAdmin.id
+			);
 		} finally {
 			await organizationAdminContext.close();
 		}
