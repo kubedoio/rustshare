@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Add an opt-in zsh Shell Memory collector with local redaction, exclusions, a private SQLite queue, and leased Files publication through Connectors.
 - Search authorized workspace Memory sources by keyword without an LLM from Ask.
 - Add an independent Local Text worker with bounded Markdown scanning, a private durable offline queue, and leased Files import.
 - Publish Connector Markdown through a durable Memory Files catalog and rebuildable keyword index, with current Files authorization and versioned citations.
