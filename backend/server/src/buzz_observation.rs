@@ -28,7 +28,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use nostr::{Event as NostrEvent, Kind};
+use nostr::{Event as NostrEvent, Kind, Tag};
 use rustshare_core::domain::{ApplicationId, PrincipalId, TenantId, WorkspaceId};
 use rustshare_crypto::WebhookSigner;
 use rustshare_integration_events::event::{ActorRef, IntegrationEvent};
@@ -52,18 +52,138 @@ pub(crate) const MAX_BUZZ_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
 /// Maximum acceptable future skew for a pushed event's author-chosen
 /// `created_at` (seconds). See the check in [`BuzzObservationService::validate_and_build`].
 const MAX_CREATED_AT_FUTURE_SKEW_SECS: i64 = 15 * 60;
+const MAX_NOSTR_EVENT_TAGS: usize = 4_096;
+const MAX_NOSTR_TAG_FIELDS: usize = 64;
 
 /// Push payload: the signed Nostr event (opaque JSON, cryptographically
 /// verified after parse) plus the Buzz Chat context describing where the event
 /// was observed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BuzzEventPush {
     /// The signed Nostr event, decoded to its fixed protocol schema before
     /// cryptographic verification. Its id and signature remain untrusted
     /// until [`nostr::Event::verify`] succeeds.
     pub event: NostrEvent,
     pub context: BuzzPushContext,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuzzEventPushWire {
+    event: BoundedNostrEvent,
+    context: BuzzPushContext,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoundedNostrEvent {
+    id: nostr::EventId,
+    pubkey: nostr::PublicKey,
+    created_at: nostr::Timestamp,
+    kind: Kind,
+    #[serde(deserialize_with = "deserialize_bounded_tags")]
+    tags: Vec<Tag>,
+    content: String,
+    sig: nostr::secp256k1::schnorr::Signature,
+}
+
+impl From<BoundedNostrEvent> for NostrEvent {
+    fn from(event: BoundedNostrEvent) -> Self {
+        Self::new(
+            event.id,
+            event.pubkey,
+            event.created_at,
+            event.kind,
+            event.tags,
+            event.content,
+            event.sig,
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for BuzzEventPush {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = BuzzEventPushWire::deserialize(deserializer)?;
+        Ok(Self {
+            event: wire.event.into(),
+            context: wire.context,
+        })
+    }
+}
+
+fn deserialize_bounded_tags<'de, D>(deserializer: D) -> Result<Vec<Tag>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct TagsVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for TagsVisitor {
+        type Value = Vec<Tag>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a bounded Nostr tag sequence")
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let capacity = sequence.size_hint().unwrap_or(0).min(MAX_NOSTR_EVENT_TAGS);
+            let mut tags = Vec::with_capacity(capacity);
+
+            while let Some(fields) = sequence.next_element::<BoundedTagFields>()? {
+                if tags.len() == MAX_NOSTR_EVENT_TAGS {
+                    return Err(serde::de::Error::custom("Nostr event tag limit exceeded"));
+                }
+                tags.push(Tag::parse(fields.0).map_err(serde::de::Error::custom)?);
+            }
+
+            Ok(tags)
+        }
+    }
+
+    deserializer.deserialize_seq(TagsVisitor)
+}
+
+struct BoundedTagFields(Vec<String>);
+
+impl<'de> Deserialize<'de> for BoundedTagFields {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct FieldsVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for FieldsVisitor {
+            type Value = BoundedTagFields;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a bounded Nostr tag field sequence")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let capacity = sequence.size_hint().unwrap_or(0).min(MAX_NOSTR_TAG_FIELDS);
+                let mut fields = Vec::with_capacity(capacity);
+
+                while let Some(field) = sequence.next_element::<String>()? {
+                    if fields.len() == MAX_NOSTR_TAG_FIELDS {
+                        return Err(serde::de::Error::custom("Nostr tag field limit exceeded"));
+                    }
+                    fields.push(field);
+                }
+
+                Ok(BoundedTagFields(fields))
+            }
+        }
+
+        deserializer.deserialize_seq(FieldsVisitor)
+    }
 }
 
 /// Chat context of an observed Buzz event.
@@ -797,6 +917,20 @@ mod tests {
 
         let mut value = serde_json::to_value(original).unwrap();
         value["context"]["unexpected"] = serde_json::json!("field");
+        assert!(serde_json::from_value::<BuzzEventPush>(value).is_err());
+    }
+
+    #[test]
+    fn buzz_event_push_rejects_oversized_tag_containers() {
+        let (_, event) = signed_text_note("hello buzz");
+        let original = push(&event, &event.id.to_hex(), ObservedEventType::Created);
+        let mut value = serde_json::to_value(&original).unwrap();
+        value["event"]["tags"] = serde_json::json!(vec![vec!["x"]; MAX_NOSTR_EVENT_TAGS + 1]);
+        assert!(serde_json::from_value::<BuzzEventPush>(value).is_err());
+
+        let mut value = serde_json::to_value(original).unwrap();
+        value["event"]["tags"] = serde_json::json!([["x"]]);
+        value["event"]["tags"][0] = serde_json::json!(vec!["x"; MAX_NOSTR_TAG_FIELDS + 1]);
         assert!(serde_json::from_value::<BuzzEventPush>(value).is_err());
     }
 
