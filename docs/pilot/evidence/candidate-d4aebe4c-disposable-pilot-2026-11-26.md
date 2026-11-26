@@ -52,16 +52,17 @@ retained for 90 days.
   and Vault Sync Compliance
   [45830910687](https://github.com/kubedoio/rustshare/actions/runs/45830910687)
   passed. Main CI [45830910826](https://github.com/kubedoio/rustshare/actions/runs/45830910826)
-  and Integration Tests
+  was cancelled after main advanced. Integration Tests
   [45830910599](https://github.com/kubedoio/rustshare/actions/runs/45830910599)
-  are still in progress; do not treat them as passed.
+  passed all four jobs.
 
 ## Decision and limits
 
 **Core disposable Pilot Release workflow: PASS** for this exact revision and
-synthetic environment. **Overall disposable pilot: NO-GO** until the separate
-approximately 100-user journey on current PR #569 and the d4 main CI and
-Integration Tests finish successfully. FWS remains **NO-GO** pending
+synthetic environment. The d4 Integration Tests passed all four jobs; d4 Main CI
+was cancelled after protected main advanced. The 100-user journey later passed
+on separate PR #569 head `d3f6e442`, not on the exact d4 candidate, so do not
+combine those heads into a single candidate GO. FWS remains **NO-GO** pending
 operator-owned DNS, HTTPS/certificate, authentication, secret custody, backup
 destination and restore access, monitoring/alert routing, and authorized
 pilot-user selection.
