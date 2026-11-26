@@ -292,9 +292,10 @@ SMOKE_NOTE_TITLE=Pilot note
             "ui.env": f"""\
 UI_STATUS=passed
 UI_BROWSER_STATUS=passed
-UI_PLAYWRIGHT_EXPECTED=4
+UI_PLAYWRIGHT_EXPECTED=5
 UI_ADMIN_SCALE_100=passed
 UI_INSTITUTIONAL_JOURNEY=passed
+UI_CALENDAR_IMPORT=passed
 UI_IMAGE_ID={image_id}
 UI_PLAYWRIGHT_SKIPPED=0
 UI_PLAYWRIGHT_UNEXPECTED=0
@@ -875,6 +876,7 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
             "tests/pilot.e2e.ts tests/institutional.e2e.ts tests/organization-admin-scale.e2e.ts",
             ui_step,
         )
+        self.assertIn("tests/calendar-import.e2e.ts --workers=1 --reporter=line,json", ui_step)
         self.assertIn(
             'ui_playwright_status="$(python3 ../scripts/verify_pilot_ui_results.py',
             ui_step,
@@ -910,8 +912,9 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
         )
         self.assertIn("E2E_BASE_URL: http://127.0.0.1", ui_step)
         self.assertIn("'UI_BROWSER_STATUS=passed'", summary_step)
-        self.assertIn("'UI_PLAYWRIGHT_EXPECTED=4'", summary_step)
+        self.assertIn("'UI_PLAYWRIGHT_EXPECTED=5'", summary_step)
         self.assertIn("'UI_ADMIN_SCALE_100=passed'", summary_step)
+        self.assertIn("'UI_CALENDAR_IMPORT=passed'", summary_step)
         self.assertIn("'UI_PLAYWRIGHT_SKIPPED=0'", summary_step)
         self.assertIn("'UI_PLAYWRIGHT_UNEXPECTED=0'", summary_step)
         self.assertIn("'UI_PLAYWRIGHT_FLAKY=0'", summary_step)

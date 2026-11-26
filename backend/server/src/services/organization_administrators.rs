@@ -131,6 +131,28 @@ pub(crate) async fn lock_tenant_admin_grants(
     Ok(())
 }
 
+/// Serialize a tenant-admin-authorized mutation against grant revocation and
+/// confirm the actor's grant is still active inside that mutation transaction.
+pub(crate) async fn lock_and_check_active_grant(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    lock_tenant_admin_grants(tx, tenant_id).await?;
+    sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1 FROM organization_administrators oa
+            JOIN users u ON u.id=oa.user_id AND u.tenant_id=oa.tenant_id
+            WHERE oa.tenant_id=$1 AND oa.user_id=$2
+              AND oa.revoked_at IS NULL AND u.disabled_at IS NULL
+        )",
+    )
+    .bind(tenant_id)
+    .bind(user_id)
+    .fetch_one(&mut **tx)
+    .await
+}
+
 pub(crate) async fn grant_operator_organization_admin(
     pool: &PgPool,
     tenant_id: Uuid,

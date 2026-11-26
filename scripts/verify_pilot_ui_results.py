@@ -12,6 +12,7 @@ EXPECTED_TESTS = {
     "Notes opens an exact historical Memory citation without changing Note identity": "tests/pilot.e2e.ts",
     "institutional Calendar journey preserves linked context and denies unavailable content": "tests/institutional.e2e.ts",
     "organization admins manage a 100-user synthetic organization safely": "tests/organization-admin-scale.e2e.ts",
+    "Calendar Settings previews, confirms, displays, exports, and idempotently re-imports iCalendar events": "tests/calendar-import.e2e.ts",
 }
 
 
@@ -90,6 +91,7 @@ def verify_report(path: Path) -> str:
 
     counters = [f"UI_PLAYWRIGHT_{counter.upper()}={stats[counter]}" for counter in COUNTERS]
     counters.append("UI_ADMIN_SCALE_100=passed")
+    counters.append("UI_CALENDAR_IMPORT=passed")
     return "\n".join(counters)
 
 
