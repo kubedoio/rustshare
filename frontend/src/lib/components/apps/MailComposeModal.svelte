@@ -188,7 +188,7 @@
 </script>
 
 {#if open}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div
 			class="modal-box max-w-2xl rounded-lg border border-[var(--rs-border)] bg-[var(--rs-surface-raised)] p-0"
 		>
