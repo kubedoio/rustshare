@@ -3075,15 +3075,25 @@ async fn mail_workspace_search_reauthorizes_live_owner_and_ask_context() {
                 &mail_ref,
             )
             .await,
-        Decision::NotFound,
-        "a different workspace user must not discover another user's Mail message"
+        Decision::Deny,
+        "a same-tenant non-owner must be denied"
     );
     assert!(matches!(
         authorizer
             .fetch(&unrelated_context, &mail_ref, Representation::Text)
             .await,
-        Err(SourceError::NotFound)
+        Err(SourceError::Unauthorized)
     ));
+    let unrelated_search = search
+        .search(
+            &unrelated_context,
+            "h3-mail-search-needle",
+            &[SearchSource::Mail],
+            5,
+        )
+        .await
+        .expect("same-tenant unauthorized Mail search fails closed");
+    assert!(unrelated_search.results.is_empty());
 
     let other_context = user_ctx(PrincipalId::from(other_user.id), other_tenant);
     let cross_tenant = search
