@@ -15,7 +15,8 @@ Date: 2026-11-26. This qualification used disposable GitHub Actions Compose proj
 ## Results
 
 - Fresh Compose installation and PostgreSQL/RustFS volumes: **PASS**. All 17 migrations applied; first boot and canonical journey passed.
-- Browser acceptance: **3 passed**, 0 skipped, 0 unexpected, 0 flaky. Coverage included Calendar linked context/unavailable-content denial, Files/Notes identity and persistence, and opening an exact historical Note citation.
+- Browser acceptance: **3 passed**, 0 skipped, 0 unexpected, 0 flaky. The institutional test created a synthetic Calendar event, opened/reused its Meeting Note, linked existing Files/Notes resources, created a Decision and Action, reconstructed the meeting through search, and verified deleted-link sanitization plus unauthenticated denial. The other journeys covered Files/Notes identity and persistence and an exact historical Note citation.
+- Institutional journey gap: this run did not provision multiple administrators or least-privilege users, mutate/revoke group membership, or assert the resulting audit record. The current journey begins with the seeded administrator; those organization-boundary and audit gates remain open.
 - Restart and persistence verification: **PASS**.
 - Database, storage, dependency, invalid-configuration, and authentication failure/recovery checks: **PASS**.
 - Backup bundle verification and restoration to a fresh isolated Compose project, followed by persistence verification: **PASS**.
