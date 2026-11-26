@@ -630,7 +630,7 @@ fn target_ref(id: Uuid) -> String {
         "file",
         id.to_string(),
     )
-    .with_version(REVISION.into())
+    .with_version(REVISION)
     .to_uri()
 }
 
