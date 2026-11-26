@@ -23,7 +23,9 @@ Current mainline has owner-scoped single-event export and bounded `.ics` import,
 
 Mainline has organization-admin user/group workflows, audit paths, capability checks, and tenant-scoped group operations. Independent workspace membership and effective-role-path visibility are not implemented; ADR-0040 defers a second membership model. Existing resource authorization remains authoritative.
 
-**Recommendation:** pilot only the current tenant-admin, group and ordinary-member boundaries. Do not add workspace membership or new role semantics without an owner decision on how they compose with resource permissions. Keep #330 open until the membership scope and approximately 100-user operational acceptance are demonstrated.
+Disposable browser evidence on PR #569 candidate `c613cc7b368d0c61d9bef99c053ce3e3c7071f2f` now passes the approximately 100-user admin journey: 100 synthetic users, two organization-admin grants, ordinary-user 403, 50+50 pagination, search/offboarding, audit attribution and cleanup safeguards ([candidate evidence](../pilot/evidence/candidate-c613cc7b-disposable-pilot-2026-11-26.md)). This establishes the candidate-specific UI scale subgate only; it does not establish independent administrator recovery, group-membership revocation through resource/search authorization, or FWS operational acceptance.
+
+**Recommendation:** pilot only the current tenant-admin, group and ordinary-member boundaries. Do not add workspace membership or new role semantics without an owner decision on how they compose with resource permissions. Keep #330 open for the owner decision on workspace-membership scope and for the outstanding revocation/effective-role and target-environment acceptance; the disposable 100-user browser journey is recorded as passed, not as institutional operational acceptance.
 
 ## #355 Rebranding
 
