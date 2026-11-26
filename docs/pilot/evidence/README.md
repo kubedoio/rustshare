@@ -1,14 +1,14 @@
 # Pilot evidence
 
-Current protected main is `20b3d75e9b56287c3dd02f075e5fb8a8f824ec1c`. Its CodeQL [run 45807933738](https://github.com/kubedoio/rustshare/actions/runs/45807933738), Frontend CI [run 45807933654](https://github.com/kubedoio/rustshare/actions/runs/45807933654), and DCO [run 45807933789](https://github.com/kubedoio/rustshare/actions/runs/45807933789) passed; Integration Tests [run 45807933666](https://github.com/kubedoio/rustshare/actions/runs/45807933666) and Pilot Release [run 45807933634](https://github.com/kubedoio/rustshare/actions/runs/45807933634) are in progress. The `af8f695b` candidate below is historical and does not qualify `20b3d75e`; no current-main evidence bundle is complete yet.
+Current protected main is `25e68c60d613c197bac1da7623368a8d0f71c273`. Its CodeQL [run 45816480926](https://github.com/kubedoio/rustshare/actions/runs/45816480926), Frontend CI [run 45816480809](https://github.com/kubedoio/rustshare/actions/runs/45816480809), DCO [run 45816480542](https://github.com/kubedoio/rustshare/actions/runs/45816480542), and Pilot Release [run 45816480908](https://github.com/kubedoio/rustshare/actions/runs/45816480908) passed. Main CI [run 45816480817](https://github.com/kubedoio/rustshare/actions/runs/45816480817) is queued; Integration Tests [run 45816480555](https://github.com/kubedoio/rustshare/actions/runs/45816480555) is in progress. The `25e68c60` candidate is the current disposable-pilot evidence; image publication was skipped.
 
-Historical exact-main candidate [3bd949b6](candidate-3bd949b6-disposable-pilot-2026-11-26.md), tied to run 45752680910 on former main `3bd949b6e8f5bd9ea078c0d9e76ebb9194764e2f`, is historical; the current main SHA has advanced to `20b3d75e`, for which Pilot Release is still running. Its clean-install, browser, backup and restore results remain historical evidence.
+Historical exact-main candidate [3bd949b6](candidate-3bd949b6-disposable-pilot-2026-11-26.md), tied to run 45752680910 on former main `3bd949b6e8f5bd9ea078c0d9e76ebb9194764e2f`, is historical; current protected main is now `25e68c60`, with the current disposable-pilot record linked above. Its clean-install, browser, backup and restore results remain historical evidence.
 
 The latest exact-candidate disposable Pilot Release run is [candidate c613cc7b](candidate-c613cc7b-disposable-pilot-2026-11-26.md), tied to PR #569 head `c613cc7b368d0c61d9bef99c053ce3e3c7071f2f` and run 45746539135. It passed clean install, the four browser journeys including 100-user administration, backup, and isolated restore. Installed upgrade/rollback remains unqualified for this first-clean-install baseline; FWS/operator acceptance remains outstanding. Image publication was skipped.
 
 PR #569's manual disposable-pilot run on exact head `308017d476fded112f1b2bf8d7026a2c6d20a9b4` passed the 100-user browser journey and fresh-volume restore drill. Its tested image was retained as a run artifact, and image publication was skipped. This branch-specific evidence does not qualify current protected main or installed upgrade/rollback. See [PR #569 candidate evidence](candidate-308017d4-pr569-disposable-pilot-2026-11-26.md) for exact artifact digests and limits.
 
-Historical exact-main candidate [b3f64684](candidate-b3f64684-disposable-pilot-2026-11-26.md), tied to Pilot Release run 45729254164, passed clean install, three browser tests, failure, backup and fresh-volume restore checks. It is historical; current protected main is `20b3d75e`, with Pilot Release still in progress. Image publication was skipped.
+Historical exact-main candidate [b3f64684](candidate-b3f64684-disposable-pilot-2026-11-26.md), tied to Pilot Release run 45729254164, passed clean install, three browser tests, failure, backup and fresh-volume restore checks. It is historical; current protected main is `25e68c60`, with the current disposable-pilot record linked above. Image publication was skipped.
 
 [Candidate 592c9188](candidate-592c9188-disposable-pilot-2026-11-26.md) is the previous exact-main snapshot, tied to run 45717748617.
 
@@ -69,8 +69,9 @@ title and H1 after reloading.
 Artifacts must not contain .env contents, passwords, tokens, cookies, private
 keys or database credentials. A missing mandatory evidence file makes the
 workflow non-pilot-ready even if an earlier test step passed.
-The protected-main disposable pilot result for `20b3d75e` is summarized in
-[`candidate-20b3d75e-disposable-pilot-2026-11-26.md`](candidate-20b3d75e-disposable-pilot-2026-11-26.md).
+The protected-main disposable pilot results for `20b3d75e` and `25e68c60` are
+summarized in [`candidate-20b3d75e-disposable-pilot-2026-11-26.md`](candidate-20b3d75e-disposable-pilot-2026-11-26.md)
+and [`candidate-25e68c60-disposable-pilot-2026-11-26.md`](candidate-25e68c60-disposable-pilot-2026-11-26.md).
 
 For the FWS target-host exercise, the external evidence bundle is retained at
 `/var/backups/rustshare/fws-evidence-20261004` on the deployment host. Its
