@@ -181,7 +181,7 @@ pub async fn import_connector_file(
         );
     }
     let source_resource_ref = source_ref.to_uri();
-    let authority = worker
+    let _authority = worker
         .context
         .effective_user_authority(
             &rustshare_core::domain::ActionCapability::new(rustshare_resource_auth::FILES_WRITE),
