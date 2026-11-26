@@ -1,6 +1,6 @@
 # H3 product-scope decisions
 
-These records bound the institutional pilot; they do not authorize FWS deployment or expand pilot scope. Protected main `5bf3585b516a2fdff0fc1e88f15c7207333319f8` passed the exact disposable install/upgrade/backup/restore/rollback and five-browser-test journey in [run 45901542778](https://github.com/kubedoio/rustshare/actions/runs/45901542778). Image publication was skipped; this is not release qualification or FWS acceptance.
+These records bound the institutional pilot; they do not authorize FWS deployment or expand pilot scope. The exact prior protected-main snapshot `5bf3585b516a2fdff0fc1e88f15c7207333319f8` passed the disposable install/upgrade/backup/restore/rollback and five-browser-test journey in [run 45901542778](https://github.com/kubedoio/rustshare/actions/runs/45901542778). Image publication was skipped; this is not release qualification or FWS acceptance.
 
 | Issue | Pilot decision | Evidence and explicit deferrals |
 | --- | --- | --- |
