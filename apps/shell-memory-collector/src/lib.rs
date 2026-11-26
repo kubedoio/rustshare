@@ -136,6 +136,7 @@ impl Queue {
         )?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.pragma_update(None, "journal_mode", "DELETE")?;
+        connection.pragma_update(None, "secure_delete", "ON")?;
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS shell_events (
                 id TEXT PRIMARY KEY,
@@ -500,6 +501,17 @@ fn restrict_queue_permissions(_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queue_enables_sqlite_secure_delete() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let queue = Queue::open(&directory.path().join("queue.sqlite3"))?;
+        let enabled: bool = queue
+            .connection
+            .query_row("PRAGMA secure_delete", [], |row| row.get(0))?;
+        assert!(enabled);
+        Ok(())
+    }
 
     fn input(command: &str) -> RecordInput {
         RecordInput {
