@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 180
     permissions:
       contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -882,11 +883,266 @@ jobs:
             rm -rf -- "${expected_root}"
           fi
 
-      - name: Record first supported release baseline
+      - name: Log in to GHCR for previous pilot image
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upgrade installed release and roll back from its pre-upgrade backup
+        env:
+          ADMIN_EMAIL: admin@localhost
+          ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          VIEWER_EMAIL: viewer@localhost
+          VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+          POSTGRES_PASSWORD: ${{ steps.pilot-secrets.outputs.pg_password }}
+          DATABASE_URL: postgres://rustshare:${{ steps.pilot-secrets.outputs.pg_password }}@postgres:5432/rustshare
+          RUSTFS_ROOT_USER: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          RUSTFS_ROOT_PASSWORD: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          AWS_ACCESS_KEY_ID: ${{ steps.pilot-secrets.outputs.rustfs_root_user }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.pilot-secrets.outputs.rustfs_root_password }}
+          JWT_SECRET: ${{ steps.pilot-secrets.outputs.jwt_secret }}
+          RUSTSHARE_SECRET_ENCRYPTION_KEY: ${{ steps.pilot-secrets.outputs.encryption_key }}
+          RUSTSHARE_CHAT_WEBHOOK_SECRET: ${{ steps.pilot-secrets.outputs.chat_webhook_secret }}
+          RUSTSHARE_ADMIN_PASSWORD: ${{ steps.pilot-secrets.outputs.admin_password }}
+          RUSTSHARE_DEMO_VIEWER_PASSWORD: ${{ steps.pilot-secrets.outputs.demo_viewer_password }}
+          RUSTSHARE_OBJECT_STORE_AUTO_CREATE_BUCKET: "true"
+          RUSTSHARE_PUBLIC_URL: http://localhost
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
+          PILOT_IMAGE_ID: ${{ env.PILOT_IMAGE_ID }}
         run: |
+          set -euo pipefail
+          umask 077
           mkdir -p /tmp/rustshare-pilot-evidence
-          printf 'UPGRADE_STATUS=not_applicable\nUPGRADE_REASON=first_clean_install_baseline\n' \
+          previous_tag=v0.8.0-alpha.7
+          previous_sha=fd6cfba71f1cd3c07ec4729b6a9521bd821a4c67
+          previous_image_ref=ghcr.io/kubedoio/rustshare-backend@sha256:42ba8f0c8efad65aabe655ae29e296999ac93c54ae7e7823b641b333b97f2059
+          previous_image_digest="${previous_image_ref##*@}"
+          previous_release_workflow_run=42421199320
+          project="rustshare-pilot-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          backup_root="/tmp/rustshare-pilot-private-upgrade-backups-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ports_file="/tmp/rustshare-pilot-upgrade-ports-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.yml"
+          cat > "${ports_file}" <<'EOF'
+          services:
+            postgres:
+              ports: !override
+                - "127.0.0.1:25432:5432"
+            rustfs:
+              ports: !override
+                - "127.0.0.1:29000:9000"
+                - "127.0.0.1:29001:9001"
+            backend:
+              ports: !override
+                - "127.0.0.1:28082:8080"
+            nginx:
+              ports: !override
+                - "127.0.0.1:28080:80"
+          EOF
+          compose=(docker compose --project-name "${project}" \
+            -f docker-compose.yml -f "${ports_file}" -f docker-compose.pilot.yml)
+          for volume in "${project}_postgres_data" "${project}_rustfs_data"; do
+            if docker volume inspect "${volume}" >/dev/null 2>&1; then
+              echo "Expected a fresh installed-upgrade volume but found ${volume}" >&2
+              exit 1
+            fi
+          done
+          docker pull "${previous_image_ref}"
+          previous_image_id="$(docker image inspect "${previous_image_ref}" --format '{{.Id}}')"
+          previous_image_revision="$(docker image inspect "${previous_image_ref}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          candidate_image_id="$(docker image inspect rustshare-backend:pilot --format '{{.Id}}')"
+          candidate_image_revision="$(docker image inspect rustshare-backend:pilot --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          [[ "${previous_image_revision}" == "${previous_sha}" ]] || {
+            echo "Previous image revision does not match its source tag" >&2
+            exit 1
+          }
+          [[ "${candidate_image_id}" == "${PILOT_IMAGE_ID}" && "${candidate_image_revision}" == "${GITHUB_SHA}" ]] || {
+            echo "Candidate image identity does not match this workflow run" >&2
+            exit 1
+          }
+
+          RUSTSHARE_BACKEND_IMAGE="${previous_image_ref}" \
+            "${compose[@]}" up -d postgres rustfs backend nginx
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:28080/health/ready >/dev/null; then
+              break
+            fi
+            [[ "${attempt}" -lt 30 ]] || {
+              echo "Previous release did not become ready" >&2
+              exit 1
+            }
+            sleep 5
+          done
+          BASE_URL=http://127.0.0.1:28080 \
+            ADMIN_EMAIL="${ADMIN_EMAIL}" ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
+            VIEWER_EMAIL="${VIEWER_EMAIL}" VIEWER_PASSWORD="${VIEWER_PASSWORD}" \
+            REPORT_DIR=/tmp/rustshare-pilot-evidence \
+            PILOT_REPORT_PATH=/tmp/rustshare-pilot-evidence/upgrade-previous.env \
+            PILOT_MODE=upgrade-previous PILOT_PRESERVE_DATA=1 \
+            PILOT_SOURCE_SHA="${previous_sha}" PILOT_BUILD_VERSION="${previous_tag}" \
+            PILOT_DEPLOYMENT_ID="${project}" PILOT_CONFIG_ID=upgrade-isolated \
+            ./scripts/run-beta-smoke.sh
+          previous_migration="$("${compose[@]}" exec -T postgres psql -U rustshare -d rustshare -Atc \
+            'SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations WHERE success')"
+          [[ "${previous_migration}" =~ ^[0-9]+$ ]] || {
+            echo "Could not read the previous release migration version" >&2
+            exit 1
+          }
+          # Quiesce app writes so PostgreSQL and object-store snapshots describe
+          # the same pre-upgrade state. The restore uses a separate fresh project.
+          "${compose[@]}" stop backend nginx
+
+          # Backup the populated, installed old release before candidate
+          # migrations. The secret-bearing bundle remains private to this job.
+          mkdir -p "${backup_root}"
+          backup_raw="/tmp/rustshare-pilot-upgrade-backup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log"
+          set +e
+          COMPOSE_PROJECT_NAME="${project}" \
+            COMPOSE_FILE="${GITHUB_WORKSPACE}/docker-compose.yml:${ports_file}:${GITHUB_WORKSPACE}/docker-compose.pilot.yml" \
+            RUSTSHARE_BACKEND_IMAGE="${previous_image_ref}" \
+            scripts/backup-stack.sh "${backup_root}" >"${backup_raw}" 2>&1
+          backup_status=$?
+          python3 scripts/redact_pilot_logs.py \
+            < "${backup_raw}" > /tmp/rustshare-pilot-evidence/upgrade-backup.log
+          redaction_status=$?
+          set -e
+          rm -f -- "${backup_raw}"
+          [[ "${redaction_status}" -eq 0 ]] || {
+            echo "Upgrade backup diagnostics could not be safely redacted" >&2
+            exit 1
+          }
+          [[ "${backup_status}" -eq 0 ]] || {
+            echo "Pre-upgrade backup failed" >&2
+            exit "${backup_status}"
+          }
+          backup_dir="$(find "${backup_root}" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          [[ -n "${backup_dir}" ]] || { echo "Pre-upgrade backup is missing" >&2; exit 1; }
+          verify_raw="/tmp/rustshare-pilot-upgrade-backup-verify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log"
+          set +e
+          scripts/verify-backup-bundle.sh "${backup_dir}" >"${verify_raw}" 2>&1
+          verify_status=$?
+          python3 scripts/redact_pilot_logs.py \
+            < "${verify_raw}" > /tmp/rustshare-pilot-evidence/upgrade-backup-verify.log
+          verify_redaction_status=$?
+          set -e
+          rm -f -- "${verify_raw}"
+          [[ "${verify_redaction_status}" -eq 0 ]] || {
+            echo "Pre-upgrade backup verification diagnostics could not be redacted" >&2
+            exit 1
+          }
+          [[ "${verify_status}" -eq 0 ]] || {
+            echo "Pre-upgrade backup bundle verification failed" >&2
+            exit "${verify_status}"
+          }
+          [[ -s "${backup_dir}/SHA256SUMS" ]] || {
+            echo "Pre-upgrade bundle has no checksum manifest" >&2
+            exit 1
+          }
+          backup_manifest_sha="$(sha256sum "${backup_dir}/SHA256SUMS" | cut -d' ' -f1)"
+          printf 'UPGRADE_BACKUP_STATUS=passed\nUPGRADE_BACKUP_DIAGNOSTIC_SECRET_SCAN=passed\nUPGRADE_BACKUP_CHECKSUM_MANIFEST_SHA256=%s\nUPGRADE_BACKUP_SOURCE_SHA=%s\nUPGRADE_BACKUP_IMAGE_ID=%s\nUPGRADE_BACKUP_IMAGE_DIGEST=%s\nUPGRADE_BACKUP_IMAGE_REVISION=%s\nPREVIOUS_RELEASE_WORKFLOW_RUN_ID=%s\n' \
+            "${backup_manifest_sha}" "${previous_sha}" "${previous_image_id}" "${previous_image_digest}" "${previous_image_revision}" "${previous_release_workflow_run}" \
+            > /tmp/rustshare-pilot-evidence/upgrade-backup.env
+
+          RUSTSHARE_BACKEND_IMAGE=rustshare-backend:pilot \
+            "${compose[@]}" up -d backend nginx
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:28080/health/ready \
+              >/dev/null; then
+              break
+            fi
+            [[ "${attempt}" -lt 30 ]] || {
+              echo "Candidate release did not become ready after migration" >&2
+              exit 1
+            }
+            sleep 5
+          done
+          candidate_migration="$("${compose[@]}" exec -T postgres psql -U rustshare -d rustshare -Atc \
+            'SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations WHERE success')"
+          [[ "${candidate_migration}" =~ ^[0-9]+$ ]] || {
+            echo "Could not read the candidate migration version" >&2
+            exit 1
+          }
+          (( candidate_migration > previous_migration )) || {
+            echo "Candidate did not advance the installed migration version" >&2
+            exit 1
+          }
+          BASE_URL=http://127.0.0.1:28080 \
+            ADMIN_EMAIL="${ADMIN_EMAIL}" ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
+            VIEWER_EMAIL="${VIEWER_EMAIL}" VIEWER_PASSWORD="${VIEWER_PASSWORD}" \
+            REPORT_DIR=/tmp/rustshare-pilot-evidence \
+            PILOT_REPORT_PATH=/tmp/rustshare-pilot-evidence/upgrade-candidate.env \
+            PILOT_VERIFY_STATE_FILE=/tmp/rustshare-pilot-evidence/upgrade-previous.env \
+            PILOT_MODE=upgrade-candidate PILOT_SOURCE_SHA="${GITHUB_SHA}" \
+            PILOT_BUILD_VERSION="${PILOT_BUILD_VERSION}" \
+            PILOT_DEPLOYMENT_ID="${project}" PILOT_CONFIG_ID=upgrade-isolated \
+            ./scripts/run-beta-smoke.sh
+          "${compose[@]}" down -v --remove-orphans
+
+          # A safe rollback restores the old backup to a distinct empty project
+          # and boots the exact old image; it never downgrades the migrated DB.
+          rollback_project="rustshare-pilot-rollback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rollback_reports="/tmp/rustshare-pilot-rollback-reports-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "${rollback_reports}"
+          RUSTSHARE_BACKEND_IMAGE="${previous_image_ref}" \
+            PILOT_IMAGE_ID="${previous_image_id}" PILOT_SOURCE_SHA="${previous_sha}" \
+            PILOT_BUILD_VERSION="${previous_tag}" PILOT_DEPLOYMENT_ID="${rollback_project}" \
+            PILOT_CONFIG_ID=upgrade-isolated DRILL_PROJECT_NAME="${rollback_project}" \
+            DRILL_REPORT_DIR="${rollback_reports}" \
+            DRILL_POSTGRES_HOST_PORT=35432 DRILL_RUSTFS_HOST_PORT=39000 \
+            DRILL_RUSTFS_CONSOLE_HOST_PORT=39001 DRILL_BACKEND_HOST_PORT=38081 \
+            DRILL_NGINX_HOST_PORT=38080 DRILL_BASE_URL=http://localhost:38080 \
+            DRILL_API_BASE_URL=http://localhost:38080/api/v1 \
+            RESTORE_DRILL_STATE_FILE=/tmp/rustshare-pilot-evidence/upgrade-previous.env \
+            RESTORE_DRILL_PILOT_REPORT_PATH=/tmp/rustshare-pilot-evidence/rollback-persistence.env \
+            scripts/run-restore-drill.sh "${backup_dir}"
+          rollback_report="$(find "${rollback_reports}" -maxdepth 1 -type f -name '*-restore-drill.env' -print -quit)"
+          [[ -n "${rollback_report}" ]] || { echo "Rollback restore report is missing" >&2; exit 1; }
+          cp -- "${rollback_report}" /tmp/rustshare-pilot-evidence/rollback-restore.env
+          cat > /tmp/rustshare-pilot-evidence/rollback.env <<EOF
+          ROLLBACK_STATUS=passed
+          ROLLBACK_BACKUP_CHECKSUM_MANIFEST_SHA256=${backup_manifest_sha}
+          ROLLBACK_PRE_UPGRADE_SOURCE_SHA=${previous_sha}
+          ROLLBACK_PRE_UPGRADE_IMAGE_ID=${previous_image_id}
+          ROLLBACK_PRE_UPGRADE_IMAGE_DIGEST=${previous_image_digest}
+          ROLLBACK_PREVIOUS_RELEASE_WORKFLOW_RUN_ID=${previous_release_workflow_run}
+          ROLLBACK_PRE_UPGRADE_IMAGE_REVISION=${previous_image_revision}
+          ROLLBACK_CANDIDATE_SOURCE_SHA=${GITHUB_SHA}
+          ROLLBACK_CANDIDATE_IMAGE_ID=${candidate_image_id}
+          ROLLBACK_RESTORED_SOURCE_SHA=${previous_sha}
+          ROLLBACK_RESTORED_IMAGE_ID=${previous_image_id}
+          ROLLBACK_RESTORED_IMAGE_DIGEST=${previous_image_digest}
+          ROLLBACK_RESTORE_PROJECT=${rollback_project}
+          ROLLBACK_FRESH_VOLUME_RESTORE=passed
+          WORKFLOW_RUN_ID=${GITHUB_RUN_ID}
+          WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}
+          EOF
+          printf 'UPGRADE_STATUS=passed\nPREVIOUS_TAG=%s\nPREVIOUS_SHA=%s\nPREVIOUS_IMAGE_ID=%s\nPREVIOUS_IMAGE_DIGEST=%s\nPREVIOUS_IMAGE_REVISION=%s\nPREVIOUS_LATEST_MIGRATION=%s\nPREVIOUS_RELEASE_WORKFLOW_RUN_ID=%s\nCANDIDATE_IMAGE_ID=%s\nCANDIDATE_IMAGE_REVISION=%s\nCANDIDATE_LATEST_MIGRATION=%s\nPRE_UPGRADE_BACKUP_CHECKSUM_MANIFEST_SHA256=%s\nROLLBACK_STATUS=passed\n' \
+            "${previous_tag}" "${previous_sha}" "${previous_image_id}" \
+            "${previous_image_digest}" "${previous_image_revision}" "${previous_migration}" \
+            "${previous_release_workflow_run}" "${candidate_image_id}" "${GITHUB_SHA}" "${candidate_migration}" \
+            "${backup_manifest_sha}" \
             > /tmp/rustshare-pilot-evidence/upgrade.env
+
+      - name: Clean up installed upgrade and rollback resources
+        if: always()
+        env:
+          RUSTSHARE_BACKEND_IMAGE: rustshare-backend:pilot
+          RUSTSHARE_BACKEND_PULL_POLICY: never
+        run: |
+          set -euo pipefail
+          project="rustshare-pilot-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ports_file="/tmp/rustshare-pilot-upgrade-ports-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.yml"
+          if [[ -f "${ports_file}" ]]; then
+            docker compose --project-name "${project}" \
+              -f docker-compose.yml -f "${ports_file}" -f docker-compose.pilot.yml \
+              down -v --remove-orphans
+          fi
+          rm -rf -- "/tmp/rustshare-pilot-private-upgrade-backups-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rm -rf -- "/tmp/rustshare-pilot-rollback-reports-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rm -f -- "/tmp/rustshare-pilot-upgrade-backup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log" \
+            "/tmp/rustshare-pilot-upgrade-backup-verify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.raw.log" \
+            "${ports_file}"
 
       - name: Install Rust toolchain for migration tooling
         uses: dtolnay/rust-toolchain@1.97.1
@@ -1079,7 +1335,15 @@ jobs:
               persistence.env \
               backup.env \
               restore-persistence.env \
+              upgrade-previous.env \
+              upgrade-backup.env \
+              upgrade-backup.log \
+              upgrade-backup-verify.log \
+              upgrade-candidate.env \
               upgrade.env \
+              rollback.env \
+              rollback-persistence.env \
+              rollback-restore.env \
               migration.env \
               migration-failure.env \
               migration-failure.log \
@@ -1219,8 +1483,58 @@ jobs:
             (( failure_finished_epoch < failure_started_epoch )) && { echo "failure-drill finish timestamp precedes start"; exit 1; }
             require_line "${evidence_dir}/backup.env" 'BACKUP_STATUS=passed'
             require_line "${evidence_dir}/backup.env" 'BACKUP_OUTPUT_SECRET_SCAN=passed'
-            require_line "${evidence_dir}/upgrade.env" 'UPGRADE_STATUS=not_applicable'
-            require_line "${evidence_dir}/upgrade.env" 'UPGRADE_REASON=first_clean_install_baseline'
+            require_line "${evidence_dir}/upgrade.env" 'UPGRADE_STATUS=passed'
+            require_line "${evidence_dir}/upgrade.env" 'ROLLBACK_STATUS=passed'
+            require_line "${evidence_dir}/upgrade-backup.env" 'UPGRADE_BACKUP_STATUS=passed'
+            require_line "${evidence_dir}/upgrade-backup.env" 'UPGRADE_BACKUP_DIAGNOSTIC_SECRET_SCAN=passed'
+            require_line "${evidence_dir}/rollback.env" 'ROLLBACK_STATUS=passed'
+            require_line "${evidence_dir}/rollback.env" 'ROLLBACK_FRESH_VOLUME_RESTORE=passed'
+            previous_sha="$(sed -n 's/^PREVIOUS_SHA=//p' "${evidence_dir}/upgrade.env")"
+            previous_tag="$(sed -n 's/^PREVIOUS_TAG=//p' "${evidence_dir}/upgrade.env")"
+            previous_image_id="$(sed -n 's/^PREVIOUS_IMAGE_ID=//p' "${evidence_dir}/upgrade.env")"
+            candidate_upgrade_image_id="$(sed -n 's/^CANDIDATE_IMAGE_ID=//p' "${evidence_dir}/upgrade.env")"
+            previous_migration="$(sed -n 's/^PREVIOUS_LATEST_MIGRATION=//p' "${evidence_dir}/upgrade.env")"
+            candidate_migration="$(sed -n 's/^CANDIDATE_LATEST_MIGRATION=//p' "${evidence_dir}/upgrade.env")"
+            upgrade_backup_sha="$(sed -n 's/^UPGRADE_BACKUP_CHECKSUM_MANIFEST_SHA256=//p' "${evidence_dir}/upgrade-backup.env")"
+            [[ "${previous_sha}" == fd6cfba71f1cd3c07ec4729b6a9521bd821a4c67 \
+              && "${previous_image_id}" =~ ^sha256:[0-9a-f]{64}$ \
+              && "${candidate_upgrade_image_id}" == "${image_id}" \
+              && "${previous_migration}" =~ ^[0-9]+$ \
+              && "${candidate_migration}" =~ ^[0-9]+$ \
+              && "${candidate_migration}" -gt "${previous_migration}" \
+              && "${upgrade_backup_sha}" =~ ^[0-9a-f]{64}$ ]] || {
+              echo "Installed upgrade identity, migration, or backup digest is invalid" >&2
+              exit 1
+            }
+            require_line "${evidence_dir}/upgrade.env" "PREVIOUS_IMAGE_REVISION=${previous_sha}"
+            require_line "${evidence_dir}/upgrade.env" "PREVIOUS_LATEST_MIGRATION=${previous_migration}"
+            require_line "${evidence_dir}/upgrade.env" 'PREVIOUS_TAG=v0.8.0-alpha.7'
+            require_line "${evidence_dir}/upgrade.env" 'PREVIOUS_IMAGE_DIGEST=sha256:42ba8f0c8efad65aabe655ae29e296999ac93c54ae7e7823b641b333b97f2059'
+            require_line "${evidence_dir}/upgrade.env" 'PREVIOUS_RELEASE_WORKFLOW_RUN_ID=42421199320'
+            require_line "${evidence_dir}/upgrade.env" "CANDIDATE_IMAGE_REVISION=${GITHUB_SHA}"
+            require_line "${evidence_dir}/upgrade.env" "CANDIDATE_LATEST_MIGRATION=${candidate_migration}"
+            require_line "${evidence_dir}/upgrade.env" "PRE_UPGRADE_BACKUP_CHECKSUM_MANIFEST_SHA256=${upgrade_backup_sha}"
+            require_line "${evidence_dir}/upgrade-backup.env" "UPGRADE_BACKUP_CHECKSUM_MANIFEST_SHA256=${upgrade_backup_sha}"
+            require_line "${evidence_dir}/upgrade-backup.env" "UPGRADE_BACKUP_SOURCE_SHA=${previous_sha}"
+            require_line "${evidence_dir}/upgrade-backup.env" "UPGRADE_BACKUP_IMAGE_ID=${previous_image_id}"
+            require_line "${evidence_dir}/upgrade-backup.env" 'UPGRADE_BACKUP_IMAGE_DIGEST=sha256:42ba8f0c8efad65aabe655ae29e296999ac93c54ae7e7823b641b333b97f2059'
+            require_line "${evidence_dir}/upgrade-backup.env" "UPGRADE_BACKUP_IMAGE_REVISION=${previous_sha}"
+            require_line "${evidence_dir}/upgrade-backup.env" 'PREVIOUS_RELEASE_WORKFLOW_RUN_ID=42421199320'
+            require_line "${evidence_dir}/rollback.env" "ROLLBACK_BACKUP_CHECKSUM_MANIFEST_SHA256=${upgrade_backup_sha}"
+            require_line "${evidence_dir}/rollback.env" "ROLLBACK_PRE_UPGRADE_SOURCE_SHA=${previous_sha}"
+            require_line "${evidence_dir}/rollback.env" "ROLLBACK_PRE_UPGRADE_IMAGE_ID=${previous_image_id}"
+            require_line "${evidence_dir}/rollback.env" 'ROLLBACK_PRE_UPGRADE_IMAGE_DIGEST=sha256:42ba8f0c8efad65aabe655ae29e296999ac93c54ae7e7823b641b333b97f2059'
+            require_line "${evidence_dir}/rollback.env" 'ROLLBACK_PREVIOUS_RELEASE_WORKFLOW_RUN_ID=42421199320'
+            require_line "${evidence_dir}/rollback.env" "ROLLBACK_PRE_UPGRADE_IMAGE_REVISION=${previous_sha}"
+            require_line "${evidence_dir}/rollback.env" "ROLLBACK_CANDIDATE_SOURCE_SHA=${GITHUB_SHA}"
+            require_line "${evidence_dir}/rollback.env" "ROLLBACK_CANDIDATE_IMAGE_ID=${image_id}"
+            require_line "${evidence_dir}/rollback.env" "ROLLBACK_RESTORED_SOURCE_SHA=${previous_sha}"
+            require_line "${evidence_dir}/rollback.env" "ROLLBACK_RESTORED_IMAGE_ID=${previous_image_id}"
+            require_line "${evidence_dir}/rollback.env" 'ROLLBACK_RESTORED_IMAGE_DIGEST=sha256:42ba8f0c8efad65aabe655ae29e296999ac93c54ae7e7823b641b333b97f2059'
+            rollback_project="rustshare-pilot-rollback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            require_line "${evidence_dir}/rollback.env" "ROLLBACK_RESTORE_PROJECT=${rollback_project}"
+            require_line "${evidence_dir}/rollback.env" "WORKFLOW_RUN_ID=${GITHUB_RUN_ID}"
+            require_line "${evidence_dir}/rollback.env" "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
             require_line "${evidence_dir}/migration.env" 'MIGRATION_STATUS=passed'
             require_line "${evidence_dir}/migration.env" 'MIGRATION_DIAGNOSTIC_SECRET_SCAN=passed'
             require_line "${evidence_dir}/migration-failure.env" 'MIGRATION_FAILURE_STATUS=passed'
@@ -1240,13 +1554,14 @@ jobs:
             require_line "${evidence_dir}/security-sanity.env" 'PRODUCTION_COOKIE_SECURITY=passed'
             require_line "${evidence_dir}/security-sanity.env" 'SECRET_LOG_SCAN=passed'
             require_line "${evidence_dir}/evidence-collection-status.env" 'EVIDENCE_COLLECTION_STATUS=passed'
-            for report in canonical-smoke.env persistence.env restore-persistence.env; do
+            for report in canonical-smoke.env persistence.env restore-persistence.env \
+              upgrade-previous.env upgrade-candidate.env rollback-persistence.env; do
               require_smoke_passed "${evidence_dir}/${report}"
             done
-            for report in canonical-smoke.env; do
+            for report in canonical-smoke.env upgrade-previous.env; do
               require_line "${evidence_dir}/${report}" 'BETA_SMOKE_FILE_SHARE_ACCESS=passed'
             done
-            for report in persistence.env restore-persistence.env; do
+            for report in persistence.env restore-persistence.env upgrade-candidate.env rollback-persistence.env; do
               require_line "${evidence_dir}/${report}" 'BETA_SMOKE_PERSISTENCE_STATE_VERIFIED=passed'
             done
             for report in canonical-smoke.env persistence.env restore-persistence.env; do
@@ -1260,6 +1575,25 @@ jobs:
             require_line "${evidence_dir}/restore-persistence.env" "BETA_SMOKE_BUILD_VERSION=${image_version}"
             require_line "${evidence_dir}/restore-persistence.env" 'BETA_SMOKE_DEPLOYMENT_ID=rustshare-restore-drill'
             require_line "${evidence_dir}/restore-persistence.env" "BETA_SMOKE_CONFIG_ID=${config_id}"
+            require_line "${evidence_dir}/upgrade-previous.env" "BETA_SMOKE_SOURCE_SHA=${previous_sha}"
+            require_line "${evidence_dir}/upgrade-previous.env" "BETA_SMOKE_BUILD_VERSION=${previous_tag}"
+            require_line "${evidence_dir}/upgrade-previous.env" 'BETA_SMOKE_MODE=upgrade-previous'
+            require_line "${evidence_dir}/upgrade-candidate.env" "BETA_SMOKE_SOURCE_SHA=${GITHUB_SHA}"
+            require_line "${evidence_dir}/upgrade-candidate.env" "BETA_SMOKE_BUILD_VERSION=${image_version}"
+            require_line "${evidence_dir}/upgrade-candidate.env" 'BETA_SMOKE_MODE=upgrade-candidate'
+            require_line "${evidence_dir}/rollback-persistence.env" "BETA_SMOKE_SOURCE_SHA=${previous_sha}"
+            require_line "${evidence_dir}/rollback-persistence.env" "BETA_SMOKE_BUILD_VERSION=${previous_tag}"
+            require_line "${evidence_dir}/rollback-persistence.env" 'BETA_SMOKE_MODE=restore-verify'
+            require_line "${evidence_dir}/rollback-persistence.env" 'BETA_SMOKE_PERSISTENCE_STATE_VERIFIED=passed'
+            require_line "${evidence_dir}/rollback-restore.env" 'RESTORE_DRILL_STATUS=passed'
+            require_line "${evidence_dir}/rollback-restore.env" "RESTORE_DRILL_SOURCE_SHA=${previous_sha}"
+            require_line "${evidence_dir}/rollback-restore.env" "RESTORE_DRILL_BACKEND_IMAGE_ID=${previous_image_id}"
+            require_line "${evidence_dir}/rollback-restore.env" "RESTORE_DRILL_IMAGE_REVISION=${previous_sha}"
+            require_line "${evidence_dir}/rollback-restore.env" "RESTORE_DRILL_BUILD_VERSION=${previous_tag}"
+            require_line "${evidence_dir}/rollback-restore.env" "RESTORE_DRILL_DEPLOYMENT_ID=$(sed -n 's/^ROLLBACK_RESTORE_PROJECT=//p' "${evidence_dir}/rollback.env")"
+            require_line "${evidence_dir}/rollback-restore.env" 'RESTORE_DRILL_CONFIG_ID=upgrade-isolated'
+            require_line "${evidence_dir}/rollback-restore.env" "RESTORE_DRILL_WORKFLOW_RUN_ID=${GITHUB_RUN_ID}"
+            require_line "${evidence_dir}/rollback-restore.env" "RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
             for report in "${restore_reports[@]}"; do
               require_line "${report}" 'RESTORE_DRILL_STATUS=passed'
               require_line "${report}" "RESTORE_DRILL_SOURCE_SHA=${GITHUB_SHA}"
