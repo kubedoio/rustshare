@@ -54,7 +54,8 @@ registry.
   passed. Main CI [45816480817](https://github.com/kubedoio/rustshare/actions/runs/45816480817)
   remains queued; Integration Tests
   [45816480555](https://github.com/kubedoio/rustshare/actions/runs/45816480555)
-  remains in progress. Prior exact-main Integration
+  passed its suite, Buzz live conformance, identity replacement, and Chat Product
+  Acceptance jobs. Prior exact-main Integration
   Tests passed on `20b3d75e` in run
   [45807933666](https://github.com/kubedoio/rustshare/actions/runs/45807933666).
 
