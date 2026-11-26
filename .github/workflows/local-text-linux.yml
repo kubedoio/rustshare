@@ -1,0 +1,35 @@
+name: Local Text Linux Secret Service
+
+on:
+  pull_request:
+    paths:
+      - "apps/local-text-worker/**"
+      - "scripts/qualify-local-text-secret-service.sh"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/local-text-linux.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/local-text-worker/**"
+      - "scripts/qualify-local-text-secret-service.sh"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/local-text-linux.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-service:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Install isolated Secret Service test dependencies
+        run: sudo apt-get update && sudo apt-get install --yes gnome-keyring libsecret-tools
+      - name: Build Local Text worker
+        run: cargo build --locked --release -p local-text-worker
+      - name: Qualify private GNOME Keyring session
+        run: bash scripts/qualify-local-text-secret-service.sh target/release/elembra-local-text-worker
