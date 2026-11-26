@@ -30,7 +30,7 @@ jobs:
       - name: Run Windows worker tests
         run: cargo test --locked -p local-text-worker
       - name: Run native credential test in ephemeral Credential Manager
-        run: cargo test --locked -p local-text-worker native_credential_store_provisions_reads_rotates_and_deletes -- --ignored
+        run: cargo test --locked -p local-text-worker credential_tests::native_credential_store_provisions_reads_rotates_and_deletes -- --ignored --exact --test-threads=1
       - name: Package unsigned Windows ZIP
         shell: pwsh
         run: |

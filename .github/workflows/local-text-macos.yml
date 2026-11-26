@@ -39,7 +39,7 @@ jobs:
       - name: Run Keychain acceptance test
         run: cargo test --locked -p local-text-worker
       - name: Run native credential test in isolated Keychain
-        run: cargo test --locked -p local-text-worker native_credential_store_provisions_reads_rotates_and_deletes -- --ignored
+        run: cargo test --locked -p local-text-worker credential_tests::native_credential_store_provisions_reads_rotates_and_deletes -- --ignored --exact --test-threads=1
       - name: Remove isolated test Keychain
         if: always()
         run: security delete-keychain "$LOCAL_TEXT_TEST_KEYCHAIN" || true
