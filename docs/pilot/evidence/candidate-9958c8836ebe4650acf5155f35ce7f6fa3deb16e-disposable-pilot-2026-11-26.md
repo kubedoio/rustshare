@@ -52,11 +52,12 @@ publication or release artifact.
 - CodeQL run [45890507700](https://github.com/kubedoio/rustshare/actions/runs/45890507700)
   completed successfully.
 - Main CI run [45890508008](https://github.com/kubedoio/rustshare/actions/runs/45890508008)
-  had one failed Build Release attempt because the downloaded Swagger UI archive
-  was invalid (`Could not find EOCD`). Its same-SHA retry was still running at
-  21:04 UTC; all other CI jobs were green. This candidate therefore does not
-  qualify a release.
-- This run does not provide release image scanning, SBOM, or provenance.
+  completed successfully at 21:11:30 UTC, including Build Release, tests, coverage,
+  migration baseline, SQLx prepare, Clippy, and Cargo Deny. Its first Build Release
+  attempt rejected an invalid downloaded Swagger UI archive (`Could not find EOCD`);
+  the same-SHA retry passed. No build or security gate was weakened.
+- This disposable Pilot Release does not provide release image scanning, SBOM, or
+  provenance, so this candidate is not a qualified release artifact.
 
 ## Decision and boundary
 
