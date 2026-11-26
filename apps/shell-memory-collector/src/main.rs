@@ -6,7 +6,12 @@ use serde::{Deserialize, Serialize};
 use shell_memory_collector::{
     record_if_enabled, Config, Event, Queue, QueueLock, RecordInput, UploadLock,
 };
-use std::{io::Read, net::IpAddr, path::PathBuf, time::Duration};
+use std::{
+    io::Read,
+    net::IpAddr,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use url::Url;
 use uuid::Uuid;
 
@@ -233,6 +238,17 @@ impl UploadRound {
 enum UploadResult {
     NoLease,
     Completed,
+    Paused,
+    Disabled,
+}
+
+fn upload_stop(queue_path: &Path) -> Result<Option<UploadResult>> {
+    let _queue_lock = QueueLock::acquire(queue_path)?;
+    if Queue::is_disabled(queue_path)? {
+        return Ok(Some(UploadResult::Disabled));
+    }
+    let queue = Queue::open(queue_path)?;
+    Ok(queue.paused().then_some(UploadResult::Paused))
 }
 
 async fn upload_round<F>(
@@ -263,6 +279,8 @@ where
     match upload_pending(client, config, &credential, events).await? {
         UploadResult::NoLease => Ok(UploadRound::NoLease),
         UploadResult::Completed => Ok(UploadRound::Completed),
+        UploadResult::Paused => Ok(UploadRound::Idle),
+        UploadResult::Disabled => Ok(UploadRound::Disabled),
     }
 }
 
@@ -298,7 +316,12 @@ async fn upload_pending(
         return Ok(UploadResult::NoLease);
     };
     let mut completed = Vec::with_capacity(events.len());
+    let mut stopped = None;
     for event in events {
+        if let Some(reason) = upload_stop(&config.queue)? {
+            stopped = Some(reason);
+            break;
+        }
         // shortcut: one Files object per command; batch daily views if object counts become material.
         let relative_path = format!("shell-command-{}.md", event.id);
         let source_resource_ref = format!("elembra://{CONNECTOR_ID}/file/{}", event.id);
@@ -349,7 +372,8 @@ async fn upload_pending(
         }
     }
     let Some(queue_id) = completed.last() else {
-        bail!("upload round completed without a Files import");
+        return stopped
+            .ok_or_else(|| anyhow::anyhow!("upload round completed without a Files import"));
     };
     let response = client
         .post(format!(
@@ -375,7 +399,7 @@ async fn upload_pending(
     for id in completed {
         queue.acknowledge(id)?;
     }
-    Ok(UploadResult::Completed)
+    Ok(stopped.unwrap_or(UploadResult::Completed))
 }
 
 async fn report_failure(
@@ -414,19 +438,28 @@ fn failure_category(status: StatusCode) -> &'static str {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Control {
     Pause,
     Disable,
 }
-fn set_control(config_path: &PathBuf, control: Control, value: bool) -> Result<()> {
-    let config = load_config(config_path)?;
-    let _upload_lock = UploadLock::acquire(&config.queue)?;
-    let _lock = QueueLock::acquire(&config.queue)?;
-    let queue = Queue::open(&config.queue)?;
+
+fn update_control(queue_path: &Path, control: Control, value: bool) -> Result<()> {
+    let _lock = QueueLock::acquire(queue_path)?;
+    let queue = Queue::open(queue_path)?;
     match control {
         Control::Pause => queue.set_paused(value),
         Control::Disable => queue.set_disabled(value),
     }
+}
+
+fn set_control(config_path: &PathBuf, control: Control, value: bool) -> Result<()> {
+    let config = load_config(config_path)?;
+    if value {
+        update_control(&config.queue, control, true)?;
+    }
+    let _upload_lock = UploadLock::acquire(&config.queue)?;
+    update_control(&config.queue, control, value)
 }
 
 fn store_credential(config_path: &PathBuf) -> Result<()> {
@@ -449,12 +482,18 @@ fn read_keyring_credential(instance_id: Uuid) -> Result<String> {
         .context("Shell Memory worker credential is unavailable in the OS credential store")
 }
 
-fn forget(config_path: &PathBuf) -> Result<()> {
-    let config = load_config(config_path)?;
+fn forget_queue(config: &Config) -> Result<()> {
+    update_control(&config.queue, Control::Disable, true)?;
     let _upload_lock = UploadLock::acquire(&config.queue)?;
     let _lock = QueueLock::acquire(&config.queue)?;
     let queue = Queue::open(&config.queue)?;
     queue.forget()?;
+    Ok(())
+}
+
+fn forget(config_path: &PathBuf) -> Result<()> {
+    let config = load_config(config_path)?;
+    forget_queue(&config)?;
     match keyring::Entry::new(CREDENTIAL_SERVICE, &config.instance_id.to_string())?
         .delete_credential()
     {
@@ -490,7 +529,10 @@ fn normalize_server(server: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{failure_category, normalize_server, upload_round, UploadRound};
+    use super::{
+        failure_category, forget_queue, normalize_server, set_control, upload_pending,
+        upload_round, Control, UploadResult, UploadRound,
+    };
     use anyhow::Result;
     use reqwest::StatusCode;
     use shell_memory_collector::{
@@ -585,11 +627,9 @@ mod tests {
                         .send(body)
                         .await
                         .map_err(std::io::Error::other)?;
-                    import_release
-                        .take()
-                        .expect("only one event is imported")
-                        .await
-                        .map_err(std::io::Error::other)?;
+                    if let Some(release) = import_release.take() {
+                        release.await.map_err(std::io::Error::other)?;
+                    }
                     let body = serde_json::json!({
                         "sourceResourceRef": "elembra://io.elembra.connector.shell-memory/file/synthetic",
                         "sourceRevision": "sha256:synthetic",
@@ -989,6 +1029,112 @@ mod tests {
             .await?,
             UploadRound::Disabled
         );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pause_disable_and_forget_stop_later_imports_in_the_current_batch() -> Result<()> {
+        for (control, expected) in [
+            (Some(Control::Pause), UploadResult::Paused),
+            (Some(Control::Disable), UploadResult::Disabled),
+            (None, UploadResult::Disabled),
+        ] {
+            let directory = tempfile::tempdir()?;
+            let queue_path = directory.path().join("queue.sqlite3");
+            let instance_id = Uuid::new_v4();
+            let config = Config {
+                server: String::new(),
+                instance_id,
+                queue: queue_path.clone(),
+                exclude_commands: Vec::new(),
+            };
+            for command in ["echo first-queued-command", "echo second-queued-command"] {
+                assert!(record_if_enabled(
+                    &queue_path,
+                    instance_id,
+                    RecordInput {
+                        command: command.into(),
+                        cwd: "/tmp/synthetic".into(),
+                        host: "synthetic-host".into(),
+                        exit_code: 0,
+                        duration_ms: 1,
+                    },
+                    &[]
+                )?);
+            }
+            let events = Queue::open(&queue_path)?.pending(instance_id, 2)?;
+            let listener = TcpListener::bind("127.0.0.1:0").await?;
+            let mut config = config;
+            config.server = format!("http://{}", listener.local_addr()?);
+            let (import_started_tx, mut import_started_rx) = mpsc::channel(2);
+            let (import_release_tx, import_release_rx) = oneshot::channel();
+            let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
+            let server = tokio::spawn(fake_connector(
+                listener,
+                instance_id,
+                false,
+                import_started_tx,
+                import_release_rx,
+                acknowledged_tx,
+            ));
+            let upload_config = config.clone();
+            let uploader = tokio::spawn(async move {
+                let _upload_lock = UploadLock::acquire(&upload_config.queue)?;
+                upload_pending(
+                    &reqwest::Client::new(),
+                    &upload_config,
+                    "ecw1_synthetic_worker_credential",
+                    events,
+                )
+                .await
+            });
+            let first_import =
+                tokio::time::timeout(Duration::from_secs(2), import_started_rx.recv())
+                    .await?
+                    .expect("fake server receives the first queued event");
+            assert!(String::from_utf8_lossy(&first_import).contains("first-queued-command"));
+
+            let config_path = directory.path().join("config.json");
+            std::fs::write(&config_path, serde_json::to_vec(&config)?)?;
+            let control_config = config.clone();
+            let control_path = config_path.clone();
+            let controller = tokio::task::spawn_blocking(move || match control {
+                Some(control) => set_control(&control_path, control, true),
+                None => forget_queue(&control_config),
+            });
+            let marker_path = queue_path.with_extension(if control == Some(Control::Pause) {
+                "paused"
+            } else {
+                "disabled"
+            });
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while !marker_path.exists() {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("control marker is visible before waiting for the upload lock");
+
+            import_release_tx
+                .send(())
+                .expect("release the in-flight import response");
+            assert_eq!(uploader.await??, expected);
+            tokio::time::timeout(Duration::from_secs(2), acknowledged_rx)
+                .await?
+                .expect("the completed prefix is acknowledged");
+            controller.await??;
+            server.await??;
+            assert!(
+                import_started_rx.try_recv().is_err(),
+                "no later event reached the Files import endpoint"
+            );
+
+            if control.is_none() {
+                assert!(!queue_path.exists());
+            } else {
+                assert_eq!(Queue::open(&queue_path)?.pending(instance_id, 2)?.len(), 1);
+            }
+        }
         Ok(())
     }
 }
