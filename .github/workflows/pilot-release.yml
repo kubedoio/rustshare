@@ -415,7 +415,7 @@ jobs:
             > /tmp/rustshare-pilot-evidence/ui.env
           printf '%s\n' "${ui_playwright_status}" \
             >> /tmp/rustshare-pilot-evidence/ui.env
-          printf 'UI_IMAGE_ID=%s\nUI_INSTITUTIONAL_JOURNEY=passed\nUI_CALENDAR_IMPORT=passed\n' "${PILOT_IMAGE_ID}" \
+          printf 'UI_IMAGE_ID=%s\nUI_INSTITUTIONAL_JOURNEY=passed\n' "${PILOT_IMAGE_ID}" \
             >> /tmp/rustshare-pilot-evidence/ui.env
 
       - name: Validate separately provisioned runtime database role
