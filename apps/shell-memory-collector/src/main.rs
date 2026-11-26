@@ -570,9 +570,29 @@ async fn sync_pending_forgets(config_path: &PathBuf) -> Result<()> {
         return Ok(());
     }
     let credential = read_keyring_credential(config.instance_id)?;
-    sync_forgets(&client, &config, &credential, &pending).await?;
-    println!("Forgot {} Shell Memory record(s).", pending.len());
+    let forgotten = sync_all_pending_forgets(&client, &config, &credential).await?;
+    println!("Forgot {forgotten} Shell Memory record(s).");
     Ok(())
+}
+
+async fn sync_all_pending_forgets(
+    client: &reqwest::Client,
+    config: &Config,
+    credential: &str,
+) -> Result<usize> {
+    let mut total = 0;
+    loop {
+        let pending = {
+            let _lock = QueueLock::acquire(&config.queue)?;
+            Queue::open(&config.queue)?.pending_forgets(config.instance_id, 100)?
+        };
+        if pending.is_empty() {
+            return Ok(total);
+        }
+        let count = pending.len();
+        sync_forgets(client, config, credential, &pending).await?;
+        total += count;
+    }
 }
 
 async fn report_failure(
@@ -703,8 +723,8 @@ fn normalize_server(server: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        failure_category, forget_queue, normalize_server, set_control, sync_forgets,
-        upload_pending, upload_round, Control, UploadResult, UploadRound,
+        failure_category, forget_queue, normalize_server, set_control, sync_all_pending_forgets,
+        sync_forgets, upload_pending, upload_round, Control, UploadResult, UploadRound,
     };
     use anyhow::Result;
     use reqwest::StatusCode;
@@ -929,6 +949,62 @@ mod tests {
         Ok(())
     }
 
+    async fn fake_forget_batch_server(
+        listener: TcpListener,
+        instance_id: Uuid,
+        expected_forgets: usize,
+    ) -> std::io::Result<()> {
+        let source_prefix = "elembra://io.elembra.connector.shell-memory/file/";
+        let mut session_requests = 0;
+        let mut forget_requests = 0;
+        while forget_requests < expected_forgets {
+            let (mut stream, _) = listener.accept().await?;
+            let (request, headers, body) = read_request(&mut stream).await?;
+            let path = request.split_whitespace().nth(1).unwrap_or_default();
+            match path {
+                "/api/v1/connectors/worker/session" => {
+                    session_requests += 1;
+                    let response = serde_json::json!({
+                        "id": instance_id,
+                        "connectorId": "io.elembra.connector.shell-memory"
+                    });
+                    respond(
+                        &mut stream,
+                        "200 OK",
+                        response.to_string().as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+                "/api/v1/connectors/worker/files/forget" => {
+                    assert!(headers
+                        .to_ascii_lowercase()
+                        .contains("authorization: connector ecw1_synthetic-forget-batch"));
+                    let payload: serde_json::Value =
+                        serde_json::from_slice(&body).map_err(std::io::Error::other)?;
+                    assert!(payload["sourceResourceRef"]
+                        .as_str()
+                        .is_some_and(|value| value.starts_with(source_prefix)));
+                    assert!(payload["sourceRevision"]
+                        .as_str()
+                        .is_some_and(|value| value.starts_with("sha256:")));
+                    assert!(payload.get("targetResourceRef").is_none());
+                    forget_requests += 1;
+                    respond(&mut stream, "204 No Content", b"", "application/json").await;
+                }
+                _ => {
+                    return Err(std::io::Error::other(format!("unexpected request: {path}")));
+                }
+            }
+        }
+        if session_requests != 2 {
+            return Err(std::io::Error::other(format!(
+                "expected two bounded pages, got {session_requests} session checks"
+            )));
+        }
+        Ok(())
+    }
+
     async fn fake_forgotten_import_server(
         listener: TcpListener,
         instance_id: Uuid,
@@ -1092,6 +1168,67 @@ mod tests {
             .pending_forgets(instance_id, 10)?
             .is_empty());
         server.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remote_forget_drains_more_than_one_bounded_page_while_paused_and_disabled(
+    ) -> Result<()> {
+        const RECORD_COUNT: usize = 101;
+        let directory = tempfile::tempdir()?;
+        let queue_path = directory.path().join("queue.sqlite3");
+        let instance_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+        let mut queue = Queue::open(&queue_path)?;
+        for index in 0..RECORD_COUNT {
+            assert!(queue.record(
+                instance_id,
+                RecordInput {
+                    command: format!("echo synthetic-forget-batch-{index}"),
+                    cwd: "/tmp/synthetic".into(),
+                    host: "synthetic-host".into(),
+                    exit_code: 0,
+                    duration_ms: 1,
+                    session_id: Some(session_id),
+                },
+                &[],
+            )?);
+        }
+        assert_eq!(
+            queue.request_forget_session(instance_id, session_id)?,
+            RECORD_COUNT
+        );
+        assert!(queue.pending(instance_id, RECORD_COUNT)?.is_empty());
+        queue.set_paused(true)?;
+        queue.set_disabled(true)?;
+        drop(queue);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let config = Config {
+            server: format!("http://{}", listener.local_addr()?),
+            instance_id,
+            queue: queue_path.clone(),
+            exclude_commands: vec![],
+        };
+        let server = tokio::spawn(fake_forget_batch_server(
+            listener,
+            instance_id,
+            RECORD_COUNT,
+        ));
+        let forgotten = sync_all_pending_forgets(
+            &reqwest::Client::new(),
+            &config,
+            "ecw1_synthetic-forget-batch",
+        )
+        .await?;
+        assert_eq!(forgotten, RECORD_COUNT);
+        server.await??;
+
+        let queue = Queue::open(&queue_path)?;
+        assert!(queue.pending_forgets(instance_id, RECORD_COUNT)?.is_empty());
+        assert!(queue.list(instance_id, RECORD_COUNT)?.is_empty());
+        assert!(queue.paused());
+        assert!(queue.disabled());
         Ok(())
     }
 
