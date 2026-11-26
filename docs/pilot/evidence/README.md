@@ -1,5 +1,7 @@
 # Pilot evidence
 
+The latest exact protected-main disposable candidate is [candidate 3bd949b6](candidate-3bd949b6-disposable-pilot-2026-11-26.md), tied to Pilot Release run 45752680910 on `3bd949b6e8f5bd9ea078c0d9e76ebb9194764e2f`. It passed clean install, three browser journeys, backup and fresh-volume restore. Publication was skipped. Installed upgrade/rollback, the separate 100-user two-admin journey, and FWS acceptance remain unqualified.
+
 The latest exact-candidate disposable Pilot Release run is [candidate c613cc7b](candidate-c613cc7b-disposable-pilot-2026-11-26.md), tied to PR #569 head `c613cc7b368d0c61d9bef99c053ce3e3c7071f2f` and run 45746539135. It passed clean install, the four browser journeys including 100-user administration, backup, and isolated restore. Installed upgrade/rollback remains unqualified for this first-clean-install baseline; FWS/operator acceptance remains outstanding. Image publication was skipped.
 
 PR #569's manual disposable-pilot run on exact head `308017d476fded112f1b2bf8d7026a2c6d20a9b4` passed the 100-user browser journey and fresh-volume restore drill. Its tested image was retained as a run artifact, and image publication was skipped. This branch-specific evidence does not qualify current protected main or installed upgrade/rollback. See [PR #569 candidate evidence](candidate-308017d4-pr569-disposable-pilot-2026-11-26.md) for exact artifact digests and limits.
