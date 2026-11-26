@@ -6,7 +6,7 @@ Date: 2026-11-26
 
 - Protected-main SHA: `d0fc70c0594f709223e3ff83423cc38340f03dc6` (includes merged PR #572).
 - Pilot Release run: [45842979547](https://github.com/kubedoio/rustshare/actions/runs/45842979547), attempt 1 — **passed**.
-- Main CodeQL run [45842979479](https://github.com/kubedoio/rustshare/actions/runs/45842979479) — passed; the new CI run remains queued and the Integration Tests workflow remains in progress.
+- Main CodeQL run [45842979479](https://github.com/kubedoio/rustshare/actions/runs/45842979479) — passed. Integration Tests run [45842979511](https://github.com/kubedoio/rustshare/actions/runs/45842979511) — all four jobs passed. Main CI run [45842979462](https://github.com/kubedoio/rustshare/actions/runs/45842979462) remains in progress.
 - Tested backend image ID: `sha256:32348a3c04396fbd7edb7b45042929e4818be5ee331ac388c56f45c37acba585`.
 - Compose config ID: `c6da48b87c3806e654afe469fb29ab1df37c839ef8c21e99bee394467db8e160`.
 - Evidence artifact: [15133236620](https://github.com/kubedoio/rustshare/actions/runs/45842979547/artifacts/15133236620), `sha256:224bfc4df8e11023f5de66f2fd030e3cc5ed5935522e6181fc65faf905f088bd`.
