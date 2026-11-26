@@ -29,7 +29,10 @@ use chrono::{DateTime, Utc};
 use rustshare_core::domain::SharePermissions;
 use rustshare_core::services::{ScimGroup, ScimMember, ScimPatchOperation, ScimPatchRequest};
 use rustshare_server::handlers::admin::groups as admin_groups;
-use rustshare_server::handlers::{scim, scim_v2, AdminUser, ValidatedJson};
+use rustshare_server::handlers::{
+    organization_admin as organization_admin_handlers, scim, scim_v2, AdminUser, OrganizationAdmin,
+    ValidatedJson,
+};
 use rustshare_server::services::note_index_sink::NoteIndexSink;
 use uuid::Uuid;
 
@@ -3550,4 +3553,201 @@ async fn test_group_folder_refresh_terminates_at_foreign_tenant_folder() {
         sink.snapshot().iter().all(|r| r.tenant_id == tenant_id),
         "no cross-tenant content may be indexed"
     );
+}
+
+#[tokio::test]
+async fn organization_group_membership_rechecks_revoked_admin_and_tenant_scope() {
+    let (state, _sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let foreign_tenant_id = insert_test_tenant(&state.db_pool).await;
+    let stale_admin_id = Uuid::new_v4();
+    let successor_admin_id = Uuid::new_v4();
+    let operator_id = Uuid::new_v4();
+    let member_id = Uuid::new_v4();
+    let foreign_user_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        stale_admin_id,
+        &format!("stale-admin-{stale_admin_id}@example.com"),
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        successor_admin_id,
+        &format!("successor-admin-{successor_admin_id}@example.com"),
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        operator_id,
+        &format!("operator-{operator_id}@example.com"),
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        member_id,
+        &format!("member-{member_id}@example.com"),
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        foreign_tenant_id,
+        foreign_user_id,
+        &format!("foreign-user-{foreign_user_id}@example.com"),
+    )
+    .await;
+
+    for admin_id in [stale_admin_id, successor_admin_id] {
+        sqlx::query(
+            "INSERT INTO organization_administrators (tenant_id, user_id, granted_by) VALUES ($1,$2,$3)",
+        )
+        .bind(tenant_id)
+        .bind(admin_id)
+        .bind(operator_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    }
+    let group_id = insert_test_group(&state.db_pool, tenant_id, None).await;
+    insert_group_member_direct(&state.db_pool, group_id, member_id).await;
+    let stale_admin_snapshot = OrganizationAdmin {
+        user_id: stale_admin_id,
+        tenant_id,
+    };
+
+    // A currently authorized organization admin cannot add a user from another
+    // tenant, even when given a valid group ID from their own tenant.
+    let foreign_result = organization_admin_handlers::add_member(
+        State(state.clone()),
+        OrganizationAdmin {
+            user_id: successor_admin_id,
+            tenant_id,
+        },
+        axum::http::HeaderMap::new(),
+        Path(group_id),
+        axum::Json(organization_admin_handlers::MemberInput {
+            user_id: foreign_user_id,
+        }),
+    )
+    .await;
+    assert_eq!(
+        foreign_result.unwrap_err().into_response().status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // Revoke after the extractor would have produced its OrganizationAdmin
+    // snapshot. The handler must recheck that snapshot under the same tenant
+    // lock used by revocation before either membership mutation can commit.
+    let revoke_result = rustshare_server::handlers::admin::organization_administrators::revoke_organization_administrator(
+        State(state.clone()),
+        AdminUser {
+            user_id: operator_id,
+        },
+        axum::http::HeaderMap::new(),
+        Path((tenant_id, stale_admin_id)),
+    )
+    .await;
+    assert_eq!(revoke_result.unwrap(), StatusCode::NO_CONTENT);
+
+    let stale_add = organization_admin_handlers::add_member(
+        State(state.clone()),
+        stale_admin_snapshot.clone(),
+        axum::http::HeaderMap::new(),
+        Path(group_id),
+        axum::Json(organization_admin_handlers::MemberInput { user_id: member_id }),
+    )
+    .await;
+    assert_eq!(
+        stale_add.unwrap_err().into_response().status(),
+        StatusCode::FORBIDDEN
+    );
+
+    let stale_remove = organization_admin_handlers::remove_member(
+        State(state.clone()),
+        stale_admin_snapshot,
+        axum::http::HeaderMap::new(),
+        Path((group_id, member_id)),
+    )
+    .await;
+    assert_eq!(
+        stale_remove.unwrap_err().into_response().status(),
+        StatusCode::FORBIDDEN
+    );
+
+    let member_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM group_members WHERE group_id=$1 AND user_id=$2")
+            .bind(group_id)
+            .bind(member_id)
+            .fetch_one(&state.db_pool)
+            .await
+            .unwrap();
+    assert_eq!(member_count, 1, "revoked admin must not remove membership");
+    let foreign_member_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM group_members WHERE group_id=$1 AND user_id=$2")
+            .bind(group_id)
+            .bind(foreign_user_id)
+            .fetch_one(&state.db_pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        foreign_member_count, 0,
+        "cross-tenant add must write nothing"
+    );
+    let unauthorized_audits: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM admin_actions WHERE tenant_id=$1 AND actor_id=$2 AND action_type IN ('group.member_added','group.member_removed')",
+    )
+    .bind(tenant_id)
+    .bind(stale_admin_id)
+    .fetch_one(&state.db_pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        unauthorized_audits, 0,
+        "denied writes must not be audited as successes"
+    );
+
+    sqlx::query("DELETE FROM admin_actions WHERE tenant_id=$1")
+        .bind(tenant_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM group_members WHERE group_id=$1")
+        .bind(group_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM user_groups WHERE id=$1")
+        .bind(group_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM organization_administrators WHERE tenant_id=$1")
+        .bind(tenant_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    for user_id in [
+        stale_admin_id,
+        successor_admin_id,
+        operator_id,
+        member_id,
+        foreign_user_id,
+    ] {
+        sqlx::query("DELETE FROM users WHERE id=$1")
+            .bind(user_id)
+            .execute(&state.db_pool)
+            .await
+            .unwrap();
+    }
+    for id in [tenant_id, foreign_tenant_id] {
+        sqlx::query("DELETE FROM tenants WHERE id=$1")
+            .bind(id)
+            .execute(&state.db_pool)
+            .await
+            .unwrap();
+    }
 }
