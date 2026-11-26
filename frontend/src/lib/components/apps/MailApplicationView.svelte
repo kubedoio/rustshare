@@ -1353,7 +1353,7 @@
 </ApplicationPageShell>
 
 {#if activityOpen}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div class="modal-box max-w-2xl">
 			<h2 class="text-lg font-bold">Synchronization activity</h2>
 			<div class="mt-4 grid gap-4 sm:grid-cols-2">
