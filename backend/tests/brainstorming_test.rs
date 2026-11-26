@@ -509,7 +509,7 @@ async fn contract_cross_tenant_save_board_source_denied() {
         )
         .await;
     assert!(
-        matches!(result, Err(BrainstormError::PermissionDenied)),
+        matches!(result, Err(BrainstormError::BoardNotFound)),
         "Cross-tenant save_board_source should be denied, got {:?}",
         result
     );
@@ -966,7 +966,7 @@ async fn contract_same_tenant_unauthorized_save_board_source_denied() {
         )
         .await;
     assert!(
-        matches!(result, Err(BrainstormError::PermissionDenied)),
+        matches!(result, Err(BrainstormError::BoardNotFound)),
         "Same-tenant unauthorized save_board_source should be denied, got {:?}",
         result
     );
