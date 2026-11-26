@@ -31,3 +31,17 @@ This record captures a manual Pilot Release run against PR #569 head `c613cc7b36
 The workflow summary records `READINESS_DECISION=NOT_READY_UNTIL_TARGET_ENVIRONMENT_ACCEPTANCE`. This disposable run does not qualify FWS DNS and HTTPS, authentication and group-claim contract, secret custody, backup destination, monitoring, or authorized users. It also does not replace platform-specific Local Text acceptance, cross-tenant acceptance, a full group-revocation-to-Memory search/citation journey, or the installed upgrade/rollback qualification. No institutional data or real users were used.
 
 Keep this candidate-specific evidence distinct from the earlier protected-main candidate records and from PR #567's installed-upgrade/rollback qualification.
+
+## Complementary cross-tenant integration evidence
+
+Separate from the manual Pilot Release run above, PR #569's integration workflow [run 45746509706](https://github.com/kubedoio/rustshare/actions/runs/45746509706), attempt 1, completed **success** on the same candidate head `c613cc7b368d0c61d9bef99c053ce3e3c7071f2f`. Its `integration-tests` job (`139663831840`) passed. The `Memory source audit integration tests (default features)` and repeated `Ask Workspace security matrix` steps also passed `cross_tenant_candidates_never_appear`.
+
+The integration job logs additionally show these named passing contracts:
+
+- Notes and Meetings: `contract_cross_tenant_get_note_denied`, `contract_cross_tenant_list_notes_does_not_leak`, `contract_cross_tenant_save_note_denied`, `contract_cross_tenant_get_meeting_denied`, `contract_cross_tenant_list_meetings_does_not_leak`, and `contract_cross_tenant_update_meeting_denied`.
+- Search and share links: `cross_tenant_candidates_never_appear` in the Memory source audit and Ask Workspace matrices, and `tenant_isolation_contract::test_cross_tenant_share_link_is_denied`.
+- Calendar and meeting IDs: `cross_tenant_ids_are_not_visible` and `calendar_event_opens_persistent_meeting_and_denies_other_tenant`.
+- Groups and group sharing: `test_get_my_group_foreign_tenant_group_not_found`, `test_list_my_groups_excludes_foreign_tenant_groups`, `tenant_isolation_contract::test_group_roster_query_text_is_tenant_scoped`, `tenant_isolation_contract::test_group_share_with_foreign_group_refused_no_share_row`, and `received_user_shares_include_only_tenant_valid_group_grants`.
+- Chat access: `cross_tenant_message_access_rejected` and `buzz_mode_channel_list_denies_when_chat_access_is_deactivated`.
+
+These are integration-test results, not browser evidence from the manual Pilot Release. They complement the disposable candidate record but do not establish database RLS isolation, FWS target acceptance, installed upgrade/rollback, or release readiness.
