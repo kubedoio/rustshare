@@ -3971,18 +3971,21 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
     .await;
     let stale_candidates = harness
         .keyword_indexer
-        .keyword_search_with_acl(
+        .search_with_acl(
             &rustshare_core::services::ai::RetrievalPrincipal {
                 tenant_id: tenant.0,
                 workspace_id: Some(tenant.0),
                 user_id: owner.id,
                 group_ids: vec![],
                 min_acl_versions: HashMap::new(),
+                source_file_ids: None,
+                source_folder_ids: None,
             },
             "plan",
             8,
         )
-        .await;
+        .await
+        .expect("search the intentionally stale keyword ACL fixture");
     assert!(
         stale_candidates.iter().any(|(candidate, _)| {
             candidate
