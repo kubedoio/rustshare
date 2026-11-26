@@ -1,5 +1,7 @@
 mod common;
 
+use std::sync::Arc;
+
 use axum::{
     body::{to_bytes, Body},
     extract::FromRef,
@@ -11,8 +13,13 @@ use rustshare_core::domain::{
     CONNECTOR_API_VERSION,
 };
 use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
-use rustshare_resource_auth::{PrincipalContext, Representation, ResourceRef, SourceError};
-use rustshare_server::{routes, services::connector_service::RegisterConnector};
+use rustshare_infrastructure::repositories::PermissionResolverRepository;
+use rustshare_resource_auth::{
+    PrincipalContext, Representation, ResourceOwner, ResourceRef, SourceError,
+};
+use rustshare_server::{
+    authz::files_owner::FilesResourceOwner, routes, services::connector_service::RegisterConnector,
+};
 use rustshare_storage::{ConnectorMappingProvenance, ConnectorStore};
 use serde_json::json;
 use sqlx::PgPool;
@@ -61,7 +68,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     store
         .record_mapping(
             tenant_id,
-            Uuid::from(primary.instance_id),
+            primary.instance_id,
             &owned_source,
             REVISION,
             &owned_target,
@@ -72,7 +79,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     store
         .record_mapping(
             tenant_id,
-            Uuid::from(primary.instance_id),
+            primary.instance_id,
             &unrelated_source,
             REVISION,
             &unrelated_target,
@@ -114,10 +121,15 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         TenantId(tenant_id),
         WorkspaceId(tenant_id),
     );
+    let files_owner = FilesResourceOwner::new(
+        Arc::clone(&state.permission_resolver),
+        Arc::new(PermissionResolverRepository::new(pool.clone())),
+        Arc::clone(&state.metadata_store),
+        Arc::clone(&state.object_store),
+    );
     assert!(
         matches!(
-            state
-                .source_authorizer
+            files_owner
                 .fetch(&principal, &source, Representation::Text)
                 .await,
             Err(SourceError::NotFound | SourceError::Unauthorized)
@@ -144,7 +156,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         "SELECT forgotten_at IS NULL FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
     )
     .bind(tenant_id)
-    .bind(Uuid::from(primary.instance_id))
+    .bind(primary.instance_id)
     .bind(&unrelated_source)
     .bind(REVISION)
     .fetch_one(&pool)
@@ -155,7 +167,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         "SELECT forget_requested_at IS NOT NULL AND forgotten_at IS NOT NULL FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
     )
     .bind(tenant_id)
-    .bind(Uuid::from(primary.instance_id))
+    .bind(primary.instance_id)
     .bind(&owned_source)
     .bind(REVISION)
     .fetch_one(&pool)
@@ -214,7 +226,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         "SELECT target_resource_ref, forgotten_at IS NOT NULL FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
     )
     .bind(tenant_id)
-    .bind(Uuid::from(primary.instance_id))
+    .bind(primary.instance_id)
     .bind(&never_imported_source)
     .bind(REVISION)
     .fetch_one(&pool)
@@ -245,7 +257,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     let late_mapping = store
         .record_mapping(
             tenant_id,
-            Uuid::from(primary.instance_id),
+            primary.instance_id,
             &never_imported_source,
             REVISION,
             &owned_target,
@@ -260,7 +272,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         "SELECT target_resource_ref FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
     )
     .bind(tenant_id)
-    .bind(Uuid::from(primary.instance_id))
+    .bind(primary.instance_id)
     .bind(&never_imported_source)
     .bind(REVISION)
     .fetch_one(&pool)
@@ -274,18 +286,13 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     let delayed_file_id = insert_file(&pool, owner_id, tenant_id, Uuid::new_v4()).await;
     let delayed_target = target_ref(delayed_file_id);
     let import_lock = store
-        .lock_mapping_scope(
-            tenant_id,
-            Uuid::from(primary.instance_id),
-            &delayed_source,
-            REVISION,
-        )
+        .lock_mapping_scope(tenant_id, primary.instance_id, &delayed_source, REVISION)
         .await
         .unwrap();
     store
         .record_mapping(
             tenant_id,
-            Uuid::from(primary.instance_id),
+            primary.instance_id,
             &delayed_source,
             REVISION,
             &delayed_target,
@@ -319,7 +326,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     store
         .record_mapping(
             tenant_id,
-            Uuid::from(primary.instance_id),
+            primary.instance_id,
             &foreign_source,
             REVISION,
             &foreign_target,
@@ -331,7 +338,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     store
         .record_mapping(
             tenant_id,
-            Uuid::from(other_shell.instance_id),
+            other_shell.instance_id,
             &own_scope_source,
             REVISION,
             &foreign_target,
@@ -342,7 +349,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     store
         .record_mapping(
             tenant_id,
-            Uuid::from(primary.instance_id),
+            primary.instance_id,
             &source_ref(Uuid::new_v4()),
             REVISION,
             &foreign_target,
@@ -370,7 +377,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         "SELECT forgotten_at IS NULL FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
     )
     .bind(tenant_id)
-    .bind(Uuid::from(other_shell.instance_id))
+    .bind(other_shell.instance_id)
     .bind(&own_scope_source)
     .bind(REVISION)
     .fetch_one(&pool)
@@ -386,7 +393,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     assert!(file_is_active(&pool, foreign_file_id).await);
 
     sqlx::query("UPDATE connector_instances SET lifecycle_state='paused' WHERE id=$1")
-        .bind(Uuid::from(primary.instance_id))
+        .bind(primary.instance_id)
         .execute(&pool)
         .await
         .unwrap();
@@ -396,14 +403,14 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     );
     assert!(file_is_active(&pool, foreign_file_id).await);
     sqlx::query("UPDATE connector_instances SET lifecycle_state='active' WHERE id=$1")
-        .bind(Uuid::from(primary.instance_id))
+        .bind(primary.instance_id)
         .execute(&pool)
         .await
         .unwrap();
     let database = rustshare_server::state::DatabaseState::from_ref(&state);
     let rotated = database
         .connector_service
-        .rotate_worker_credential(tenant_id, owner_id, Uuid::from(primary.instance_id))
+        .rotate_worker_credential(tenant_id, owner_id, primary.instance_id)
         .await
         .unwrap();
     assert_eq!(
