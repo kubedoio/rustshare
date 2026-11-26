@@ -181,7 +181,7 @@ pub async fn import_connector_file(
         );
     }
     let source_resource_ref = source_ref.to_uri();
-    let _authority = worker
+    let authority = worker
         .context
         .effective_user_authority(
             &rustshare_core::domain::ActionCapability::new(rustshare_resource_auth::FILES_WRITE),
@@ -255,13 +255,6 @@ pub async fn import_connector_file(
         }));
     }
 
-    let authority = worker
-        .context
-        .effective_user_authority(
-            &rustshare_core::domain::ActionCapability::new(rustshare_resource_auth::FILES_WRITE),
-            None,
-        )
-        .map_err(|_| worker_auth_rejection())?;
     let file_name = std::path::Path::new(&metadata.relative_path)
         .file_name()
         .and_then(|name| name.to_str())
