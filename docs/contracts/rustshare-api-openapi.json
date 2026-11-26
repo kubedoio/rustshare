@@ -19008,7 +19008,7 @@
         "required": [
           "sourceResourceRef",
           "sourceRevision",
-          "targetResourceRef"
+          "forgotten"
         ],
         "properties": {
           "sourceResourceRef": {
@@ -19018,7 +19018,13 @@
             "type": "string"
           },
           "targetResourceRef": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "forgotten": {
+            "type": "boolean"
           }
         }
       },

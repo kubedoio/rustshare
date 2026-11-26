@@ -463,6 +463,19 @@ impl ConnectorService {
             .map_err(Into::into)
     }
 
+    pub async fn lock_mapping_scope(
+        &self,
+        worker: &AuthenticatedConnectorWorker,
+        source_resource_ref: &str,
+        source_revision: &str,
+    ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, ConnectorError> {
+        let (tenant_id, _, instance_id) = worker_scope(worker)?;
+        self.store
+            .lock_mapping_scope(tenant_id, instance_id, source_resource_ref, source_revision)
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn mapping_forgotten(
         &self,
         worker: &AuthenticatedConnectorWorker,

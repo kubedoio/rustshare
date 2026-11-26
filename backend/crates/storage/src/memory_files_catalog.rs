@@ -95,7 +95,7 @@ impl MemoryFilesCatalogStore {
         limit: i64,
     ) -> Result<Vec<Uuid>> {
         sqlx::query_scalar(
-            "WITH mapped AS (SELECT CASE WHEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1)::uuid END AS file_id FROM connector_external_mappings WHERE tenant_id=$1) SELECT DISTINCT file_id FROM mapped WHERE file_id IS NOT NULL AND ($2::uuid IS NULL OR file_id > $2) ORDER BY file_id LIMIT $3",
+            "WITH mapped AS (SELECT CASE WHEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1)::uuid END AS file_id FROM connector_external_mappings WHERE tenant_id=$1 AND target_resource_ref IS NOT NULL) SELECT DISTINCT file_id FROM mapped WHERE file_id IS NOT NULL AND ($2::uuid IS NULL OR file_id > $2) ORDER BY file_id LIMIT $3",
         )
         .bind(tenant_id)
         .bind(after_file_id)
@@ -312,6 +312,7 @@ impl MemoryFilesCatalogStore {
             "SELECT instance_id, external_resource_ref, external_revision, relative_path, source_observed_modified_at, clock_timestamp() \
              FROM connector_external_mappings \
              WHERE tenant_id=$1 \
+               AND target_resource_ref IS NOT NULL \
                AND forget_requested_at IS NULL \
                AND forgotten_at IS NULL \
                AND split_part(split_part(target_resource_ref, '/file/', 2), '?', 1)=$2 \
@@ -455,6 +456,13 @@ mod tests {
             .bind(instance_id)
             .bind(&source_ref)
             .bind(&target_ref)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO connector_external_mappings (tenant_id,instance_id,external_resource_ref,external_revision,target_resource_ref,forget_requested_at,forgotten_at) VALUES ($1,$2,$3,'sha256:never-imported',NULL,now(),now())")
+            .bind(tenant_id)
+            .bind(instance_id)
+            .bind(format!("elembra://io.elembra.connector.shell-memory/file/{}", Uuid::new_v4()))
             .execute(&pool)
             .await
             .unwrap();

@@ -35,7 +35,7 @@ pub struct ConnectorFileImportMetadata {
 pub struct ConnectorFileImportResponse {
     pub source_resource_ref: String,
     pub source_revision: String,
-    pub target_resource_ref: String,
+    pub target_resource_ref: Option<String>,
     #[serde(default)]
     pub forgotten: bool,
 }
@@ -181,6 +181,31 @@ pub async fn import_connector_file(
         );
     }
     let source_resource_ref = source_ref.to_uri();
+    let authority = worker
+        .context
+        .effective_user_authority(
+            &rustshare_core::domain::ActionCapability::new(rustshare_resource_auth::FILES_WRITE),
+            None,
+        )
+        .map_err(|_| worker_auth_rejection())?;
+    let _mapping_lock = state
+        .connector_service
+        .lock_mapping_scope(&worker, &source_resource_ref, &metadata.source_revision)
+        .await
+        .map_err(|error| map_error(error).into_response())?;
+    if state
+        .connector_service
+        .mapping_forgotten(&worker, &source_resource_ref, &metadata.source_revision)
+        .await
+        .map_err(|error| map_error(error).into_response())?
+    {
+        return Ok(Json(ConnectorFileImportResponse {
+            source_resource_ref,
+            source_revision: metadata.source_revision,
+            target_resource_ref: None,
+            forgotten: true,
+        }));
+    }
     if let Some(target) = state
         .connector_service
         .mapped_target(&worker, &source_resource_ref, &metadata.source_revision)
@@ -210,19 +235,6 @@ pub async fn import_connector_file(
             .map_err(|_| worker_auth_rejection())?;
         if state
             .connector_service
-            .mapping_forgotten(&worker, &source_resource_ref, &metadata.source_revision)
-            .await
-            .map_err(|error| map_error(error).into_response())?
-        {
-            return Ok(Json(ConnectorFileImportResponse {
-                source_resource_ref,
-                source_revision: metadata.source_revision,
-                target_resource_ref: target,
-                forgotten: true,
-            }));
-        }
-        if state
-            .connector_service
             .mapping_forget_requested_at(&worker, &source_resource_ref, &metadata.source_revision)
             .await
             .map_err(|error| map_error(error).into_response())?
@@ -238,7 +250,7 @@ pub async fn import_connector_file(
         return Ok(Json(ConnectorFileImportResponse {
             source_resource_ref,
             source_revision: metadata.source_revision,
-            target_resource_ref: target,
+            target_resource_ref: Some(target),
             forgotten: false,
         }));
     }
@@ -308,7 +320,7 @@ pub async fn import_connector_file(
     )
     .with_version(metadata.source_revision.clone())
     .to_uri();
-    state
+    let mapping_result = state
         .connector_service
         .record_mapping(
             &worker,
@@ -318,12 +330,51 @@ pub async fn import_connector_file(
             &relative_path,
             observed_modified_at,
         )
-        .await
-        .map_err(|error| map_error(error).into_response())?;
+        .await;
+    if let Err(error) = mapping_result {
+        let forgotten = state
+            .connector_service
+            .mapping_forgotten(&worker, &source_resource_ref, &metadata.source_revision)
+            .await
+            .map_err(|error| map_error(error).into_response())?;
+        if !forgotten {
+            return Err(map_error(error).into_response());
+        }
+        let deleted = services
+            .file_service
+            .delete_file_if_unchanged(
+                file.id,
+                authority.user_authority_id.0,
+                &file.content_hash,
+                file.current_version,
+                file.modified_at,
+                worker.context.tenant_id.0,
+            )
+            .await
+            .map_err(|error| AppError::from(error).into_response())?;
+        if !deleted {
+            return Err(
+                AppError::conflict("Forgotten import changed during cleanup").into_response(),
+            );
+        }
+        if let Err(error) = services
+            .note_service
+            .remove_source_file_from_index(file.id, worker.context.tenant_id.0)
+            .await
+        {
+            tracing::warn!(file_id = %file.id, tenant_id = %worker.context.tenant_id.0, error = %error, "Failed to remove tombstoned Connector import from content index");
+        }
+        return Ok(Json(ConnectorFileImportResponse {
+            source_resource_ref,
+            source_revision: metadata.source_revision,
+            target_resource_ref: None,
+            forgotten: true,
+        }));
+    }
     Ok(Json(ConnectorFileImportResponse {
         source_resource_ref,
         source_revision: metadata.source_revision,
-        target_resource_ref: target_ref,
+        target_resource_ref: Some(target_ref),
         forgotten: false,
     }))
 }
@@ -357,12 +408,32 @@ pub async fn forget_connector_file(
         return Err(AppError::not_found("Import not found").into_response());
     }
     let source_resource_ref = source_ref.to_uri();
+    // A targetless tombstone still mutates this owner's Files-backed source
+    // namespace. Require the same current Files write authority before either
+    // creating a tombstone or deleting a mapped target.
+    let authority = worker
+        .context
+        .effective_user_authority(
+            &rustshare_core::domain::ActionCapability::new(rustshare_resource_auth::FILES_WRITE),
+            None,
+        )
+        .map_err(|_| worker_auth_rejection())?;
+    let _mapping_lock = state
+        .connector_service
+        .lock_mapping_scope(&worker, &source_resource_ref, &request.source_revision)
+        .await
+        .map_err(|error| map_error(error).into_response())?;
     let Some(target) = state
         .connector_service
         .mapped_target(&worker, &source_resource_ref, &request.source_revision)
         .await
         .map_err(|error| map_error(error).into_response())?
     else {
+        state
+            .connector_service
+            .request_mapping_forget(&worker, &source_resource_ref, &request.source_revision)
+            .await
+            .map_err(|error| map_error(error).into_response())?;
         return Ok(StatusCode::NO_CONTENT);
     };
     if state
@@ -383,13 +454,6 @@ pub async fn forget_connector_file(
     }
     let target_id = Uuid::parse_str(&target_ref.resource_id)
         .map_err(|_| AppError::internal("Stored Connector mapping is invalid").into_response())?;
-    let authority = worker
-        .context
-        .effective_user_authority(
-            &rustshare_core::domain::ActionCapability::new(rustshare_resource_auth::FILES_WRITE),
-            None,
-        )
-        .map_err(|_| worker_auth_rejection())?;
     let file = match services
         .file_service
         .get_file(target_id, authority.user_authority_id.0)
@@ -808,13 +872,14 @@ mod connector_import_tests {
     fn forgotten_import_replay_is_an_explicit_terminal_ack() {
         let response = ConnectorFileImportResponse {
             source_resource_ref: "io.elembra.connector.shell-memory://file/123".into(),
-            source_revision: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
-            target_resource_ref: "io.elembra.files://file/456?version=sha256%3Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            source_revision:
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            target_resource_ref: None,
             forgotten: true,
         };
         let wire = serde_json::to_value(response).unwrap();
         assert_eq!(wire["forgotten"], true);
-        assert!(wire.get("targetResourceRef").is_some());
+        assert!(wire["targetResourceRef"].is_null());
     }
 
     #[test]

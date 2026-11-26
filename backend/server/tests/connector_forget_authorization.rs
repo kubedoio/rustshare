@@ -1,16 +1,17 @@
 mod common;
 
 use axum::{
-    body::Body,
+    body::{to_bytes, Body},
     extract::FromRef,
     http::{header, Request, StatusCode},
 };
+use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_core::domain::{
     ApplicationId, ConnectorAuthority, ConnectorCapabilities, ConnectorDescriptor,
     ConnectorMetadata, ConnectorModes, ConnectorOperations, ConnectorPublications,
     ConnectorSource, CONNECTOR_API_VERSION,
 };
-use rustshare_resource_auth::ResourceRef;
+use rustshare_resource_auth::{PrincipalContext, Representation, ResourceRef, SourceError};
 use rustshare_server::{
     routes,
     services::connector_service::RegisterConnector,
@@ -93,6 +94,42 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         StatusCode::NO_CONTENT
     );
     assert!(!file_is_active(&pool, owned_file_id).await);
+    // Simulate a stale projection surviving or arriving after index cleanup;
+    // current Files authorization must still prevent it reaching Memory.
+    sqlx::query("INSERT INTO note_index_chunks (id,tenant_id,note_id,source_file_id,file_name,file_path,content,mime_type,owner_id,workspace_id) VALUES ($1,$2,$3,$3,'stale.md','/stale.md','synthetic stale secret','text/markdown',$4,$2)")
+        .bind(Uuid::new_v4())
+        .bind(tenant_id)
+        .bind(owned_file_id)
+        .bind(owner_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let stale_chunks: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM note_index_chunks WHERE tenant_id=$1 AND source_file_id=$2 AND content='synthetic stale secret'",
+    )
+    .bind(tenant_id)
+    .bind(owned_file_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stale_chunks, 1, "test retains the stale index projection");
+    let source = ResourceRef::new(
+        ApplicationId::new("io.elembra.files"),
+        "file",
+        owned_file_id.to_string(),
+    );
+    let principal = PrincipalContext::user(
+        PrincipalId(owner_id),
+        TenantId(tenant_id),
+        WorkspaceId(tenant_id),
+    );
+    assert!(matches!(
+        state
+            .source_authorizer
+            .fetch(&principal, &source, Representation::Text)
+            .await,
+        Err(SourceError::NotFound | SourceError::Unauthorized)
+    ), "a stale chunk cannot be materialized without current Files authorization");
     assert!(file_is_active(&pool, unrelated_owned_file_id).await);
     let mismatched_revision = format!("sha256:{}", "b".repeat(64));
     assert_eq!(
@@ -168,6 +205,104 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         StatusCode::NO_CONTENT
     );
     assert!(file_is_active(&pool, owned_file_id).await);
+
+    // An unknown source forget is retained as a targetless tombstone. A later
+    // replay checks it before creating a Files object.
+    let never_imported_source = source_ref(Uuid::new_v4());
+    assert_eq!(
+        forget(&state, &primary.credential, &never_imported_source).await,
+        StatusCode::NO_CONTENT
+    );
+    let tombstone: (Option<String>, bool) = sqlx::query_as(
+        "SELECT target_resource_ref, forgotten_at IS NOT NULL FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
+    )
+    .bind(tenant_id)
+    .bind(Uuid::from(primary.instance_id))
+    .bind(&never_imported_source)
+    .bind(REVISION)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tombstone, (None, true));
+    let never_imported_path = format!("never-imported-{}.md", Uuid::new_v4());
+    let replay = import_source(
+        &state,
+        &primary.credential,
+        &never_imported_source,
+        &never_imported_path,
+    )
+    .await;
+    assert_eq!(replay.status, StatusCode::OK);
+    let replay_json: serde_json::Value = serde_json::from_slice(&replay.body).unwrap();
+    assert_eq!(replay_json["forgotten"], true);
+    assert!(replay_json["targetResourceRef"].is_null());
+    let late_file_count: i64 = sqlx::query_scalar("SELECT count(*) FROM files WHERE path=$1")
+        .bind(format!("/{never_imported_path}"))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(late_file_count, 0, "tombstoned replay creates no Files object");
+    let late_mapping = store
+        .record_mapping(
+            tenant_id,
+            Uuid::from(primary.instance_id),
+            &never_imported_source,
+            REVISION,
+            &owned_target,
+            ConnectorMappingProvenance::default(),
+        )
+        .await;
+    assert!(late_mapping.is_err(), "a late mapping cannot replace a forget tombstone");
+    let target_after_replay: Option<String> = sqlx::query_scalar(
+        "SELECT target_resource_ref FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
+    )
+    .bind(tenant_id)
+    .bind(Uuid::from(primary.instance_id))
+    .bind(&never_imported_source)
+    .bind(REVISION)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(target_after_replay.is_none());
+
+    // If import owns the source lock first, forget waits for its mapping to
+    // commit, then deletes the resulting Files target.
+    let delayed_source = source_ref(Uuid::new_v4());
+    let delayed_file_id = insert_file(&pool, owner_id, tenant_id, Uuid::new_v4()).await;
+    let delayed_target = target_ref(delayed_file_id);
+    let import_lock = store
+        .lock_mapping_scope(
+            tenant_id,
+            Uuid::from(primary.instance_id),
+            &delayed_source,
+            REVISION,
+        )
+        .await
+        .unwrap();
+    store
+        .record_mapping(
+            tenant_id,
+            Uuid::from(primary.instance_id),
+            &delayed_source,
+            REVISION,
+            &delayed_target,
+            ConnectorMappingProvenance::default(),
+        )
+        .await
+        .unwrap();
+    let delayed_state = state.clone();
+    let delayed_credential = primary.credential.clone();
+    let delayed_source_for_request = delayed_source.clone();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let forget_task = tokio::spawn(async move {
+        let _ = started_tx.send(());
+        forget(&delayed_state, &delayed_credential, &delayed_source_for_request).await
+    });
+    started_rx.await.unwrap();
+    wait_for_advisory_lock_wait(&pool).await;
+    drop(import_lock);
+    assert_eq!(forget_task.await.unwrap(), StatusCode::NO_CONTENT);
+    assert!(!file_is_active(&pool, delayed_file_id).await);
 
     let foreign_file_id = insert_file(&pool, foreign_owner_id, foreign_tenant_id, fixture).await;
     let foreign_source = source_ref(Uuid::new_v4());
@@ -385,6 +520,89 @@ async fn forget_with_revision(
     .await
     .unwrap()
     .status()
+}
+
+async fn wait_for_advisory_lock_wait(pool: &PgPool) {
+    for _ in 0..100 {
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND wait_event='advisory' AND query LIKE '%pg_advisory_xact_lock%')",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if waiting {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("forget request never reached the held source-revision advisory lock");
+}
+
+struct ImportResponse {
+    status: StatusCode,
+    body: Vec<u8>,
+}
+
+async fn import_source(
+    state: &rustshare_server::AppState,
+    credential: &str,
+    source_ref: &str,
+    relative_path: &str,
+) -> ImportResponse {
+    let app = routes::connector_routes().with_state(state.clone());
+    let lease_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/connectors/worker/lease")
+                .header(header::AUTHORIZATION, format!("Connector {credential}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(lease_response.status(), StatusCode::OK);
+    let lease_body = to_bytes(lease_response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let lease: serde_json::Value = serde_json::from_slice(&lease_body).unwrap();
+    let lease = lease.as_object().expect("worker receives an execution lease");
+    let boundary = "synthetic-shell-import-boundary";
+    let metadata = json!({
+        "leaseId": lease["leaseId"],
+        "fence": lease["fence"],
+        "sourceResourceRef": source_ref,
+        "sourceRevision": REVISION,
+        "relativePath": relative_path,
+        "observedModifiedAt": chrono::Utc::now(),
+        "parentFolderId": null
+    });
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\nContent-Type: application/json\r\n\r\n{}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"synthetic.md\"\r\nContent-Type: text/markdown\r\n\r\nsynthetic shell memory content\r\n--{boundary}--\r\n",
+        metadata
+    );
+    let response = routes::connector_routes()
+        .with_state(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/connectors/worker/files/import")
+                .header(header::AUTHORIZATION, format!("Connector {credential}"))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap()
+        .to_vec();
+    ImportResponse { status, body }
 }
 
 fn source_ref(id: Uuid) -> String {
