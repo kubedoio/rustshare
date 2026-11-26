@@ -22,6 +22,6 @@ Date: 2026-11-26
 ## Qualification boundary
 
 - This is synthetic disposable evidence for the exact d6 commit, not release-image qualification: no immutable release-image scan, SBOM, provenance, or publication was produced.
-- The separate d6 Main Integration Tests run [45865255462](https://github.com/kubedoio/rustshare/actions/runs/45865255462) has passed the integration-tests, Buzz Live Conformance, and Buzz Identity Replacement E2E jobs; Chat Product Acceptance is still in progress as of 2026-11-26 17:57 UTC.
+- The d6 Main Integration Tests run [45865255462](https://github.com/kubedoio/rustshare/actions/runs/45865255462) passed all four jobs on 2026-11-26, including integration-tests, Chat Product Acceptance, Buzz Live Conformance, and Buzz Identity Replacement E2E. The integration job also passed the Linux Local Text worker E2E, Memory source-access audit, and repeated Ask Workspace authorization matrix.
 - The 100-user/two-admin journey is not included in this run. PR #569 exact d6-based head `911e936fb74c367143c613e43e65777c70ca773b` has a separate non-publishing Pilot Release [45865650938](https://github.com/kubedoio/rustshare/actions/runs/45865650938) in progress; its results are not yet evidence for this protected-main candidate.
 - FWS remains **NO-GO** pending operator-owned DNS, HTTPS, authentication, secret custody, backup destination/restore, monitoring, and authorized-user gates. No institutional data, real users, publication, or deployment was involved.
