@@ -19,9 +19,12 @@ use super::{
 };
 use crate::{
     handlers::{AdminUser, AppError},
+    services::admin_user_queries::{AdminUserQueries, AdminUserRow},
     user_disable::{set_user_disabled_at, DisableUserTarget},
     AppState,
 };
+
+type UserRow = AdminUserRow;
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -117,21 +120,8 @@ pub struct PaginatedUsers {
 // Internal row type
 // ---------------------------------------------------------------------------
 
-#[derive(sqlx::FromRow)]
-struct UserRow {
-    id: Uuid,
-    username: String,
-    email: String,
-    display_name: String,
-    is_admin: bool,
-    storage_quota: i64,
-    disabled_at: Option<chrono::DateTime<chrono::Utc>>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-impl From<UserRow> for AdminUserResponse {
-    fn from(row: UserRow) -> Self {
+impl From<AdminUserRow> for AdminUserResponse {
+    fn from(row: AdminUserRow) -> Self {
         AdminUserResponse {
             id: row.id.to_string(),
             username: row.username,
@@ -167,145 +157,15 @@ pub async fn list_admin_users(
 ) -> Result<Json<PaginatedUsers>, AppError> {
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(20).clamp(1, 100);
-    let offset = (page - 1) * per_page;
-
-    let cols = "id, username, email, display_name, is_admin, storage_quota, disabled_at, created_at, updated_at";
-    let order = "ORDER BY created_at DESC";
-
-    let (rows, total): (Vec<UserRow>, i64) = match (
-        query.search.as_deref(),
-        query.status.as_deref(),
-    ) {
-        (None, None) | (None, Some("all")) => {
-            let total = sqlx::query_scalar!("SELECT COUNT(*) FROM users")
-                .fetch_one(&state.db_pool)
-                .await
-                .map_err(db_error)?
-                .unwrap_or(0);
-            let rows = sqlx::query_as::<_, UserRow>(&format!(
-                "SELECT {cols} FROM users {order} LIMIT $1 OFFSET $2"
-            ))
-            .bind(per_page)
-            .bind(offset)
-            .fetch_all(&state.db_pool)
-            .await
-            .map_err(db_error)?;
-            (rows, total)
-        }
-        (None, Some("active")) => {
-            let total = sqlx::query_scalar!("SELECT COUNT(*) FROM users WHERE disabled_at IS NULL")
-                .fetch_one(&state.db_pool)
-                .await
-                .map_err(db_error)?
-                .unwrap_or(0);
-            let rows = sqlx::query_as::<_, UserRow>(&format!(
-                "SELECT {cols} FROM users WHERE disabled_at IS NULL {order} LIMIT $1 OFFSET $2"
-            ))
-            .bind(per_page)
-            .bind(offset)
-            .fetch_all(&state.db_pool)
-            .await
-            .map_err(db_error)?;
-            (rows, total)
-        }
-        (None, Some("disabled")) => {
-            let total =
-                sqlx::query_scalar!("SELECT COUNT(*) FROM users WHERE disabled_at IS NOT NULL")
-                    .fetch_one(&state.db_pool)
-                    .await
-                    .map_err(db_error)?
-                    .unwrap_or(0);
-            let rows = sqlx::query_as::<_, UserRow>(&format!(
-                "SELECT {cols} FROM users WHERE disabled_at IS NOT NULL {order} LIMIT $1 OFFSET $2"
-            ))
-            .bind(per_page)
-            .bind(offset)
-            .fetch_all(&state.db_pool)
-            .await
-            .map_err(db_error)?;
-            (rows, total)
-        }
-        (Some(search), None) | (Some(search), Some("all")) => {
-            let pattern = format!("%{}%", search);
-            let total = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM users WHERE username ILIKE $1 OR email ILIKE $1",
-                &pattern
-            )
-            .fetch_one(&state.db_pool)
-            .await
-            .map_err(db_error)?
-            .unwrap_or(0);
-            let rows = sqlx::query_as::<_, UserRow>(&format!(
-                    "SELECT {cols} FROM users WHERE username ILIKE $1 OR email ILIKE $1 {order} LIMIT $2 OFFSET $3"
-                ))
-                .bind(&pattern)
-                .bind(per_page)
-                .bind(offset)
-                .fetch_all(&state.db_pool)
-                .await
-                .map_err(db_error)?;
-            (rows, total)
-        }
-        (Some(search), Some("active")) => {
-            let pattern = format!("%{}%", search);
-            let total = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM users WHERE (username ILIKE $1 OR email ILIKE $1) AND disabled_at IS NULL",
-                    &pattern
-                )
-                .fetch_one(&state.db_pool)
-                .await
-                .map_err(db_error)?
-                .unwrap_or(0);
-            let rows = sqlx::query_as::<_, UserRow>(&format!(
-                    "SELECT {cols} FROM users WHERE (username ILIKE $1 OR email ILIKE $1) AND disabled_at IS NULL {order} LIMIT $2 OFFSET $3"
-                ))
-                .bind(&pattern)
-                .bind(per_page)
-                .bind(offset)
-                .fetch_all(&state.db_pool)
-                .await
-                .map_err(db_error)?;
-            (rows, total)
-        }
-        (Some(search), Some("disabled")) => {
-            let pattern = format!("%{}%", search);
-            let total = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM users WHERE (username ILIKE $1 OR email ILIKE $1) AND disabled_at IS NOT NULL",
-                    &pattern
-                )
-                .fetch_one(&state.db_pool)
-                .await
-                .map_err(db_error)?
-                .unwrap_or(0);
-            let rows = sqlx::query_as::<_, UserRow>(&format!(
-                    "SELECT {cols} FROM users WHERE (username ILIKE $1 OR email ILIKE $1) AND disabled_at IS NOT NULL {order} LIMIT $2 OFFSET $3"
-                ))
-                .bind(&pattern)
-                .bind(per_page)
-                .bind(offset)
-                .fetch_all(&state.db_pool)
-                .await
-                .map_err(db_error)?;
-            (rows, total)
-        }
-        _ => {
-            // Fallback: all users
-            let total = sqlx::query_scalar!("SELECT COUNT(*) FROM users")
-                .fetch_one(&state.db_pool)
-                .await
-                .map_err(db_error)?
-                .unwrap_or(0);
-            let rows = sqlx::query_as::<_, UserRow>(&format!(
-                "SELECT {cols} FROM users {order} LIMIT $1 OFFSET $2"
-            ))
-            .bind(per_page)
-            .bind(offset)
-            .fetch_all(&state.db_pool)
-            .await
-            .map_err(db_error)?;
-            (rows, total)
-        }
-    };
+    let (rows, total) = AdminUserQueries::new(state.db_pool.clone())
+        .list(
+            query.search.as_deref(),
+            query.status.as_deref(),
+            page,
+            per_page,
+        )
+        .await
+        .map_err(db_error)?;
 
     Ok(Json(PaginatedUsers {
         users: rows.into_iter().map(AdminUserResponse::from).collect(),
@@ -439,31 +299,15 @@ pub async fn get_admin_user(
     AdminUser { .. }: AdminUser,
     Path(user_id): Path<Uuid>,
 ) -> Result<Json<AdminUserDetailResponse>, AppError> {
-    let cols = "id, username, email, display_name, is_admin, storage_quota, disabled_at, created_at, updated_at";
-    let row = sqlx::query_as::<_, UserRow>(&format!("SELECT {cols} FROM users WHERE id = $1"))
-        .bind(user_id)
-        .fetch_optional(&state.db_pool)
+    let detail = AdminUserQueries::new(state.db_pool.clone())
+        .get(user_id)
         .await
         .map_err(db_error)?
         .ok_or_else(|| admin_not_found("User not found"))?;
 
-    let storage_used_bytes = sqlx::query_scalar!(
-        "SELECT COALESCE(SUM(size), 0)::BIGINT FROM (
-             SELECT DISTINCT ON (fv.storage_key) fv.size
-             FROM file_versions fv
-             JOIN files f ON f.id = fv.file_id
-             WHERE f.owner_id = $1
-         ) sub",
-        user_id
-    )
-    .fetch_one(&state.db_pool)
-    .await
-    .map_err(db_error)?
-    .unwrap_or(0);
-
     Ok(Json(AdminUserDetailResponse {
-        user: AdminUserResponse::from(row),
-        storage_used_bytes,
+        user: AdminUserResponse::from(detail.user),
+        storage_used_bytes: detail.storage_used_bytes,
     }))
 }
 
