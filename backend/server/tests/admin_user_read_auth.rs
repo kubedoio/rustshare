@@ -102,34 +102,9 @@ async fn admin_user_reads_require_installation_admin_and_preserve_system_scope()
     assert_eq!(detail_status, StatusCode::OK);
     assert_eq!(detail_body["id"], cross_tenant_target.to_string());
 
-    sqlx::query("DELETE FROM organization_administrators WHERE user_id = $1")
-        .bind(organization_admin)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(
-        "DELETE FROM admin_actions WHERE tenant_id = $1 AND action_type = 'organization_admin.bootstrap' AND target_id = $2 AND detail->>'grant_id' = $3",
-    )
-    .bind(admin_tenant)
-    .bind(organization_admin)
-    .bind(grant_id.to_string())
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query("DELETE FROM users WHERE id = ANY($1)")
-        .bind(vec![
-            organization_admin,
-            installation_admin,
-            cross_tenant_target,
-        ])
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM tenants WHERE id = ANY($1)")
-        .bind(vec![admin_tenant, other_tenant])
-        .execute(&pool)
-        .await
-        .unwrap();
+    // Keep these unique fixture rows until the explicitly guarded disposable
+    // test database is discarded. The administrator grant and its audit event
+    // are append-only records and must not be deleted by test cleanup.
 }
 
 fn assert_disposable_test_destinations() {
