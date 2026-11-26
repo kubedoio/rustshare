@@ -27,18 +27,34 @@ async fn admin_user_reads_require_installation_admin_and_preserve_system_scope()
     insert_user(&pool, organization_admin, admin_tenant, false).await;
     insert_user(&pool, installation_admin, admin_tenant, true).await;
     insert_user(&pool, cross_tenant_target, other_tenant, false).await;
-    sqlx::query("INSERT INTO organization_administrators (tenant_id, user_id, granted_by) VALUES ($1, $2, $2)")
-        .bind(admin_tenant)
-        .bind(organization_admin)
-        .execute(&pool)
-        .await
-        .unwrap();
+    let mut grant_tx = pool.begin().await.unwrap();
+    let grant_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO organization_administrators (tenant_id, user_id, granted_by) VALUES ($1, $2, $2) RETURNING id",
+    )
+    .bind(admin_tenant)
+    .bind(organization_admin)
+    .fetch_one(&mut *grant_tx)
+    .await
+    .unwrap();
+    rustshare_server::services::organization_administrators::insert_scoped_admin_action(
+        &mut grant_tx,
+        admin_tenant,
+        organization_admin,
+        "organization_admin.bootstrap",
+        Some("organization_administrator"),
+        Some(organization_admin),
+        serde_json::json!({ "grant_id": grant_id }),
+        None,
+    )
+    .await
+    .unwrap();
+    grant_tx.commit().await.unwrap();
 
     let organization_admin_token = state
         .jwt_manager
         .generate(
             organization_admin,
-            &format!("{organization_admin}@example.test"),
+            format!("{organization_admin}@example.test"),
             admin_tenant,
         )
         .unwrap();
@@ -63,7 +79,7 @@ async fn admin_user_reads_require_installation_admin_and_preserve_system_scope()
         .jwt_manager
         .generate(
             installation_admin,
-            &format!("{installation_admin}@example.test"),
+            format!("{installation_admin}@example.test"),
             admin_tenant,
         )
         .unwrap();
