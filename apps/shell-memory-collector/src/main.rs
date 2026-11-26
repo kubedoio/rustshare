@@ -970,7 +970,8 @@ mod tests {
                     assert!(
                         String::from_utf8_lossy(&body).contains("echo synthetic-already-forgotten")
                     );
-                    let response = serde_json::json!({ "targetResourceRef": "elembra://io.elembra.files/file/synthetic", "forgotten": true });
+                    let response =
+                        serde_json::json!({ "targetResourceRef": null, "forgotten": true });
                     respond(
                         &mut stream,
                         "200 OK",
