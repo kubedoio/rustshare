@@ -192,13 +192,24 @@ pub struct UnfurlResponse {
     pub metadata: UnfurlMetadata,
 }
 
+/// Maximum body size accepted for an incoming Chat event webhook.
+pub const MAX_CHAT_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
+
 /// Incoming chat event from external chat system.
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct IncomingChatEvent {
     pub event_type: String,
     pub timestamp: DateTime<Utc>,
     pub user_id: Option<String>,
-    pub data: serde_json::Value,
+    #[schema(value_type = serde_json::Value)]
+    pub data: Box<serde_json::value::RawValue>,
+}
+
+fn deserialize_incoming_chat_event(body: &[u8]) -> Result<IncomingChatEvent, serde_json::Error> {
+    let mut deserializer = serde_json::Deserializer::from_slice(body);
+    let event = IncomingChatEvent::deserialize(&mut deserializer)?;
+    deserializer.end()?;
+    Ok(event)
 }
 
 /// Trait for metadata store operations needed by ChatIntegrationService.
@@ -595,7 +606,7 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
         body: &[u8],
         signature: &str,
     ) -> Result<(), ChatIntegrationError> {
-        if signature.is_empty() {
+        if signature.is_empty() || body.len() > MAX_CHAT_EVENT_REQUEST_BYTES {
             return Err(ChatIntegrationError::SignatureVerificationFailed);
         }
 
@@ -607,7 +618,7 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
             return Err(ChatIntegrationError::SignatureVerificationFailed);
         }
 
-        let event: IncomingChatEvent = serde_json::from_slice(body)
+        let event = deserialize_incoming_chat_event(body)
             .map_err(|e| ChatIntegrationError::Serialization(e.to_string()))?;
 
         // Enforce maximum age to prevent replay attacks.
@@ -1073,8 +1084,54 @@ mod tests {
             event_type: "share.revoked".to_string(),
             timestamp: Utc::now(),
             user_id: Some(Uuid::new_v4().to_string()),
-            data: serde_json::json!({"share_token": "abc123"}),
+            data: serde_json::value::RawValue::from_string(
+                r#"{"share_token":"abc123"}"#.to_string(),
+            )
+            .unwrap(),
         }
+    }
+
+    #[test]
+    fn incoming_chat_event_preserves_arbitrary_json_data_without_decoding_a_value_tree() {
+        for data in [
+            r#"{"share_token":"abc123"}"#,
+            r#"["future","payload"]"#,
+            r#"null"#,
+            r#"17"#,
+            r#""vendor-specific""#,
+        ] {
+            let body = format!(
+                r#"{{"event_type":"vendor.event","timestamp":"2026-01-01T00:00:00Z","user_id":"opaque-principal","data":{data}}}"#
+            );
+            let event: IncomingChatEvent = serde_json::from_str(&body).unwrap();
+
+            assert_eq!(event.event_type, "vendor.event");
+            assert_eq!(event.user_id.as_deref(), Some("opaque-principal"));
+            assert_eq!(event.data.get(), data);
+        }
+    }
+
+    #[test]
+    fn incoming_chat_event_rejects_trailing_json() {
+        let event = IncomingChatEvent {
+            event_type: "vendor.event".to_string(),
+            timestamp: Utc::now(),
+            user_id: None,
+            data: serde_json::value::RawValue::from_string("null".to_string()).unwrap(),
+        };
+        let mut body = serde_json::to_vec(&event).unwrap();
+        body.extend_from_slice(b"{}");
+
+        assert!(deserialize_incoming_chat_event(&body).is_err());
+    }
+
+    #[test]
+    fn incoming_chat_event_accepts_extension_fields_and_preserves_data() {
+        let body = r#"{"event_type":"vendor.event","timestamp":"2026-01-01T00:00:00Z","user_id":null,"data":{"opaque":true},"extension":{"version":2}}"#;
+
+        let event: IncomingChatEvent = serde_json::from_str(body).unwrap();
+        assert_eq!(event.event_type, "vendor.event");
+        assert_eq!(event.data.get(), r#"{"opaque":true}"#);
     }
 
     #[tokio::test]
@@ -1167,6 +1224,42 @@ mod tests {
             .sign_with_timestamp(event.timestamp.timestamp(), &body)
             .unwrap();
         (body, signature)
+    }
+
+    fn sign_incoming_event_with_body_size(size: usize) -> (Vec<u8>, String) {
+        let event = sample_incoming_event();
+        let mut body = serde_json::to_vec(&event).unwrap();
+        assert!(body.len() <= size);
+        body.resize(size, b' ');
+        let signer = WebhookSigner::new("test_secret");
+        let signature = signer
+            .sign_with_timestamp(event.timestamp.timestamp(), &body)
+            .unwrap();
+        (body, signature)
+    }
+
+    #[tokio::test]
+    async fn process_incoming_event_accepts_body_at_size_limit() {
+        let service = test_service_with_max_age(300);
+        let (body, signature) = sign_incoming_event_with_body_size(MAX_CHAT_EVENT_REQUEST_BYTES);
+
+        assert_eq!(body.len(), MAX_CHAT_EVENT_REQUEST_BYTES);
+        assert!(service
+            .process_incoming_event(&body, &signature)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn process_incoming_event_rejects_oversized_valid_body_before_deserialization() {
+        let service = test_service_with_max_age(300);
+        let (body, signature) =
+            sign_incoming_event_with_body_size(MAX_CHAT_EVENT_REQUEST_BYTES + 1);
+
+        assert!(matches!(
+            service.process_incoming_event(&body, &signature).await,
+            Err(ChatIntegrationError::SignatureVerificationFailed)
+        ));
     }
 
     #[tokio::test]
