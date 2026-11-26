@@ -50,7 +50,7 @@ class PilotUiResultsTests(unittest.TestCase):
         self.assertIn("UI_PLAYWRIGHT_SKIPPED=0", result)
 
     def test_skipped_browser_test_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ValueError, "exactly 3 passes"):
+        with self.assertRaisesRegex(ValueError, f"exactly {len(EXPECTED_TESTS)} passes"):
             report = self.make_report(
                 {
                     "expectedStatus": "skipped",
@@ -91,12 +91,17 @@ class PilotUiResultsTests(unittest.TestCase):
 
     def test_additional_or_flaky_test_is_rejected(self) -> None:
         for stats in (
-            {"expected": 4, "skipped": 0, "unexpected": 0, "flaky": 0},
+            {
+                "expected": len(EXPECTED_TESTS) + 1,
+                "skipped": 0,
+                "unexpected": 0,
+                "flaky": 0,
+            },
             {"expected": 0, "skipped": 0, "unexpected": 1, "flaky": 0},
             {"expected": 1, "skipped": 0, "unexpected": 0, "flaky": 1},
         ):
             with self.subTest(stats=stats), self.assertRaisesRegex(
-                ValueError, "exactly 3 passes"
+                ValueError, f"exactly {len(EXPECTED_TESTS)} passes"
             ):
                 self.verify({"stats": stats})
 
