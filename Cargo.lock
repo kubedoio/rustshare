@@ -5660,6 +5660,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "shell-memory-collector"
+version = "0.8.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "dirs",
+ "glob",
+ "hex",
+ "keyring",
+ "libc",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

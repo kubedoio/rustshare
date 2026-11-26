@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "apps/local-text-worker",
+    "apps/shell-memory-collector",
     "backend/crates/core",
     "backend/crates/storage",
     "backend/crates/auth",
