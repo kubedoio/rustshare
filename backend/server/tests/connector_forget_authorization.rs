@@ -5,17 +5,14 @@ use axum::{
     extract::FromRef,
     http::{header, Request, StatusCode},
 };
-use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_core::domain::{
     ApplicationId, ConnectorAuthority, ConnectorCapabilities, ConnectorDescriptor,
-    ConnectorMetadata, ConnectorModes, ConnectorOperations, ConnectorPublications,
-    ConnectorSource, CONNECTOR_API_VERSION,
+    ConnectorMetadata, ConnectorModes, ConnectorOperations, ConnectorPublications, ConnectorSource,
+    CONNECTOR_API_VERSION,
 };
+use rustshare_core::domain::{PrincipalId, TenantId, WorkspaceId};
 use rustshare_resource_auth::{PrincipalContext, Representation, ResourceRef, SourceError};
-use rustshare_server::{
-    routes,
-    services::connector_service::RegisterConnector,
-};
+use rustshare_server::{routes, services::connector_service::RegisterConnector};
 use rustshare_storage::{ConnectorMappingProvenance, ConnectorStore};
 use serde_json::json;
 use sqlx::PgPool;
@@ -44,14 +41,8 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     let owner_id = insert_user(&pool, fixture, tenant_id).await;
     let foreign_owner_id = insert_user(&pool, fixture, foreign_tenant_id).await;
     let primary = register_worker(&state, tenant_id, owner_id, SHELL_MEMORY_ID, fixture).await;
-    let other_shell = register_worker(
-        &state,
-        tenant_id,
-        owner_id,
-        SHELL_MEMORY_ID,
-        Uuid::new_v4(),
-    )
-    .await;
+    let other_shell =
+        register_worker(&state, tenant_id, owner_id, SHELL_MEMORY_ID, Uuid::new_v4()).await;
     let local_text = register_worker(
         &state,
         tenant_id,
@@ -123,13 +114,16 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         TenantId(tenant_id),
         WorkspaceId(tenant_id),
     );
-    assert!(matches!(
-        state
-            .source_authorizer
-            .fetch(&principal, &source, Representation::Text)
-            .await,
-        Err(SourceError::NotFound | SourceError::Unauthorized)
-    ), "a stale chunk cannot be materialized without current Files authorization");
+    assert!(
+        matches!(
+            state
+                .source_authorizer
+                .fetch(&principal, &source, Representation::Text)
+                .await,
+            Err(SourceError::NotFound | SourceError::Unauthorized)
+        ),
+        "a stale chunk cannot be materialized without current Files authorization"
+    );
     assert!(file_is_active(&pool, unrelated_owned_file_id).await);
     let mismatched_revision = format!("sha256:{}", "b".repeat(64));
     assert_eq!(
@@ -177,7 +171,10 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(delete_events, 1, "Files lifecycle event is durable and owner-attributed");
+    assert_eq!(
+        delete_events, 1,
+        "Files lifecycle event is durable and owner-attributed"
+    );
     assert_eq!(
         forget(&state, &primary.credential, &owned_source).await,
         StatusCode::NO_CONTENT
@@ -241,7 +238,10 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(late_file_count, 0, "tombstoned replay creates no Files object");
+    assert_eq!(
+        late_file_count, 0,
+        "tombstoned replay creates no Files object"
+    );
     let late_mapping = store
         .record_mapping(
             tenant_id,
@@ -252,7 +252,10 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
             ConnectorMappingProvenance::default(),
         )
         .await;
-    assert!(late_mapping.is_err(), "a late mapping cannot replace a forget tombstone");
+    assert!(
+        late_mapping.is_err(),
+        "a late mapping cannot replace a forget tombstone"
+    );
     let target_after_replay: Option<String> = sqlx::query_scalar(
         "SELECT target_resource_ref FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
     )
@@ -296,7 +299,12 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let forget_task = tokio::spawn(async move {
         let _ = started_tx.send(());
-        forget(&delayed_state, &delayed_credential, &delayed_source_for_request).await
+        forget(
+            &delayed_state,
+            &delayed_credential,
+            &delayed_source_for_request,
+        )
+        .await
     });
     started_rx.await.unwrap();
     wait_for_advisory_lock_wait(&pool).await;
@@ -495,7 +503,11 @@ async fn register_worker(
     }
 }
 
-async fn forget(state: &rustshare_server::AppState, credential: &str, source_ref: &str) -> StatusCode {
+async fn forget(
+    state: &rustshare_server::AppState,
+    credential: &str,
+    source_ref: &str,
+) -> StatusCode {
     forget_with_revision(state, credential, source_ref, REVISION).await
 }
 
@@ -513,7 +525,8 @@ async fn forget_with_revision(
             .header(header::AUTHORIZATION, format!("Connector {credential}"))
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(
-                json!({"sourceResourceRef": source_ref, "sourceRevision": source_revision}).to_string(),
+                json!({"sourceResourceRef": source_ref, "sourceRevision": source_revision})
+                    .to_string(),
             ))
             .unwrap(),
     )
@@ -566,7 +579,9 @@ async fn import_source(
         .await
         .unwrap();
     let lease: serde_json::Value = serde_json::from_slice(&lease_body).unwrap();
-    let lease = lease.as_object().expect("worker receives an execution lease");
+    let lease = lease
+        .as_object()
+        .expect("worker receives an execution lease");
     let boundary = "synthetic-shell-import-boundary";
     let metadata = json!({
         "leaseId": lease["leaseId"],
@@ -606,12 +621,7 @@ async fn import_source(
 }
 
 fn source_ref(id: Uuid) -> String {
-    ResourceRef::new(
-        ApplicationId::new(SHELL_MEMORY_ID),
-        "file",
-        id.to_string(),
-    )
-    .to_uri()
+    ResourceRef::new(ApplicationId::new(SHELL_MEMORY_ID), "file", id.to_string()).to_uri()
 }
 
 fn target_ref(id: Uuid) -> String {
