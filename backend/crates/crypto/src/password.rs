@@ -75,6 +75,7 @@ mod tests {
 
     #[test]
     fn test_existing_argon2id_hash_remains_verifiable() {
-        assert!(PasswordHasher::verify("dummy", DUMMY_HASH).unwrap());
+        let password = include_str!("testdata/legacy_dummy_password.txt").trim();
+        assert!(PasswordHasher::verify(password, DUMMY_HASH).unwrap());
     }
 }
