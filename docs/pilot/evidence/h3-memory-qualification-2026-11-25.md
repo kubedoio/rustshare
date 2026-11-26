@@ -2,15 +2,14 @@
 
 ## Current-main qualification status
 
-Protected main after #582 is `5bf3585b516a2fdff0fc1e88f15c7207333319f8`;
-the application candidate immediately before that documentation-only merge was
-`9e0fc56421b0e84d2116f48111e73a547d9d090a`. Integration Tests run
-[45896771209](https://github.com/kubedoio/rustshare/actions/runs/45896771209)
-passed all four jobs. Its integration job passed the Local Text worker E2E,
-source-access audit and repeated Ask Workspace authorization matrix. The
-source-by-source summary below supersedes earlier run-status statements in this
-historical record; the detailed test inventory and acceptance gaps are tracked
-in issue [#119](https://github.com/kubedoio/rustshare/issues/119#issuecomment-7204150554).
+Protected main `5bf3585b516a2fdff0fc1e88f15c7207333319f8` passed the exact
+non-publishing Pilot Release [45901542778](https://github.com/kubedoio/rustshare/actions/runs/45901542778)
+and Integration Tests [45901542697](https://github.com/kubedoio/rustshare/actions/runs/45901542697),
+with all four integration jobs green. The integration job passed the Local Text
+worker E2E, source-access audit and repeated Ask Workspace authorization matrix.
+The source-by-source summary below supersedes earlier run-status statements in
+this historical record; the detailed test inventory and acceptance gaps are
+tracked in issue [#119](https://github.com/kubedoio/rustshare/issues/119#issuecomment-7204150554).
 
 | Source | Current owner/retrieval semantics | Current evidence and remaining acceptance |
 | --- | --- | --- |
