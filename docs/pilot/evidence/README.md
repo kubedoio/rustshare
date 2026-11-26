@@ -69,6 +69,8 @@ title and H1 after reloading.
 Artifacts must not contain .env contents, passwords, tokens, cookies, private
 keys or database credentials. A missing mandatory evidence file makes the
 workflow non-pilot-ready even if an earlier test step passed.
+The protected-main disposable pilot result for `20b3d75e` is summarized in
+[`candidate-20b3d75e-disposable-pilot-2026-11-26.md`](candidate-20b3d75e-disposable-pilot-2026-11-26.md).
 
 For the FWS target-host exercise, the external evidence bundle is retained at
 `/var/backups/rustshare/fws-evidence-20261004` on the deployment host. Its
