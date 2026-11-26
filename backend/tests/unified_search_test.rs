@@ -3938,6 +3938,34 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         b"FILE-AUTHORIZED-BYTES: What is the plan?",
     )
     .await;
+    let other_owner = create_user(&harness.metadata_store, "ask-other-owner", tenant.0).await;
+    let unshared_file = create_file_with_content(
+        &harness,
+        other_owner.id,
+        "unshared-plan.md",
+        "/private/unshared-plan.md",
+        b"unshared source blob",
+    )
+    .await;
+    let stale_read_acl = vec![format!("owner:{}", owner.id)];
+    insert_note_index_row(
+        &pool,
+        tenant.0,
+        &unshared_file,
+        other_owner.id,
+        "UNAUTHORIZED-SAME-TENANT-SECRET: plan",
+        &stale_read_acl,
+    )
+    .await;
+    let indexed_sentinel_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM note_index_chunks WHERE tenant_id = $1 AND content = $2",
+    )
+    .bind(tenant.0)
+    .bind("UNAUTHORIZED-SAME-TENANT-SECRET: plan")
+    .fetch_one(&pool)
+    .await
+    .expect("verify the stale unauthorized index fixture");
+    assert_eq!(indexed_sentinel_count, 1);
     let keys = Keys::generate();
     let env = setup_tenant_with_relay_for_principal(
         &pool,
@@ -3950,6 +3978,35 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         serde_json::json!({ "memory_projection": true, "content_indexing": true }),
     )
     .await;
+    let stale_candidates = harness
+        .keyword_indexer
+        .search_with_acl(
+            &rustshare_core::services::ai::RetrievalPrincipal {
+                tenant_id: tenant.0,
+                workspace_id: Some(tenant.0),
+                user_id: owner.id,
+                group_ids: vec![],
+                min_acl_versions: HashMap::new(),
+                source_file_ids: None,
+                source_folder_ids: None,
+            },
+            "plan",
+            8,
+        )
+        .await
+        .expect("search the intentionally stale keyword ACL fixture");
+    assert!(
+        stale_candidates.iter().any(|(candidate, _)| {
+            candidate
+                .acl
+                .as_ref()
+                .is_some_and(|acl| acl.source_file_id == unshared_file.id)
+                && candidate
+                    .content
+                    .contains("UNAUTHORIZED-SAME-TENANT-SECRET")
+        }),
+        "the stale ACL fixture must reach Ask as an unauthorized keyword candidate"
+    );
     let msg_id = message_id(9001);
     insert_chat_message(
         &pool,
@@ -4012,7 +4069,12 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
     assert!(context
         .iter()
         .any(|text| text.contains("CHAT-AUTHORIZED-BYTES")));
-    assert!(!context.iter().any(|text| text.contains("UNAUTHORIZED")));
+    assert!(
+        !context
+            .iter()
+            .any(|text| text.contains("UNAUTHORIZED-SAME-TENANT-SECRET")),
+        "a same-tenant unshared file with a stale ACL index must not reach the LLM provider"
+    );
 
     let note_provider = Arc::new(RecordingLlmProvider::new(LlmResult {
         answer: "The note contains the plan.".into(),
