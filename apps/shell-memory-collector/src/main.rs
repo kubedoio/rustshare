@@ -62,7 +62,9 @@ struct ExecutionLease {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ImportResponse {
-    target_resource_ref: String,
+    target_resource_ref: Option<String>,
+    #[serde(default)]
+    forgotten: bool,
 }
 
 #[derive(Serialize)]
@@ -341,9 +343,12 @@ async fn upload_pending(
             bail!("Files import failed with HTTP {}", response.status());
         }
         let imported: ImportResponse = response.json().await?;
-        completed.push((event.id, imported.target_resource_ref));
+        match (imported.forgotten, imported.target_resource_ref) {
+            (true, None) | (false, Some(_)) => completed.push(event.id),
+            _ => bail!("Files import response had an invalid forgotten state"),
+        }
     }
-    let Some((queue_id, _)) = completed.last() else {
+    let Some(queue_id) = completed.last() else {
         bail!("upload round completed without a Files import");
     };
     let response = client
@@ -367,7 +372,7 @@ async fn upload_pending(
     }
     let _queue_lock = QueueLock::acquire(&config.queue)?;
     let queue = Queue::open(&config.queue)?;
-    for (id, _) in completed {
+    for id in completed {
         queue.acknowledge(id)?;
     }
     Ok(UploadResult::Completed)
@@ -534,6 +539,7 @@ mod tests {
     async fn fake_connector(
         listener: TcpListener,
         instance_id: Uuid,
+        forgotten: bool,
         import_started: mpsc::Sender<Vec<u8>>,
         import_release: oneshot::Receiver<()>,
         acknowledged: oneshot::Sender<()>,
@@ -587,7 +593,8 @@ mod tests {
                     let body = serde_json::json!({
                         "sourceResourceRef": "elembra://io.elembra.connector.shell-memory/file/synthetic",
                         "sourceRevision": "sha256:synthetic",
-                        "targetResourceRef": "elembra://io.elembra.files/file/synthetic"
+                        "targetResourceRef": if forgotten { serde_json::Value::Null } else { serde_json::json!("elembra://io.elembra.files/file/synthetic") },
+                        "forgotten": forgotten
                     });
                     respond(
                         &mut stream,
@@ -775,6 +782,75 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn forgotten_import_replay_is_acknowledged_and_removed_from_queue() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let queue_path = directory.path().join("queue.sqlite3");
+        let instance_id = Uuid::new_v4();
+        assert!(record_if_enabled(
+            &queue_path,
+            instance_id,
+            RecordInput {
+                command: "echo synthetic-tombstoned-command".into(),
+                cwd: "/tmp/synthetic".into(),
+                host: "synthetic-host".into(),
+                exit_code: 0,
+                duration_ms: 1,
+            },
+            &[]
+        )?);
+        let mut config = Config {
+            server: String::new(),
+            instance_id,
+            queue: queue_path.clone(),
+            exclude_commands: Vec::new(),
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        config.server = format!("http://{}", listener.local_addr()?);
+        let (import_started_tx, mut import_started_rx) = mpsc::channel(1);
+        let (import_release_tx, import_release_rx) = oneshot::channel();
+        let (acknowledged_tx, acknowledged_rx) = oneshot::channel();
+        let server = tokio::spawn(fake_connector(
+            listener,
+            instance_id,
+            true,
+            import_started_tx,
+            import_release_rx,
+            acknowledged_tx,
+        ));
+        let client = reqwest::Client::new();
+        let upload_config = config.clone();
+        let uploader = tokio::spawn(async move {
+            upload_round(&client, &upload_config, || {
+                Ok("ecw1_synthetic_worker_credential".into())
+            })
+            .await
+        });
+        let import_body = tokio::time::timeout(Duration::from_secs(2), import_started_rx.recv())
+            .await?
+            .expect("fake server receives the tombstoned import replay");
+        assert!(String::from_utf8_lossy(&import_body).contains("synthetic-tombstoned-command"));
+        import_release_tx
+            .send(())
+            .expect("release forgotten response");
+        assert_eq!(uploader.await??, UploadRound::Completed);
+        tokio::time::timeout(Duration::from_secs(2), acknowledged_rx)
+            .await?
+            .expect("fake server observes terminal checkpoint acknowledgment");
+        server.await??;
+
+        let queue = Queue::open(&queue_path)?;
+        assert!(queue.pending(instance_id, 10)?.is_empty());
+        assert_eq!(
+            upload_round(&reqwest::Client::new(), &config, || {
+                anyhow::bail!("credential must not be read after terminal acknowledgment")
+            })
+            .await?,
+            UploadRound::Idle
+        );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn forget_waits_for_real_upload_round_while_record_stays_unblocked() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let queue_path = directory.path().join("queue.sqlite3");
@@ -820,6 +896,7 @@ mod tests {
         let server = tokio::spawn(fake_connector(
             listener,
             instance_id,
+            false,
             import_started_tx,
             import_release_rx,
             acknowledged_tx,
