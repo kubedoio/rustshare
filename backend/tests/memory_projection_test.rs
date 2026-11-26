@@ -200,7 +200,7 @@ fn signed_push(
         .sign_with_keys(keys)
         .expect("sign text note");
     let push = BuzzEventPush {
-        event: serde_json::to_value(&event).unwrap(),
+        event: event.clone(),
         context: BuzzPushContext {
             community_id: COMMUNITY_ID.to_string(),
             channel_id: CHANNEL_ID.to_string(),
@@ -230,7 +230,7 @@ fn signed_created_push_with_kind(
         .expect("sign text note");
     let event_id = event.id.to_hex();
     let push = BuzzEventPush {
-        event: serde_json::to_value(&event).unwrap(),
+        event: event.clone(),
         context: BuzzPushContext {
             community_id: COMMUNITY_ID.to_string(),
             channel_id: CHANNEL_ID.to_string(),
@@ -709,7 +709,7 @@ async fn tombstone_observed_before_create_produces_no_record() {
         .expect("sign created event");
     let created_id = created_event.id.to_hex();
     let created_push = BuzzEventPush {
-        event: serde_json::to_value(&created_event).unwrap(),
+        event: created_event.clone(),
         context: BuzzPushContext {
             community_id: COMMUNITY_ID.to_string(),
             channel_id: CHANNEL_ID.to_string(),
@@ -727,7 +727,7 @@ async fn tombstone_observed_before_create_produces_no_record() {
         .sign_with_keys(&keys)
         .expect("sign deleted event");
     let deleted_push = BuzzEventPush {
-        event: serde_json::to_value(&deleted_event).unwrap(),
+        event: deleted_event.clone(),
         context: BuzzPushContext {
             community_id: COMMUNITY_ID.to_string(),
             channel_id: CHANNEL_ID.to_string(),
