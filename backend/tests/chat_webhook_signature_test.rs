@@ -109,7 +109,8 @@ fn sample_event() -> IncomingChatEvent {
         event_type: "share.revoked".to_string(),
         timestamp: Utc::now(),
         user_id: Some(Uuid::new_v4().to_string()),
-        data: serde_json::json!({"share_token": "abc123"}),
+        data: serde_json::value::RawValue::from_string(r#"{"share_token":"abc123"}"#.to_string())
+            .unwrap(),
     }
 }
 
