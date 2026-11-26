@@ -63,6 +63,8 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     let unrelated_owned_file_id = insert_file(&pool, owner_id, tenant_id, Uuid::new_v4()).await;
     let owned_source = source_ref(Uuid::new_v4());
     let owned_target = target_ref(owned_file_id);
+    let unrelated_source = source_ref(Uuid::new_v4());
+    let unrelated_target = target_ref(unrelated_owned_file_id);
     let store = ConnectorStore::new(pool.clone());
     store
         .record_mapping(
@@ -75,12 +77,49 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         )
         .await
         .unwrap();
+    store
+        .record_mapping(
+            tenant_id,
+            Uuid::from(primary.instance_id),
+            &unrelated_source,
+            REVISION,
+            &unrelated_target,
+            ConnectorMappingProvenance::default(),
+        )
+        .await
+        .unwrap();
     assert_eq!(
         forget(&state, &primary.credential, &owned_source).await,
         StatusCode::NO_CONTENT
     );
     assert!(!file_is_active(&pool, owned_file_id).await);
     assert!(file_is_active(&pool, unrelated_owned_file_id).await);
+    let mismatched_revision = format!("sha256:{}", "b".repeat(64));
+    assert_eq!(
+        forget_with_revision(
+            &state,
+            &primary.credential,
+            &unrelated_source,
+            &mismatched_revision,
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+    assert!(
+        file_is_active(&pool, unrelated_owned_file_id).await,
+        "an exact-revision mismatch cannot delete the mapped File"
+    );
+    let mismatched_mapping_active: bool = sqlx::query_scalar(
+        "SELECT forgotten_at IS NULL FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
+    )
+    .bind(tenant_id)
+    .bind(Uuid::from(primary.instance_id))
+    .bind(&unrelated_source)
+    .bind(REVISION)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(mismatched_mapping_active);
     let forgotten_mapping: bool = sqlx::query_scalar(
         "SELECT forget_requested_at IS NOT NULL AND forgotten_at IS NOT NULL FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
     )
@@ -213,6 +252,28 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         StatusCode::UNAUTHORIZED
     );
     assert!(file_is_active(&pool, foreign_file_id).await);
+    sqlx::query("UPDATE connector_instances SET lifecycle_state='active' WHERE id=$1")
+        .bind(Uuid::from(primary.instance_id))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let database = rustshare_server::state::DatabaseState::from_ref(&state);
+    let rotated = database
+        .connector_service
+        .rotate_worker_credential(tenant_id, owner_id, Uuid::from(primary.instance_id))
+        .await
+        .unwrap();
+    assert_eq!(
+        forget(&state, &primary.credential, &unrelated_source).await,
+        StatusCode::UNAUTHORIZED,
+        "rotated credentials cannot invoke the old worker token"
+    );
+    assert!(file_is_active(&pool, unrelated_owned_file_id).await);
+    assert_eq!(
+        forget(&state, &rotated.credential, &unrelated_source).await,
+        StatusCode::NO_CONTENT
+    );
+    assert!(!file_is_active(&pool, unrelated_owned_file_id).await);
 
     sqlx::query("DELETE FROM files WHERE id=$1")
         .bind(foreign_file_id)
@@ -300,6 +361,15 @@ async fn register_worker(
 }
 
 async fn forget(state: &rustshare_server::AppState, credential: &str, source_ref: &str) -> StatusCode {
+    forget_with_revision(state, credential, source_ref, REVISION).await
+}
+
+async fn forget_with_revision(
+    state: &rustshare_server::AppState,
+    credential: &str,
+    source_ref: &str,
+    source_revision: &str,
+) -> StatusCode {
     let app = routes::connector_routes().with_state(state.clone());
     app.oneshot(
         Request::builder()
@@ -308,7 +378,7 @@ async fn forget(state: &rustshare_server::AppState, credential: &str, source_ref
             .header(header::AUTHORIZATION, format!("Connector {credential}"))
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(
-                json!({"sourceResourceRef": source_ref, "sourceRevision": REVISION}).to_string(),
+                json!({"sourceResourceRef": source_ref, "sourceRevision": source_revision}).to_string(),
             ))
             .unwrap(),
     )
