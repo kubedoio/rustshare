@@ -494,7 +494,7 @@ async fn ingest_event_into(
     event: &NostrEvent,
 ) {
     let push = BuzzEventPush {
-        event: serde_json::to_value(event).unwrap(),
+        event: event.clone(),
         context: BuzzPushContext {
             community_id: community_id.to_string(),
             channel_id: channel_of(event).to_string(),

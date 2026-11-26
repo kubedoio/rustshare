@@ -1035,7 +1035,7 @@ fn created_push(
     let event = signed_note(keys, content);
     let event_id = event.id.to_hex();
     let push = BuzzEventPush {
-        event: serde_json::to_value(&event).unwrap(),
+        event: event.clone(),
         context: BuzzPushContext {
             community_id: community_id.to_string(),
             channel_id: CHANNEL_ID.to_string(),
@@ -3646,7 +3646,7 @@ async fn reconcile_deleted_snapshot_for_unknown_event_is_harmless() {
     // The webhook path accepts the same snapshot form without error.
     let service = service(pool.clone());
     let tombstone_push = BuzzEventPush {
-        event: serde_json::to_value(&event).unwrap(),
+        event: event.clone(),
         context: BuzzPushContext {
             community_id: community.clone(),
             channel_id: CHANNEL_ID.to_string(),
