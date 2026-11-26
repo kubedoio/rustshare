@@ -4,7 +4,8 @@ pub mod invitations;
 use crate::{
     handlers::{
         admin::organization_administrators::{
-            lock_tenant_admin_grants, removal_would_leave_no_enabled_admin, revoke_for_lifecycle,
+            lock_and_check_active_grant, lock_tenant_admin_grants,
+            removal_would_leave_no_enabled_admin, revoke_for_lifecycle,
         },
         admin::{
             admin_bad_request, admin_conflict, admin_internal_error, admin_not_found,
@@ -809,6 +810,7 @@ pub async fn add_member(
         ));
     }
     let mut tx = s.db_pool.begin().await.map_err(db_error)?;
+    require_current_organization_admin(&mut tx, tenant_id, user_id).await?;
     let valid=sqlx::query("SELECT g.id FROM user_groups g JOIN users u ON u.tenant_id=g.tenant_id WHERE g.id=$1 AND g.tenant_id=$2 AND g.archived_at IS NULL AND u.id=$3 FOR UPDATE OF g,u").bind(id).bind(tenant_id).bind(input.user_id).fetch_optional(&mut *tx).await.map_err(db_error)?;
     if valid.is_none() {
         return Err(admin_not_found("Group or user not found"));
@@ -847,6 +849,7 @@ pub async fn remove_member(
     Path((id, user)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
     let mut tx = s.db_pool.begin().await.map_err(db_error)?;
+    require_current_organization_admin(&mut tx, tenant_id, actor).await?;
     let res=sqlx::query("DELETE FROM group_members m USING user_groups g, users u WHERE m.group_id=g.id AND m.user_id=u.id AND g.id=$1 AND g.tenant_id=$2 AND u.id=$3 AND u.tenant_id=$2").bind(id).bind(tenant_id).bind(user).execute(&mut *tx).await.map_err(db_error)?;
     if res.rows_affected() == 0 {
         return Err(admin_not_found("Group, user, or membership not found"));
@@ -869,6 +872,26 @@ pub async fn remove_member(
         id,
     );
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Revalidate the extractor's tenant-admin snapshot inside the membership
+/// transaction. The advisory lock serializes this check with grant revocation:
+/// a write either commits before revocation or observes the revoked grant.
+async fn require_current_organization_admin(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), AppError> {
+    let active = lock_and_check_active_grant(tx, tenant_id, user_id)
+        .await
+        .map_err(db_error)?;
+    if active {
+        Ok(())
+    } else {
+        Err(AppError::forbidden(
+            "Organization administrator access required",
+        ))
+    }
 }
 
 #[utoipa::path(get,path="/api/v1/organization-admin/audit",params(PaginationQuery),responses((status=200,body=AuditPage)))]
