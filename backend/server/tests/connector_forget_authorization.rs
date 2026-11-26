@@ -358,13 +358,24 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         .await
         .unwrap();
 
-    // A mapped target in a different tenant is indistinguishable from a
-    // missing Files resource to this worker and remains active.
+    // An inaccessible cross-tenant target is denied opaquely and stays
+    // retryable; the response must not acknowledge or tombstone an active File.
     assert_eq!(
         forget(&state, &primary.credential, &foreign_source).await,
-        StatusCode::NO_CONTENT
+        StatusCode::NOT_FOUND
     );
     assert!(file_is_active(&pool, foreign_file_id).await);
+    let foreign_mapping_pending: bool = sqlx::query_scalar(
+        "SELECT forgotten_at IS NULL AND forget_requested_at IS NULL FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
+    )
+    .bind(tenant_id)
+    .bind(primary.instance_id)
+    .bind(&foreign_source)
+    .bind(REVISION)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(foreign_mapping_pending, "denied forget remains retryable");
 
     // A source mapped under another Shell Memory instance is not visible in
     // this instance's mapping scope and cannot affect its target.

@@ -453,10 +453,7 @@ pub async fn forget_connector_file(
         .await
     {
         Ok(file) => file,
-        Err(
-            rustshare_core::services::FileError::NotFound(_)
-            | rustshare_core::services::FileError::PermissionDenied { .. },
-        ) => {
+        Err(rustshare_core::services::FileError::NotFound(_)) => {
             state
                 .connector_service
                 .request_mapping_forget(&worker, &source_resource_ref, &request.source_revision)
@@ -468,6 +465,12 @@ pub async fn forget_connector_file(
                 .await
                 .map_err(|error| map_error(error).into_response())?;
             return Ok(StatusCode::NO_CONTENT);
+        }
+        Err(rustshare_core::services::FileError::PermissionDenied { .. }) => {
+            // Keep the mapping retryable: this response must not acknowledge
+            // forget while the target may still be active. Do not expose why
+            // the Files resource is inaccessible.
+            return Err(AppError::not_found("Import not found").into_response());
         }
         Err(error) => return Err(AppError::from(error).into_response()),
     };
