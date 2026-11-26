@@ -102,13 +102,16 @@ test('institutional Calendar journey preserves linked context and denies unavail
 		// A separate granted administrator can manage membership; the ordinary member cannot.
 		const groupList = await orgApiB.get('/api/v1/organization-admin/groups');
 		expect(groupList.ok()).toBeTruthy();
-		for (const principal of [orgAdminB, ordinary]) {
-			const added = await orgApiB.post(`/api/v1/organization-admin/groups/${group.id}/members`, {
-				headers: orgHeadersB,
-				data: { user_id: principal.id }
-			});
-			expect(added.status()).toBe(204);
-		}
+		const secondAdminAdded = await orgApiA.post(
+			`/api/v1/organization-admin/groups/${group.id}/members`,
+			{ headers: orgHeadersA, data: { user_id: orgAdminB.id } }
+		);
+		expect(secondAdminAdded.status()).toBe(204);
+		const memberAdded = await orgApiB.post(
+			`/api/v1/organization-admin/groups/${group.id}/members`,
+			{ headers: orgHeadersB, data: { user_id: ordinary.id } }
+		);
+		expect(memberAdded.status()).toBe(204);
 		const deniedManagement = await memberApi.get('/api/v1/organization-admin/groups');
 		expect(deniedManagement.status()).toBe(403);
 
