@@ -1,6 +1,6 @@
 # H3 product decision records — updated 2026-11-26
 
-Source snapshot: protected main `a4d45723f6d63b4b478ce08b449e03354cb26e49`. PR #573 merged a test synchronization fix after pilot candidate `b3f64684`; the existing disposable-pilot evidence remains pinned to its exact tested SHA and is not promoted to `a4`. These decision records summarize current product scope and preserve open owner decisions as non-authorization.
+Source snapshot: protected main `3bd949b6e8f5bd9ea078c0d9e76ebb9194764e2f`. Current-main clean-install and institutional browser evidence is recorded separately from PR-head qualification; all candidate evidence remains pinned to its tested SHA. These decision records summarize current product scope and preserve open owner decisions as non-authorization.
 
 ## #325 Mail persistence
 
@@ -17,13 +17,13 @@ Owner decision required: whether optional import/archive is in scope, which mess
 
 Current mainline has owner-scoped single-event export and bounded `.ics` import, but full interoperability is incomplete. Recurrence and timezone round-trip for supported cases and stable-UID duplicate behavior remain to be qualified. Permission-aware, revocable subscription/feed acceptance is deferred pending end-to-end secret-redaction evidence, and the CalDAV feasibility decision remains open. Unsupported recurrence overrides/custom zones must fail closed rather than silently change event meaning. Native Apple/Outlook/Google client acceptance and live Google/Microsoft provider sync (#507) remain separate gates requiring operator credentials.
 
-**Recommendation:** retain the current bounded iCalendar contract for the pilot; defer full CalDAV and provider-specific live sync until named clients, recurring-event semantics, secret-redaction evidence and operator test accounts are available. Keep #329 and #507 open.
+**Recommendation:** retain the current bounded iCalendar contract for the pilot; defer full CalDAV and provider-specific live sync until named clients, recurring-event semantics, secret-redaction evidence and operator test accounts are available. PR #580 now wires the existing import/export browser test into Pilot Release, but its exact-head run remains queued; the Calendar import browser gate has not yet passed in that workflow. Keep #329 and #507 open.
 
 ## #330 Organization administration
 
 Mainline has organization-admin user/group workflows, audit paths, capability checks, and tenant-scoped group operations. Independent workspace membership and effective-role-path visibility are not implemented; ADR-0040 defers a second membership model. Existing resource authorization remains authoritative.
 
-Disposable browser evidence on PR #569 candidate `c613cc7b368d0c61d9bef99c053ce3e3c7071f2f` now passes the approximately 100-user admin journey: 100 synthetic users, two organization-admin grants, ordinary-user 403, 50+50 pagination, search/offboarding, audit attribution and cleanup safeguards ([candidate evidence](../pilot/evidence/candidate-c613cc7b-disposable-pilot-2026-11-26.md)). This establishes the candidate-specific UI scale subgate only; it does not establish independent administrator recovery, group-membership revocation through resource/search authorization, or FWS operational acceptance.
+The refreshed PR #569 head `7d1926aee99f142bdb2f6c85fc994b8b6603e8c9` passed the approximately 100-user/two-admin Pilot Release journey in run [45753851378](https://github.com/kubedoio/rustshare/actions/runs/45753851378): 100 synthetic users, two admins performing independent actions with actor audit assertions, ordinary-user denial, pagination, search/offboarding and cleanup safeguards ([candidate evidence](../pilot/evidence/candidate-7d1926ae-pr569-disposable-pilot-2026-11-26.md)). This establishes the PR-head UI scale subgate only; required CI and independent review remain pending. It does not establish independent administrator recovery, group-membership revocation through resource/search authorization, or FWS operational acceptance.
 
 **Recommendation:** pilot only the current tenant-admin, group and ordinary-member boundaries. Do not add workspace membership or new role semantics without an owner decision on how they compose with resource permissions. Keep #330 open for the owner decision on workspace-membership scope and for the outstanding revocation/effective-role and target-environment acceptance; the disposable 100-user browser journey is recorded as passed, not as institutional operational acceptance.
 
