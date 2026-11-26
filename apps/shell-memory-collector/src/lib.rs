@@ -378,6 +378,14 @@ impl Queue {
             {
                 bail!("queued source revision conflicts with imported mapping")
             }
+            (Some(_), None) => {
+                tx.execute(
+                    "DELETE FROM shell_events WHERE id=?1 AND instance_id=?2",
+                    params![id.to_string(), instance_id.to_string()],
+                )?;
+                tx.commit()?;
+                return Ok(None);
+            }
             (Some(values), _) => values,
             (None, Some((revision, created_at, session_id, _))) => {
                 (revision, created_at, session_id)
@@ -453,9 +461,8 @@ impl Queue {
         let mut count = 0;
         for id in ids {
             let id = Uuid::parse_str(&id)?;
-            if self.request_forget(instance_id, id)?.is_some() {
-                count += 1;
-            }
+            self.request_forget(instance_id, id)?;
+            count += 1;
         }
         Ok(count)
     }
@@ -955,7 +962,7 @@ mod tests {
     }
 
     #[test]
-    fn forget_session_marks_queued_records_and_erases_their_content() -> Result<()> {
+    fn forget_session_deletes_queued_records_without_remote_forgets() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("queue.sqlite3");
         let instance_id = Uuid::new_v4();
@@ -972,7 +979,14 @@ mod tests {
         queue.record(instance_id, other, &[])?;
         assert_eq!(queue.request_forget_session(instance_id, session_id)?, 2);
         assert_eq!(queue.pending(instance_id, 10)?.len(), 1);
-        assert_eq!(queue.pending_forgets(instance_id, 10)?.len(), 2);
+        assert!(queue.pending_forgets(instance_id, 10)?.is_empty());
+        let bytes = fs::read(&path)?;
+        assert!(!bytes
+            .windows(b"synthetic-session-one".len())
+            .any(|window| window == b"synthetic-session-one"));
+        assert!(!bytes
+            .windows(b"synthetic-session-two".len())
+            .any(|window| window == b"synthetic-session-two"));
         Ok(())
     }
 

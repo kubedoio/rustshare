@@ -1126,6 +1126,8 @@ mod tests {
         };
         assert!(queue.record(instance_id, input, &[])?);
         let event = queue.pending(instance_id, 1)?.remove(0);
+        queue.remember_import(instance_id, &event)?;
+        queue.acknowledge(event.id)?;
         queue.request_forget(instance_id, event.id)?;
         let source_ref = format!(
             "elembra://io.elembra.connector.shell-memory/file/{}",
@@ -1193,6 +1195,9 @@ mod tests {
                 },
                 &[],
             )?);
+            let event = queue.pending(instance_id, 1)?.remove(0);
+            queue.remember_import(instance_id, &event)?;
+            queue.acknowledge(event.id)?;
         }
         assert_eq!(
             queue.request_forget_session(instance_id, session_id)?,
