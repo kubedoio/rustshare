@@ -778,6 +778,24 @@ mod tests {
             service.verify_and_ingest(&oversized, "").await,
             Err(BuzzPushError::Malformed(_))
         ));
+        let at_limit = vec![0; MAX_BUZZ_EVENT_REQUEST_BYTES];
+        assert!(matches!(
+            service.verify_and_ingest(&at_limit, "").await,
+            Err(BuzzPushError::Unauthorized)
+        ));
+    }
+
+    #[test]
+    fn buzz_event_push_rejects_unknown_envelope_fields() {
+        let (_, event) = signed_text_note("hello buzz");
+        let original = push(&event, &event.id.to_hex(), ObservedEventType::Created);
+        let mut value = serde_json::to_value(&original).unwrap();
+        value["unexpected"] = serde_json::json!("field");
+        assert!(serde_json::from_value::<BuzzEventPush>(value).is_err());
+
+        let mut value = serde_json::to_value(original).unwrap();
+        value["context"]["unexpected"] = serde_json::json!("field");
+        assert!(serde_json::from_value::<BuzzEventPush>(value).is_err());
     }
 
     #[test]
