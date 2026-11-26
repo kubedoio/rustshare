@@ -1,6 +1,6 @@
 # H4 Chat authority decision
 
-**Snapshot:** Elembra protected `main` `d6bcbc9d4e4e5aebc6449b2b47267b267c3cf2e2`; RustChat `main` `b195719d40212fbfba227ce9266ac2420572860c`, verified 2026-11-26. Since b9, main only added the terms-independent invitation-test fixture in #588; the Buzz compatibility pin and deployment flags are unchanged. This record summarizes the architecture decision and gates. It is not deployment inventory, security acceptance, or migration authorization. See [the detailed retain/migrate/drop comparison](chat-retain-migrate-drop.md).
+**Snapshot:** Elembra protected `main` `99d289a18a1d8e9384528f7e1205d9eb22d20e03`; RustChat `main` `b195719d40212fbfba227ce9266ac2420572860c`, verified 2026-11-26. Since b9, main added the invitation-test fixture in #588 and bounded brainstorming-source parsing in #570. The #570 change does not alter the Buzz compatibility pin or deployment flags; current-main CodeQL revalidation is still in progress. This record summarizes the architecture decision and gates. It is not deployment inventory, security acceptance, or migration authorization. See [the detailed retain/migrate/drop comparison](chat-retain-migrate-drop.md).
 
 ## Decision
 
