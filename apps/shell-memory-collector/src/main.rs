@@ -39,6 +39,7 @@ enum Command {
     Hook {
         shell: String,
     },
+    SessionId,
     StoreCredential,
     Record,
     Run,
@@ -47,6 +48,12 @@ enum Command {
     Disable,
     Enable,
     Forget,
+    List,
+    ForgetLast,
+    ForgetSelected {
+        ids: Vec<Uuid>,
+    },
+    ForgetSession,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +81,13 @@ struct ImportResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ForgetRequest<'a> {
+    source_resource_ref: String,
+    source_revision: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ImportMetadata<'a> {
     lease_id: Uuid,
     fence: i64,
@@ -94,6 +108,10 @@ struct Checkpoint {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if matches!(&args.command, Command::SessionId) {
+        println!("{}", Uuid::new_v4());
+        return Ok(());
+    }
     let config_path = config_path(args.config)?;
     match args.command {
         Command::InitConfig {
@@ -107,6 +125,7 @@ async fn main() -> Result<()> {
             print!("{}", include_str!("../shell/elembra-shell-memory.zsh"));
             Ok(())
         }
+        Command::SessionId => unreachable!("handled before configuration loading"),
         Command::StoreCredential => store_credential(&config_path),
         Command::Record => record(&config_path),
         Command::Run => run(&config_path).await,
@@ -115,6 +134,10 @@ async fn main() -> Result<()> {
         Command::Disable => set_control(&config_path, Control::Disable, true),
         Command::Enable => set_control(&config_path, Control::Disable, false),
         Command::Forget => forget(&config_path),
+        Command::List => list(&config_path),
+        Command::ForgetLast => forget_last(&config_path).await,
+        Command::ForgetSelected { ids } => forget_selected(&config_path, ids).await,
+        Command::ForgetSession => forget_session(&config_path).await,
     }
 }
 
@@ -166,8 +189,8 @@ fn record(config_path: &PathBuf) -> Result<()> {
         .split(|byte| *byte == 0)
         .filter(|field| !field.is_empty())
         .collect::<Vec<_>>();
-    if fields.len() != 5 {
-        bail!("record input must contain five NUL-delimited fields");
+    if !matches!(fields.len(), 5 | 6) {
+        bail!("record input must contain five metadata fields and an optional session ID");
     }
     let input = RecordInput {
         command: std::str::from_utf8(fields[0])?.to_owned(),
@@ -179,6 +202,10 @@ fn record(config_path: &PathBuf) -> Result<()> {
         duration_ms: std::str::from_utf8(fields[4])?
             .parse()
             .context("invalid command duration")?,
+        session_id: fields
+            .get(5)
+            .and_then(|field| std::str::from_utf8(field).ok())
+            .and_then(|id| Uuid::parse_str(id).ok()),
     };
     record_if_enabled(
         &config.queue,
@@ -260,18 +287,26 @@ where
     F: FnOnce() -> Result<String>,
 {
     let _upload_lock = UploadLock::acquire(&config.queue)?;
-    let events = {
+    let (events, pending_forgets, disabled) = {
         let _queue_lock = QueueLock::acquire(&config.queue)?;
-        if Queue::is_disabled(&config.queue)? {
-            return Ok(UploadRound::Disabled);
-        }
+        let disabled = Queue::is_disabled(&config.queue)?;
         let queue = Queue::open(&config.queue)?;
-        if queue.paused() {
+        let forgets = queue.pending_forgets(config.instance_id, EVENTS_PER_UPLOAD_ROUND)?;
+        let events = if !forgets.is_empty() || queue.paused() || disabled {
             Vec::new()
         } else {
             queue.pending(config.instance_id, EVENTS_PER_UPLOAD_ROUND)?
-        }
+        };
+        (events, forgets, disabled)
     };
+    if !pending_forgets.is_empty() {
+        let credential = credential()?;
+        sync_forgets(client, config, &credential, &pending_forgets).await?;
+        return Ok(UploadRound::Completed);
+    }
+    if disabled {
+        return Ok(UploadRound::Disabled);
+    }
     if events.is_empty() {
         return Ok(UploadRound::Idle);
     }
@@ -336,7 +371,7 @@ async fn upload_pending(
         })?;
         let form = multipart::Form::new().text("metadata", metadata).part(
             "file",
-            multipart::Part::bytes(event.content)
+            multipart::Part::bytes(event.content.clone())
                 .file_name(format!("{}.md", event.id))
                 .mime_str("text/markdown; charset=utf-8")?,
         );
@@ -367,7 +402,12 @@ async fn upload_pending(
         }
         let imported: ImportResponse = response.json().await?;
         match (imported.forgotten, imported.target_resource_ref) {
-            (true, None) | (false, Some(_)) => completed.push(event.id),
+            (true, None) => completed.push(event.id),
+            (false, Some(_)) => {
+                let _lock = QueueLock::acquire(&config.queue)?;
+                Queue::open(&config.queue)?.remember_import(config.instance_id, &event)?;
+                completed.push(event.id);
+            }
             _ => bail!("Files import response had an invalid forgotten state"),
         }
     }
@@ -400,6 +440,139 @@ async fn upload_pending(
         queue.acknowledge(id)?;
     }
     Ok(stopped.unwrap_or(UploadResult::Completed))
+}
+
+async fn validate_worker_session(
+    client: &reqwest::Client,
+    config: &Config,
+    credential: &str,
+) -> Result<()> {
+    let session: WorkerSession = client
+        .get(format!(
+            "{}/api/v1/connectors/worker/session",
+            config.server
+        ))
+        .header("Authorization", format!("Connector {credential}"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    if session.id != config.instance_id || session.connector_id != CONNECTOR_ID {
+        bail!("credential is not bound to the configured Shell Memory Connector instance");
+    }
+    Ok(())
+}
+
+async fn sync_forgets(
+    client: &reqwest::Client,
+    config: &Config,
+    credential: &str,
+    forgets: &[shell_memory_collector::SourceMapping],
+) -> Result<()> {
+    validate_worker_session(client, config, credential).await?;
+    for mapping in forgets {
+        let source_resource_ref = format!("elembra://{CONNECTOR_ID}/file/{}", mapping.id);
+        let response = client
+            .post(format!(
+                "{}/api/v1/connectors/worker/files/forget",
+                config.server
+            ))
+            .header("Authorization", format!("Connector {credential}"))
+            .json(&ForgetRequest {
+                source_resource_ref,
+                source_revision: &mapping.revision,
+            })
+            .send()
+            .await?;
+        if response.status() != StatusCode::NO_CONTENT {
+            bail!("Connector forget deferred with HTTP {}", response.status());
+        }
+        let _lock = QueueLock::acquire(&config.queue)?;
+        Queue::open(&config.queue)?.acknowledge_forget(config.instance_id, mapping.id)?;
+    }
+    Ok(())
+}
+
+fn list(config_path: &PathBuf) -> Result<()> {
+    let config = load_config(config_path)?;
+    let _lock = QueueLock::acquire(&config.queue)?;
+    let queue = Queue::open(&config.queue)?;
+    for record in queue.list(config.instance_id, 100)? {
+        println!(
+            "{}\t{}\t{}",
+            record.id,
+            record.created_at.to_rfc3339(),
+            if record.uploaded {
+                "uploaded"
+            } else {
+                "queued"
+            }
+        );
+    }
+    Ok(())
+}
+
+async fn forget_last(config_path: &PathBuf) -> Result<()> {
+    let config = load_config(config_path)?;
+    let id = {
+        let _lock = QueueLock::acquire(&config.queue)?;
+        Queue::open(&config.queue)?.last_id(config.instance_id)?
+    };
+    let Some(id) = id else {
+        println!("No local Shell Memory records.");
+        return Ok(());
+    };
+    forget_selected(config_path, vec![id]).await
+}
+
+async fn forget_session(config_path: &PathBuf) -> Result<()> {
+    let session_id = std::env::var("ELEMBRA_SHELL_MEMORY_SESSION_ID")
+        .context("current shell session ID is unavailable; source the zsh hook again")?;
+    let session_id = Uuid::parse_str(&session_id).context("current shell session ID is invalid")?;
+    let config = load_config(config_path)?;
+    let _upload_lock = UploadLock::acquire(&config.queue)?;
+    {
+        let _lock = QueueLock::acquire(&config.queue)?;
+        Queue::open(&config.queue)?.request_forget_session(config.instance_id, session_id)?;
+    }
+    sync_pending_forgets(config_path).await
+}
+
+async fn forget_selected(config_path: &PathBuf, ids: Vec<Uuid>) -> Result<()> {
+    if ids.is_empty() {
+        bail!("provide at least one local record ID");
+    }
+    let config = load_config(config_path)?;
+    let _upload_lock = UploadLock::acquire(&config.queue)?;
+    {
+        let _lock = QueueLock::acquire(&config.queue)?;
+        let queue = Queue::open(&config.queue)?;
+        for id in ids {
+            queue.request_forget(config.instance_id, id)?;
+        }
+    }
+    sync_pending_forgets(config_path).await
+}
+
+async fn sync_pending_forgets(config_path: &PathBuf) -> Result<()> {
+    let config = load_config(config_path)?;
+    let client = reqwest::Client::builder()
+        .redirect(Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    let pending = {
+        let _lock = QueueLock::acquire(&config.queue)?;
+        Queue::open(&config.queue)?.pending_forgets(config.instance_id, 100)?
+    };
+    if pending.is_empty() {
+        println!("No remote Shell Memory forgets are pending.");
+        return Ok(());
+    }
+    let credential = read_keyring_credential(config.instance_id)?;
+    sync_forgets(&client, &config, &credential, &pending).await?;
+    println!("Forgot {} Shell Memory record(s).", pending.len());
+    Ok(())
 }
 
 async fn report_failure(
@@ -530,8 +703,8 @@ fn normalize_server(server: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        failure_category, forget_queue, normalize_server, set_control, upload_pending,
-        upload_round, Control, UploadResult, UploadRound,
+        failure_category, forget_queue, normalize_server, set_control, sync_forgets,
+        upload_pending, upload_round, Control, UploadResult, UploadRound,
     };
     use anyhow::Result;
     use reqwest::StatusCode;
@@ -711,6 +884,113 @@ mod tests {
         }
     }
 
+    async fn fake_forget_server(
+        listener: TcpListener,
+        instance_id: Uuid,
+        source_ref: String,
+        revision: String,
+    ) -> std::io::Result<()> {
+        for attempt in 0..2 {
+            let (mut stream, _) = listener.accept().await?;
+            let (request, _headers, _body) = read_request(&mut stream).await?;
+            let path = request.split_whitespace().nth(1).unwrap_or_default();
+            if path == "/api/v1/connectors/worker/session" {
+                let response = serde_json::json!({ "id": instance_id, "connectorId": "io.elembra.connector.shell-memory" });
+                respond(
+                    &mut stream,
+                    "200 OK",
+                    response.to_string().as_bytes(),
+                    "application/json",
+                )
+                .await;
+                let (mut stream, _) = listener.accept().await?;
+                let (request, headers, body) = read_request(&mut stream).await?;
+                assert!(request.starts_with("POST /api/v1/connectors/worker/files/forget "));
+                assert!(headers
+                    .to_ascii_lowercase()
+                    .contains("authorization: connector ecw1_synthetic"));
+                let payload: serde_json::Value =
+                    serde_json::from_slice(&body).map_err(std::io::Error::other)?;
+                assert_eq!(payload["sourceRevision"].as_str(), Some(revision.as_str()));
+                assert_eq!(
+                    payload["sourceResourceRef"].as_str(),
+                    Some(source_ref.as_str())
+                );
+                let (status, response) = if attempt == 0 {
+                    ("503 Service Unavailable", b"{}".as_slice())
+                } else {
+                    ("204 No Content", b"".as_slice())
+                };
+                respond(&mut stream, status, response, "application/json").await;
+            } else {
+                return Err(std::io::Error::other(format!("unexpected request: {path}")));
+            }
+        }
+        Ok(())
+    }
+
+    async fn fake_forgotten_import_server(
+        listener: TcpListener,
+        instance_id: Uuid,
+    ) -> std::io::Result<()> {
+        let lease_id = Uuid::new_v4();
+        for expected_path in [
+            "/api/v1/connectors/worker/session",
+            "/api/v1/connectors/worker/lease",
+            "/api/v1/connectors/worker/files/import",
+        ] {
+            let (mut stream, _) = listener.accept().await?;
+            let (request, _, body) = read_request(&mut stream).await?;
+            assert!(
+                request.starts_with(&format!("POST {expected_path} "))
+                    || request.starts_with(&format!("GET {expected_path} "))
+            );
+            match expected_path {
+                "/api/v1/connectors/worker/session" => {
+                    let response = serde_json::json!({ "id": instance_id, "connectorId": "io.elembra.connector.shell-memory" });
+                    respond(
+                        &mut stream,
+                        "200 OK",
+                        response.to_string().as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+                "/api/v1/connectors/worker/lease" => {
+                    let response = serde_json::json!({ "leaseId": lease_id, "fence": 3, "checkpointVersion": 0, "expiresAt": chrono::Utc::now() + chrono::Duration::minutes(1), "cursor": null });
+                    respond(
+                        &mut stream,
+                        "200 OK",
+                        response.to_string().as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+                "/api/v1/connectors/worker/files/import" => {
+                    assert!(
+                        String::from_utf8_lossy(&body).contains("echo synthetic-already-forgotten")
+                    );
+                    let response = serde_json::json!({ "targetResourceRef": "elembra://io.elembra.files/file/synthetic", "forgotten": true });
+                    respond(
+                        &mut stream,
+                        "200 OK",
+                        response.to_string().as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+                _ => unreachable!(),
+            }
+        }
+        let (mut stream, _) = listener.accept().await?;
+        let (request, _, _) = read_request(&mut stream).await?;
+        assert!(request.starts_with(&format!(
+            "POST /api/v1/connectors/worker/lease/{lease_id}/ack "
+        )));
+        respond(&mut stream, "204 No Content", b"", "application/json").await;
+        Ok(())
+    }
+
     #[test]
     fn server_url_rejects_credentials_query_fragment_and_path() {
         for server in [
@@ -752,6 +1032,109 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn remote_forget_retries_with_source_identity_and_acknowledges_only_success() -> Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let queue_path = directory.path().join("queue.sqlite3");
+        let instance_id = Uuid::new_v4();
+        let mut queue = Queue::open(&queue_path)?;
+        let input = RecordInput {
+            command: "echo synthetic-forget-retry".into(),
+            cwd: "/tmp/synthetic".into(),
+            host: "synthetic-host".into(),
+            exit_code: 0,
+            duration_ms: 1,
+            session_id: None,
+        };
+        assert!(queue.record(instance_id, input, &[])?);
+        let event = queue.pending(instance_id, 1)?.remove(0);
+        queue.request_forget(instance_id, event.id)?;
+        let source_ref = format!(
+            "elembra://io.elembra.connector.shell-memory/file/{}",
+            event.id
+        );
+        let revision = event.revision;
+        drop(queue);
+        assert!(Queue::open(&queue_path)?
+            .pending(instance_id, 1)?
+            .is_empty());
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let config = Config {
+            server: format!("http://{}", listener.local_addr()?),
+            instance_id,
+            queue: queue_path.clone(),
+            exclude_commands: vec![],
+        };
+        let server = tokio::spawn(fake_forget_server(
+            listener,
+            instance_id,
+            source_ref,
+            revision,
+        ));
+        let client = reqwest::Client::new();
+        let credential = "ecw1_synthetic";
+        let pending = Queue::open(&queue_path)?.pending_forgets(instance_id, 10)?;
+        assert!(sync_forgets(&client, &config, credential, &pending)
+            .await
+            .is_err());
+        assert_eq!(
+            Queue::open(&queue_path)?
+                .pending_forgets(instance_id, 10)?
+                .len(),
+            1
+        );
+        let pending = Queue::open(&queue_path)?.pending_forgets(instance_id, 10)?;
+        sync_forgets(&client, &config, credential, &pending).await?;
+        assert!(Queue::open(&queue_path)?
+            .pending_forgets(instance_id, 10)?
+            .is_empty());
+        server.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forgotten_import_replay_is_acknowledged_without_retaining_a_mapping() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let queue_path = directory.path().join("queue.sqlite3");
+        let instance_id = Uuid::new_v4();
+        assert!(record_if_enabled(
+            &queue_path,
+            instance_id,
+            RecordInput {
+                command: "echo synthetic-already-forgotten".into(),
+                cwd: "/tmp/synthetic".into(),
+                host: "synthetic-host".into(),
+                exit_code: 0,
+                duration_ms: 1,
+                session_id: None,
+            },
+            &[],
+        )?);
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let config = Config {
+            server: format!("http://{}", listener.local_addr()?),
+            instance_id,
+            queue: queue_path.clone(),
+            exclude_commands: vec![],
+        };
+        let server = tokio::spawn(fake_forgotten_import_server(listener, instance_id));
+        assert_eq!(
+            upload_round(&reqwest::Client::new(), &config, || {
+                Ok("ecw1_synthetic".into())
+            })
+            .await?,
+            UploadRound::Completed
+        );
+        server.await??;
+        let queue = Queue::open(&queue_path)?;
+        assert!(queue.pending(instance_id, 10)?.is_empty());
+        assert!(queue.list(instance_id, 10)?.is_empty());
+        assert!(queue.pending_forgets(instance_id, 10)?.is_empty());
+        Ok(())
+    }
+
     #[test]
     fn no_lease_uses_backoff() {
         assert_eq!(UploadRound::NoLease.next_delay(), Duration::from_secs(15));
@@ -781,6 +1164,7 @@ mod tests {
                 host: "synthetic-host".into(),
                 exit_code: 0,
                 duration_ms: 1,
+                session_id: None,
             },
             &[]
         )?);
@@ -910,6 +1294,7 @@ mod tests {
                 host: "synthetic-host".into(),
                 exit_code: 0,
                 duration_ms: 1,
+                session_id: None,
             },
             &[]
         )?);
@@ -922,6 +1307,7 @@ mod tests {
                 host: "synthetic-host".into(),
                 exit_code: 0,
                 duration_ms: 1,
+                session_id: None,
             },
             &[]
         )?);
@@ -968,6 +1354,7 @@ mod tests {
                     host: "synthetic-host".into(),
                     exit_code: 0,
                     duration_ms: 2,
+                    session_id: None,
                 },
                 &[],
             )
@@ -1018,6 +1405,7 @@ mod tests {
                 host: "synthetic-host".into(),
                 exit_code: 0,
                 duration_ms: 3,
+                session_id: None,
             },
             &[]
         )?);
