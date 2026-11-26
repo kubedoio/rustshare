@@ -903,8 +903,12 @@ impl<'de> Deserialize<'de> for IgnoredArray {
 fn parse_board_source(source: &str) -> Result<(), BrainstormError> {
     check_board_source_size(source)?;
     check_board_source_json_depth(source)?;
-    let parsed: BoardSourceEnvelope =
-        serde_json::from_str(source).map_err(|e| BrainstormError::InvalidData(e.to_string()))?;
+    let mut deserializer = serde_json::Deserializer::from_str(source);
+    let parsed = BoardSourceEnvelope::deserialize(&mut deserializer)
+        .map_err(|error| BrainstormError::InvalidData(error.to_string()))?;
+    deserializer
+        .end()
+        .map_err(|error| BrainstormError::InvalidData(error.to_string()))?;
 
     if parsed.source_type.as_deref() != Some("excalidraw") {
         tracing::info!("save_board_source: validation failed - missing type field");
@@ -1047,6 +1051,7 @@ mod tests {
     fn board_source_parser_rejects_non_array_elements_and_malformed_json() {
         let non_array = parse_board_source(r#"{"type":"excalidraw","elements":{}}"#);
         let malformed = parse_board_source(r#"{"type":"excalidraw","elements":[}"#);
+        let trailing_json = parse_board_source(r#"{"type":"excalidraw","elements":[]}{}"#);
         let duplicate_type =
             parse_board_source(r#"{"type":null,"type":"excalidraw","elements":[]}"#);
         let duplicate_elements =
@@ -1054,6 +1059,10 @@ mod tests {
 
         assert!(matches!(non_array, Err(BrainstormError::InvalidData(_))));
         assert!(matches!(malformed, Err(BrainstormError::InvalidData(_))));
+        assert!(matches!(
+            trailing_json,
+            Err(BrainstormError::InvalidData(_))
+        ));
         assert!(matches!(
             duplicate_type,
             Err(BrainstormError::InvalidData(_))
