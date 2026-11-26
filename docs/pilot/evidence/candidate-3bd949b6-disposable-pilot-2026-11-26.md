@@ -22,6 +22,6 @@
 ## Limits
 
 - `UPGRADE_STATUS=not_applicable` because this run establishes the first clean-install baseline. Installed upgrade and rollback are not qualified by this run; PR #567's exact-head Pilot Release dispatch is recorded separately and still needs to complete.
-- This run did not execute the separate 100-user/two-independent-admin journey. PR #569's refreshed two-admin run is separate and still in progress.
+- This run did not execute the separate 100-user/two-independent-admin journey. PR #569's refreshed run completed successfully on its own head; see [candidate-specific evidence](candidate-7d1926ae-pr569-disposable-pilot-2026-11-26.md).
 - This run does not qualify the #580 Calendar Settings import/export gate, connected Windows/macOS Local Text acceptance, or any FWS operator gate.
 - The workflow readiness decision is `NOT_READY_UNTIL_TARGET_ENVIRONMENT_ACCEPTANCE`. Keep the FWS pilot **NO-GO** until the operator-owned acceptance is recorded.

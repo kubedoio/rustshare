@@ -1,6 +1,6 @@
 # Pilot evidence
 
-The latest exact protected-main disposable candidate is [candidate 3bd949b6](candidate-3bd949b6-disposable-pilot-2026-11-26.md), tied to Pilot Release run 45752680910 on `3bd949b6e8f5bd9ea078c0d9e76ebb9194764e2f`. It passed clean install, three browser journeys, backup and fresh-volume restore. Publication was skipped. Installed upgrade/rollback, the separate 100-user two-admin journey, and FWS acceptance remain unqualified.
+The latest exact protected-main disposable candidate is [candidate 3bd949b6](candidate-3bd949b6-disposable-pilot-2026-11-26.md), tied to Pilot Release run 45752680910 on `3bd949b6e8f5bd9ea078c0d9e76ebb9194764e2f`. It passed clean install, three browser journeys, backup and fresh-volume restore. Publication was skipped. Installed upgrade/rollback and FWS acceptance remain unqualified. The separate 100-user/two-admin journey passed on PR #569 head `7d1926ae`; see [its candidate evidence](candidate-7d1926ae-pr569-disposable-pilot-2026-11-26.md), which is not current-main evidence.
 
 The latest exact-candidate disposable Pilot Release run is [candidate c613cc7b](candidate-c613cc7b-disposable-pilot-2026-11-26.md), tied to PR #569 head `c613cc7b368d0c61d9bef99c053ce3e3c7071f2f` and run 45746539135. It passed clean install, the four browser journeys including 100-user administration, backup, and isolated restore. Installed upgrade/rollback remains unqualified for this first-clean-install baseline; FWS/operator acceptance remains outstanding. Image publication was skipped.
 
