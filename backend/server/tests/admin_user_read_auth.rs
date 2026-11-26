@@ -107,6 +107,15 @@ async fn admin_user_reads_require_installation_admin_and_preserve_system_scope()
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(
+        "DELETE FROM admin_actions WHERE tenant_id = $1 AND action_type = 'organization_admin.bootstrap' AND target_id = $2 AND detail->>'grant_id' = $3",
+    )
+    .bind(admin_tenant)
+    .bind(organization_admin)
+    .bind(grant_id.to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("DELETE FROM users WHERE id = ANY($1)")
         .bind(vec![
             organization_admin,
