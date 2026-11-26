@@ -121,7 +121,7 @@ pub async fn tenant_page(
         return error(StatusCode::BAD_REQUEST).into_response();
     }
     let result = async {
-        let rows: Vec<Uuid> = sqlx::query_scalar("SELECT DISTINCT tenant_id FROM connector_external_mappings WHERE ($1::uuid IS NULL OR tenant_id > $1) ORDER BY tenant_id LIMIT $2")
+        let rows: Vec<Uuid> = sqlx::query_scalar("SELECT DISTINCT tenant_id FROM connector_external_mappings WHERE forgotten_at IS NULL AND ($1::uuid IS NULL OR tenant_id > $1) ORDER BY tenant_id LIMIT $2")
             .bind(request.after).bind(i64::from(request.limit) + 1).fetch_all(&state.db_pool).await?;
         let more = rows.len() > request.limit as usize;
         let tenant_ids: Vec<_> = rows.into_iter().take(request.limit as usize).collect();
@@ -188,7 +188,7 @@ async fn resolve_source_page(
         .fetch_one(&state.db_pool)
         .await?;
     let ids: Vec<Uuid> = sqlx::query_scalar(
-        "WITH mapped AS (SELECT CASE WHEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1)::uuid END AS file_id FROM connector_external_mappings WHERE tenant_id=$1) SELECT DISTINCT file_id FROM mapped WHERE file_id IS NOT NULL AND ($2::uuid IS NULL OR file_id > $2) ORDER BY file_id LIMIT $3")
+        "WITH mapped AS (SELECT CASE WHEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1)::uuid END AS file_id FROM connector_external_mappings WHERE tenant_id=$1 AND forgotten_at IS NULL) SELECT DISTINCT file_id FROM mapped WHERE file_id IS NOT NULL AND ($2::uuid IS NULL OR file_id > $2) ORDER BY file_id LIMIT $3")
         .bind(request.tenant_id).bind(request.after_file_id).bind(i64::from(request.limit) + 1).fetch_all(&state.db_pool).await?;
     let more = ids.len() > request.limit as usize;
     let page_ids: Vec<_> = ids.into_iter().take(request.limit as usize).collect();

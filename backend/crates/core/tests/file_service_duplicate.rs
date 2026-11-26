@@ -169,6 +169,19 @@ impl FileMetadataStoreOps for MockMetadataStore {
         unreachable!()
     }
 
+    async fn delete_file_if_unchanged_in_tx(
+        &self,
+        _tx: &mut Self::Tx,
+        _id: Uuid,
+        _owner_id: Uuid,
+        _expected_content_hash: &str,
+        _expected_version: i32,
+        _expected_modified_at: chrono::DateTime<chrono::Utc>,
+        _expected_tenant_id: Uuid,
+    ) -> Result<bool> {
+        unreachable!()
+    }
+
     async fn list_file_versions(
         &self,
         _file_id: Uuid,

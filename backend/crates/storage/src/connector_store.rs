@@ -501,4 +501,90 @@ impl ConnectorStore {
         .fetch_optional(&self.pool)
         .await
     }
+
+    pub async fn mapping_forgotten(
+        &self,
+        tenant_id: Uuid,
+        instance_id: Uuid,
+        external_resource_ref: &str,
+        external_revision: &str,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar(
+            r#"SELECT forgotten_at IS NOT NULL FROM connector_external_mappings
+               WHERE tenant_id = $1 AND instance_id = $2
+                 AND external_resource_ref = $3 AND external_revision = $4"#,
+        )
+        .bind(tenant_id)
+        .bind(instance_id)
+        .bind(external_resource_ref)
+        .bind(external_revision)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|forgotten| forgotten.unwrap_or(false))
+    }
+
+    pub async fn mapping_forget_requested_at(
+        &self,
+        tenant_id: Uuid,
+        instance_id: Uuid,
+        external_resource_ref: &str,
+        external_revision: &str,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, sqlx::Error> {
+        sqlx::query_scalar(
+            r#"SELECT forget_requested_at FROM connector_external_mappings
+               WHERE tenant_id = $1 AND instance_id = $2
+                 AND external_resource_ref = $3 AND external_revision = $4"#,
+        )
+        .bind(tenant_id)
+        .bind(instance_id)
+        .bind(external_resource_ref)
+        .bind(external_revision)
+        .fetch_optional(&self.pool)
+        .await
+        .map(Option::flatten)
+    }
+
+    pub async fn mark_mapping_forgotten(
+        &self,
+        tenant_id: Uuid,
+        instance_id: Uuid,
+        external_resource_ref: &str,
+        external_revision: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"UPDATE connector_external_mappings SET forgotten_at = COALESCE(forgotten_at, now())
+               WHERE tenant_id = $1 AND instance_id = $2
+                 AND external_resource_ref = $3 AND external_revision = $4"#,
+        )
+        .bind(tenant_id)
+        .bind(instance_id)
+        .bind(external_resource_ref)
+        .bind(external_revision)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn request_mapping_forget(
+        &self,
+        tenant_id: Uuid,
+        instance_id: Uuid,
+        external_resource_ref: &str,
+        external_revision: &str,
+        requested_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"UPDATE connector_external_mappings SET forget_requested_at = COALESCE(forget_requested_at, $5)
+               WHERE tenant_id = $1 AND instance_id = $2
+                 AND external_resource_ref = $3 AND external_revision = $4"#,
+        )
+        .bind(tenant_id)
+        .bind(instance_id)
+        .bind(external_resource_ref)
+        .bind(external_revision)
+        .bind(requested_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
 }

@@ -3000,6 +3000,34 @@ impl MetadataStore {
         Ok(())
     }
 
+    pub async fn delete_file_if_unchanged_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        id: Uuid,
+        owner_id: Uuid,
+        expected_content_hash: &str,
+        expected_version: i32,
+        expected_modified_at: chrono::DateTime<chrono::Utc>,
+        expected_tenant_id: Uuid,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"UPDATE files
+               SET deleted_at = NOW(), starred_at = NULL
+               WHERE id = $1 AND owner_id = $2 AND content_hash = $3
+                 AND current_version = $4 AND modified_at = $5 AND tenant_id = $6
+                 AND deleted_at IS NULL"#,
+        )
+        .bind(id)
+        .bind(owner_id)
+        .bind(expected_content_hash)
+        .bind(expected_version)
+        .bind(expected_modified_at)
+        .bind(expected_tenant_id)
+        .execute(&mut **tx)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     /// Delete a file from the projection table
     pub async fn delete_file(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
         let mut tx = self.pool.begin().await?;
@@ -3248,7 +3276,8 @@ impl MetadataStore {
         let result = sqlx::query!(
             r#"
             UPDATE files
-            SET deleted_at = NULL, parent_folder_id = $2, path = $3
+            SET deleted_at = NULL, parent_folder_id = $2, path = $3,
+                modified_at = GREATEST(NOW(), modified_at + INTERVAL '1 microsecond')
             WHERE id = $1 AND owner_id = $4 AND tenant_id = $5 AND deleted_at IS NOT NULL
             "#,
             id,
@@ -4435,7 +4464,8 @@ impl MetadataStore {
             r#"
             UPDATE files
             SET deleted_at = NULL,
-                path = $2 || substr(path, length($3) + 1)
+                path = $2 || substr(path, length($3) + 1),
+                modified_at = GREATEST(NOW(), modified_at + INTERVAL '1 microsecond')
             WHERE owner_id = $1
               AND tenant_id = $4
               AND path LIKE $5
@@ -8495,6 +8525,28 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStore {
         owner_id: uuid::Uuid,
     ) -> anyhow::Result<()> {
         self.delete_file_in_tx(tx, id, owner_id).await
+    }
+
+    async fn delete_file_if_unchanged_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+        expected_content_hash: &str,
+        expected_version: i32,
+        expected_modified_at: chrono::DateTime<chrono::Utc>,
+        expected_tenant_id: uuid::Uuid,
+    ) -> anyhow::Result<bool> {
+        self.delete_file_if_unchanged_in_tx(
+            tx,
+            id,
+            owner_id,
+            expected_content_hash,
+            expected_version,
+            expected_modified_at,
+            expected_tenant_id,
+        )
+        .await
     }
 
     async fn list_file_versions(

@@ -292,6 +292,7 @@ impl MemoryFilesCatalogStore {
             "SELECT instance_id, external_resource_ref, external_revision, relative_path, source_observed_modified_at, clock_timestamp() \
              FROM connector_external_mappings \
              WHERE tenant_id=$1 \
+               AND forgotten_at IS NULL \
                AND split_part(split_part(target_resource_ref, '/file/', 2), '?', 1)=$2 \
              ORDER BY observed_at DESC LIMIT 1",
         )

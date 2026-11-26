@@ -322,6 +322,19 @@ impl rustshare_core::services::FileEventStoreOps for EventStore {
     ) -> anyhow::Result<()> {
         self.append_in_tx(tx, event).await
     }
+
+    async fn has_file_lifecycle_event_since(
+        &self,
+        file_id: uuid::Uuid,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<bool> {
+        let events = self
+            .get_events(file_id, rustshare_core::events::AggregateType::File)
+            .await?;
+        Ok(rustshare_core::services::file_lifecycle_event_after(
+            &events, since,
+        ))
+    }
 }
 
 #[allow(async_fn_in_trait)]
