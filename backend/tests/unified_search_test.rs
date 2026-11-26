@@ -3697,6 +3697,32 @@ async fn ask_workspace_records_exact_authorized_files_and_chat_context() {
         serde_json::json!({ "memory_projection": true, "content_indexing": true }),
     )
     .await;
+    let stale_candidates = harness
+        .keyword_indexer
+        .keyword_search_with_acl(
+            &rustshare_core::services::ai::RetrievalPrincipal {
+                tenant_id: tenant.0,
+                workspace_id: Some(tenant.0),
+                user_id: owner.id,
+                group_ids: vec![],
+                min_acl_versions: HashMap::new(),
+            },
+            "plan",
+            8,
+        )
+        .await;
+    assert!(
+        stale_candidates.iter().any(|(candidate, _)| {
+            candidate
+                .acl
+                .as_ref()
+                .is_some_and(|acl| acl.source_file_id == unshared_file.id)
+                && candidate
+                    .content
+                    .contains("UNAUTHORIZED-SAME-TENANT-SECRET")
+        }),
+        "the stale ACL fixture must reach Ask as an unauthorized keyword candidate"
+    );
     let msg_id = message_id(9001);
     insert_chat_message(
         &pool,
