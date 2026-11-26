@@ -13,12 +13,22 @@ use rustshare_core::{
     services::{FileService, FolderService},
 };
 use rustshare_storage::{MetadataStore, ObjectStore};
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{MapAccess, SeqAccess, Visitor},
+    Deserialize, Serialize,
+};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 use uuid::Uuid;
 
 use rustshare_infrastructure::repositories::PermissionResolverRepository;
+
+/// Maximum serialized Excalidraw source accepted for one board.
+///
+/// The source payload can be submitted before board authorization, so the
+/// endpoint and service reject oversized input before allocating the parsed
+/// JSON value.
+pub const MAX_BRAINSTORM_SOURCE_BYTES: usize = 16 * 1024 * 1024;
 
 // ============================================================================
 // Errors
@@ -308,41 +318,21 @@ impl BrainstormingService {
     ) -> Result<BrainstormBoard, BrainstormError> {
         tracing::info!(board_id = %board_id, user_id = %user_id, tenant_id = %tenant_id, source_len = source.len(), "save_board_source: start");
 
-        // Validate Excalidraw JSON structure
-        let parsed: serde_json::Value = serde_json::from_str(&source)
-            .map_err(|e| BrainstormError::InvalidData(e.to_string()))?;
+        // Authorize access before parsing user-provided Excalidraw JSON.
+        let folder = authorize_and_parse_board_source(&source, async {
+            let folder = self
+                .folder_service
+                .get_folder(board_id, user_id)
+                .await
+                .map_err(BrainstormError::from)?;
 
-        if parsed.get("type").and_then(|v| v.as_str()) != Some("excalidraw") {
-            tracing::info!("save_board_source: validation failed - missing type field");
-            return Err(BrainstormError::InvalidData(
-                "Invalid Excalidraw JSON: missing type field".to_string(),
-            ));
-        }
+            if folder.tenant_id != tenant_id {
+                return Err(BrainstormError::PermissionDenied);
+            }
 
-        if !parsed
-            .get("elements")
-            .map(|v| v.is_array())
-            .unwrap_or(false)
-        {
-            tracing::info!("save_board_source: validation failed - missing elements array");
-            return Err(BrainstormError::InvalidData(
-                "Invalid Excalidraw JSON: missing elements array".to_string(),
-            ));
-        }
-
-        tracing::info!(board_id = %board_id, user_id = %user_id, "save_board_source: looking up folder");
-        let folder = self
-            .folder_service
-            .get_folder(board_id, user_id)
-            .await
-            .map_err(|e| {
-                tracing::info!(board_id = %board_id, user_id = %user_id, error = %e, "save_board_source: folder lookup failed");
-                BrainstormError::from(e)
-            })?;
-
-        if folder.tenant_id != tenant_id {
-            return Err(BrainstormError::PermissionDenied);
-        }
+            Ok(folder)
+        })
+        .await?;
 
         tracing::info!(folder_id = %folder.id, folder_path = %folder.path, "save_board_source: folder found");
 
@@ -817,6 +807,188 @@ impl BrainstormingService {
     }
 }
 
+const MAX_BOARD_SOURCE_JSON_DEPTH: usize = 128;
+
+struct BoardSourceEnvelope {
+    source_type: Option<String>,
+    has_elements: bool,
+}
+
+impl<'de> Deserialize<'de> for BoardSourceEnvelope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct EnvelopeVisitor;
+
+        impl<'de> Visitor<'de> for EnvelopeVisitor {
+            type Value = BoardSourceEnvelope;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an Excalidraw object")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut source_type = None;
+                let mut has_type = false;
+                let mut has_elements = false;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "type" => {
+                            if has_type {
+                                return Err(serde::de::Error::duplicate_field("type"));
+                            }
+                            has_type = true;
+                            source_type = map.next_value::<Option<String>>()?;
+                        }
+                        "elements" => {
+                            if has_elements {
+                                return Err(serde::de::Error::duplicate_field("elements"));
+                            }
+                            map.next_value::<IgnoredArray>()?;
+                            has_elements = true;
+                        }
+                        _ => {
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                        }
+                    }
+                }
+
+                Ok(BoardSourceEnvelope {
+                    source_type,
+                    has_elements,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(EnvelopeVisitor)
+    }
+}
+
+/// Validate `elements` as an array while discarding entries without building a
+/// JSON tree. `parse_board_source` checks nesting before invoking Serde.
+struct IgnoredArray;
+
+impl<'de> Deserialize<'de> for IgnoredArray {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ArrayVisitor;
+
+        impl<'de> Visitor<'de> for ArrayVisitor {
+            type Value = IgnoredArray;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an array")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+                Ok(IgnoredArray)
+            }
+        }
+
+        deserializer.deserialize_seq(ArrayVisitor)
+    }
+}
+
+fn parse_board_source(source: &str) -> Result<(), BrainstormError> {
+    check_board_source_size(source)?;
+    check_board_source_json_depth(source)?;
+    let mut deserializer = serde_json::Deserializer::from_str(source);
+    let parsed = BoardSourceEnvelope::deserialize(&mut deserializer)
+        .map_err(|error| BrainstormError::InvalidData(error.to_string()))?;
+    deserializer
+        .end()
+        .map_err(|error| BrainstormError::InvalidData(error.to_string()))?;
+
+    if parsed.source_type.as_deref() != Some("excalidraw") {
+        tracing::info!("save_board_source: validation failed - missing type field");
+        return Err(BrainstormError::InvalidData(
+            "Invalid Excalidraw JSON: missing type field".to_string(),
+        ));
+    }
+
+    if !parsed.has_elements {
+        tracing::info!("save_board_source: validation failed - missing elements array");
+        return Err(BrainstormError::InvalidData(
+            "Invalid Excalidraw JSON: missing elements array".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn check_board_source_json_depth(source: &str) -> Result<(), BrainstormError> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for byte in source.bytes() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                depth += 1;
+                if depth > MAX_BOARD_SOURCE_JSON_DEPTH {
+                    return Err(BrainstormError::InvalidData(
+                        "JSON nesting limit exceeded".to_string(),
+                    ));
+                }
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+async fn authorize_and_parse_board_source(
+    source: &str,
+    authorization: impl Future<Output = Result<Folder, BrainstormError>>,
+) -> Result<Folder, BrainstormError> {
+    let folder = authorization.await.map_err(hide_board_access_error)?;
+    parse_board_source(source)?;
+    Ok(folder)
+}
+
+fn hide_board_access_error(error: BrainstormError) -> BrainstormError {
+    match error {
+        BrainstormError::BoardNotFound | BrainstormError::PermissionDenied => {
+            BrainstormError::BoardNotFound
+        }
+        other => other,
+    }
+}
+
+fn check_board_source_size(source: &str) -> Result<(), BrainstormError> {
+    if source.len() > MAX_BRAINSTORM_SOURCE_BYTES {
+        return Err(BrainstormError::InvalidData(
+            "Excalidraw source exceeds the maximum size".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 // ============================================================================
 // Utilities
 // ============================================================================
@@ -834,6 +1006,113 @@ fn slugify(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn board_source_parser_rejects_oversized_input_before_deserialization() {
+        let source = " ".repeat(MAX_BRAINSTORM_SOURCE_BYTES + 1);
+
+        assert!(matches!(
+            parse_board_source(&source),
+            Err(BrainstormError::InvalidData(message))
+                if message == "Excalidraw source exceeds the maximum size"
+        ));
+    }
+
+    #[test]
+    fn board_source_parser_accepts_valid_excalidraw_with_arbitrary_fields() {
+        let source = r##"{"type":"excalidraw","elements":[{"id":"1","nested":{"items":[1,2,3]}}],"appState":{"viewBackgroundColor":"#ffffff"},"files":{"image":{}}}"##;
+        let escaped_fields =
+            r#"{"ty\u0070e":"excali\u0064raw","elements":[],"extra":{"es\u0063aped":true}}"#;
+
+        assert!(parse_board_source(source).is_ok());
+        assert!(parse_board_source(escaped_fields).is_ok());
+    }
+
+    #[test]
+    fn board_source_parser_rejects_wrong_type_and_missing_elements() {
+        let wrong_type = parse_board_source(r#"{"type":"not-excalidraw","elements":[]}"#);
+        let missing_type = parse_board_source(r#"{"elements":[]}"#);
+        let missing_elements = parse_board_source(r#"{"type":"excalidraw"}"#);
+
+        assert!(matches!(wrong_type, Err(BrainstormError::InvalidData(_))));
+        assert!(matches!(
+            missing_type,
+            Err(BrainstormError::InvalidData(message))
+                if message == "Invalid Excalidraw JSON: missing type field"
+        ));
+        assert!(matches!(
+            missing_elements,
+            Err(BrainstormError::InvalidData(message))
+                if message == "Invalid Excalidraw JSON: missing elements array"
+        ));
+    }
+
+    #[test]
+    fn board_source_parser_rejects_non_array_elements_and_malformed_json() {
+        let non_array = parse_board_source(r#"{"type":"excalidraw","elements":{}}"#);
+        let malformed = parse_board_source(r#"{"type":"excalidraw","elements":[}"#);
+        let trailing_json = parse_board_source(r#"{"type":"excalidraw","elements":[]}{}"#);
+        let duplicate_type =
+            parse_board_source(r#"{"type":null,"type":"excalidraw","elements":[]}"#);
+        let duplicate_elements =
+            parse_board_source(r#"{"type":"excalidraw","elements":[],"elements":[]}"#);
+
+        assert!(matches!(non_array, Err(BrainstormError::InvalidData(_))));
+        assert!(matches!(malformed, Err(BrainstormError::InvalidData(_))));
+        assert!(matches!(
+            trailing_json,
+            Err(BrainstormError::InvalidData(_))
+        ));
+        assert!(matches!(
+            duplicate_type,
+            Err(BrainstormError::InvalidData(_))
+        ));
+        assert!(matches!(
+            duplicate_elements,
+            Err(BrainstormError::InvalidData(_))
+        ));
+    }
+
+    #[test]
+    fn board_source_parser_bounds_depth_and_ignores_brackets_inside_strings() {
+        let within_limit = format!(
+            "{}null{}",
+            "[".repeat(MAX_BOARD_SOURCE_JSON_DEPTH - 1),
+            "]".repeat(MAX_BOARD_SOURCE_JSON_DEPTH - 1)
+        );
+        let at_limit =
+            format!("{{\"type\":\"excalidraw\",\"elements\":[],\"extra\":{within_limit}}}");
+        let escaped_brackets = r#"{"type":"excalidraw","elements":[],"extra":"[[[\"{}]]]"}"#;
+        let over_limit = format!(
+            "{}null{}",
+            "[".repeat(MAX_BOARD_SOURCE_JSON_DEPTH),
+            "]".repeat(MAX_BOARD_SOURCE_JSON_DEPTH)
+        );
+        let too_deep =
+            format!("{{\"type\":\"excalidraw\",\"elements\":[],\"extra\":{over_limit}}}");
+
+        assert!(matches!(parse_board_source(&at_limit), Ok(())));
+        assert!(matches!(parse_board_source(escaped_brackets), Ok(())));
+        assert!(matches!(
+            parse_board_source(&too_deep),
+            Err(BrainstormError::InvalidData(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn unauthorized_board_rejects_before_malformed_source_parsing() {
+        let inaccessible = authorize_and_parse_board_source("not valid JSON", async {
+            Err::<Folder, _>(BrainstormError::PermissionDenied)
+        })
+        .await;
+        let nonexistent = authorize_and_parse_board_source("not valid JSON", async {
+            Err::<Folder, _>(BrainstormError::BoardNotFound)
+        })
+        .await;
+
+        assert!(matches!(inaccessible, Err(BrainstormError::BoardNotFound)));
+        assert!(matches!(nonexistent, Err(BrainstormError::BoardNotFound)));
+    }
 
     #[test]
     fn test_slugify_basic() {
