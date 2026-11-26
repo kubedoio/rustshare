@@ -6,6 +6,22 @@ const noteTitle = process.env.PILOT_NOTE_TITLE ?? '';
 const noteId = process.env.PILOT_NOTE_ID ?? '';
 const fileName = process.env.PILOT_FILE_NAME ?? '';
 
+async function signIn(page: import('@playwright/test').Page, email: string, password: string) {
+	await page.goto('/login');
+	await page.getByLabel('Email').fill(email);
+	await page.getByLabel('Password').fill(password);
+	await page.getByRole('button', { name: 'Sign in with password' }).click();
+	await page.waitForURL('**/files');
+}
+
+async function csrfHeaders(context: import('@playwright/test').BrowserContext) {
+	const csrf = (await context.cookies()).find(
+		(cookie) => cookie.name === 'rustshare_csrf_token'
+	)?.value;
+	expect(csrf).toBeTruthy();
+	return { 'X-Rustshare-Csrf': decodeURIComponent(csrf!) };
+}
+
 test('institutional Calendar journey preserves linked context and denies unavailable content', async ({
 	page,
 	browser
@@ -17,16 +33,8 @@ test('institutional Calendar journey preserves linked context and denies unavail
 	expect(email && password && noteTitle && noteId && fileName).toBeTruthy();
 	const suffix = crypto.randomUUID();
 	const title = `GateA-${suffix}`;
-	await page.goto('/login');
-	await page.getByLabel('Email').fill(email);
-	await page.getByLabel('Password').fill(password);
-	await page.getByRole('button', { name: 'Sign in with password' }).click();
-	await page.waitForURL('**/files');
-	const csrf = (await page.context().cookies()).find(
-		(cookie) => cookie.name === 'rustshare_csrf_token'
-	)?.value;
-	expect(csrf).toBeTruthy();
-	const headers = { 'X-Rustshare-Csrf': decodeURIComponent(csrf!) };
+	await signIn(page, email, password);
+	const headers = await csrfHeaders(page.context());
 	const api = page.context().request;
 	const enabled = await api.post('/api/v1/admin/applications/io.elembra.calendar/enable', {
 		headers
@@ -35,6 +43,115 @@ test('institutional Calendar journey preserves linked context and denies unavail
 	const profileResponse = await api.get('/api/v1/me');
 	expect(profileResponse.ok()).toBeTruthy();
 	const profile = await profileResponse.json();
+
+	// Exercise the production operator bootstrap, tenant grants, and tenant-scoped group APIs.
+	// Each created principal is synthetic and confined to this disposable pilot database.
+	const syntheticPassword = `Pilot-${suffix}!`;
+	const createPrincipal = async (kind: string) => {
+		const response = await api.post('/api/v1/admin/users', {
+			headers,
+			data: {
+				username: `pilot-${kind}-${suffix}`,
+				email: `pilot-${kind}-${suffix}@example.com`,
+				password: syntheticPassword,
+				display_name: `Pilot ${kind} ${suffix}`,
+				is_admin: false
+			}
+		});
+		expect(response.status()).toBe(201);
+		return response.json();
+	};
+	const orgAdminA = await createPrincipal('org-a');
+	const orgAdminB = await createPrincipal('org-b');
+	const ordinary = await createPrincipal('member');
+	for (const principal of [orgAdminA, orgAdminB]) {
+		const granted = await api.post(
+			`/api/v1/admin/organizations/${profile.tenant_id}/administrators/${principal.id}`,
+			{ headers, data: {} }
+		);
+		expect(granted.status()).toBe(201);
+	}
+
+	const orgContextA = await browser.newContext();
+	const orgContextB = await browser.newContext();
+	const memberContext = await browser.newContext();
+	try {
+		const orgPageA = await orgContextA.newPage();
+		const orgPageB = await orgContextB.newPage();
+		const memberPage = await memberContext.newPage();
+		await signIn(orgPageA, orgAdminA.email, syntheticPassword);
+		await signIn(orgPageB, orgAdminB.email, syntheticPassword);
+		await signIn(memberPage, ordinary.email, syntheticPassword);
+		const orgApiA = orgContextA.request;
+		const orgApiB = orgContextB.request;
+		const memberApi = memberContext.request;
+		const orgHeadersA = await csrfHeaders(orgContextA);
+		const orgHeadersB = await csrfHeaders(orgContextB);
+		const groupResponse = await orgApiA.post('/api/v1/organization-admin/groups', {
+			headers: orgHeadersA,
+			data: {
+				name: `Pilot Group ${suffix}`,
+				description: 'Synthetic institutional acceptance group'
+			}
+		});
+		expect(groupResponse.status()).toBe(201);
+		const group = await groupResponse.json();
+		await orgPageA.goto('/organization-admin/groups');
+		await expect(orgPageA.getByText(`Pilot Group ${suffix}`, { exact: true })).toBeVisible();
+
+		// A separate granted administrator can manage membership; the ordinary member cannot.
+		const groupList = await orgApiB.get('/api/v1/organization-admin/groups');
+		expect(groupList.ok()).toBeTruthy();
+		for (const principal of [orgAdminB, ordinary]) {
+			const added = await orgApiB.post(`/api/v1/organization-admin/groups/${group.id}/members`, {
+				headers: orgHeadersB,
+				data: { user_id: principal.id }
+			});
+			expect(added.status()).toBe(204);
+		}
+		const deniedManagement = await memberApi.get('/api/v1/organization-admin/groups');
+		expect(deniedManagement.status()).toBe(403);
+
+		// Group access works while membership is active and is revoked immediately on removal.
+		const sharedNoteResponse = await orgApiB.post('/api/v1/notes', {
+			headers: orgHeadersB,
+			data: { title: `Shared pilot note ${suffix}`, content: 'Synthetic group access evidence' }
+		});
+		expect(sharedNoteResponse.status()).toBe(201);
+		const sharedNote = await sharedNoteResponse.json();
+		const shareResponse = await orgApiB.post(`/api/v1/files/${sharedNote.id}/share/group`, {
+			headers: orgHeadersB,
+			data: { group_id: group.id, permission: 'View' }
+		});
+		expect(shareResponse.status()).toBe(201);
+		const memberAccess = await memberApi.get(`/api/v1/notes/${sharedNote.id}`);
+		expect(memberAccess.ok()).toBeTruthy();
+		expect((await memberAccess.json()).content).toContain('Synthetic group access evidence');
+		const removed = await orgApiB.delete(
+			`/api/v1/organization-admin/groups/${group.id}/members/${ordinary.id}`,
+			{ headers: orgHeadersB }
+		);
+		expect(removed.status()).toBe(204);
+		const revokedAccess = await memberApi.get(`/api/v1/notes/${sharedNote.id}`);
+		expect([403, 404]).toContain(revokedAccess.status());
+		expect(await revokedAccess.text()).not.toContain('Synthetic group access evidence');
+
+		const auditResponse = await orgApiA.get('/api/v1/organization-admin/audit');
+		expect(auditResponse.ok()).toBeTruthy();
+		const audit = await auditResponse.json();
+		const groupActions = audit.entries.filter(
+			(entry: { target_id: string }) => entry.target_id === group.id
+		);
+		expect(groupActions.map((entry: { action_type: string }) => entry.action_type)).toEqual(
+			expect.arrayContaining(['group.created', 'group.member_added', 'group.member_removed'])
+		);
+		expect(
+			groupActions.some((entry: { actor_id: string }) => entry.actor_id === orgAdminB.id)
+		).toBeTruthy();
+	} finally {
+		await Promise.all([orgContextA.close(), orgContextB.close(), memberContext.close()]);
+	}
+
 	const noteResponse = await api.get(`/api/v1/notes/${noteId}`);
 	expect(noteResponse.ok()).toBeTruthy();
 	const note = await noteResponse.json();
