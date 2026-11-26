@@ -754,7 +754,8 @@ async fn invitation_cancellation_and_acceptance_serialize_on_the_same_tenant_inv
             Some(json!({
                 "email":email,
                 "display_name":"Race User",
-                "password":"test-password-123"
+                "password":"test-password-123",
+                "terms_accepted":true
             })),
         )
     );
