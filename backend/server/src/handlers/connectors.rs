@@ -453,7 +453,10 @@ pub async fn forget_connector_file(
         .await
     {
         Ok(file) => file,
-        Err(rustshare_core::services::FileError::NotFound(_)) => {
+        Err(
+            rustshare_core::services::FileError::NotFound(_)
+            | rustshare_core::services::FileError::PermissionDenied { .. },
+        ) => {
             state
                 .connector_service
                 .request_mapping_forget(&worker, &source_resource_ref, &request.source_revision)

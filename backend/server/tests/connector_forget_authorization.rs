@@ -178,7 +178,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         "SELECT count(*) FROM events WHERE aggregate_id=$1 AND event_type=$2 AND user_id=$3",
     )
     .bind(owned_file_id)
-    .bind("\"FileDeleted\"")
+    .bind(r#"{"type":"FileDeleted"}"#)
     .bind(owner_id)
     .fetch_one(&pool)
     .await
@@ -196,7 +196,7 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
             "SELECT count(*) FROM events WHERE aggregate_id=$1 AND event_type=$2 AND user_id=$3",
         )
         .bind(owned_file_id)
-        .bind("\"FileDeleted\"")
+        .bind(r#"{"type":"FileDeleted"}"#)
         .bind(owner_id)
         .fetch_one(&pool)
         .await
