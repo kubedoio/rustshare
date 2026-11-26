@@ -292,7 +292,8 @@ SMOKE_NOTE_TITLE=Pilot note
             "ui.env": f"""\
 UI_STATUS=passed
 UI_BROWSER_STATUS=passed
-UI_PLAYWRIGHT_EXPECTED=4
+UI_PLAYWRIGHT_EXPECTED=5
+UI_ADMIN_SCALE_100=passed
 UI_INSTITUTIONAL_JOURNEY=passed
 UI_CALENDAR_IMPORT=passed
 UI_IMAGE_ID={image_id}
@@ -868,12 +869,14 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
         summary_step = workflow_step("Write pilot workflow summary")
         smoke = (SCRIPT.parent / "run-beta-smoke.sh").read_text(encoding="utf-8")
         e2e = (SCRIPT.parents[1] / "frontend/tests/pilot.e2e.ts").read_text(encoding="utf-8")
+        scale_e2e = (SCRIPT.parents[1] / "frontend/tests/organization-admin-scale.e2e.ts").read_text(encoding="utf-8")
 
         self.assertIn("npx playwright install --with-deps chromium", ui_step)
         self.assertIn(
-            "tests/pilot.e2e.ts tests/institutional.e2e.ts tests/calendar-import.e2e.ts --workers=1 --reporter=line,json",
+            "tests/pilot.e2e.ts tests/institutional.e2e.ts tests/organization-admin-scale.e2e.ts",
             ui_step,
         )
+        self.assertIn("tests/calendar-import.e2e.ts --workers=1 --reporter=line,json", ui_step)
         self.assertIn(
             'ui_playwright_status="$(python3 ../scripts/verify_pilot_ui_results.py',
             ui_step,
@@ -897,13 +900,20 @@ RESTORE_DRILL_WORKFLOW_RUN_ATTEMPT={run_attempt}
         self.assertIn("/apps/notes/${encodeURIComponent(pilotNoteId)}", e2e)
         self.assertIn("await editH1(editedH1)", e2e)
         self.assertIn("await rename(pilotNoteTitle, renamedNote)", e2e)
+        self.assertIn("create synthetic account", scale_e2e)
+        self.assertIn("PILOT_ACCEPTANCE_MUTATIONS).toBe('authorized')", scale_e2e)
+        self.assertIn("100 users · Page 1 of 2", scale_e2e)
+        self.assertIn("ordinary.api.get('/api/v1/organization-admin/users", scale_e2e)
+        self.assertIn("Preview offboarding", scale_e2e)
+        self.assertIn("organization_admin.user_offboarded", scale_e2e)
         self.assertRegex(
             e2e,
             r"finally\s*\{\s*if\s*\(noteOpened\)\s*await test\.step\('Restore pilot Note fixture', restoreSmokeNote\);\s*\}",
         )
         self.assertIn("E2E_BASE_URL: http://127.0.0.1", ui_step)
         self.assertIn("'UI_BROWSER_STATUS=passed'", summary_step)
-        self.assertIn("'UI_PLAYWRIGHT_EXPECTED=4'", summary_step)
+        self.assertIn("'UI_PLAYWRIGHT_EXPECTED=5'", summary_step)
+        self.assertIn("'UI_ADMIN_SCALE_100=passed'", summary_step)
         self.assertIn("'UI_CALENDAR_IMPORT=passed'", summary_step)
         self.assertIn("'UI_PLAYWRIGHT_SKIPPED=0'", summary_step)
         self.assertIn("'UI_PLAYWRIGHT_UNEXPECTED=0'", summary_step)
