@@ -325,6 +325,8 @@ fn sensitive_key(key: &str) -> bool {
         "token",
         "authorization",
         "credential",
+        "cookie",
+        "session",
         "api_key",
         "apikey",
         "access_key",
@@ -506,6 +508,35 @@ mod tests {
         assert!(content.contains("shell: zsh\n"));
         assert!(content.contains("<redacted command>"));
         assert!(!content.contains("synthetic-shell-secret"));
+        Ok(())
+    }
+
+    #[test]
+    fn redacts_cookie_and_session_credentials_before_queueing() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut queue = Queue::open(&directory.path().join("queue.sqlite3"))?;
+        let instance_id = Uuid::new_v4();
+
+        assert!(queue.record(
+            instance_id,
+            input("curl -H 'Cookie: synthetic_value_9876' https://example.test"),
+            &[],
+        )?);
+        assert!(queue.record(
+            instance_id,
+            input("curl -H 'X-Session-Id: synthetic_value_1234' https://example.test"),
+            &[],
+        )?);
+
+        let events = queue.pending(instance_id, 10)?;
+        assert_eq!(events.len(), 2);
+        for event in &events {
+            assert_eq!(event.command, "<redacted command>");
+            let content = String::from_utf8_lossy(&event.content);
+            assert!(content.contains("<redacted command>"));
+            assert!(!content.contains("synthetic_value_9876"));
+            assert!(!content.contains("synthetic_value_1234"));
+        }
         Ok(())
     }
 
