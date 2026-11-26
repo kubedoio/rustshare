@@ -114,6 +114,13 @@ impl<'de> Deserialize<'de> for BuzzEventPush {
     }
 }
 
+fn parse_buzz_event_push(payload: &[u8]) -> Result<BuzzEventPush, serde_json::Error> {
+    let mut deserializer = serde_json::Deserializer::from_slice(payload);
+    let push = BuzzEventPush::deserialize(&mut deserializer)?;
+    deserializer.end()?;
+    Ok(push)
+}
+
 fn deserialize_bounded_tags<'de, D>(deserializer: D) -> Result<Vec<Tag>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -320,7 +327,7 @@ impl BuzzObservationService {
         self.verify_hmac(payload, signature)?;
 
         // 2. Parse the push envelope.
-        let push: BuzzEventPush = serde_json::from_slice(payload)
+        let push = parse_buzz_event_push(payload)
             .map_err(|e| BuzzPushError::Malformed(format!("invalid request body: {e}")))?;
 
         // 3–8. Validate + build the observation row; no writes yet.
@@ -932,6 +939,16 @@ mod tests {
         value["event"]["tags"] = serde_json::json!([["x"]]);
         value["event"]["tags"][0] = serde_json::json!(vec!["x"; MAX_NOSTR_TAG_FIELDS + 1]);
         assert!(serde_json::from_value::<BuzzEventPush>(value).is_err());
+    }
+
+    #[test]
+    fn buzz_event_push_rejects_trailing_json() {
+        let (_, event) = signed_text_note("hello buzz");
+        let original = push(&event, &event.id.to_hex(), ObservedEventType::Created);
+        let mut payload = serde_json::to_vec(&original).unwrap();
+        payload.extend_from_slice(b"{}");
+
+        assert!(parse_buzz_event_push(&payload).is_err());
     }
 
     #[test]
