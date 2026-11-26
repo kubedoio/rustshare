@@ -764,9 +764,8 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://rustshare:unused@127.0.0.1:1/rustshare")
             .expect("valid lazy PostgreSQL URL");
-        let registry = Arc::new(
-            rustshare_core::domain::ApplicationRegistry::first_party().unwrap(),
-        );
+        let registry =
+            Arc::new(rustshare_core::domain::ApplicationRegistry::first_party().unwrap());
         let service = BuzzObservationService::new(
             pool.clone(),
             ChatIdentityStore::new(pool.clone()),
