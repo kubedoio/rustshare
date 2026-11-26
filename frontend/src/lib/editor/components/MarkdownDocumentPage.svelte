@@ -519,7 +519,7 @@
 						{/if}
 					</button>
 					<ul
-						class="menu dropdown-content z-[100] mt-2 w-48 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
+						class="dropdown-content menu z-[100] mt-2 w-48 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl"
 					>
 						<li class="menu-title text-[10px] tracking-wider text-base-content/40 uppercase">
 							Purpose Color
@@ -619,7 +619,7 @@
 						<button tabindex="0" class="btn btn-ghost btn-sm" aria-label="Export">
 							<Download size={14} />
 						</button>
-						<ul class="menu dropdown-content z-10 w-40 menu-sm rounded-box bg-base-200 p-1 shadow">
+						<ul class="dropdown-content menu z-10 w-40 menu-sm rounded-box bg-base-200 p-1 shadow">
 							<li>
 								<button onclick={handleExportMarkdown}>
 									<FileText size={14} />
@@ -640,7 +640,7 @@
 					<button tabindex="0" class="btn btn-ghost btn-sm" aria-label="More options">
 						<MoreHorizontal size={14} />
 					</button>
-					<ul class="menu dropdown-content z-10 w-52 menu-sm rounded-box bg-base-200 p-1 shadow">
+					<ul class="dropdown-content menu z-10 w-52 menu-sm rounded-box bg-base-200 p-1 shadow">
 						<li>
 							<button onclick={toggleAttachments}>
 								<Paperclip size={14} />

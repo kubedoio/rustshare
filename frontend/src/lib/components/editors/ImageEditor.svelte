@@ -351,7 +351,7 @@
 
 <!-- Resize Modal -->
 {#if showResizeModal}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div class="modal-box">
 			<h3 class="mb-4 text-lg font-bold">Resize Image</h3>
 
