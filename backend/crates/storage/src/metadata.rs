@@ -3270,19 +3270,19 @@ impl MetadataStore {
             format!("/{}", name)
         };
 
-        let result = sqlx::query!(
+        let result = sqlx::query(
             r#"
             UPDATE files
             SET deleted_at = NULL, parent_folder_id = $2, path = $3,
                 modified_at = GREATEST(NOW(), modified_at + INTERVAL '1 microsecond')
             WHERE id = $1 AND owner_id = $4 AND tenant_id = $5 AND deleted_at IS NOT NULL
             "#,
-            id,
-            restored_parent_id,
-            restored_path,
-            owner_id,
-            tenant_id
         )
+        .bind(id)
+        .bind(restored_parent_id)
+        .bind(restored_path)
+        .bind(owner_id)
+        .bind(tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -4421,25 +4421,25 @@ impl MetadataStore {
             );
         }
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE folders
             SET deleted_at = NULL, parent_folder_id = $2, path = $3
             WHERE id = $1 AND owner_id = $4 AND tenant_id = $5 AND deleted_at IS NOT NULL
             "#,
-            id,
-            restored_parent_id,
-            &restored_path,
-            owner_id,
-            tenant_id,
         )
+        .bind(id)
+        .bind(restored_parent_id)
+        .bind(&restored_path)
+        .bind(owner_id)
+        .bind(tenant_id)
         .execute(&self.pool)
         .await?;
 
         let old_prefix = format!("{}/%", old_path.trim_end_matches('/'));
         let new_prefix = format!("{}/", restored_path.trim_end_matches('/'));
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE folders
             SET deleted_at = NULL,
@@ -4448,16 +4448,16 @@ impl MetadataStore {
               AND tenant_id = $4
               AND path LIKE $5
             "#,
-            owner_id,
-            &new_prefix,
-            &old_path,
-            tenant_id,
-            &old_prefix,
         )
+        .bind(owner_id)
+        .bind(&new_prefix)
+        .bind(&old_path)
+        .bind(tenant_id)
+        .bind(&old_prefix)
         .execute(&self.pool)
         .await?;
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE files
             SET deleted_at = NULL,
@@ -4467,12 +4467,12 @@ impl MetadataStore {
               AND tenant_id = $4
               AND path LIKE $5
             "#,
-            owner_id,
-            &new_prefix,
-            &old_path,
-            tenant_id,
-            &old_prefix,
         )
+        .bind(owner_id)
+        .bind(&new_prefix)
+        .bind(&old_path)
+        .bind(tenant_id)
+        .bind(&old_prefix)
         .execute(&self.pool)
         .await?;
 
