@@ -297,6 +297,26 @@ async fn connector_mappings(
     .expect("read Connector-to-Files mappings")
 }
 
+async fn wait_for_connector_mappings(
+    pool: &sqlx::PgPool,
+    instance_id: Uuid,
+    expected_count: usize,
+    phase: &str,
+) -> Vec<(String, String, String)> {
+    let mut mappings = Vec::new();
+    for _ in 0..150 {
+        mappings = connector_mappings(pool, instance_id).await;
+        if mappings.len() >= expected_count {
+            return mappings;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!(
+        "timed out waiting for Connector mappings during {phase}; expected at least {expected_count}, observed {}",
+        mappings.len()
+    );
+}
+
 async fn wait_for_memory_projection(
     pool: &sqlx::PgPool,
     file_id: Uuid,
@@ -904,7 +924,11 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
                 && event["observed_modified_at"].is_string()
         }));
     }
-    let initial_mappings = connector_mappings(&pool, instance_uuid).await;
+    // Files metadata and outbox visibility precede the separate mapping write
+    // in the import handler. Wait for that durable write before asserting its
+    // count instead of racing the handler's final step.
+    let initial_mappings =
+        wait_for_connector_mappings(&pool, instance_uuid, 3, "initial import").await;
     assert_eq!(initial_mappings.len(), 3);
     assert!(initial_mappings.iter().all(|(source, revision, target)| {
         target.starts_with("elembra://io.elembra.files/file/")
