@@ -411,6 +411,18 @@ fn ensure_migration_target(existing: Option<&str>, incoming: &str) -> Result<()>
 mod credential_tests {
     use super::{ensure_migration_target, validate_credential};
 
+    #[cfg(any(windows, target_os = "macos"))]
+    struct NativeCredentialCleanup(Vec<keyring::Entry>);
+
+    #[cfg(any(windows, target_os = "macos"))]
+    impl Drop for NativeCredentialCleanup {
+        fn drop(&mut self) {
+            for entry in &self.0 {
+                let _ = entry.delete_credential();
+            }
+        }
+    }
+
     #[test]
     fn accepts_only_connector_worker_credentials() {
         assert_eq!(
@@ -426,5 +438,63 @@ mod credential_tests {
         assert!(ensure_migration_target(None, "ecw1_old").is_ok());
         assert!(ensure_migration_target(Some("ecw1_old"), "ecw1_old").is_ok());
         assert!(ensure_migration_target(Some("ecw1_rotated"), "ecw1_old").is_err());
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    #[ignore = "writes to the platform credential store; run only with an isolated test keyring"]
+    fn native_credential_store_provisions_reads_rotates_and_deletes() {
+        let instance_id = uuid::Uuid::new_v4();
+        let other_instance_id = uuid::Uuid::new_v4();
+        let entry =
+            keyring::Entry::new("io.elembra.local-text-worker", &instance_id.to_string()).unwrap();
+        let other_entry = keyring::Entry::new(
+            "io.elembra.local-text-worker",
+            &other_instance_id.to_string(),
+        )
+        .unwrap();
+        let cleanup_entry =
+            keyring::Entry::new("io.elembra.local-text-worker", &instance_id.to_string()).unwrap();
+        let _cleanup = NativeCredentialCleanup(vec![cleanup_entry, other_entry]);
+
+        entry
+            .set_password("ecw1_synthetic-local-text-token")
+            .unwrap();
+        assert_eq!(
+            super::read_keyring_credential(instance_id).unwrap(),
+            "ecw1_synthetic-local-text-token"
+        );
+        assert!(super::read_keyring_credential(other_instance_id).is_err());
+
+        entry
+            .set_password("ecw1_synthetic-local-text-rotated")
+            .unwrap();
+        assert_eq!(
+            super::read_keyring_credential(instance_id).unwrap(),
+            "ecw1_synthetic-local-text-rotated"
+        );
+
+        #[cfg(unix)]
+        {
+            let directory = tempfile::tempdir().unwrap();
+            let credential_file = directory.path().join("synthetic-credential");
+            std::fs::write(&credential_file, "ecw1_synthetic-local-text-migrated\n").unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&credential_file, std::fs::Permissions::from_mode(0o600))
+                .unwrap();
+
+            assert_eq!(
+                super::migrate_credential(&credential_file, other_instance_id).unwrap(),
+                "ecw1_synthetic-local-text-migrated"
+            );
+            assert!(!credential_file.exists());
+            assert_eq!(
+                super::read_keyring_credential(other_instance_id).unwrap(),
+                "ecw1_synthetic-local-text-migrated"
+            );
+        }
+
+        entry.delete_credential().unwrap();
+        assert!(super::read_keyring_credential(instance_id).is_err());
     }
 }
