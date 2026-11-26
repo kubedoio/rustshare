@@ -936,6 +936,7 @@ mod tests {
                     payload["sourceResourceRef"].as_str(),
                     Some(source_ref.as_str())
                 );
+                assert!(payload.get("targetResourceRef").is_none());
                 let (status, response) = if attempt == 0 {
                     ("503 Service Unavailable", b"{}".as_slice())
                 } else {
@@ -1110,8 +1111,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remote_forget_retries_with_source_identity_and_acknowledges_only_success() -> Result<()>
-    {
+    async fn remote_forget_retries_after_local_mapping_write_failure() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let queue_path = directory.path().join("queue.sqlite3");
         let instance_id = Uuid::new_v4();
@@ -1126,8 +1126,17 @@ mod tests {
         };
         assert!(queue.record(instance_id, input, &[])?);
         let event = queue.pending(instance_id, 1)?.remove(0);
-        queue.remember_import(instance_id, &event)?;
-        queue.acknowledge(event.id)?;
+        drop(queue);
+        rusqlite::Connection::open(&queue_path)?.execute_batch(
+            "CREATE TRIGGER fail_shell_import_mapping BEFORE INSERT ON shell_imports
+             BEGIN SELECT RAISE(ABORT, 'simulated local mapping write failure'); END;",
+        )?;
+        assert!(Queue::open(&queue_path)?
+            .remember_import(instance_id, &event)
+            .is_err());
+        rusqlite::Connection::open(&queue_path)?
+            .execute_batch("DROP TRIGGER fail_shell_import_mapping")?;
+        let queue = Queue::open(&queue_path)?;
         queue.request_forget(instance_id, event.id)?;
         let source_ref = format!(
             "elembra://io.elembra.connector.shell-memory/file/{}",

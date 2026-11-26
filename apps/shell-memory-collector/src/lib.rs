@@ -378,14 +378,8 @@ impl Queue {
             {
                 bail!("queued source revision conflicts with imported mapping")
             }
-            (Some(_), None) => {
-                tx.execute(
-                    "DELETE FROM shell_events WHERE id=?1 AND instance_id=?2",
-                    params![id.to_string(), instance_id.to_string()],
-                )?;
-                tx.commit()?;
-                return Ok(None);
-            }
+            // The server may have committed an import before its local mapping write failed.
+            (Some(values), None) => values,
             (Some(values), _) => values,
             (None, Some((revision, created_at, session_id, _))) => {
                 (revision, created_at, session_id)
@@ -962,7 +956,7 @@ mod tests {
     }
 
     #[test]
-    fn forget_session_deletes_queued_records_without_remote_forgets() -> Result<()> {
+    fn forget_session_tombstones_queued_records_without_local_mappings() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("queue.sqlite3");
         let instance_id = Uuid::new_v4();
@@ -979,7 +973,7 @@ mod tests {
         queue.record(instance_id, other, &[])?;
         assert_eq!(queue.request_forget_session(instance_id, session_id)?, 2);
         assert_eq!(queue.pending(instance_id, 10)?.len(), 1);
-        assert!(queue.pending_forgets(instance_id, 10)?.is_empty());
+        assert_eq!(queue.pending_forgets(instance_id, 10)?.len(), 2);
         let bytes = fs::read(&path)?;
         assert!(!bytes
             .windows(b"synthetic-session-one".len())
