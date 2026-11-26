@@ -169,7 +169,7 @@ fn signed_push_with_kind(
         .sign_with_keys(keys)
         .expect("sign event");
     let push = BuzzEventPush {
-        event: serde_json::to_value(&event).unwrap(),
+        event: event.clone(),
         context: BuzzPushContext {
             community_id: COMMUNITY_ID.to_string(),
             channel_id: "channel-1".to_string(),
@@ -504,7 +504,7 @@ async fn push_accepts_edited_event_superseding_message_root() {
         .sign_with_keys(&keys)
         .expect("sign edit event");
     let edit_push = BuzzEventPush {
-        event: serde_json::to_value(&edit_event).unwrap(),
+        event: edit_event.clone(),
         context: BuzzPushContext {
             community_id: COMMUNITY_ID.to_string(),
             channel_id: "channel-1".to_string(),
@@ -647,7 +647,7 @@ async fn dm_channel_body_not_stored_even_with_content_indexing() {
         .expect("sign text note");
     let event_id = event.id.to_hex();
     let push = BuzzEventPush {
-        event: serde_json::to_value(&event).unwrap(),
+        event: event.clone(),
         context: BuzzPushContext {
             community_id: COMMUNITY_ID.to_string(),
             channel_id: "channel-1".to_string(),
@@ -1126,7 +1126,7 @@ async fn future_dated_event_is_rejected_within_skew_accepted() {
             .sign_with_keys(&keys)
             .expect("sign text note");
         BuzzEventPush {
-            event: serde_json::to_value(&event).unwrap(),
+            event: event.clone(),
             context: BuzzPushContext {
                 community_id: COMMUNITY_ID.to_string(),
                 channel_id: "channel-1".to_string(),

@@ -28,7 +28,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use nostr::{Event as NostrEvent, Kind};
+use nostr::{Event as NostrEvent, Kind, Tag};
 use rustshare_core::domain::{ApplicationId, PrincipalId, TenantId, WorkspaceId};
 use rustshare_crypto::WebhookSigner;
 use rustshare_integration_events::event::{ActorRef, IntegrationEvent};
@@ -46,24 +46,156 @@ use rustshare_storage::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+/// Maximum number of bytes accepted by the Buzz webhook and ingestion service.
+pub(crate) const MAX_BUZZ_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
+
 /// Maximum acceptable future skew for a pushed event's author-chosen
 /// `created_at` (seconds). See the check in [`BuzzObservationService::validate_and_build`].
 const MAX_CREATED_AT_FUTURE_SKEW_SECS: i64 = 15 * 60;
+const MAX_NOSTR_EVENT_TAGS: usize = 4_096;
+const MAX_NOSTR_TAG_FIELDS: usize = 64;
 
 /// Push payload: the signed Nostr event (opaque JSON, cryptographically
 /// verified after parse) plus the Buzz Chat context describing where the event
 /// was observed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BuzzEventPush {
-    /// The Nostr event as raw JSON; parsed into [`nostr::Event`] for
-    /// cryptographic verification. The raw `id` string is never trusted — it
-    /// is only ever compared against the parsed, verified event id.
-    pub event: serde_json::Value,
+    /// The signed Nostr event, decoded to its fixed protocol schema before
+    /// cryptographic verification. Its id and signature remain untrusted
+    /// until [`nostr::Event::verify`] succeeds.
+    pub event: NostrEvent,
     pub context: BuzzPushContext,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuzzEventPushWire {
+    event: BoundedNostrEvent,
+    context: BuzzPushContext,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoundedNostrEvent {
+    id: nostr::EventId,
+    pubkey: nostr::PublicKey,
+    created_at: nostr::Timestamp,
+    kind: Kind,
+    #[serde(deserialize_with = "deserialize_bounded_tags")]
+    tags: Vec<Tag>,
+    content: String,
+    sig: nostr::secp256k1::schnorr::Signature,
+}
+
+impl From<BoundedNostrEvent> for NostrEvent {
+    fn from(event: BoundedNostrEvent) -> Self {
+        Self::new(
+            event.id,
+            event.pubkey,
+            event.created_at,
+            event.kind,
+            event.tags,
+            event.content,
+            event.sig,
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for BuzzEventPush {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = BuzzEventPushWire::deserialize(deserializer)?;
+        Ok(Self {
+            event: wire.event.into(),
+            context: wire.context,
+        })
+    }
+}
+
+fn parse_buzz_event_push(payload: &[u8]) -> Result<BuzzEventPush, serde_json::Error> {
+    let mut deserializer = serde_json::Deserializer::from_slice(payload);
+    let push = BuzzEventPush::deserialize(&mut deserializer)?;
+    deserializer.end()?;
+    Ok(push)
+}
+
+fn deserialize_bounded_tags<'de, D>(deserializer: D) -> Result<Vec<Tag>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct TagsVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for TagsVisitor {
+        type Value = Vec<Tag>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a bounded Nostr tag sequence")
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let capacity = sequence.size_hint().unwrap_or(0).min(MAX_NOSTR_EVENT_TAGS);
+            let mut tags = Vec::with_capacity(capacity);
+
+            while let Some(fields) = sequence.next_element::<BoundedTagFields>()? {
+                if tags.len() == MAX_NOSTR_EVENT_TAGS {
+                    return Err(serde::de::Error::custom("Nostr event tag limit exceeded"));
+                }
+                tags.push(Tag::parse(fields.0).map_err(serde::de::Error::custom)?);
+            }
+
+            Ok(tags)
+        }
+    }
+
+    deserializer.deserialize_seq(TagsVisitor)
+}
+
+struct BoundedTagFields(Vec<String>);
+
+impl<'de> Deserialize<'de> for BoundedTagFields {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct FieldsVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for FieldsVisitor {
+            type Value = BoundedTagFields;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a bounded Nostr tag field sequence")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let capacity = sequence.size_hint().unwrap_or(0).min(MAX_NOSTR_TAG_FIELDS);
+                let mut fields = Vec::with_capacity(capacity);
+
+                while let Some(field) = sequence.next_element::<String>()? {
+                    if fields.len() == MAX_NOSTR_TAG_FIELDS {
+                        return Err(serde::de::Error::custom("Nostr tag field limit exceeded"));
+                    }
+                    fields.push(field);
+                }
+
+                Ok(BoundedTagFields(fields))
+            }
+        }
+
+        deserializer.deserialize_seq(FieldsVisitor)
+    }
 }
 
 /// Chat context of an observed Buzz event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuzzPushContext {
     pub community_id: String,
     pub channel_id: String,
@@ -184,11 +316,18 @@ impl BuzzObservationService {
         payload: &[u8],
         signature: &str,
     ) -> Result<IngestOutcome, BuzzPushError> {
+        if payload.len() > MAX_BUZZ_EVENT_REQUEST_BYTES {
+            return Err(BuzzPushError::Malformed(format!(
+                "request body exceeds the {}-byte limit",
+                MAX_BUZZ_EVENT_REQUEST_BYTES
+            )));
+        }
+
         // 1. HMAC + replay window (fail closed).
         self.verify_hmac(payload, signature)?;
 
         // 2. Parse the push envelope.
-        let push: BuzzEventPush = serde_json::from_slice(payload)
+        let push = parse_buzz_event_push(payload)
             .map_err(|e| BuzzPushError::Malformed(format!("invalid request body: {e}")))?;
 
         // 3–8. Validate + build the observation row; no writes yet.
@@ -295,24 +434,13 @@ impl BuzzObservationService {
         validate_context(push)?;
 
         // 4. Cryptographic verification of the signed Nostr event.
-        let raw_event_id = push
-            .event
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| BuzzPushError::Malformed("Nostr event missing `id`".to_string()))?;
-        let event: NostrEvent = serde_json::from_value(push.event.clone())
-            .map_err(|e| BuzzPushError::Malformed(format!("invalid Nostr event: {e}")))?;
+        let event = &push.event;
         if !is_chat_message_kind(event.kind) {
             return Err(BuzzPushError::VerificationFailed);
         }
-        // The raw JSON `id` must equal the parsed event id. `Event::verify`
-        // recomputes the id from the canonical serialization (so a lying raw
-        // field can never survive verification), but be explicit: the
-        // observation identity is derived from the parsed event only.
+        // The observation identity is derived from the typed event only;
+        // `Event::verify` recomputes its id from canonical serialization.
         let event_id_hex = event.id.to_hex();
-        if raw_event_id != event_id_hex {
-            return Err(BuzzPushError::VerificationFailed);
-        }
         event
             .verify()
             .map_err(|_| BuzzPushError::VerificationFailed)?;
@@ -434,7 +562,7 @@ impl BuzzObservationService {
             workspace,
             &data,
             body,
-            extract_attachment_refs(&event),
+            extract_attachment_refs(event),
         );
         Ok((tenant, workspace, row, data))
     }
@@ -652,18 +780,14 @@ fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
             ));
         }
     }
-    // The raw `id` field is only ever a comparison input here; the parsed,
-    // cryptographically verified event id is authoritative (step 4).
-    let raw_event_id = push
-        .event
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| BuzzPushError::Malformed("Nostr event missing `id`".to_string()))?;
+    // The typed event id is only a comparison input here; cryptographic
+    // verification later establishes it as authoritative.
+    let event_id = push.event.id.to_hex();
     match context.event_type {
         // A created event IS the message root: its id must equal the message
         // id, and there is nothing it can supersede.
         ObservedEventType::Created => {
-            if raw_event_id != context.message_id {
+            if event_id != context.message_id {
                 return Err(BuzzPushError::Malformed(
                     "created event message_id must equal the Nostr event id".to_string(),
                 ));
@@ -679,13 +803,13 @@ fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
         // `supersedes == message_id` is the correct first-edit contract;
         // only self-supersede (`supersedes == this event's id`) is invalid.
         ObservedEventType::Edited => {
-            if raw_event_id == context.message_id {
+            if event_id == context.message_id {
                 return Err(BuzzPushError::Malformed(
                     "edited event message_id must differ from the Nostr event id".to_string(),
                 ));
             }
             if let Some(supersedes) = &context.supersedes_event_id {
-                if supersedes == raw_event_id {
+                if supersedes == &event_id {
                     return Err(BuzzPushError::Malformed(
                         "context.supersedes_event_id must not equal the Nostr event id".to_string(),
                     ));
@@ -694,14 +818,14 @@ fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
         }
         // A deletion has TWO accepted forms:
         // 1. Webhook form: a separate deletion event superseding the message
-        //    — `raw_event_id != message_id` (same identity rules as Edited).
+        //    — `event_id != message_id` (same identity rules as Edited).
         // 2. Snapshot form (the relay's `state/events` tombstone): the
         //    message itself is the entry, marked deleted —
-        //    `raw_event_id == message_id` with `supersedes_event_id: null`
+        //    `event_id == message_id` with `supersedes_event_id: null`
         //    (a snapshot tombstone supersedes nothing). Reconcile applies it
         //    by re-ingesting the same event id as a Deleted observation.
         ObservedEventType::Deleted => {
-            if raw_event_id == context.message_id {
+            if event_id == context.message_id {
                 // Snapshot form.
                 if context.supersedes_event_id.is_some() {
                     return Err(BuzzPushError::Malformed(
@@ -710,7 +834,7 @@ fn validate_context(push: &BuzzEventPush) -> Result<(), BuzzPushError> {
                     ));
                 }
             } else if let Some(supersedes) = &context.supersedes_event_id {
-                if supersedes == raw_event_id {
+                if supersedes == &event_id {
                     return Err(BuzzPushError::Malformed(
                         "context.supersedes_event_id must not equal the Nostr event id".to_string(),
                     ));
@@ -748,7 +872,7 @@ mod tests {
 
     fn push(event: &NostrEvent, message_id: &str, event_type: ObservedEventType) -> BuzzEventPush {
         BuzzEventPush {
-            event: serde_json::to_value(event).expect("serialize nostr event"),
+            event: event.clone(),
             context: BuzzPushContext {
                 community_id: "community-1".to_string(),
                 channel_id: "channel-1".to_string(),
@@ -761,16 +885,93 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn oversized_payload_is_rejected_before_hmac_or_database_access() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://rustshare:unused@127.0.0.1:1/rustshare")
+            .expect("valid lazy PostgreSQL URL");
+        let registry =
+            Arc::new(rustshare_core::domain::ApplicationRegistry::first_party().unwrap());
+        let service = BuzzObservationService::new(
+            pool.clone(),
+            ChatIdentityStore::new(pool.clone()),
+            ChatObservationStore::new(pool.clone()),
+            Arc::new(OutboxStore::new(pool, registry)),
+            WebhookSigner::new("test-buzz-webhook-secret"),
+            300,
+            Arc::new(rustshare_core::events::EventBroadcaster::new(64)),
+        );
+        let oversized = vec![0; MAX_BUZZ_EVENT_REQUEST_BYTES + 1];
+
+        assert!(matches!(
+            service.verify_and_ingest(&oversized, "").await,
+            Err(BuzzPushError::Malformed(_))
+        ));
+        let at_limit = vec![0; MAX_BUZZ_EVENT_REQUEST_BYTES];
+        assert!(matches!(
+            service.verify_and_ingest(&at_limit, "").await,
+            Err(BuzzPushError::Unauthorized)
+        ));
+    }
+
+    #[test]
+    fn buzz_event_push_rejects_unknown_envelope_fields() {
+        let (_, event) = signed_text_note("hello buzz");
+        let original = push(&event, &event.id.to_hex(), ObservedEventType::Created);
+        let mut value = serde_json::to_value(&original).unwrap();
+        value["unexpected"] = serde_json::json!("field");
+        assert!(serde_json::from_value::<BuzzEventPush>(value).is_err());
+
+        let mut value = serde_json::to_value(original).unwrap();
+        value["context"]["unexpected"] = serde_json::json!("field");
+        assert!(serde_json::from_value::<BuzzEventPush>(value).is_err());
+    }
+
+    #[test]
+    fn buzz_event_push_rejects_oversized_tag_containers() {
+        let (_, event) = signed_text_note("hello buzz");
+        let original = push(&event, &event.id.to_hex(), ObservedEventType::Created);
+        let mut value = serde_json::to_value(&original).unwrap();
+        value["event"]["tags"] = serde_json::json!(vec![vec!["x"]; MAX_NOSTR_EVENT_TAGS + 1]);
+        assert!(serde_json::from_value::<BuzzEventPush>(value).is_err());
+
+        let mut value = serde_json::to_value(original).unwrap();
+        value["event"]["tags"] = serde_json::json!([["x"]]);
+        value["event"]["tags"][0] = serde_json::json!(vec!["x"; MAX_NOSTR_TAG_FIELDS + 1]);
+        assert!(serde_json::from_value::<BuzzEventPush>(value).is_err());
+    }
+
+    #[test]
+    fn buzz_event_push_rejects_trailing_json() {
+        let (_, event) = signed_text_note("hello buzz");
+        let original = push(&event, &event.id.to_hex(), ObservedEventType::Created);
+        let mut payload = serde_json::to_vec(&original).unwrap();
+        payload.extend_from_slice(b"{}");
+
+        assert!(parse_buzz_event_push(&payload).is_err());
+    }
+
     #[test]
     fn buzz_event_push_serde_round_trips() {
         let (_, event) = signed_text_note("hello buzz");
         let original = push(&event, &event.id.to_hex(), ObservedEventType::Created);
         let json = serde_json::to_value(&original).unwrap();
         let back: BuzzEventPush = serde_json::from_value(json).unwrap();
-        assert_eq!(back.event, original.event);
+        assert_eq!(back.event.id, original.event.id);
+        assert_eq!(back.event.sig, original.event.sig);
         assert_eq!(back.context.community_id, "community-1");
         assert_eq!(back.context.event_type, ObservedEventType::Created);
         assert_eq!(back.context.message_id, event.id.to_hex());
+    }
+
+    #[test]
+    fn buzz_event_push_rejects_malformed_nostr_event_fields() {
+        let (_, event) = signed_text_note("hello buzz");
+        let original = push(&event, &event.id.to_hex(), ObservedEventType::Created);
+        let mut value = serde_json::to_value(original).unwrap();
+        value["event"]["id"] = json!(17);
+
+        assert!(serde_json::from_value::<BuzzEventPush>(value).is_err());
     }
 
     #[test]
