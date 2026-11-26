@@ -503,6 +503,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn config_round_trip_uses_camel_case_exclusion_key() -> Result<()> {
+        let config = Config {
+            server: "https://example.test".into(),
+            instance_id: Uuid::new_v4(),
+            queue: PathBuf::from("/tmp/synthetic.sqlite3"),
+            exclude_commands: vec!["deploy *".into()],
+        };
+        let value = serde_json::to_value(&config)?;
+        assert_eq!(value["excludeCommands"][0], "deploy *");
+        assert!(value.get("exclude_commands").is_none());
+        let decoded: Config = serde_json::from_value(value)?;
+        assert_eq!(decoded.exclude_commands, ["deploy *"]);
+        Ok(())
+    }
+
+    #[test]
     fn queue_enables_sqlite_secure_delete() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let queue = Queue::open(&directory.path().join("queue.sqlite3"))?;
