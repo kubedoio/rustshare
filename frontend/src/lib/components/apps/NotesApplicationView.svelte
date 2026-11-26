@@ -451,7 +451,7 @@
 		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 		<ul
 			tabindex="0"
-			class="menu dropdown-content z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
+			class="dropdown-content menu z-10 w-48 menu-sm rounded-box bg-base-200 p-1 shadow"
 		>
 			<li>
 				<button onclick={() => handleShowAttachments(note)}>

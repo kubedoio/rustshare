@@ -258,11 +258,13 @@ async fn wait_for_versions(
                 ))
             })
             .collect();
-        if expected.iter().all(|(path, version)| {
-            last_versions
-                .get(*path)
-                .is_some_and(|found| found >= version)
-        }) {
+        if queue_pending(queue.0, queue.1) == 0
+            && expected.iter().all(|(path, version)| {
+                last_versions
+                    .get(*path)
+                    .is_some_and(|found| found >= version)
+            })
+        {
             return files;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;

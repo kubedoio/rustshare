@@ -328,7 +328,7 @@
 
 <!-- Disable confirmation -->
 {#if confirmDisable}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div class="modal-box">
 			<h3 class="text-lg font-bold">Disable Account</h3>
 			<p class="py-4">
@@ -352,7 +352,7 @@
 
 <!-- Delete confirmation -->
 {#if confirmDelete}
-	<div class="modal modal-open">
+	<div class="modal-open modal">
 		<div class="modal-box">
 			<h3 class="text-lg font-bold">Delete User</h3>
 			<p class="py-4">
