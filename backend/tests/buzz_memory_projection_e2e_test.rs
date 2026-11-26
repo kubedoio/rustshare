@@ -322,7 +322,7 @@ fn created_push_at(
     let event = signed_note(keys, content, created_at);
     let event_id = event.id.to_hex();
     let push = BuzzEventPush {
-        event: serde_json::to_value(&event).unwrap(),
+        event: event.clone(),
         context: BuzzPushContext {
             community_id: community_id.to_string(),
             channel_id: CHANNEL_ID.to_string(),
@@ -348,7 +348,7 @@ fn deleted_push_at(
 ) -> (BuzzEventPush, nostr::Event) {
     let event = signed_note(keys, content, created_at);
     let push = BuzzEventPush {
-        event: serde_json::to_value(&event).unwrap(),
+        event: event.clone(),
         context: BuzzPushContext {
             community_id: community_id.to_string(),
             channel_id: CHANNEL_ID.to_string(),
