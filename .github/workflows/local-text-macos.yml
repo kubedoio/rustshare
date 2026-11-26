@@ -1,0 +1,45 @@
+name: Local Text macOS Keychain
+
+on:
+  pull_request:
+    paths:
+      - "apps/local-text-worker/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/local-text-macos.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/local-text-worker/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/local-text-macos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  keychain:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Create isolated test Keychain
+        run: |
+          keychain="$RUNNER_TEMP/elembra-local-text-test.keychain-db"
+          security create-keychain -p synthetic "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p synthetic "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security default-keychain -s "$keychain"
+          echo "LOCAL_TEXT_TEST_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+      - name: Build macOS worker
+        run: cargo build --locked --release -p local-text-worker
+      - name: Run Keychain acceptance test
+        run: cargo test --locked -p local-text-worker
+      - name: Run native credential test in isolated Keychain
+        run: cargo test --locked -p local-text-worker credential_tests::native_credential_store_provisions_reads_rotates_and_deletes -- --ignored --exact --test-threads=1
+      - name: Remove isolated test Keychain
+        if: always()
+        run: security delete-keychain "$LOCAL_TEXT_TEST_KEYCHAIN" || true
