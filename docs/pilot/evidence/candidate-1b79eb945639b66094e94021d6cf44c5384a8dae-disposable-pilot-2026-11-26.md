@@ -48,10 +48,10 @@ publication or release artifact.
 ## Decision and boundary
 
 **Disposable workflow: PASS for this exact revision and tested synthetic
-environment. Overall pilot: NO-GO pending remaining acceptance.** The separate
-100-user/two-administrator run for current-main-based PR #569 is still in
-progress at head `453ca591aea23e0190f09f932f6d9d451a007321` in Pilot Release
-run [45882009152](https://github.com/kubedoio/rustshare/actions/runs/45882009152).
+environment. Overall pilot: NO-GO pending remaining acceptance.** The 100-user/two-administrator run for current-main-based PR #569 passed at
+head `453ca591aea23e0190f09f932f6d9d451a007321` in Pilot Release run
+[45882009152](https://github.com/kubedoio/rustshare/actions/runs/45882009152); its
+exact candidate evidence is [here](candidate-453ca591aea23e0190f09f932f6d9d451a007321-pr569-disposable-pilot-2026-11-26.md).
 Memory's source-specific acceptance remains partial under #119, and connected
 Windows/macOS Local Text editor ingestion remains outstanding under #99.
 
