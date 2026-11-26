@@ -4,7 +4,8 @@ pub mod invitations;
 use crate::{
     handlers::{
         admin::organization_administrators::{
-            lock_tenant_admin_grants, removal_would_leave_no_enabled_admin, revoke_for_lifecycle,
+            lock_and_check_active_grant, lock_tenant_admin_grants,
+            removal_would_leave_no_enabled_admin, revoke_for_lifecycle,
         },
         admin::{
             admin_bad_request, admin_conflict, admin_internal_error, admin_not_found,
@@ -24,7 +25,6 @@ use axum::{
 use rand::Rng;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
-use sqlx::{Postgres, Transaction};
 use std::sync::Arc;
 use uuid::Uuid;
 use validator::Validate;
@@ -878,26 +878,13 @@ pub async fn remove_member(
 /// transaction. The advisory lock serializes this check with grant revocation:
 /// a write either commits before revocation or observes the revoked grant.
 async fn require_current_organization_admin(
-    tx: &mut Transaction<'_, Postgres>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     tenant_id: Uuid,
     user_id: Uuid,
 ) -> Result<(), AppError> {
-    lock_tenant_admin_grants(tx, tenant_id)
+    let active = lock_and_check_active_grant(tx, tenant_id, user_id)
         .await
         .map_err(db_error)?;
-    let active: bool = sqlx::query_scalar(
-        "SELECT EXISTS(
-            SELECT 1 FROM organization_administrators oa
-            JOIN users u ON u.id=oa.user_id AND u.tenant_id=oa.tenant_id
-            WHERE oa.tenant_id=$1 AND oa.user_id=$2
-              AND oa.revoked_at IS NULL AND u.disabled_at IS NULL
-        )",
-    )
-    .bind(tenant_id)
-    .bind(user_id)
-    .fetch_one(&mut **tx)
-    .await
-    .map_err(db_error)?;
     if active {
         Ok(())
     } else {

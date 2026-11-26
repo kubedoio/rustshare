@@ -13,9 +13,10 @@ use super::{
     request_correlation_id,
 };
 pub(crate) use crate::services::organization_administrators::{
-    grant_operator_organization_admin, list_active_for_tenant, lock_tenant_admin_grants,
-    removal_would_leave_no_enabled_admin, revoke_for_lifecycle, revoke_operator_grant,
-    OperatorGrantOutcome, OperatorRevokeOutcome, OrganizationAdministratorRow,
+    grant_operator_organization_admin, list_active_for_tenant, lock_and_check_active_grant,
+    lock_tenant_admin_grants, removal_would_leave_no_enabled_admin, revoke_for_lifecycle,
+    revoke_operator_grant, OperatorGrantOutcome, OperatorRevokeOutcome,
+    OrganizationAdministratorRow,
 };
 use crate::{
     handlers::{AdminUser, AppError, PaginationQuery},
