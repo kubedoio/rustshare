@@ -205,6 +205,13 @@ pub struct IncomingChatEvent {
     pub data: Box<serde_json::value::RawValue>,
 }
 
+fn deserialize_incoming_chat_event(body: &[u8]) -> Result<IncomingChatEvent, serde_json::Error> {
+    let mut deserializer = serde_json::Deserializer::from_slice(body);
+    let event = IncomingChatEvent::deserialize(&mut deserializer)?;
+    deserializer.end()?;
+    Ok(event)
+}
+
 /// Trait for metadata store operations needed by ChatIntegrationService.
 #[allow(async_fn_in_trait)]
 pub trait MetadataStoreOps: Send + Sync {
@@ -611,7 +618,7 @@ impl<M: MetadataStoreOps, E: EventStoreOps, W: WebhookDispatcher> ChatIntegratio
             return Err(ChatIntegrationError::SignatureVerificationFailed);
         }
 
-        let event: IncomingChatEvent = serde_json::from_slice(body)
+        let event = deserialize_incoming_chat_event(body)
             .map_err(|e| ChatIntegrationError::Serialization(e.to_string()))?;
 
         // Enforce maximum age to prevent replay attacks.
@@ -1102,6 +1109,20 @@ mod tests {
             assert_eq!(event.user_id.as_deref(), Some("opaque-principal"));
             assert_eq!(event.data.get(), data);
         }
+    }
+
+    #[test]
+    fn incoming_chat_event_rejects_trailing_json() {
+        let event = IncomingChatEvent {
+            event_type: "vendor.event".to_string(),
+            timestamp: Utc::now(),
+            user_id: None,
+            data: serde_json::value::RawValue::from_string("null".to_string()).unwrap(),
+        };
+        let mut body = serde_json::to_vec(&event).unwrap();
+        body.extend_from_slice(b"{}");
+
+        assert!(deserialize_incoming_chat_event(&body).is_err());
     }
 
     #[test]
