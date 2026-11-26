@@ -1,6 +1,6 @@
 # H3 product-scope decisions
 
-As of protected main `b9baaaefe59c9b0fd4f42abddd4763e576617066`. These records bound the institutional pilot; they do not authorize FWS deployment or expand pilot scope.
+As of protected main `d6bcbc9d4e4e5aebc6449b2b47267b267c3cf2e2`. #588 adds only a terms-independent invitation-race test fixture. These records bound the institutional pilot; they do not authorize FWS deployment or expand pilot scope.
 
 | Issue | Pilot decision | Evidence and explicit deferrals |
 | --- | --- | --- |
