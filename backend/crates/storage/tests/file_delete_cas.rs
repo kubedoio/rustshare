@@ -56,10 +56,12 @@ async fn delete_cas_rejects_a_file_restored_after_observation() {
             &mut tx,
             file_id,
             owner_id,
-            "same-content",
-            1,
-            observed_modified_at,
-            tenant_id,
+            &rustshare_core::services::FileDeleteSnapshot {
+                content_hash: "same-content".into(),
+                version: 1,
+                modified_at: observed_modified_at,
+                tenant_id,
+            },
         )
         .await
         .unwrap();

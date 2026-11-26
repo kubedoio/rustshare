@@ -3005,10 +3005,7 @@ impl MetadataStore {
         tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
         id: Uuid,
         owner_id: Uuid,
-        expected_content_hash: &str,
-        expected_version: i32,
-        expected_modified_at: chrono::DateTime<chrono::Utc>,
-        expected_tenant_id: Uuid,
+        expected: &rustshare_core::services::FileDeleteSnapshot,
     ) -> Result<bool> {
         let result = sqlx::query(
             r#"UPDATE files
@@ -3019,10 +3016,10 @@ impl MetadataStore {
         )
         .bind(id)
         .bind(owner_id)
-        .bind(expected_content_hash)
-        .bind(expected_version)
-        .bind(expected_modified_at)
-        .bind(expected_tenant_id)
+        .bind(&expected.content_hash)
+        .bind(expected.version)
+        .bind(expected.modified_at)
+        .bind(expected.tenant_id)
         .execute(&mut **tx)
         .await?;
         Ok(result.rows_affected() == 1)
@@ -8532,21 +8529,10 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStore {
         tx: &mut Self::Tx,
         id: uuid::Uuid,
         owner_id: uuid::Uuid,
-        expected_content_hash: &str,
-        expected_version: i32,
-        expected_modified_at: chrono::DateTime<chrono::Utc>,
-        expected_tenant_id: uuid::Uuid,
+        expected: &rustshare_core::services::FileDeleteSnapshot,
     ) -> anyhow::Result<bool> {
-        self.delete_file_if_unchanged_in_tx(
-            tx,
-            id,
-            owner_id,
-            expected_content_hash,
-            expected_version,
-            expected_modified_at,
-            expected_tenant_id,
-        )
-        .await
+        self.delete_file_if_unchanged_in_tx(tx, id, owner_id, expected)
+            .await
     }
 
     async fn list_file_versions(

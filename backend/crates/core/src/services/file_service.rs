@@ -113,6 +113,16 @@ pub fn file_lifecycle_event_after(events: &[Event], since: chrono::DateTime<chro
     })
 }
 
+/// File row state observed before a Connector forget. Storage compares this
+/// snapshot atomically with the soft-delete update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDeleteSnapshot {
+    pub content_hash: String,
+    pub version: i32,
+    pub modified_at: chrono::DateTime<chrono::Utc>,
+    pub tenant_id: uuid::Uuid,
+}
+
 /// Trait for metadata store operations needed by FileService.
 ///
 /// This trait abstracts the metadata store to allow for testing without database dependencies.
@@ -199,10 +209,7 @@ pub trait MetadataStoreOps: Send + Sync {
         tx: &mut Self::Tx,
         id: uuid::Uuid,
         owner_id: uuid::Uuid,
-        expected_content_hash: &str,
-        expected_version: i32,
-        expected_modified_at: chrono::DateTime<chrono::Utc>,
-        expected_tenant_id: uuid::Uuid,
+        expected: &FileDeleteSnapshot,
     ) -> Result<bool>;
 
     /// List all versions of a file, ordered by version number descending.
@@ -1960,10 +1967,12 @@ where
                 &mut tx,
                 file_id,
                 file.owner_id,
-                expected_content_hash,
-                expected_version,
-                expected_modified_at,
-                expected_tenant_id,
+                &FileDeleteSnapshot {
+                    content_hash: expected_content_hash.to_owned(),
+                    version: expected_version,
+                    modified_at: expected_modified_at,
+                    tenant_id: expected_tenant_id,
+                },
             )
             .await
             .map_err(|error| FileError::Database(error.to_string()))?
@@ -4096,10 +4105,7 @@ mod integration_publish_tests {
             _tx: &mut Self::Tx,
             _id: uuid::Uuid,
             _owner_id: uuid::Uuid,
-            _expected_content_hash: &str,
-            _expected_version: i32,
-            _expected_modified_at: chrono::DateTime<chrono::Utc>,
-            _expected_tenant_id: uuid::Uuid,
+            _expected: &FileDeleteSnapshot,
         ) -> Result<bool> {
             Ok(false)
         }

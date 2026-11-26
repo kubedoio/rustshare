@@ -174,10 +174,7 @@ impl FileMetadataStoreOps for MockMetadataStore {
         _tx: &mut Self::Tx,
         _id: Uuid,
         _owner_id: Uuid,
-        _expected_content_hash: &str,
-        _expected_version: i32,
-        _expected_modified_at: chrono::DateTime<chrono::Utc>,
-        _expected_tenant_id: Uuid,
+        _expected: &rustshare_core::services::FileDeleteSnapshot,
     ) -> Result<bool> {
         unreachable!()
     }
