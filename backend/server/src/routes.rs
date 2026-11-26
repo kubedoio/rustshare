@@ -1,7 +1,6 @@
+use crate::buzz_observation::MAX_BUZZ_EVENT_REQUEST_BYTES;
 use crate::state::AppState;
 use axum::Router;
-
-const MAX_BUZZ_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
 
 pub fn health_routes() -> Router<AppState> {
     use axum::routing::get;
