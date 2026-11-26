@@ -46,9 +46,11 @@ use rustshare_storage::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+/// Maximum number of bytes accepted by the Buzz webhook and ingestion service.
+pub(crate) const MAX_BUZZ_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
+
 /// Maximum acceptable future skew for a pushed event's author-chosen
 /// `created_at` (seconds). See the check in [`BuzzObservationService::validate_and_build`].
-pub(crate) const MAX_BUZZ_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
 
 const MAX_CREATED_AT_FUTURE_SKEW_SECS: i64 = 15 * 60;
 
@@ -762,7 +764,9 @@ mod tests {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://rustshare:unused@127.0.0.1:1/rustshare")
             .expect("valid lazy PostgreSQL URL");
-        let registry = Arc::new(rustshare_core::domain::ApplicationRegistry::first_party().unwrap());
+        let registry = Arc::new(
+            rustshare_core::domain::ApplicationRegistry::first_party().unwrap(),
+        );
         let service = BuzzObservationService::new(
             pool.clone(),
             ChatIdentityStore::new(pool.clone()),
