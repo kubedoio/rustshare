@@ -14,7 +14,8 @@
 
 - Clean installation used fresh PostgreSQL and RustFS volumes, applied 17 migrations through `20261123190000`, verified image identity and first boot, and passed the canonical Files/Notes/user journey.
 - Migration failure aborted startup with diagnostics. Representative upgrade migrations passed; installed product upgrade was explicitly `not_applicable` because this is the first clean-install baseline. No installed upgrade/rollback drill was run.
-- Runtime database role checks passed, including negative privilege checks; migrations were not run under the runtime role.
+- The separately provisioned runtime role was `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOINHERIT`, `NOREPLICATION`, and `NOBYPASSRLS`; negative privilege checks passed. The backend also booted and passed a canonical smoke journey under that role with migrations disabled.
+- The runtime-role result does not prove RLS isolation. The active pool context resets `app.current_user_id` to nil, and the `files`/`folders`/`file_versions` policies permit unset/nil context; repository tenant predicates remain the active boundary.
 - Restart/persistence, bounded database and storage failure/recovery, authentication failure/recovery, invalid configuration rejection, and invalid credential rejection passed.
 - Backup creation and secret scan passed. The restore drill used isolated volumes and passed persistence verification.
 - Browser suite ran three expected tests with 0 skipped, 0 unexpected and 0 flaky: institutional Calendar linked-context/denial; Files and Note identity/H1 behavior; and opening an exact historical Memory citation without changing Note identity.
