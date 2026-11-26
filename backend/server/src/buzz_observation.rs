@@ -48,12 +48,15 @@ use std::collections::HashSet;
 
 /// Maximum acceptable future skew for a pushed event's author-chosen
 /// `created_at` (seconds). See the check in [`BuzzObservationService::validate_and_build`].
+pub(crate) const MAX_BUZZ_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
+
 const MAX_CREATED_AT_FUTURE_SKEW_SECS: i64 = 15 * 60;
 
 /// Push payload: the signed Nostr event (opaque JSON, cryptographically
 /// verified after parse) plus the Buzz Chat context describing where the event
 /// was observed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuzzEventPush {
     /// The signed Nostr event, decoded to its fixed protocol schema before
     /// cryptographic verification. Its id and signature remain untrusted
@@ -64,6 +67,7 @@ pub struct BuzzEventPush {
 
 /// Chat context of an observed Buzz event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuzzPushContext {
     pub community_id: String,
     pub channel_id: String,
@@ -184,6 +188,13 @@ impl BuzzObservationService {
         payload: &[u8],
         signature: &str,
     ) -> Result<IngestOutcome, BuzzPushError> {
+        if payload.len() > MAX_BUZZ_EVENT_REQUEST_BYTES {
+            return Err(BuzzPushError::Malformed(format!(
+                "request body exceeds the {}-byte limit",
+                MAX_BUZZ_EVENT_REQUEST_BYTES
+            )));
+        }
+
         // 1. HMAC + replay window (fail closed).
         self.verify_hmac(payload, signature)?;
 
@@ -744,6 +755,29 @@ mod tests {
                 supersedes_event_id: None,
             },
         }
+    }
+
+    #[tokio::test]
+    async fn oversized_payload_is_rejected_before_hmac_or_database_access() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://rustshare:unused@127.0.0.1:1/rustshare")
+            .expect("valid lazy PostgreSQL URL");
+        let registry = Arc::new(rustshare_core::domain::ApplicationRegistry::first_party().unwrap());
+        let service = BuzzObservationService::new(
+            pool.clone(),
+            ChatIdentityStore::new(pool.clone()),
+            ChatObservationStore::new(pool.clone()),
+            Arc::new(OutboxStore::new(pool, registry)),
+            WebhookSigner::new("test-buzz-webhook-secret"),
+            300,
+            Arc::new(rustshare_core::events::EventBroadcaster::new(64)),
+        );
+        let oversized = vec![0; MAX_BUZZ_EVENT_REQUEST_BYTES + 1];
+
+        assert!(matches!(
+            service.verify_and_ingest(&oversized, "").await,
+            Err(BuzzPushError::Malformed(_))
+        ));
     }
 
     #[test]
