@@ -48,11 +48,11 @@ registry.
   and Vault Sync Compliance
   [45816480581](https://github.com/kubedoio/rustshare/actions/runs/45816480581)
   passed. Main CI [45816480817](https://github.com/kubedoio/rustshare/actions/runs/45816480817)
-  was queued, Integration Tests
+  was cancelled after protected main advanced; Integration Tests
   [45816480555](https://github.com/kubedoio/rustshare/actions/runs/45816480555)
   and CodeQL [45816480926](https://github.com/kubedoio/rustshare/actions/runs/45816480926)
   passed. Main CI [45816480817](https://github.com/kubedoio/rustshare/actions/runs/45816480817)
-  remains queued; Integration Tests
+  was cancelled after protected main advanced; Integration Tests
   [45816480555](https://github.com/kubedoio/rustshare/actions/runs/45816480555)
   passed its suite, Buzz live conformance, identity replacement, and Chat Product
   Acceptance jobs. Prior exact-main Integration
