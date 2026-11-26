@@ -55,10 +55,12 @@ exact candidate evidence is [here](candidate-453ca591aea23e0190f09f932f6d9d451a0
 Memory's source-specific acceptance remains partial under #119, and connected
 Windows/macOS Local Text editor ingestion remains outstanding under #99.
 
-At the 2026-11-26 19:50 UTC status check, current-main CI [45881776570](https://github.com/kubedoio/rustshare/actions/runs/45881776570)
-was still running queued jobs; Integration Tests [45881776637](https://github.com/kubedoio/rustshare/actions/runs/45881776637)
-was in progress; CodeQL [45881776713](https://github.com/kubedoio/rustshare/actions/runs/45881776713)
-had passed. These results do not qualify a release. No release image scan,
+At the 2026-11-26 20:08 UTC status check, current-main Integration Tests
+[45881776637](https://github.com/kubedoio/rustshare/actions/runs/45881776637) had
+passed all four jobs at 20:01 UTC, and CodeQL
+[45881776713](https://github.com/kubedoio/rustshare/actions/runs/45881776713) had
+passed at 19:38 UTC. Main CI [45881776570](https://github.com/kubedoio/rustshare/actions/runs/45881776570)
+still had test, coverage, migration-baseline, and SQLx-prepare jobs queued. These results do not qualify a release. No release image scan,
 SBOM, or provenance was produced for this candidate.
 
 This record does not establish FWS DNS, HTTPS, authentication, operator secret
