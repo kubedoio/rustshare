@@ -11,7 +11,7 @@ isolated disposable services. The image publication job was skipped.
 | Item | Identity |
 | --- | --- |
 | Protected-main source | `5bf3585b516a2fdff0fc1e88f15c7207333319f8` |
-| Workflow / attempt | `45901542778` / 1; completed 22:36:57 UTC |
+| Workflow / attempt | `45901542778` / 1; completed 22:37:00 UTC |
 | Evidence artifact | [15158225765](https://github.com/kubedoio/rustshare/actions/runs/45901542778/artifacts/15158225765), 35,231 bytes, downloaded ZIP SHA-256 `79bf51f62437c3b464916e81a059731f97fe413264dca34b2bffcc014e5ba3f8` |
 | Tested-image transfer artifact | [15158017785](https://github.com/kubedoio/rustshare/actions/runs/45901542778/artifacts/15158017785), 40,480,477 bytes, downloaded ZIP SHA-256 `b4177f34094df94cf1fb074be114807c58774dcf1b55fbcfb9ab20eed171ca62` |
 | Backend image ID / revision | `sha256:ef29a05aa497b4fdcc4fe495f49e472d60e4ddff94853c4ad674c50676ee492f` / `5bf3585b516a2fdff0fc1e88f15c7207333319f8` |
