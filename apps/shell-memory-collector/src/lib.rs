@@ -299,14 +299,16 @@ pub fn record_if_enabled(
 }
 
 pub fn redact_command(command: &str) -> String {
-    if command.split_whitespace().any(|token| {
+    let tokens = command.split_whitespace().collect::<Vec<_>>();
+    if tokens.iter().copied().any(|token| {
         let lower = token.to_ascii_lowercase();
         let key = token.split_once('=').map_or(token, |(key, _)| key);
         sensitive_key(key)
             || lower.contains("bearer")
             || matches!(lower.as_str(), "-u" | "--user")
             || authenticated_url(token)
-    }) {
+    }) || docker_login_uses_short_password(&tokens)
+    {
         // shortcut: unlabelled secrets need explicit excludeCommands; add source-specific parsing when required.
         return "<redacted command>".into();
     }
@@ -321,6 +323,8 @@ fn sensitive_key(key: &str) -> bool {
     [
         "password",
         "passwd",
+        "pass",
+        "pwd",
         "secret",
         "token",
         "authorization",
@@ -334,6 +338,23 @@ fn sensitive_key(key: &str) -> bool {
     ]
     .iter()
     .any(|part| normalized.contains(part))
+}
+
+fn docker_login_uses_short_password(tokens: &[&str]) -> bool {
+    tokens
+        .iter()
+        .position(|token| is_program(token, "docker"))
+        .and_then(|docker| {
+            tokens[docker + 1..]
+                .iter()
+                .position(|token| *token == "login")
+                .map(|login| docker + 1 + login)
+        })
+        .is_some_and(|login| {
+            tokens[login + 1..]
+                .iter()
+                .any(|token| *token == "-p" || token.starts_with("-p="))
+        })
 }
 
 fn authenticated_url(token: &str) -> bool {
@@ -536,6 +557,40 @@ mod tests {
             assert!(content.contains("<redacted command>"));
             assert!(!content.contains("synthetic_value_9876"));
             assert!(!content.contains("synthetic_value_1234"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn redacts_common_password_forms_before_queueing() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut queue = Queue::open(&directory.path().join("queue.sqlite3"))?;
+        let instance_id = Uuid::new_v4();
+        let commands = [
+            "DB_PASS=synthetic_db_password ./client status",
+            "MYSQL_PWD=synthetic_mysql_password mysql -e 'select 1'",
+            "docker login -p synthetic_docker_password registry.example.test",
+            "docker login --pass=synthetic_option_password registry.example.test",
+        ];
+
+        for command in commands {
+            assert!(queue.record(instance_id, input(command), &[])?);
+        }
+
+        let events = queue.pending(instance_id, 10)?;
+        assert_eq!(events.len(), commands.len());
+        for event in events {
+            assert_eq!(event.command, "<redacted command>");
+            let content = String::from_utf8_lossy(&event.content);
+            assert!(content.contains("<redacted command>"));
+            for secret in [
+                "synthetic_db_password",
+                "synthetic_mysql_password",
+                "synthetic_docker_password",
+                "synthetic_option_password",
+            ] {
+                assert!(!content.contains(secret));
+            }
         }
         Ok(())
     }
