@@ -1825,7 +1825,7 @@ async fn contract_brainstorming_cross_tenant_save_source_denied() {
         )
         .await;
     assert!(
-        matches!(result, Err(BrainstormError::PermissionDenied)),
+        matches!(result, Err(BrainstormError::BoardNotFound)),
         "Cross-tenant save_board_source should be denied, got {:?}",
         result
     );
