@@ -51,7 +51,6 @@ pub(crate) const MAX_BUZZ_EVENT_REQUEST_BYTES: usize = 1024 * 1024;
 
 /// Maximum acceptable future skew for a pushed event's author-chosen
 /// `created_at` (seconds). See the check in [`BuzzObservationService::validate_and_build`].
-
 const MAX_CREATED_AT_FUTURE_SKEW_SECS: i64 = 15 * 60;
 
 /// Push payload: the signed Nostr event (opaque JSON, cryptographically
