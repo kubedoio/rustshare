@@ -2,6 +2,27 @@
 
 ## Conclusion: NOT READY
 
+## Current protected-main disposable qualification (2026-11-27)
+
+Protected main `82ca0adb8f2d23c5c2c847ead234e8c8c6b023a4` passed non-publishing
+Pilot Release [45906682546](https://github.com/kubedoio/rustshare/actions/runs/45906682546)
+and Integration Tests [45906682696](https://github.com/kubedoio/rustshare/actions/runs/45906682696).
+The pilot run passed clean install, five synthetic browser journeys (including
+100-user organization administration), upgrade, backup/restore, and rollback
+from a pre-upgrade backup into fresh volumes. Exact identities and scope are in
+the [82ca candidate evidence record](evidence/candidate-82ca0adb8f2d23c5c2c847ead234e8c8c6b023a4-disposable-pilot-2026-11-26.md).
+
+This is disposable engineering evidence only. Image publication was skipped;
+the run has no qualifying image scan, SBOM, or provenance. Main CI
+[45906682585](https://github.com/kubedoio/rustshare/actions/runs/45906682585)
+failed in Monitoring Compose Contract, so full CI is not green. The release is
+not qualified and the FWS pilot remains **NO-GO**. [#333](https://github.com/kubedoio/rustshare/issues/333)
+institutional acceptance and [#335](https://github.com/kubedoio/rustshare/issues/335)
+operator-owned environment gates remain open. This evidence does not authorize
+deployment, image publication, institutional-data import, or real-user
+onboarding. Historical FWS observations below are not replaced by this
+disposable run.
+
 ## Elembra WebUI deployment execution (2026-11-06)
 
 - **Decision: POC NOT READY.** The public app is reachable at
@@ -302,7 +323,7 @@ deployed to FWS; target-host evidence is recorded below and in
 | [#328](https://github.com/kubedoio/rustshare/issues/328) | NOT STARTED | No verified event-to-agenda/Notes/document/decision/action workflow with source reauthorization, revocation, and stale-reference behavior. |
 | [#329](https://github.com/kubedoio/rustshare/issues/329) | PARTIAL | Local import/export tests cover selected recurrence cases; non-UTC recurring masters and detached overrides remain unsupported, and client interoperability/feed revocation are not accepted. |
 | [#331](https://github.com/kubedoio/rustshare/issues/331) | PARTIAL | Single-user lifecycle is exercised; bounded bulk onboarding preview/retry, group/workspace assignment, and organization-wide offboarding are not implemented. The candidate contains the SCIM credential-revocation correction and its targeted integration test passed, but no disposable SCIM-managed user has been tested on FWS. |
-| [#333](https://github.com/kubedoio/rustshare/issues/333) | PARTIAL | Pilot Release run 37461268485 provides exact-SHA CI evidence for clean install, canonical journey, UI, restart/persistence, failures/recovery, backup/restore, and upgrade; the exact tested image is now deployed to FWS and the public canonical journey plus restart persistence passed there. Still missing are the independent two-admin recovery/runbook rehearsal, staged 10–15/30–50/~100-user evidence, and Phase 0 product/security decisions. |
+| [#333](https://github.com/kubedoio/rustshare/issues/333) | PARTIAL | Pilot Release run 37461268485 provides exact-SHA CI evidence for clean install, canonical journey, UI, restart/persistence, failures/recovery, backup/restore, and upgrade; the exact tested image is now deployed to FWS and the public canonical journey plus restart persistence passed there. The later 82ca disposable run passed a synthetic 100-user administration journey with two organization admins and ordinary-user denial; this does not establish staged institutional cohort or production-load behavior. Still missing are the independent two-admin recovery/runbook rehearsal, staged target-environment cohorts, and Phase 0 product/security decisions. |
 
 ## Evidence sequence
 
@@ -481,9 +502,10 @@ backend restart and persistence check passed. However, the independent
 second-admin recovery rehearsal has not yet been completed, the merge image's
 Trivy publication gate failed with an unresolved scan/report mismatch, its
 failed-job-only retry did not reach scanning, the initial outbox delay remains
-unexplained and event delivery is unverified, staged scale evidence is missing,
-and institutional organization/workspace authorization remains unapproved and
-unimplemented.
+unexplained and event delivery is unverified, staged FWS cohort/throughput
+evidence remains missing (the later synthetic 100-user journey is not load
+certification), and institutional organization/workspace authorization remains
+unapproved and unimplemented.
 Keep the bounded cohort stopped until the independent rehearsal and explicit
 acceptance of the operational limitations are recorded. Keep broader #333
 institutional work gated on ADR/product decisions. Do not begin Bund-specific
