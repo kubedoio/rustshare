@@ -32621,6 +32621,10 @@
       "description": "Permission-aware unified search across applications"
     },
     {
+      "name": "Memory",
+      "description": "Authorized Memory catalog status and provenance"
+    },
+    {
       "name": "Vault Sync",
       "description": "Vault synchronization and WebUI content endpoints"
     }

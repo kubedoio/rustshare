@@ -254,6 +254,7 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 	const title = `Memory search ${suffix}`;
 	const marker = `M1SearchMarker${suffix}`;
 	let noteId: string | null = null;
+	let folderId: string | null = null;
 
 	await page.goto('/login');
 	await page.getByLabel('Email').fill(adminEmail);
@@ -269,14 +270,43 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 	const headers = { 'X-Rustshare-Csrf': decodeURIComponent(csrf!) };
 
 	try {
+		const folder = await api.post('/api/v1/folders', {
+			headers,
+			data: { name: `Memory scope ${suffix}` }
+		});
+		expect(folder.ok()).toBeTruthy();
+		folderId = (await folder.json()).id;
+
 		const created = await api.post('/api/v1/notes', {
 			headers,
-			data: { title, content: `# ${title}\n\n${marker} authorized search content` }
+			data: {
+				title,
+				parent_folder_id: folderId,
+				content: `# ${title}\n\n${marker} authorized search content`
+			}
 		});
 		expect(created.ok()).toBeTruthy();
 		noteId = (await created.json()).id;
 
 		await page.goto('/ask');
+		const catalogResponse = await page.waitForResponse(
+			(response) =>
+				response.url().includes('/api/v1/memory/catalog') && response.request().method() === 'GET',
+			{ timeout: 15_000 }
+		);
+		expect(catalogResponse.status()).toBe(200);
+		const catalog = await catalogResponse.json();
+		expect(catalog.coverage).toMatchObject({
+			cataloged: ['chat_messages', 'connector_published_files'],
+			not_tracked: ['ordinary_files_and_notes', 'live_mail_messages']
+		});
+		const catalogStatus = page.getByRole('region', { name: 'Memory catalog status' });
+		await expect(catalogStatus).toContainText(
+			'Regular Files/Notes and live Mail are searchable, but are not tracked in this catalog.'
+		);
+		await expect(catalogStatus).toContainText('Revoked or unavailable records are omitted.');
+		await expect(catalogStatus).toContainText('Showing up to 100 recent authorized entries.');
+
 		await page.getByLabel('Your question').fill(marker);
 		const searchResponse = page.waitForResponse(
 			(response) =>
@@ -310,6 +340,48 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 		expect((await openResponse).status()).toBe(200);
 		expect((await contentResponse).status()).toBe(200);
 		await expect(page.getByText(marker)).toBeVisible();
+
+		const scopedCases = [
+			{
+				type: 'folder',
+				resourceRef: `elembra://io.elembra.files/folder/${folderId}`,
+				label: 'Folder'
+			},
+			{
+				type: 'note',
+				resourceRef: `elembra://io.elembra.files/file/${noteId}`,
+				label: 'Current note'
+			}
+		] as const;
+		for (const scopedCase of scopedCases) {
+			const scopedSearch = await api.post('/api/v1/search', {
+				headers,
+				data: {
+					query: marker,
+					sources: ['files'],
+					limit: 10,
+					scope: { type: scopedCase.type, resourceRef: scopedCase.resourceRef }
+				}
+			});
+			expect(scopedSearch.status()).toBe(200);
+			const scopedResults = (await scopedSearch.json()).results;
+			expect(
+				scopedResults.some(
+					(result: { resource_ref: string; snippet?: string }) =>
+						result.resource_ref.startsWith(`elembra://io.elembra.files/file/${noteId}`) &&
+						result.snippet?.includes(marker)
+				)
+			).toBe(true);
+
+			await page.goto(
+				`/ask?scope=${scopedCase.type}&resourceRef=${encodeURIComponent(scopedCase.resourceRef)}`
+			);
+			await expect(page.getByText(`Company Memory · ${scopedCase.label}`)).toBeVisible();
+			await expect(page.getByText(`Scope: ${scopedCase.label}`)).toBeVisible();
+			await expect(page.getByRole('region', { name: 'Memory catalog status' })).toContainText(
+				'Revoked or unavailable records are omitted.'
+			);
+		}
 	} finally {
 		if (noteId) {
 			try {
@@ -321,6 +393,18 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 					console.warn(`Memory search fixture cleanup returned HTTP ${deleted.status()}`);
 			} catch {
 				console.warn('Memory search fixture cleanup request failed');
+			}
+		}
+		if (folderId) {
+			try {
+				const deleted = await api.delete(`/api/v1/folders/${folderId}`, {
+					headers,
+					timeout: 5_000
+				});
+				if (!deleted.ok())
+					console.warn(`Memory scope fixture cleanup returned HTTP ${deleted.status()}`);
+			} catch {
+				console.warn('Memory scope fixture cleanup request failed');
 			}
 		}
 	}

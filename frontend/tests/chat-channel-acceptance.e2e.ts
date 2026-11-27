@@ -964,11 +964,59 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 		expect(mB.author_pubkey).toBe(b.pubkey);
 		state.eventIds.msgA = mA.event_id;
 		state.eventIds.msgB = mB.event_id;
+		const expectedChatRef = `elembra://io.elembra.chat/message/${mA.event_id}`;
+		await expect
+			.poll(
+				async () => {
+					const chatSearch = await api(a.context, 'POST', '/api/v1/search', {
+						query: `hello from A ${RUN_SUFFIX}`,
+						sources: ['chat'],
+						limit: 10,
+						scope: {
+							type: 'chatChannel',
+							communityId: state.communityId,
+							channelId: open.id
+						}
+					});
+					if (chatSearch.status !== 200) return null;
+					const chatResults = (await chatSearch.json()).results as Array<{
+						resource_ref: string;
+						provenance: { message_id: string };
+						snippet: string;
+					}>;
+					const result = chatResults.find(
+						(candidate) => candidate.resource_ref === expectedChatRef
+					);
+					return result
+						? {
+								resource_ref: result.resource_ref,
+								message_id: result.provenance.message_id,
+								snippet: result.snippet
+							}
+						: null;
+				},
+				{ timeout: 120_000, intervals: [2_000, 5_000, 10_000] }
+			)
+			.toEqual({
+				resource_ref: expectedChatRef,
+				message_id: mA.event_id,
+				snippet: expect.stringContaining(`hello from A ${RUN_SUFFIX}`)
+			});
+
+		const chatCitation = await api(a.context, 'POST', '/api/v1/memory/citations/open', {
+			resource_ref: expectedChatRef
+		});
+		expect(chatCitation.status).toBe(200);
+		expect(await chatCitation.json()).toMatchObject({
+			resource_ref: expectedChatRef,
+			available: true
+		});
 		record('c', 'Message exchange with matching event ids and authors on both sides', 'PASS', {
 			channelId: open.id,
 			aAuthor: mA.author_pubkey,
 			bAuthor: mB.author_pubkey,
 			eventIds: { a: mA.event_id, b: mB.event_id },
+			chatMemorySearch: 'authorized channel scope and citation opening',
 			timelineCountA: aView.body?.messages?.length ?? 0,
 			timelineCountB: bView.body?.messages?.length ?? 0
 		});
