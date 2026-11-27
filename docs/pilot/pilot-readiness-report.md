@@ -21,8 +21,8 @@ not qualified and the FWS pilot remains **NO-GO**. [#333](https://github.com/kub
 institutional acceptance and [#335](https://github.com/kubedoio/rustshare/issues/335)
 operator-owned environment gates remain open. This evidence does not authorize
 deployment, image publication, institutional-data import, or real-user
-onboarding. Current protected main is `2aa2bd626902b13e2bfa1f281c1fe89d6717a197`
-after documentation-only #589; the run above qualifies the 82ca runtime-bearing
+onboarding. Current protected main is `14c7c688e734f20d754503c4d5f6b5e6d194c8db`
+after documentation-only #584; #589 remains in its ancestry; the run above qualifies the 82ca runtime-bearing
 snapshot. Historical FWS observations below are not replaced by this
 disposable run.
 

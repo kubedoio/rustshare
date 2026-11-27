@@ -1,6 +1,6 @@
 # H3 product-scope decisions
 
-These records bound the institutional pilot; they do not authorize FWS deployment or expand pilot scope. The latest tested runtime-bearing protected-main snapshot `82ca0adb8f2d23c5c2c847ead234e8c8c6b023a4` passed its disposable install/upgrade/backup/restore/rollback and five-browser-test journey in [run 45906682546](https://github.com/kubedoio/rustshare/actions/runs/45906682546). Current protected main is `2aa2bd626902b13e2bfa1f281c1fe89d6717a197` after documentation-only #589. Image publication was skipped; this is not release qualification or FWS acceptance. See the [candidate evidence record](candidate-82ca0adb8f2d23c5c2c847ead234e8c8c6b023a4-disposable-pilot-2026-11-26.md).
+These records bound the institutional pilot; they do not authorize FWS deployment or expand pilot scope. The latest tested runtime-bearing protected-main snapshot `82ca0adb8f2d23c5c2c847ead234e8c8c6b023a4` passed its disposable install/upgrade/backup/restore/rollback and five-browser-test journey in [run 45906682546](https://github.com/kubedoio/rustshare/actions/runs/45906682546). Current protected main is `14c7c688e734f20d754503c4d5f6b5e6d194c8db` after documentation-only #584; #589 remains in its ancestry. Image publication was skipped; this is not release qualification or FWS acceptance. See the [candidate evidence record](candidate-82ca0adb8f2d23c5c2c847ead234e8c8c6b023a4-disposable-pilot-2026-11-26.md).
 
 | Issue | Pilot decision | Evidence and explicit deferrals |
 | --- | --- | --- |
