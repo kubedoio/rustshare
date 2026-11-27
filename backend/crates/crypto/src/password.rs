@@ -1,7 +1,5 @@
 use argon2::{
-    password_hash::{
-        rand_core::OsRng, PasswordHash, PasswordHasher as _, PasswordVerifier, SaltString,
-    },
+    password_hash::{phc::PasswordHash, PasswordHasher as _, PasswordVerifier},
     Argon2,
 };
 use thiserror::Error;
@@ -25,11 +23,10 @@ pub struct PasswordHasher;
 impl PasswordHasher {
     /// Hash a password using Argon2id
     pub fn hash(password: &str) -> Result<String, PasswordError> {
-        let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::default();
 
-        let hash = argon2
-            .hash_password(password.as_bytes(), &salt)
+        let hash: PasswordHash = argon2
+            .hash_password(password.as_bytes())
             .map_err(|e| PasswordError::HashError(e.to_string()))?;
 
         Ok(hash.to_string())
@@ -74,5 +71,11 @@ mod tests {
         // But both should verify
         assert!(PasswordHasher::verify(password, &hash1).unwrap());
         assert!(PasswordHasher::verify(password, &hash2).unwrap());
+    }
+
+    #[test]
+    fn test_existing_argon2id_hash_remains_parseable() {
+        let hash = PasswordHash::new(DUMMY_HASH).unwrap();
+        assert_eq!(hash.algorithm.as_str(), "argon2id");
     }
 }
