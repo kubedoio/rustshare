@@ -20,9 +20,11 @@ was cancelled, so it is not a passing gate. Release is **NOT QUALIFIED** and
 the FWS pilot remains **NO-GO**. [#333](https://github.com/kubedoio/rustshare/issues/333)
 institutional acceptance and [#335](https://github.com/kubedoio/rustshare/issues/335)
 operator-owned environment gates remain open. Current protected main is
-`b58f05f31190ea701c316a0f471a6f8f20586a05` after #586; its CI, CodeQL,
-Integration Tests, and Pilot Release runs are in progress, and no b58
-qualification claim is made. This evidence does not authorize deployment,
+`6a915a4791c93e1b768f84b730cb5b466675cba0` after #590. The latest Pilot
+Release run [45976264151](https://github.com/kubedoio/rustshare/actions/runs/45976264151)
+is still in progress on prior main `b58f05f31190ea701c316a0f471a6f8f20586a05`
+after #586; it does not qualify 6a, and no Pilot Release result is claimed for
+6a. This evidence does not authorize deployment,
 image publication, institutional-data import, or real-user onboarding.
 Historical FWS observations below are not replaced by this disposable run.
 
