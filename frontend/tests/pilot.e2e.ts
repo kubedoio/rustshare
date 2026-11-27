@@ -288,12 +288,13 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 		expect(created.ok()).toBeTruthy();
 		noteId = (await created.json()).id;
 
+		await page.goto('/ask');
 		const catalogResponsePromise = page.waitForResponse(
 			(response) =>
 				response.url().includes('/api/v1/memory/catalog') && response.request().method() === 'GET',
 			{ timeout: 15_000 }
 		);
-		await page.goto('/ask');
+		await page.getByRole('button', { name: 'View catalog status' }).click();
 		const catalogResponse = await catalogResponsePromise;
 		expect(catalogResponse.status()).toBe(200);
 		const catalog = await catalogResponse.json();
