@@ -248,7 +248,7 @@ test('Notes opens an exact historical Memory citation without changing Note iden
 	}
 });
 
-test('Workspace keyword search opens a Note through real Memory authorization', async ({
+test('Workspace search opens a Note through real Memory authorization', async ({
 	page
 }) => {
 	test.setTimeout(90_000);
