@@ -2059,6 +2059,165 @@ async fn revoked_files_share_disappears() {
 }
 
 // ---------------------------------------------------------------------------
+// 3a. A revoked Files share cannot enter Ask context through a stale index
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "test-recording-provider")]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn revoked_indexed_files_share_never_enters_ask_context() {
+    let _guard = SERIAL.lock().await;
+    let harness = harness_with_scripted_authority(pool().await, false).await;
+    let pool = harness.pool.clone();
+    let tenant = TenantId::from(harness.tenant);
+    cleanup(&pool, tenant).await;
+
+    let owner = create_user(&harness.metadata_store, "ask-share-owner", tenant.0).await;
+    let recipient = create_user(&harness.metadata_store, "ask-share-recipient", tenant.0).await;
+    let marker = "revokedindexsecretmarker";
+    let file = create_file_with_content(
+        &harness,
+        owner.id,
+        "shared-ask-plan.md",
+        "/docs/shared-ask-plan.md",
+        format!("The private plan marker is {marker}.").as_bytes(),
+    )
+    .await;
+    insert_connector_file_projection(&pool, &file).await;
+    let share = share_file_to_user(
+        &harness,
+        file.id,
+        owner.id,
+        recipient.id,
+        SharePermissions::View,
+    )
+    .await;
+
+    // Index through the supported keyword indexer. The user ACL is a stale
+    // candidate hint after share revocation; Files remains the authority.
+    let mut indexed_acl = owner_acl(tenant.0, file.id, owner.id);
+    indexed_acl
+        .read_principals
+        .push(IndexPrincipal::User(recipient.id));
+    harness
+        .keyword_indexer
+        .index_note(
+            file.id,
+            file.name.clone(),
+            file.path.clone(),
+            format!("The private plan marker is {marker}."),
+            file.mime_type.clone(),
+            owner.id,
+            indexed_acl,
+        )
+        .await
+        .expect("index the shared source through the keyword indexer");
+
+    let recipient_ctx = user_ctx(PrincipalId::from(recipient.id), tenant);
+    let retrieval_principal = rustshare_core::services::ai::RetrievalPrincipal {
+        tenant_id: tenant.0,
+        workspace_id: Some(tenant.0),
+        user_id: recipient.id,
+        group_ids: vec![],
+        min_acl_versions: HashMap::new(),
+        source_file_ids: None,
+        source_folder_ids: None,
+    };
+    let indexed_candidates = harness
+        .keyword_indexer
+        .search_with_acl(&retrieval_principal, marker, 5)
+        .await
+        .expect("the indexed keyword candidate is available");
+    assert!(
+        indexed_candidates.iter().any(|(candidate, _)| {
+            candidate
+                .acl
+                .as_ref()
+                .is_some_and(|acl| acl.source_file_id == file.id)
+                && candidate.content.contains(marker)
+        }),
+        "the test must retain an indexed candidate for the source"
+    );
+
+    let search = Arc::new(
+        harness
+            .service()
+            .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+    );
+    let provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "The plan marker is present.".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let ask = AskWorkspaceService::new(search, Some(provider.clone()));
+    let authorized = ask
+        .ask(&recipient_ctx, marker, &[SearchSource::Files], 5)
+        .await
+        .expect("the active share authorizes Ask");
+    assert!(authorized.grounded);
+    assert_eq!(
+        authorized
+            .citations
+            .first()
+            .expect("the source-backed answer cites the Files resource")
+            .resource_ref,
+        format!(
+            "elembra://io.elembra.files/file/{}?version=sha256%3A{}",
+            file.id, file.content_hash
+        ),
+        "the Files citation identifies the authoritative content hash"
+    );
+    let calls = provider.calls().await;
+    assert_eq!(calls.len(), 1);
+    assert!(calls[0]
+        .sources
+        .iter()
+        .any(|source| source.text.contains(marker)));
+
+    harness
+        .metadata_store
+        .revoke_share(share.id, owner.id)
+        .await
+        .expect("revoke the source share after indexing");
+    assert_eq!(
+        harness
+            .authorizer
+            .authorize(
+                &recipient_ctx,
+                &ActionCapability::from(FILES_READ),
+                &file_ref(file.id),
+            )
+            .await,
+        Decision::Deny,
+        "the authoritative Files permission denies the revoked recipient"
+    );
+    assert!(
+        harness
+            .keyword_indexer
+            .search_with_acl(&retrieval_principal, marker, 5)
+            .await
+            .expect("the stale projection remains queryable")
+            .iter()
+            .any(|(candidate, _)| candidate.content.contains(marker)),
+        "the test must exercise reauthorization against a still-indexed candidate"
+    );
+
+    let revoked = ask
+        .ask(&recipient_ctx, marker, &[SearchSource::Files], 5)
+        .await
+        .expect("revoked source access degrades to insufficient evidence");
+    assert!(revoked.insufficient_evidence);
+    assert_eq!(revoked.source_count, 0);
+    assert!(revoked.citations.is_empty());
+    assert_eq!(
+        provider.calls().await.len(),
+        1,
+        "the revoked source body must not be submitted to the provider"
+    );
+
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
 // 4. A stale Files ACL hint can never leak content
 // ---------------------------------------------------------------------------
 
