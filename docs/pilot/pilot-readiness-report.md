@@ -2,30 +2,29 @@
 
 ## Conclusion: NOT READY
 
-## Latest disposable-pilot qualification (82ca snapshot; 2026-11-27)
+## Latest disposable-pilot qualification (3cd snapshot; 2026-11-27)
 
-The latest snapshot with a completed disposable Pilot Release,
-`82ca0adb8f2d23c5c2c847ead234e8c8c6b023a4` (before #585), passed non-publishing
-Pilot Release [45906682546](https://github.com/kubedoio/rustshare/actions/runs/45906682546)
-and Integration Tests [45906682696](https://github.com/kubedoio/rustshare/actions/runs/45906682696).
-The pilot run passed clean install, five synthetic browser journeys (including
-100-user organization administration), upgrade, backup/restore, and rollback
-from a pre-upgrade backup into fresh volumes. Exact identities and scope are in
-the [82ca candidate evidence record](evidence/candidate-82ca0adb8f2d23c5c2c847ead234e8c8c6b023a4-disposable-pilot-2026-11-26.md).
+The latest completed protected-main disposable Pilot Release is source
+`3cd1156be32298695874a9a59a464dec66e6d451` after #585 and before #586. Run
+[45970032587](https://github.com/kubedoio/rustshare/actions/runs/45970032587)
+passed clean install, five synthetic browser journeys (including 100-user
+organization administration), upgrade, backup/restore, and rollback from a
+pre-upgrade backup into fresh volumes. Image publication was skipped. Exact
+identities and limits are in the [3cd candidate evidence record](evidence/candidate-3cd1156be32298695874a9a59a464dec66e6d451-disposable-pilot-2026-11-27.md).
 
-This is disposable engineering evidence only. Image publication was skipped;
-the run has no qualifying image scan, SBOM, or provenance. Main CI
-[45906682585](https://github.com/kubedoio/rustshare/actions/runs/45906682585)
-failed in Monitoring Compose Contract, so full CI is not green. The release is
-not qualified and the FWS pilot remains **NO-GO**. [#333](https://github.com/kubedoio/rustshare/issues/333)
+This is disposable engineering evidence only. There is no qualifying image
+scan, SBOM, or provenance. Main CI, CodeQL, Frontend CI, Vault Sync Compliance,
+DCO, and Windows/macOS/Linux Local Text workflows passed on 3cd; Integration
+Tests [45970032746](https://github.com/kubedoio/rustshare/actions/runs/45970032746)
+was cancelled, so it is not a passing gate. Release is **NOT QUALIFIED** and
+the FWS pilot remains **NO-GO**. [#333](https://github.com/kubedoio/rustshare/issues/333)
 institutional acceptance and [#335](https://github.com/kubedoio/rustshare/issues/335)
-operator-owned environment gates remain open. This evidence does not authorize
-deployment, image publication, institutional-data import, or real-user
-onboarding. Current protected main is
-`3cd1156be32298695874a9a59a464dec66e6d451` after #585 (Argon2 dependency
-merge); #584 and #589 remain in its ancestry. The evidence above applies only
-to 82ca and makes no Pilot Release qualification claim for 3cd. Historical FWS
-observations below are not replaced by this disposable run.
+operator-owned environment gates remain open. Current protected main is
+`b58f05f31190ea701c316a0f471a6f8f20586a05` after #586; its CI, CodeQL,
+Integration Tests, and Pilot Release runs are in progress, and no b58
+qualification claim is made. This evidence does not authorize deployment,
+image publication, institutional-data import, or real-user onboarding.
+Historical FWS observations below are not replaced by this disposable run.
 
 ## Elembra WebUI deployment execution (2026-11-06)
 
