@@ -3602,15 +3602,22 @@ async fn organization_group_membership_rechecks_revoked_admin_and_tenant_scope()
     .await;
 
     for admin_id in [stale_admin_id, successor_admin_id] {
-        sqlx::query(
-            "INSERT INTO organization_administrators (tenant_id, user_id, granted_by) VALUES ($1,$2,$3)",
+        let grant = rustshare_server::handlers::admin::organization_administrators::grant_organization_administrator(
+            State(state.clone()),
+            AdminUser {
+                user_id: operator_id,
+            },
+            axum::http::HeaderMap::new(),
+            Path((tenant_id, admin_id)),
+            axum::Json(
+                rustshare_server::handlers::admin::organization_administrators::OrganizationAdministratorGrantRequest {
+                    recovery_reason: None,
+                },
+            ),
         )
-        .bind(tenant_id)
-        .bind(admin_id)
-        .bind(operator_id)
-        .execute(&state.db_pool)
         .await
         .unwrap();
+        assert_eq!(grant.0, StatusCode::CREATED);
     }
     let group_id = insert_test_group(&state.db_pool, tenant_id, None).await;
     insert_group_member_direct(&state.db_pool, group_id, member_id).await;
@@ -3710,8 +3717,152 @@ async fn organization_group_membership_rechecks_revoked_admin_and_tenant_scope()
         "denied writes must not be audited as successes"
     );
 
-    sqlx::query("DELETE FROM admin_actions WHERE tenant_id=$1")
-        .bind(tenant_id)
+    sqlx::query("DELETE FROM group_members WHERE group_id=$1")
+        .bind(group_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM user_groups WHERE id=$1")
+        .bind(group_id)
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    // Grant history and tenant audit records are append-only; retain these
+    // synthetic principals and tenants in the disposable integration DB.
+}
+
+#[tokio::test]
+async fn organization_admin_group_membership_rolls_back_when_audit_fails() {
+    let (state, _sink) = setup_with_recording_sink().await;
+    let tenant_id = insert_test_tenant(&state.db_pool).await;
+    let operator_id = Uuid::new_v4();
+    let actor_id = Uuid::new_v4();
+    let member_id = Uuid::new_v4();
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        operator_id,
+        &format!("group-audit-operator-{operator_id}@example.com"),
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        actor_id,
+        &format!("group-audit-admin-{actor_id}@example.com"),
+    )
+    .await;
+    insert_test_user(
+        &state.db_pool,
+        tenant_id,
+        member_id,
+        &format!("group-audit-member-{member_id}@example.com"),
+    )
+    .await;
+    let grant = rustshare_server::handlers::admin::organization_administrators::grant_organization_administrator(
+        State(state.clone()),
+        AdminUser {
+            user_id: operator_id,
+        },
+        axum::http::HeaderMap::new(),
+        Path((tenant_id, actor_id)),
+        axum::Json(
+            rustshare_server::handlers::admin::organization_administrators::OrganizationAdministratorGrantRequest {
+                recovery_reason: None,
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(grant.0, StatusCode::CREATED);
+    let group_id = insert_test_group(&state.db_pool, tenant_id, None).await;
+
+    let suffix = Uuid::new_v4().simple().to_string();
+    let function_name = format!("fail_group_audit_{suffix}");
+    let trigger_name = format!("fail_group_audit_trigger_{suffix}");
+    sqlx::query(&format!(
+        "CREATE FUNCTION {function_name}() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             IF NEW.tenant_id = '{tenant_id}'::uuid
+                AND NEW.target_id = '{group_id}'::uuid
+                AND NEW.action_type IN ('group.member_added', 'group.member_removed') THEN
+                 RAISE EXCEPTION 'injected membership audit failure';
+             END IF;
+             RETURN NEW;
+         END $$"
+    ))
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
+    sqlx::query(&format!(
+        "CREATE TRIGGER {trigger_name} BEFORE INSERT ON admin_actions
+         FOR EACH ROW EXECUTE FUNCTION {function_name}()"
+    ))
+    .execute(&state.db_pool)
+    .await
+    .unwrap();
+
+    let add = organization_admin_handlers::add_member(
+        State(state.clone()),
+        OrganizationAdmin {
+            user_id: actor_id,
+            tenant_id,
+        },
+        axum::http::HeaderMap::new(),
+        Path(group_id),
+        axum::Json(organization_admin_handlers::MemberInput { user_id: member_id }),
+    )
+    .await;
+    assert_eq!(
+        add.unwrap_err().into_response().status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM group_members WHERE group_id=$1 AND user_id=$2",
+        )
+        .bind(group_id)
+        .bind(member_id)
+        .fetch_one(&state.db_pool)
+        .await
+        .unwrap(),
+        0,
+        "failed required audit must roll back the membership insert"
+    );
+
+    insert_group_member_direct(&state.db_pool, group_id, member_id).await;
+    let remove = organization_admin_handlers::remove_member(
+        State(state.clone()),
+        OrganizationAdmin {
+            user_id: actor_id,
+            tenant_id,
+        },
+        axum::http::HeaderMap::new(),
+        Path((group_id, member_id)),
+    )
+    .await;
+    assert_eq!(
+        remove.unwrap_err().into_response().status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM group_members WHERE group_id=$1 AND user_id=$2",
+        )
+        .bind(group_id)
+        .bind(member_id)
+        .fetch_one(&state.db_pool)
+        .await
+        .unwrap(),
+        1,
+        "failed required audit must roll back the membership deletion"
+    );
+
+    sqlx::query(&format!("DROP TRIGGER {trigger_name} ON admin_actions"))
+        .execute(&state.db_pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!("DROP FUNCTION {function_name}()"))
         .execute(&state.db_pool)
         .await
         .unwrap();
@@ -3725,29 +3876,6 @@ async fn organization_group_membership_rechecks_revoked_admin_and_tenant_scope()
         .execute(&state.db_pool)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM organization_administrators WHERE tenant_id=$1")
-        .bind(tenant_id)
-        .execute(&state.db_pool)
-        .await
-        .unwrap();
-    for user_id in [
-        stale_admin_id,
-        successor_admin_id,
-        operator_id,
-        member_id,
-        foreign_user_id,
-    ] {
-        sqlx::query("DELETE FROM users WHERE id=$1")
-            .bind(user_id)
-            .execute(&state.db_pool)
-            .await
-            .unwrap();
-    }
-    for id in [tenant_id, foreign_tenant_id] {
-        sqlx::query("DELETE FROM tenants WHERE id=$1")
-            .bind(id)
-            .execute(&state.db_pool)
-            .await
-            .unwrap();
-    }
+    // Grant history and its audit record are append-only; keep the synthetic
+    // tenant and principals in this disposable test database.
 }

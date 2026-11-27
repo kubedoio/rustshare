@@ -4,8 +4,7 @@ pub mod invitations;
 use crate::{
     handlers::{
         admin::organization_administrators::{
-            lock_and_check_active_grant, lock_tenant_admin_grants,
-            removal_would_leave_no_enabled_admin, revoke_for_lifecycle,
+            lock_tenant_admin_grants, removal_would_leave_no_enabled_admin, revoke_for_lifecycle,
         },
         admin::{
             admin_bad_request, admin_conflict, admin_internal_error, admin_not_found,
@@ -13,7 +12,7 @@ use crate::{
         },
         AppError, OrganizationAdmin,
     },
-    services::organization_groups::list_groups,
+    services::organization_groups::{self, list_groups},
     user_disable::{set_user_disabled_at, DisableUserTarget},
     AppState,
 };
@@ -809,34 +808,34 @@ pub async fn add_member(
             "Organization administrators cannot add themselves to groups",
         ));
     }
-    let mut tx = s.db_pool.begin().await.map_err(db_error)?;
-    require_current_organization_admin(&mut tx, tenant_id, user_id).await?;
-    let valid=sqlx::query("SELECT g.id FROM user_groups g JOIN users u ON u.tenant_id=g.tenant_id WHERE g.id=$1 AND g.tenant_id=$2 AND g.archived_at IS NULL AND u.id=$3 FOR UPDATE OF g,u").bind(id).bind(tenant_id).bind(input.user_id).fetch_optional(&mut *tx).await.map_err(db_error)?;
-    if valid.is_none() {
-        return Err(admin_not_found("Group or user not found"));
-    }
-    let res=sqlx::query("INSERT INTO group_members(group_id,user_id,added_by) VALUES($1,$2,$3) ON CONFLICT DO NOTHING").bind(id).bind(input.user_id).bind(user_id).execute(&mut *tx).await.map_err(db_error)?;
-    if res.rows_affected() == 0 {
-        return Err(admin_conflict("User is already a member of this group"));
-    }
-    insert_scoped_admin_action(
-        &mut tx,
+    match organization_groups::add_member_as_organization_admin(
+        &s.db_pool,
         tenant_id,
+        id,
+        input.user_id,
         user_id,
-        "group.member_added",
-        Some("group"),
-        Some(id),
-        json!({"user_id":input.user_id}),
         request_correlation_id(&h),
     )
     .await
-    .map_err(db_error)?;
-    tx.commit().await.map_err(db_error)?;
-    crate::services::note_service::dispatch_group_index_acl_refresh(
-        Arc::clone(&s.note_service),
-        id,
-    );
-    Ok(StatusCode::NO_CONTENT)
+    .map_err(db_error)?
+    {
+        organization_groups::OrganizationAdminMemberOutcome::Changed => {
+            crate::services::note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&s.note_service),
+                id,
+            );
+            Ok(StatusCode::NO_CONTENT)
+        }
+        organization_groups::OrganizationAdminMemberOutcome::AdministratorRevoked => Err(
+            AppError::forbidden("Organization administrator access required"),
+        ),
+        organization_groups::OrganizationAdminMemberOutcome::NotFound => {
+            Err(admin_not_found("Group or user not found"))
+        }
+        organization_groups::OrganizationAdminMemberOutcome::AlreadyMember => {
+            Err(admin_conflict("User is already a member of this group"))
+        }
+    }
 }
 #[utoipa::path(delete,path="/api/v1/organization-admin/groups/{id}/members/{user_id}",params(("id"=Uuid,Path),("user_id"=Uuid,Path)),responses((status=204),(status=404)))]
 pub async fn remove_member(
@@ -848,49 +847,33 @@ pub async fn remove_member(
     h: HeaderMap,
     Path((id, user)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, AppError> {
-    let mut tx = s.db_pool.begin().await.map_err(db_error)?;
-    require_current_organization_admin(&mut tx, tenant_id, actor).await?;
-    let res=sqlx::query("DELETE FROM group_members m USING user_groups g, users u WHERE m.group_id=g.id AND m.user_id=u.id AND g.id=$1 AND g.tenant_id=$2 AND u.id=$3 AND u.tenant_id=$2").bind(id).bind(tenant_id).bind(user).execute(&mut *tx).await.map_err(db_error)?;
-    if res.rows_affected() == 0 {
-        return Err(admin_not_found("Group, user, or membership not found"));
-    }
-    insert_scoped_admin_action(
-        &mut tx,
+    match organization_groups::remove_member_as_organization_admin(
+        &s.db_pool,
         tenant_id,
+        id,
+        user,
         actor,
-        "group.member_removed",
-        Some("group"),
-        Some(id),
-        json!({"user_id":user}),
         request_correlation_id(&h),
     )
     .await
-    .map_err(db_error)?;
-    tx.commit().await.map_err(db_error)?;
-    crate::services::note_service::dispatch_group_index_acl_refresh(
-        Arc::clone(&s.note_service),
-        id,
-    );
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// Revalidate the extractor's tenant-admin snapshot inside the membership
-/// transaction. The advisory lock serializes this check with grant revocation:
-/// a write either commits before revocation or observes the revoked grant.
-async fn require_current_organization_admin(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    tenant_id: Uuid,
-    user_id: Uuid,
-) -> Result<(), AppError> {
-    let active = lock_and_check_active_grant(tx, tenant_id, user_id)
-        .await
-        .map_err(db_error)?;
-    if active {
-        Ok(())
-    } else {
-        Err(AppError::forbidden(
-            "Organization administrator access required",
-        ))
+    .map_err(db_error)?
+    {
+        organization_groups::OrganizationAdminMemberOutcome::Changed => {
+            crate::services::note_service::dispatch_group_index_acl_refresh(
+                Arc::clone(&s.note_service),
+                id,
+            );
+            Ok(StatusCode::NO_CONTENT)
+        }
+        organization_groups::OrganizationAdminMemberOutcome::AdministratorRevoked => Err(
+            AppError::forbidden("Organization administrator access required"),
+        ),
+        organization_groups::OrganizationAdminMemberOutcome::NotFound => {
+            Err(admin_not_found("Group, user, or membership not found"))
+        }
+        organization_groups::OrganizationAdminMemberOutcome::AlreadyMember => {
+            Err(admin_conflict("User is already a member of this group"))
+        }
     }
 }
 
