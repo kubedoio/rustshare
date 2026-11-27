@@ -3184,6 +3184,15 @@ async fn mail_workspace_search_reauthorizes_live_owner_and_ask_context() {
             .await,
         Decision::NotFound
     );
+    assert!(
+        matches!(
+            authorizer
+                .fetch(&owner_context, &mail_ref, Representation::Text)
+                .await,
+            Err(SourceError::NotFound)
+        ),
+        "opening an issued Mail citation must reauthorize live Mail availability"
+    );
 
     cleanup(&pool, tenant).await;
     cleanup(&pool, other_tenant).await;
