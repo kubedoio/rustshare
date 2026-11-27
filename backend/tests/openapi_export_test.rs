@@ -114,6 +114,33 @@ fn account_and_vault_device_delete_routes_are_distinct() {
 }
 
 #[test]
+fn memory_catalog_route_and_response_are_documented() {
+    let spec = rustshare_server::openapi::to_pretty_json()
+        .expect("failed to serialize OpenAPI spec to JSON");
+    let value: serde_json::Value =
+        serde_json::from_str(&spec).expect("failed to parse generated OpenAPI spec as JSON");
+    let operation = value["paths"]["/api/v1/memory/catalog"]["get"]
+        .as_object()
+        .expect("missing Memory catalog GET operation");
+
+    assert_eq!(operation["tags"][0], "Memory");
+    assert_eq!(
+        operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/MemoryCatalogResponse"
+    );
+    for schema in [
+        "MemoryCatalogEntry",
+        "MemoryCatalogCoverage",
+        "MemoryCatalogResponse",
+    ] {
+        assert!(
+            value["components"]["schemas"][schema].is_object(),
+            "missing Memory catalog schema {schema}"
+        );
+    }
+}
+
+#[test]
 fn connector_management_contract_is_tenant_scoped_and_redacts_credentials() {
     let spec = rustshare_server::openapi::to_pretty_json()
         .expect("failed to serialize generated OpenAPI spec");
