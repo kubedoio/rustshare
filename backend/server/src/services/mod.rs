@@ -23,6 +23,7 @@ pub mod mail_service;
 pub mod meeting_actions;
 pub mod meeting_decisions;
 pub mod meeting_service;
+pub mod memory_catalog;
 pub mod note_index_sink;
 pub mod note_service;
 pub mod organization_administrators;

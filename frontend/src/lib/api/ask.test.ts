@@ -1,13 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from './client';
-import { askHref, askWorkspace, openAskCitation, type AskScope } from './ask';
+import { askHref, askWorkspace, getMemoryCatalog, openAskCitation, type AskScope } from './ask';
 
 vi.mock('./client', () => ({
-	apiClient: { post: vi.fn() }
+	apiClient: { get: vi.fn(), post: vi.fn() }
 }));
 
 describe('Ask API contract', () => {
-	beforeEach(() => vi.mocked(apiClient.post).mockReset());
+	beforeEach(() => {
+		vi.mocked(apiClient.get).mockReset();
+		vi.mocked(apiClient.post).mockReset();
+	});
+
+	it('loads the authenticated Memory catalog contract', async () => {
+		vi.mocked(apiClient.get).mockResolvedValue({ entries: [], coverage: {} });
+		await getMemoryCatalog();
+		expect(apiClient.get).toHaveBeenCalledWith('/memory/catalog');
+	});
 
 	it.each([
 		[{ type: 'workspace' } satisfies AskScope],

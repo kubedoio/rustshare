@@ -3,13 +3,15 @@
 	import { ApiError } from '$lib/api/types';
 	import {
 		askWorkspace,
+		getMemoryCatalog,
 		openAskCitation,
 		searchMemory,
 		type AskCitation,
 		type OpenCitationResponse,
 		type AskResponse,
 		type AskScope,
-		type MemorySearchResult
+		type MemorySearchResult,
+		type MemoryCatalogResponse
 	} from '$lib/api/ask';
 	import { currentUser } from '$lib/stores/auth';
 	import { ArrowUp, BookOpen, ExternalLink, LoaderCircle } from 'lucide-svelte';
@@ -30,9 +32,12 @@
 	let question = $state('');
 	let response = $state<AskResponse | null>(null);
 	let searchResults = $state<MemorySearchResult[] | null>(null);
+	let catalog = $state<MemoryCatalogResponse | null>(null);
 	let error = $state('');
 	let loading = $state(false);
 	let searching = $state(false);
+	let loadingCatalog = $state(false);
+	let catalogError = $state('');
 	let openingCitation = $state<string | null>(null);
 	let requestGeneration = 0;
 	let scopeKey = $state('');
@@ -75,6 +80,19 @@
 			}
 		} finally {
 			if (generation === requestGeneration) searching = false;
+		}
+	}
+
+	async function loadCatalog() {
+		if (loadingCatalog) return;
+		loadingCatalog = true;
+		catalogError = '';
+		try {
+			catalog = await getMemoryCatalog();
+		} catch {
+			catalogError = 'Memory catalog status could not be loaded.';
+		} finally {
+			loadingCatalog = false;
 		}
 	}
 
@@ -237,6 +255,62 @@
 	</form>
 
 	{#if error}<div class="mt-5 alert alert-warning" role="alert"><span>{error}</span></div>{/if}
+	<section class="mt-8" aria-label="Memory catalog status">
+		<div class="flex items-center justify-between gap-3">
+			<h2 class="text-sm font-semibold text-base-content">Recent Memory catalog</h2>
+			<button
+				class="btn btn-ghost btn-sm"
+				type="button"
+				onclick={() => void loadCatalog()}
+				disabled={loadingCatalog}
+			>
+				{loadingCatalog ? 'Loading' : catalog ? 'Refresh catalog' : 'View catalog status'}
+			</button>
+		</div>
+		<p class="mt-2 text-sm text-base-content/60">
+			Cataloged records: Chat messages and Files-backed Connector publications. Regular Files/Notes
+			and live Mail are searchable, but are not tracked in this catalog. Revoked or unavailable
+			records are omitted. Showing up to 100 recent authorized entries.
+		</p>
+		{#if catalogError}<p class="mt-2 text-sm text-error" role="alert">{catalogError}</p>{/if}
+		{#if catalog}
+			{#if catalog.entries.length}
+				<div class="mt-3 grid gap-2 sm:grid-cols-2">
+					{#each catalog.entries as entry (entry.resource_ref)}
+						<button
+							type="button"
+							class="w-full rounded-xl border border-base-300/70 p-3 text-left hover:bg-base-200/50"
+							onclick={() =>
+								void openCitation({
+									resource_ref: entry.resource_ref,
+									title: entry.title,
+									provenance: {}
+								})}
+						>
+							<span class="block truncate text-sm font-medium">{entry.title}</span>
+							<span class="mt-1 block text-xs text-base-content/50">
+								{entry.source_type} · {entry.indexing_status}{#if entry.source_version}
+									· {entry.source_version}{/if}
+							</span>
+							{#if entry.provenance.relative_path}
+								<span class="mt-1 block truncate text-xs text-base-content/50"
+									>{String(entry.provenance.relative_path)}</span
+								>
+							{:else if entry.provenance.channel_id}
+								<span class="mt-1 block truncate text-xs text-base-content/50"
+									>Chat channel {String(entry.provenance.channel_id)}</span
+								>
+							{/if}
+						</button>
+					{/each}
+				</div>
+			{:else}
+				<p class="mt-3 text-sm text-base-content/60">
+					No authorized records are currently cataloged.
+				</p>
+			{/if}
+		{/if}
+	</section>
 	{#if searchResults}
 		<section class="mt-8" aria-label="Memory keyword search results" aria-live="polite">
 			<h2 class="mb-3 text-sm font-semibold text-base-content">

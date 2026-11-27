@@ -247,3 +247,83 @@ test('Notes opens an exact historical Memory citation without changing Note iden
 		}
 	}
 });
+
+test('Workspace keyword search opens a Note through real Memory authorization', async ({
+	page
+}) => {
+	test.setTimeout(90_000);
+	const suffix = randomUUID().replaceAll('-', '');
+	const title = `Memory search ${suffix}`;
+	const marker = `M1SearchMarker${suffix}`;
+	let noteId: string | null = null;
+
+	await page.goto('/login');
+	await page.getByLabel('Email').fill(adminEmail);
+	await page.getByLabel('Password').fill(adminPassword);
+	await page.getByRole('button', { name: 'Sign in with password' }).click();
+	await page.waitForURL('**/files');
+
+	const api = page.context().request;
+	const csrf = (await page.context().cookies()).find(
+		(cookie) => cookie.name === 'rustshare_csrf_token'
+	)?.value;
+	expect(csrf).toBeTruthy();
+	const headers = { 'X-Rustshare-Csrf': decodeURIComponent(csrf!) };
+
+	try {
+		const created = await api.post('/api/v1/notes', {
+			headers,
+			data: { title, content: `# ${title}\n\n${marker} authorized search content` }
+		});
+		expect(created.ok()).toBeTruthy();
+		noteId = (await created.json()).id;
+
+		await page.goto('/ask');
+		await page.getByLabel('Your question').fill(marker);
+		const searchResponse = page.waitForResponse(
+			(response) =>
+				response.url().includes('/api/v1/search') && response.request().method() === 'POST',
+			{ timeout: 30_000 }
+		);
+		await page.getByRole('button', { name: 'Search by keyword' }).click();
+		const response = await searchResponse;
+		expect(response.status()).toBe(200);
+		const result = (await response.json()).results.find(
+			(item: { resource_ref: string; snippet?: string }) =>
+				item.resource_ref.startsWith(`elembra://io.elembra.files/file/${noteId}`) &&
+				item.snippet?.includes(marker)
+		);
+		expect(result).toBeTruthy();
+		await expect(page.getByRole('button', { name: new RegExp(title) })).toBeVisible();
+
+		const openResponse = page.waitForResponse(
+			(candidate) =>
+				candidate.url().includes('/api/v1/memory/citations/open') &&
+				candidate.request().method() === 'POST',
+			{ timeout: 15_000 }
+		);
+		const contentResponse = page.waitForResponse(
+			(candidate) =>
+				candidate.url().includes(`/api/v1/files/${noteId}/content`) &&
+				candidate.request().method() === 'GET',
+			{ timeout: 15_000 }
+		);
+		await page.getByRole('button', { name: new RegExp(title) }).click();
+		expect((await openResponse).status()).toBe(200);
+		expect((await contentResponse).status()).toBe(200);
+		await expect(page.getByText(marker)).toBeVisible();
+	} finally {
+		if (noteId) {
+			try {
+				const deleted = await api.delete(`/api/v1/notes/${noteId}`, {
+					headers,
+					timeout: 5_000
+				});
+				if (!deleted.ok())
+					console.warn(`Memory search fixture cleanup returned HTTP ${deleted.status()}`);
+			} catch {
+				console.warn('Memory search fixture cleanup request failed');
+			}
+		}
+	}
+});

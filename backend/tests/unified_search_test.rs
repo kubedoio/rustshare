@@ -2744,6 +2744,78 @@ async fn revoked_chat_membership_removes_result() {
 }
 
 // ---------------------------------------------------------------------------
+// Chat catalog entries are reauthorized against current Buzz membership
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn revoked_chat_membership_removes_catalog_entry() {
+    let _guard = SERIAL.lock().await;
+    let harness = harness_with_scripted_authority(pool().await, false).await;
+    let pool = harness.pool.clone();
+    let tenant = TenantId::from(harness.tenant);
+    cleanup(&pool, tenant).await;
+
+    let owner = create_user(&harness.metadata_store, "catalog-owner", tenant.0).await;
+    let keys = Keys::generate();
+    let env = setup_tenant_with_relay_for_principal(
+        &pool,
+        tenant,
+        PrincipalId::from(owner.id),
+        &keys,
+        &format!("community-{}", Uuid::new_v4()),
+        "wss://relay.example.test",
+        None,
+        serde_json::json!({ "memory_projection": true, "content_indexing": true }),
+    )
+    .await;
+    let msg_id = message_id(220);
+    insert_chat_message(
+        &pool,
+        &harness.memory_catalog_store,
+        tenant,
+        &env.community_id,
+        &msg_id,
+        "catalog source marker",
+        Utc::now(),
+    )
+    .await;
+    let authority = harness.scripted.as_ref().expect("scripted authority");
+    authority.set(&msg_id, ScriptedOutcome::Allow);
+
+    let files_catalog = rustshare_storage::MemoryFilesCatalogStore::new(pool.clone());
+    let listed = rustshare_server::services::memory_catalog::list_for_principal(
+        &harness.memory_catalog_store,
+        &files_catalog,
+        &harness.authorizer,
+        owner.id,
+        tenant.0,
+    )
+    .await
+    .expect("authorized catalog listing succeeds");
+    assert_eq!(listed.entries.len(), 1);
+    assert_eq!(listed.entries[0].source_type, "message");
+    assert!(listed.entries[0]
+        .resource_ref
+        .ends_with(&format!("/message/{msg_id}")));
+
+    authority.set(&msg_id, ScriptedOutcome::Deny);
+    let revoked = rustshare_server::services::memory_catalog::list_for_principal(
+        &harness.memory_catalog_store,
+        &files_catalog,
+        &harness.authorizer,
+        owner.id,
+        tenant.0,
+    )
+    .await
+    .expect("denied sources are filtered from catalog listing");
+    assert!(revoked.entries.is_empty());
+    assert!(!serde_json::to_string(&revoked).unwrap().contains(&msg_id));
+
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
 // 6. Stale Chat Memory can never override Buzz
 // ---------------------------------------------------------------------------
 

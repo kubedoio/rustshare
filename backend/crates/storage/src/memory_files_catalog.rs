@@ -29,6 +29,20 @@ pub struct MemoryFilesCatalogRecord {
     pub observed_modified_at: Option<DateTime<Utc>>,
 }
 
+/// A Files-backed Connector publication eligible for the Memory catalog UI.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MemoryConnectorCatalogRecord {
+    pub tenant_id: Uuid,
+    pub file_id: Uuid,
+    pub current_version: String,
+    pub connector_instance_id: Uuid,
+    pub source_resource_ref: String,
+    pub source_revision: String,
+    pub relative_path: String,
+    pub updated_at: DateTime<Utc>,
+    pub indexed: bool,
+}
+
 #[derive(Clone)]
 pub struct MemoryFilesCatalogStore {
     pool: PgPool,
@@ -44,6 +58,31 @@ impl MemoryFilesCatalogStore {
             .fetch_one(&self.pool)
             .await
             .map_err(Into::into)
+    }
+
+    /// List live Connector publications in one tenant. Files remains the
+    /// source authority; callers must reauthorize each Files resource.
+    pub async fn list_connector_records(
+        &self,
+        tenant_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<MemoryConnectorCatalogRecord>> {
+        sqlx::query_as(
+            "SELECT c.tenant_id, c.file_id, c.current_version, c.connector_instance_id,
+                    c.source_resource_ref, c.source_revision, c.relative_path, c.updated_at,
+                    EXISTS (SELECT 1 FROM note_index_chunks i
+                            WHERE i.tenant_id=c.tenant_id AND i.source_file_id=c.file_id
+                              AND i.indexed_at >= c.updated_at) AS indexed
+             FROM memory_files_catalog c
+             WHERE c.tenant_id=$1 AND c.deleted_at IS NULL
+               AND c.current_version IS NOT NULL AND c.connector_instance_id IS NOT NULL
+             ORDER BY c.updated_at DESC, c.file_id ASC LIMIT $2",
+        )
+        .bind(tenant_id)
+        .bind(limit.clamp(1, 500) as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(Into::into)
     }
 
     /// Append an idempotent, content-free audit record for a Memory source

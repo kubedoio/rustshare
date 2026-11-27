@@ -43,11 +43,15 @@ pub use managed_identity_vault::{
     ManagedIdentityRecord, ManagedIdentityStatus, ManagedIdentityStoreError,
     ManagedIdentityVaultStore,
 };
-pub use memory_catalog::{content_match_terms, MemoryCatalogStore, ReconcileCounts};
+pub use memory_catalog::{
+    content_match_terms, MemoryCatalogListRecord, MemoryCatalogStore, ReconcileCounts,
+};
 pub use memory_execution_mode::{
     MemoryExecutionMode, MemoryExecutionModeError, MemoryExecutionModeStore,
 };
-pub use memory_files_catalog::{MemoryFilesCatalogRecord, MemoryFilesCatalogStore};
+pub use memory_files_catalog::{
+    MemoryConnectorCatalogRecord, MemoryFilesCatalogRecord, MemoryFilesCatalogStore,
+};
 pub use metadata::{
     BlobReferenceSummary, MemoryReconcileFile, MetadataStore, ObjectGcCandidate,
     PublicShareAccessLogEntry, ReplicationAttemptRecord, SecurityConfig, ShareAccessLogEntry,

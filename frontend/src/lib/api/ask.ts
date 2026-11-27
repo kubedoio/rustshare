@@ -44,6 +44,26 @@ export interface MemorySearchResponse {
 	total: number;
 }
 
+export interface MemoryCatalogEntry {
+	source_application: string;
+	source_type: string;
+	resource_ref: string;
+	title: string;
+	indexing_status: string;
+	occurred_at?: string | null;
+	updated_at?: string | null;
+	source_version?: string | null;
+	provenance: Record<string, unknown>;
+}
+
+export interface MemoryCatalogResponse {
+	coverage: {
+		cataloged: string[];
+		not_tracked: string[];
+	};
+	entries: MemoryCatalogEntry[];
+}
+
 export interface OpenCitationResponse {
 	resource_ref: string;
 	display_name: string;
@@ -72,6 +92,10 @@ export function askWorkspace(request: AskRequest): Promise<AskResponse> {
 
 export function searchMemory(query: string): Promise<MemorySearchResponse> {
 	return apiClient.post<MemorySearchResponse>('/search', { query, limit: 10 });
+}
+
+export function getMemoryCatalog(): Promise<MemoryCatalogResponse> {
+	return apiClient.get<MemoryCatalogResponse>('/memory/catalog');
 }
 
 export function openAskCitation(resource_ref: string): Promise<OpenCitationResponse> {

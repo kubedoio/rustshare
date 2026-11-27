@@ -10,6 +10,7 @@ COUNTERS = ("expected", "skipped", "unexpected", "flaky")
 EXPECTED_TESTS = {
     "pilot administrator uses Files and edits a Note name independently from its H1": "tests/pilot.e2e.ts",
     "Notes opens an exact historical Memory citation without changing Note identity": "tests/pilot.e2e.ts",
+    "Workspace keyword search opens a Note through real Memory authorization": "tests/pilot.e2e.ts",
     "institutional Calendar journey preserves linked context and denies unavailable content": "tests/institutional.e2e.ts",
     "organization admins manage a 100-user synthetic organization safely": "tests/organization-admin-scale.e2e.ts",
     "Calendar Settings previews, confirms, displays, exports, and idempotently re-imports iCalendar events": "tests/calendar-import.e2e.ts",
