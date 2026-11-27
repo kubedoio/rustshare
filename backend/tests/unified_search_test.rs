@@ -1929,6 +1929,19 @@ async fn revoked_files_share_disappears() {
     )
     .await;
     insert_connector_file_projection(&pool, &file).await;
+    harness
+        .keyword_indexer
+        .index_note(
+            file.id,
+            file.name.clone(),
+            file.path.clone(),
+            "shared plan contents".to_string(),
+            file.mime_type.clone(),
+            owner.id,
+            owner_acl(tenant.0, file.id, owner.id),
+        )
+        .await
+        .expect("Files-backed Connector text remains keyword searchable");
     let share = share_file_to_user(
         &harness,
         file.id,
@@ -1971,6 +1984,10 @@ async fn revoked_files_share_disappears() {
             file.id, file.content_hash
         ),
         "the shared Connector file carries its cataloged Files version"
+    );
+    assert_eq!(
+        before.results[0].provenance.note_id, None,
+        "Files-backed Connector publication keeps Files identity"
     );
 
     let allowed_audit: (Uuid, String, Uuid, String, String, String, bool) = sqlx::query_as(

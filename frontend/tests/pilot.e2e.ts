@@ -318,10 +318,14 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 		await page.getByRole('button', { name: 'Search by keyword' }).click();
 		const response = await searchResponse;
 		expect(response.status()).toBe(200);
+		const currentNote = await api.get(`/api/v1/notes/${noteId}`, { headers });
+		expect(currentNote.status()).toBe(200);
+		expect((await currentNote.json()).content).toContain(marker);
 		const result = (await response.json()).results.find(
-			(item: { resource_ref: string; snippet?: string }) =>
+			(item: { resource_ref: string; snippet?: string; provenance: { note_id?: string } }) =>
 				item.resource_ref.startsWith(`elembra://io.elembra.files/file/${noteId}`) &&
-				item.snippet?.includes(marker)
+				item.snippet?.includes(marker) &&
+				item.provenance.note_id === noteId
 		);
 		expect(result).toBeTruthy();
 		await expect(page.getByRole('button', { name: new RegExp(title) })).toBeVisible();
@@ -339,7 +343,12 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 			{ timeout: 15_000 }
 		);
 		await page.getByRole('button', { name: new RegExp(title) }).click();
-		expect((await openResponse).status()).toBe(200);
+		const opened = await openResponse;
+		expect(opened.status()).toBe(200);
+		expect(await opened.json()).toMatchObject({ available: true });
+		await page.waitForURL((url) => url.pathname === `/apps/notes/${noteId}`, {
+			timeout: 15_000
+		});
 		expect((await noteResponse).status()).toBe(200);
 		await expect(page.getByText(marker)).toBeVisible();
 

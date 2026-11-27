@@ -171,13 +171,8 @@
 			const version = sourceVersion(opened.resource_ref);
 			const noteId = citation.provenance.note_id;
 			if (file && noteId === file) {
-				if (!version) {
-					error = 'The cited Note version is unavailable.';
-					return;
-				}
-				goto(
-					`/apps/notes/${encodeURIComponent(noteId)}?sourceVersion=${encodeURIComponent(version)}`
-				);
+				const versionParam = version ? `?sourceVersion=${encodeURIComponent(version)}` : '';
+				goto(`/apps/notes/${encodeURIComponent(noteId)}${versionParam}`);
 			} else if (file) {
 				const versionParam = version ? `&version=${encodeURIComponent(version)}` : '';
 				goto(`/files?preview=${encodeURIComponent(file)}${versionParam}`);

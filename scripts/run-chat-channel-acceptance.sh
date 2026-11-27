@@ -40,6 +40,11 @@ compose() {
 BASE_URL="${ACCEPTANCE_BASE_URL:-http://127.0.0.1:18080}"
 RELAY_URL="${BUZZ_RELAY_WS:-ws://localhost:17447}"
 EVIDENCE_PATH="${ACCEPTANCE_EVIDENCE:-docs/pilot/evidence/chat-channel-acceptance-$(date +%Y%m%d).json}"
+if [[ "${EVIDENCE_PATH}" == /* ]]; then
+	EVIDENCE_ABSOLUTE_PATH="${EVIDENCE_PATH}"
+else
+	EVIDENCE_ABSOLUTE_PATH="$(cd "${REPO_ROOT}" && pwd)/${EVIDENCE_PATH}"
+fi
 # ACCEPTANCE_GIT_SHA lets evidence runs record the exact CODE commit under
 # test even when infra/evidence commits sit on top of it.
 GIT_SHA="${ACCEPTANCE_GIT_SHA:-$(git rev-parse HEAD)}"
@@ -116,7 +121,7 @@ E2E_BASE_URL="${BASE_URL}" \
 	ACCEPTANCE_RELAY_URL="${RELAY_URL}" \
 	ACCEPTANCE_ADMIN_EMAIL="${RUSTSHARE_ADMIN_EMAIL:-admin@localhost}" \
 	ACCEPTANCE_ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
-	ACCEPTANCE_EVIDENCE="$(cd "${REPO_ROOT}" && pwd)/${EVIDENCE_PATH}" \
+	ACCEPTANCE_EVIDENCE="${EVIDENCE_ABSOLUTE_PATH}" \
 	ACCEPTANCE_GIT_SHA="${GIT_SHA}" \
 	ACCEPTANCE_STACK="${COMPOSE_PROJECT_NAME} (source build at ${GIT_SHA}, relay ${RELAY_URL})" \
 	ACCEPTANCE_IMAGE_DIGESTS="${IMAGE_DIGESTS}" \
