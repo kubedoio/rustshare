@@ -1,6 +1,8 @@
 //! Tenant-scoped organization group queries.
 
-use crate::services::organization_administrators::insert_scoped_admin_action;
+use crate::services::organization_administrators::{
+    insert_scoped_admin_action, lock_and_check_active_grant,
+};
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -19,6 +21,120 @@ pub(crate) enum RemoveMemberOutcome {
     UserNotFound,
     DifferentTenant,
     MembershipNotFound,
+}
+
+pub(crate) enum OrganizationAdminMemberOutcome {
+    Changed,
+    AdministratorRevoked,
+    NotFound,
+    AlreadyMember,
+}
+
+pub(crate) async fn add_member_as_organization_admin(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    group_id: Uuid,
+    member_id: Uuid,
+    actor_id: Uuid,
+    correlation_id: Option<&str>,
+) -> Result<OrganizationAdminMemberOutcome, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    if !lock_and_check_active_grant(&mut tx, tenant_id, actor_id).await? {
+        return Ok(OrganizationAdminMemberOutcome::AdministratorRevoked);
+    }
+
+    let target = sqlx::query(
+        "SELECT g.id FROM user_groups g JOIN users u ON u.tenant_id = g.tenant_id
+         WHERE g.id = $1 AND g.tenant_id = $2 AND g.archived_at IS NULL
+           AND u.id = $3 FOR UPDATE OF g, u",
+    )
+    .bind(group_id)
+    .bind(tenant_id)
+    .bind(member_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if target.is_none() {
+        return Ok(OrganizationAdminMemberOutcome::NotFound);
+    }
+
+    let inserted = sqlx::query(
+        "INSERT INTO group_members (group_id, user_id, added_by)
+         VALUES ($1, $2, $3) ON CONFLICT (group_id, user_id) DO NOTHING",
+    )
+    .bind(group_id)
+    .bind(member_id)
+    .bind(actor_id)
+    .execute(&mut *tx)
+    .await?;
+    if inserted.rows_affected() == 0 {
+        return Ok(OrganizationAdminMemberOutcome::AlreadyMember);
+    }
+
+    insert_scoped_admin_action(
+        &mut tx,
+        tenant_id,
+        actor_id,
+        "group.member_added",
+        Some("group"),
+        Some(group_id),
+        json!({"user_id": member_id}),
+        correlation_id,
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(OrganizationAdminMemberOutcome::Changed)
+}
+
+pub(crate) async fn remove_member_as_organization_admin(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    group_id: Uuid,
+    member_id: Uuid,
+    actor_id: Uuid,
+    correlation_id: Option<&str>,
+) -> Result<OrganizationAdminMemberOutcome, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    if !lock_and_check_active_grant(&mut tx, tenant_id, actor_id).await? {
+        return Ok(OrganizationAdminMemberOutcome::AdministratorRevoked);
+    }
+
+    let target = sqlx::query(
+        "SELECT g.id FROM user_groups g JOIN users u ON u.tenant_id = g.tenant_id
+         WHERE g.id = $1 AND g.tenant_id = $2 AND u.id = $3 FOR UPDATE OF g, u",
+    )
+    .bind(group_id)
+    .bind(tenant_id)
+    .bind(member_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if target.is_none() {
+        return Ok(OrganizationAdminMemberOutcome::NotFound);
+    }
+
+    let removed = sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
+        .bind(group_id)
+        .bind(member_id)
+        .execute(&mut *tx)
+        .await?;
+    if removed.rows_affected() == 0 {
+        return Ok(OrganizationAdminMemberOutcome::NotFound);
+    }
+
+    insert_scoped_admin_action(
+        &mut tx,
+        tenant_id,
+        actor_id,
+        "group.member_removed",
+        Some("group"),
+        Some(group_id),
+        json!({"user_id": member_id}),
+        correlation_id,
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(OrganizationAdminMemberOutcome::Changed)
 }
 
 pub(crate) async fn add_member(
