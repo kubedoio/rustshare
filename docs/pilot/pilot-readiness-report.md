@@ -4,7 +4,8 @@
 
 ## Current protected-main disposable qualification (2026-11-27)
 
-Protected main `82ca0adb8f2d23c5c2c847ead234e8c8c6b023a4` passed non-publishing
+The latest tested runtime-bearing protected-main snapshot,
+`82ca0adb8f2d23c5c2c847ead234e8c8c6b023a4`, passed non-publishing
 Pilot Release [45906682546](https://github.com/kubedoio/rustshare/actions/runs/45906682546)
 and Integration Tests [45906682696](https://github.com/kubedoio/rustshare/actions/runs/45906682696).
 The pilot run passed clean install, five synthetic browser journeys (including
@@ -20,7 +21,9 @@ not qualified and the FWS pilot remains **NO-GO**. [#333](https://github.com/kub
 institutional acceptance and [#335](https://github.com/kubedoio/rustshare/issues/335)
 operator-owned environment gates remain open. This evidence does not authorize
 deployment, image publication, institutional-data import, or real-user
-onboarding. Historical FWS observations below are not replaced by this
+onboarding. Current protected main is `2aa2bd626902b13e2bfa1f281c1fe89d6717a197`
+after documentation-only #589; the run above qualifies the 82ca runtime-bearing
+snapshot. Historical FWS observations below are not replaced by this
 disposable run.
 
 ## Elembra WebUI deployment execution (2026-11-06)
