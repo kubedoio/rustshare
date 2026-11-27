@@ -248,9 +248,7 @@ test('Notes opens an exact historical Memory citation without changing Note iden
 	}
 });
 
-test('Workspace search opens a Note through real Memory authorization', async ({
-	page
-}) => {
+test('Workspace search opens a Note through real Memory authorization', async ({ page }) => {
 	test.setTimeout(90_000);
 	const suffix = randomUUID().replaceAll('-', '');
 	const title = `Memory search ${suffix}`;
