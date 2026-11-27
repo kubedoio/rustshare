@@ -2,6 +2,35 @@
 
 ## Conclusion: NOT READY
 
+## Latest disposable-pilot qualification (b58 snapshot; 2026-11-27)
+
+The latest completed protected-main disposable Pilot Release is source
+`b58f05f31190ea701c316a0f471a6f8f20586a05` after #586. Run
+[45976264151](https://github.com/kubedoio/rustshare/actions/runs/45976264151)
+passed clean install, five synthetic browser journeys (including 100-user
+organization administration), upgrade, backup/restore, and rollback from a
+pre-upgrade backup into fresh volumes. Image publication was skipped. Exact
+identities and limits are in the [b58 candidate evidence record](evidence/candidate-b58f05f31190ea701c316a0f471a6f8f20586a05-disposable-pilot-2026-11-27.md).
+
+This is disposable engineering evidence only. There is no qualifying image
+scan, SBOM, or provenance. Main CI [45976264259](https://github.com/kubedoio/rustshare/actions/runs/45976264259),
+Integration Tests [45976264272](https://github.com/kubedoio/rustshare/actions/runs/45976264272),
+CodeQL [45976264312](https://github.com/kubedoio/rustshare/actions/runs/45976264312),
+Frontend CI [45976264336](https://github.com/kubedoio/rustshare/actions/runs/45976264336),
+Vault Sync Compliance [45976264332](https://github.com/kubedoio/rustshare/actions/runs/45976264332),
+and DCO Check [45976264334](https://github.com/kubedoio/rustshare/actions/runs/45976264334)
+passed on b58. Release is **NOT QUALIFIED** and
+the FWS pilot remains **NO-GO**. [#333](https://github.com/kubedoio/rustshare/issues/333)
+institutional acceptance and [#335](https://github.com/kubedoio/rustshare/issues/335)
+operator-owned environment gates remain open. Current protected main is
+`6a915a4791c93e1b768f84b730cb5b466675cba0` after #590; b58 evidence does not
+qualify 6a, and no Pilot Release result is claimed for 6a. The preceding 3cd
+candidate passed Pilot Release but its Integration Tests were cancelled; its
+results are not transferred to b58. This evidence does not authorize
+deployment, image publication, institutional-data import, or real-user
+onboarding.
+Historical FWS observations below are not replaced by this disposable run.
+
 ## Elembra WebUI deployment execution (2026-11-06)
 
 - **Decision: POC NOT READY.** The public app is reachable at
@@ -302,7 +331,7 @@ deployed to FWS; target-host evidence is recorded below and in
 | [#328](https://github.com/kubedoio/rustshare/issues/328) | NOT STARTED | No verified event-to-agenda/Notes/document/decision/action workflow with source reauthorization, revocation, and stale-reference behavior. |
 | [#329](https://github.com/kubedoio/rustshare/issues/329) | PARTIAL | Local import/export tests cover selected recurrence cases; non-UTC recurring masters and detached overrides remain unsupported, and client interoperability/feed revocation are not accepted. |
 | [#331](https://github.com/kubedoio/rustshare/issues/331) | PARTIAL | Single-user lifecycle is exercised; bounded bulk onboarding preview/retry, group/workspace assignment, and organization-wide offboarding are not implemented. The candidate contains the SCIM credential-revocation correction and its targeted integration test passed, but no disposable SCIM-managed user has been tested on FWS. |
-| [#333](https://github.com/kubedoio/rustshare/issues/333) | PARTIAL | Pilot Release run 37461268485 provides exact-SHA CI evidence for clean install, canonical journey, UI, restart/persistence, failures/recovery, backup/restore, and upgrade; the exact tested image is now deployed to FWS and the public canonical journey plus restart persistence passed there. Still missing are the independent two-admin recovery/runbook rehearsal, staged 10–15/30–50/~100-user evidence, and Phase 0 product/security decisions. |
+| [#333](https://github.com/kubedoio/rustshare/issues/333) | PARTIAL | Pilot Release run 37461268485 provides exact-SHA CI evidence for clean install, canonical journey, UI, restart/persistence, failures/recovery, backup/restore, and upgrade; the exact tested image is now deployed to FWS and the public canonical journey plus restart persistence passed there. The later b58 disposable run passed a synthetic 100-user administration journey with two organization admins and ordinary-user denial; this does not establish staged institutional cohort or production-load behavior. Still missing are the independent two-admin recovery/runbook rehearsal, staged target-environment cohorts, and Phase 0 product/security decisions. |
 
 ## Evidence sequence
 
@@ -481,9 +510,10 @@ backend restart and persistence check passed. However, the independent
 second-admin recovery rehearsal has not yet been completed, the merge image's
 Trivy publication gate failed with an unresolved scan/report mismatch, its
 failed-job-only retry did not reach scanning, the initial outbox delay remains
-unexplained and event delivery is unverified, staged scale evidence is missing,
-and institutional organization/workspace authorization remains unapproved and
-unimplemented.
+unexplained and event delivery is unverified, staged FWS cohort/throughput
+evidence remains missing (the later synthetic 100-user journey is not load
+certification), and institutional organization/workspace authorization remains
+unapproved and unimplemented.
 Keep the bounded cohort stopped until the independent rehearsal and explicit
 acceptance of the operational limitations are recorded. Keep broader #333
 institutional work gated on ADR/product decisions. Do not begin Bund-specific
