@@ -505,7 +505,7 @@ async fn memory_mail_search_reauthorizes_owner_tenant_and_enablement_before_body
         .find(|result| {
             result["resource_ref"] == format!("elembra://io.elembra.mail/message/{}", message.id)
         })
-        .expect("authenticated Search API returns the authorized live Mail source");
+        .expect("authenticated Search API returns the authoritative persisted Mail source");
     assert!(api_result["snippet"]
         .as_str()
         .unwrap()
