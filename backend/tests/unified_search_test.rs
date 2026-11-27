@@ -2218,6 +2218,180 @@ async fn revoked_indexed_files_share_never_enters_ask_context() {
 }
 
 // ---------------------------------------------------------------------------
+// 3b. A revoked group membership cannot enter Ask context through a stale ACL
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "test-recording-provider")]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires DATABASE_URL and S3-compatible object storage"]
+async fn revoked_group_membership_never_enters_ask_context() {
+    let _guard = SERIAL.lock().await;
+    let harness = harness_with_scripted_authority(pool().await, false).await;
+    let pool = harness.pool.clone();
+    let tenant = TenantId::from(harness.tenant);
+    cleanup(&pool, tenant).await;
+
+    let owner = create_user(&harness.metadata_store, "group-ask-owner", tenant.0).await;
+    let member = create_user(&harness.metadata_store, "group-ask-member", tenant.0).await;
+    let group_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO user_groups (id, name, tenant_id, created_by) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(group_id)
+    .bind(format!("Memory test group {group_id}"))
+    .bind(tenant.0)
+    .bind(owner.id)
+    .execute(&pool)
+    .await
+    .expect("create tenant-local group");
+    sqlx::query("INSERT INTO group_members (group_id, user_id, added_by) VALUES ($1, $2, $3)")
+        .bind(group_id)
+        .bind(member.id)
+        .bind(owner.id)
+        .execute(&pool)
+        .await
+        .expect("add member to the group");
+
+    let marker = "revokedgroupsecretmarker";
+    let file = create_file_with_content(
+        &harness,
+        owner.id,
+        "group-shared-plan.md",
+        "/docs/group-shared-plan.md",
+        format!("The private group plan marker is {marker}.").as_bytes(),
+    )
+    .await;
+    insert_connector_file_projection(&pool, &file).await;
+    let group_share = Share {
+        id: Uuid::new_v4(),
+        file_id: Some(file.id),
+        folder_id: None,
+        share_token: None,
+        permissions: SharePermissions::View,
+        password_hash: None,
+        expires_at: None,
+        upload_only: false,
+        access_count: 0,
+        recipient_user_id: None,
+        recipient_group_id: Some(group_id),
+        created_by: owner.id,
+        created_at: Utc::now(),
+        revoked_at: None,
+        tenant_id: tenant.0,
+    };
+    harness
+        .metadata_store
+        .create_share(&group_share)
+        .await
+        .expect("share the Files resource with the group");
+
+    let mut indexed_acl = owner_acl(tenant.0, file.id, owner.id);
+    indexed_acl
+        .read_principals
+        .push(IndexPrincipal::Group(group_id));
+    harness
+        .keyword_indexer
+        .index_note(
+            file.id,
+            file.name.clone(),
+            file.path.clone(),
+            format!("The private group plan marker is {marker}."),
+            file.mime_type.clone(),
+            owner.id,
+            indexed_acl,
+        )
+        .await
+        .expect("index the group-shared source");
+
+    let member_ctx = user_ctx(PrincipalId::from(member.id), tenant);
+    let search = Arc::new(
+        harness
+            .service()
+            .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+    );
+    let provider = Arc::new(RecordingLlmProvider::new(LlmResult {
+        answer: "The group plan marker is present.".into(),
+        citations: vec!["src-001".into()],
+    }));
+    let ask = AskWorkspaceService::new(search, Some(provider.clone()));
+    let authorized = ask
+        .ask(&member_ctx, marker, &[SearchSource::Files], 5)
+        .await
+        .expect("active group membership authorizes Ask");
+    assert!(authorized.grounded);
+    let initial_calls = provider.calls().await;
+    assert_eq!(initial_calls.len(), 1);
+    assert!(initial_calls[0]
+        .sources
+        .iter()
+        .any(|source| source.text.contains(marker)));
+
+    sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
+        .bind(group_id)
+        .bind(member.id)
+        .execute(&pool)
+        .await
+        .expect("remove the member while the group ACL remains indexed");
+    assert_eq!(
+        harness
+            .authorizer
+            .authorize(
+                &member_ctx,
+                &ActionCapability::from(FILES_READ),
+                &file_ref(file.id),
+            )
+            .await,
+        Decision::Deny,
+        "the Files owner denies a member removed from the group"
+    );
+    let stale_group_candidates = harness
+        .keyword_indexer
+        .search_with_acl(
+            &rustshare_core::services::ai::RetrievalPrincipal {
+                tenant_id: tenant.0,
+                workspace_id: Some(tenant.0),
+                user_id: member.id,
+                group_ids: vec![group_id],
+                min_acl_versions: HashMap::new(),
+                source_file_ids: None,
+                source_folder_ids: None,
+            },
+            marker,
+            5,
+        )
+        .await
+        .expect("the stale group ACL still returns an indexed candidate");
+    assert!(stale_group_candidates
+        .iter()
+        .any(|(candidate, _)| candidate.content.contains(marker)));
+    let revoked = ask
+        .ask(&member_ctx, marker, &[SearchSource::Files], 5)
+        .await
+        .expect("revoked membership returns insufficient evidence");
+    assert!(revoked.insufficient_evidence);
+    assert_eq!(revoked.source_count, 0);
+    assert!(revoked.citations.is_empty());
+    let calls = provider.calls().await;
+    assert_eq!(
+        calls.len(),
+        1,
+        "the revoked group source never reaches the provider"
+    );
+
+    sqlx::query("DELETE FROM shares WHERE id = $1")
+        .bind(group_share.id)
+        .execute(&pool)
+        .await
+        .expect("remove the synthetic group share");
+    sqlx::query("DELETE FROM user_groups WHERE id = $1")
+        .bind(group_id)
+        .execute(&pool)
+        .await
+        .expect("remove the synthetic group");
+    cleanup(&pool, tenant).await;
+}
+
+// ---------------------------------------------------------------------------
 // 4. A stale Files ACL hint can never leak content
 // ---------------------------------------------------------------------------
 
