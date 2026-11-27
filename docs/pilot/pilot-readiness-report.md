@@ -2,10 +2,10 @@
 
 ## Conclusion: NOT READY
 
-## Current protected-main disposable qualification (2026-11-27)
+## Latest disposable-pilot qualification (82ca snapshot; 2026-11-27)
 
-The latest tested runtime-bearing protected-main snapshot,
-`82ca0adb8f2d23c5c2c847ead234e8c8c6b023a4`, passed non-publishing
+The latest snapshot with a completed disposable Pilot Release,
+`82ca0adb8f2d23c5c2c847ead234e8c8c6b023a4` (before #585), passed non-publishing
 Pilot Release [45906682546](https://github.com/kubedoio/rustshare/actions/runs/45906682546)
 and Integration Tests [45906682696](https://github.com/kubedoio/rustshare/actions/runs/45906682696).
 The pilot run passed clean install, five synthetic browser journeys (including
@@ -21,10 +21,11 @@ not qualified and the FWS pilot remains **NO-GO**. [#333](https://github.com/kub
 institutional acceptance and [#335](https://github.com/kubedoio/rustshare/issues/335)
 operator-owned environment gates remain open. This evidence does not authorize
 deployment, image publication, institutional-data import, or real-user
-onboarding. Current protected main is `14c7c688e734f20d754503c4d5f6b5e6d194c8db`
-after documentation-only #584; #589 remains in its ancestry; the run above qualifies the 82ca runtime-bearing
-snapshot. Historical FWS observations below are not replaced by this
-disposable run.
+onboarding. Current protected main is
+`3cd1156be32298695874a9a59a464dec66e6d451` after #585 (Argon2 dependency
+merge); #584 and #589 remain in its ancestry. The evidence above applies only
+to 82ca and makes no Pilot Release qualification claim for 3cd. Historical FWS
+observations below are not replaced by this disposable run.
 
 ## Elembra WebUI deployment execution (2026-11-06)
 
