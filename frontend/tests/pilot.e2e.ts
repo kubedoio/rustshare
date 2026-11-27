@@ -332,15 +332,15 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 				candidate.request().method() === 'POST',
 			{ timeout: 15_000 }
 		);
-		const contentResponse = page.waitForResponse(
+		const noteResponse = page.waitForResponse(
 			(candidate) =>
-				candidate.url().includes(`/api/v1/files/${noteId}/content`) &&
+				candidate.url().includes(`/api/v1/notes/${noteId}`) &&
 				candidate.request().method() === 'GET',
 			{ timeout: 15_000 }
 		);
 		await page.getByRole('button', { name: new RegExp(title) }).click();
 		expect((await openResponse).status()).toBe(200);
-		expect((await contentResponse).status()).toBe(200);
+		expect((await noteResponse).status()).toBe(200);
 		await expect(page.getByText(marker)).toBeVisible();
 
 		const scopedCases = [
