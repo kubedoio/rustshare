@@ -12619,6 +12619,33 @@
         }
       }
     },
+    "/api/v1/memory/catalog": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Return recent Memory catalog entries visible to the authenticated user.",
+        "operationId": "memory_catalog",
+        "responses": {
+          "200": {
+            "description": "Authorized catalog entries and explicit coverage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryCatalogResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Memory catalog unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/memory/citations/open": {
       "post": {
         "tags": [
@@ -26016,6 +26043,100 @@
           "user_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "MemoryCatalogCoverage": {
+        "type": "object",
+        "required": [
+          "cataloged",
+          "not_tracked"
+        ],
+        "properties": {
+          "cataloged": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "description": "These source record kinds are currently materialized in the catalog."
+          },
+          "not_tracked": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "description": "These sources can be searched, but this endpoint does not track them."
+          }
+        }
+      },
+      "MemoryCatalogEntry": {
+        "type": "object",
+        "required": [
+          "source_application",
+          "source_type",
+          "resource_ref",
+          "title",
+          "indexing_status",
+          "provenance"
+        ],
+        "properties": {
+          "indexing_status": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "provenance": {},
+          "resource_ref": {
+            "type": "string"
+          },
+          "source_application": {
+            "type": "string"
+          },
+          "source_type": {
+            "type": "string"
+          },
+          "source_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "MemoryCatalogResponse": {
+        "type": "object",
+        "required": [
+          "coverage",
+          "entries"
+        ],
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/MemoryCatalogCoverage"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryCatalogEntry"
+            }
           }
         }
       },
