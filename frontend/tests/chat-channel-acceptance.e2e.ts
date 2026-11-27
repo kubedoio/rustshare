@@ -1002,6 +1002,39 @@ test.describe('Chat channel management product acceptance (PR #480)', () => {
 				message_id: mA.event_id,
 				snippet: expect.stringContaining(`hello from A ${RUN_SUFFIX}`)
 			});
+		await expect
+			.poll(
+				async () => {
+					const catalogResponse = await api(a.context, 'GET', '/api/v1/memory/catalog');
+					if (catalogResponse.status !== 200) return null;
+					const catalog = (await catalogResponse.json()) as {
+						entries: Array<{
+							resource_ref: string;
+							source_application: string;
+							indexing_status: string;
+							provenance: { message_id?: string; channel_id?: string };
+						}>;
+					};
+					const entry = catalog.entries.find(
+						(candidate) => candidate.resource_ref === expectedChatRef
+					);
+					return entry
+						? {
+								source_application: entry.source_application,
+								indexing_status: entry.indexing_status,
+								message_id: entry.provenance.message_id,
+								channel_id: entry.provenance.channel_id
+							}
+						: null;
+				},
+				{ timeout: 120_000, intervals: [2_000, 5_000, 10_000] }
+			)
+			.toEqual({
+				source_application: 'io.elembra.chat',
+				indexing_status: expect.stringMatching(/^(content_stored|reference_only)$/),
+				message_id: mA.event_id,
+				channel_id: open.id
+			});
 
 		const chatCitation = await api(a.context, 'POST', '/api/v1/memory/citations/open', {
 			resource_ref: expectedChatRef
