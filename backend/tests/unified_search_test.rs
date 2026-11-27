@@ -49,7 +49,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{header, HeaderMap, StatusCode, Uri};
+use axum::http::{header, HeaderMap, Request, StatusCode, Uri};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
@@ -96,8 +96,11 @@ use rustshare_storage::{
 };
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use tower::ServiceExt;
 use url::Url;
 use uuid::Uuid;
+
+mod support;
 
 /// Serializes the tests within this binary (same convention as the chat-owner
 /// and buzz-authority-gateway suites).
@@ -1532,10 +1535,13 @@ async fn harness_with_real_gateway(
 // Cleanup and response rendering
 // ---------------------------------------------------------------------------
 
-/// Remove every row the tests create for `tenant_id` — the chat tables, the
-/// chat Application enablement, the note index, shares, files, folders and
-/// users (FK-safe order).
+/// Remove per-test source/index rows and non-preserved tenant users.
 async fn cleanup(pool: &PgPool, tenant_id: TenantId) {
+    cleanup_preserving_users(pool, tenant_id, &[]).await;
+}
+
+async fn cleanup_preserving_users(pool: &PgPool, tenant_id: TenantId, preserved_users: &[Uuid]) {
+    // Organization-admin grants and audits are append-only history.
     for table in ["mail_message_parts", "mail_attachments", "mail_messages"] {
         sqlx::query(&format!("DELETE FROM {table} WHERE tenant_id = $1"))
             .bind(tenant_id.0)
@@ -1556,7 +1562,6 @@ async fn cleanup(pool: &PgPool, tenant_id: TenantId) {
         "shares",
         "files",
         "folders",
-        "users",
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE tenant_id = $1"))
             .bind(tenant_id.0)
@@ -1564,6 +1569,12 @@ async fn cleanup(pool: &PgPool, tenant_id: TenantId) {
             .await
             .unwrap();
     }
+    sqlx::query("DELETE FROM users WHERE tenant_id = $1 AND id <> ALL($2)")
+        .bind(tenant_id.0)
+        .bind(preserved_users)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 /// Tenant-scoped row counts for the tables a search can touch (used to prove
@@ -2326,12 +2337,113 @@ async fn revoked_group_membership_never_enters_ask_context() {
         .iter()
         .any(|source| source.text.contains(marker)));
 
-    sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
-        .bind(group_id)
-        .bind(member.id)
+    let mut app_state = support::calendar_harness::setup_test_env().await;
+    app_state.default_tenant_config = rustshare_server::config::DefaultTenantConfig::Set(tenant.0);
+    let operator = create_user(&harness.metadata_store, "group-ask-operator", tenant.0).await;
+    sqlx::query("UPDATE users SET is_admin = true WHERE id = $1")
+        .bind(operator.id)
         .execute(&pool)
         .await
-        .expect("remove the member while the group ACL remains indexed");
+        .expect("configure the synthetic installation operator");
+    let administrator = create_user(&harness.metadata_store, "group-ask-admin", tenant.0).await;
+    let baseline_admin = create_user(
+        &harness.metadata_store,
+        "group-ask-baseline-admin",
+        tenant.0,
+    )
+    .await;
+    let operator_token =
+        support::calendar_harness::create_auth_token(&app_state, operator.id, tenant.0);
+    let administrator_token =
+        support::calendar_harness::create_auth_token(&app_state, administrator.id, tenant.0);
+    let app = rustshare_server::routes::admin_routes().with_state(app_state);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/admin/organizations/{}/administrators/{}",
+                    tenant.0, administrator.id
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {operator_token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .expect("build organization-administrator grant request"),
+        )
+        .await
+        .expect("organization-administrator grant request");
+    assert_eq!(
+        response.status(),
+        StatusCode::CREATED,
+        "the operator API grants tenant-scoped administrator access"
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/admin/organizations/{}/administrators/{}",
+                    tenant.0, baseline_admin.id
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {operator_token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .expect("build baseline administrator grant request"),
+        )
+        .await
+        .expect("baseline administrator grant request");
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/api/v1/organization-admin/groups/{group_id}/members/{}",
+                    member.id
+                ))
+                .header(
+                    header::AUTHORIZATION,
+                    format!("Bearer {administrator_token}"),
+                )
+                .body(Body::empty())
+                .expect("build organization-admin membership removal request"),
+        )
+        .await
+        .expect("organization-admin membership removal request");
+    assert_eq!(
+        response.status(),
+        StatusCode::NO_CONTENT,
+        "the supported organization-admin API removes the group member"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM group_members WHERE group_id = $1 AND user_id = $2",
+        )
+        .bind(group_id)
+        .bind(member.id)
+        .fetch_one(&pool)
+        .await
+        .expect("verify the API removed group membership"),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM admin_actions
+             WHERE tenant_id = $1 AND actor_principal_id = $2
+               AND action_type = 'group.member_removed'
+               AND detail->>'user_id' = $3",
+        )
+        .bind(tenant.0)
+        .bind(administrator.id)
+        .bind(member.id.to_string())
+        .fetch_one(&pool)
+        .await
+        .expect("verify the membership removal was audited"),
+        1
+    );
     assert_eq!(
         harness
             .authorizer
@@ -2378,6 +2490,22 @@ async fn revoked_group_membership_never_enters_ask_context() {
         "the revoked group source never reaches the provider"
     );
 
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/api/v1/admin/organizations/{}/administrators/{}",
+                    tenant.0, administrator.id
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {operator_token}"))
+                .body(Body::empty())
+                .expect("build organization-administrator revocation request"),
+        )
+        .await
+        .expect("organization-administrator revocation request");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
     sqlx::query("DELETE FROM shares WHERE id = $1")
         .bind(group_share.id)
         .execute(&pool)
@@ -2388,7 +2516,12 @@ async fn revoked_group_membership_never_enters_ask_context() {
         .execute(&pool)
         .await
         .expect("remove the synthetic group");
-    cleanup(&pool, tenant).await;
+    cleanup_preserving_users(
+        &pool,
+        tenant,
+        &[operator.id, administrator.id, baseline_admin.id, member.id],
+    )
+    .await;
 }
 
 // ---------------------------------------------------------------------------
