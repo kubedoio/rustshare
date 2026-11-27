@@ -1508,23 +1508,60 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
     .await
     .expect("read durable Memory backlog");
     assert_eq!(pending, "pending");
+    let modified_offline_content = b"modified while Memory worker stopped, then replayed\n";
+    fs::write(root.join(&offline_relative), modified_offline_content).unwrap();
+    let local_text = spawn_worker(&instance_id, &server, &credential_file, &queue, root);
+    wait_for_versions(
+        &client,
+        &server,
+        &owner_token,
+        &scope,
+        "Files update with Memory worker offline",
+        (&queue, &instance_id),
+        &[(&offline_path, 2)],
+    )
+    .await;
+    drop(local_text);
+    let update_event =
+        file_event_id(&pool, offline_file_id, "io.elembra.files.file.updated.v1").await;
+    set_memory_delivery_pending(&pool, offline_event, 0).await;
+    set_memory_delivery_pending(&pool, update_event, 0).await;
+    let pending_events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM integration_deliveries WHERE consumer_id='io.elembra.memory.files-connector.v1' AND event_id=ANY($1) AND state='pending'",
+    )
+    .bind(vec![offline_event, update_event])
+    .fetch_one(&pool)
+    .await
+    .expect("count durable create/update deliveries while Memory is stopped");
+    assert_eq!(pending_events, 2);
     memory_worker = Some(spawn_memory_worker(&server, true).await);
     wait_for_memory_initial_delivery(&pool, offline_event).await;
-    let offline_revision = revision(offline_content);
+    wait_for_memory_initial_delivery(&pool, update_event).await;
+    let offline_revision = revision(modified_offline_content);
     let offline_version = format!("sha256:{}", offline_revision.trim_start_matches("sha256:"));
     wait_for_memory_projection(
         &pool,
         offline_file_id,
         &offline_version,
         &offline_revision,
-        1,
+        2,
+    )
+    .await;
+    redeliver_memory_event(&pool, offline_event).await;
+    wait_for_memory_redelivery(&pool, offline_event).await;
+    wait_for_memory_projection(
+        &pool,
+        offline_file_id,
+        &offline_version,
+        &offline_revision,
+        2,
     )
     .await;
     let offline_search = keyword_search(
         &client,
         &server,
         &owner_token,
-        "durable Memory backlog recovered",
+        "modified while Memory worker stopped",
     )
     .await;
     assert!(offline_search["results"]
@@ -1703,6 +1740,11 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
 
     let files_before_delete = imported_files(&client, &server, &owner_token, &scope).await;
     assert_eq!(files_before_delete.len(), 7);
+    // Files stays authoritative while Memory is down, so deletion must hide stale indexed content.
+    memory_worker
+        .take()
+        .expect("Memory worker is running")
+        .stop_gracefully();
     let deleted = client
         .delete(format!("{server}/api/v1/files/{first_file_id}"))
         .bearer_auth(&owner_token)
@@ -1725,6 +1767,22 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .unwrap()
         .iter()
         .any(|result| result["provenance"]["file_id"] == first_file_id.to_string()));
+    let stale_projection_tombstoned: bool = sqlx::query_scalar(
+        "SELECT deleted_at IS NOT NULL FROM memory_files_catalog WHERE file_id=$1",
+    )
+    .bind(first_file_id)
+    .fetch_one(&pool)
+    .await
+    .expect("inspect Memory projection before worker replay");
+    assert!(
+        !stale_projection_tombstoned,
+        "the stopped Memory worker leaves its source projection stale"
+    );
+    let delete_event =
+        file_event_id(&pool, first_file_id, "io.elembra.files.file.deleted.v1").await;
+    memory_worker = Some(spawn_memory_worker(&server, true).await);
+    let mut tombstone_observed = false;
+    wait_for_memory_initial_delivery(&pool, delete_event).await;
     for _ in 0..150 {
         let deleted_at: Option<chrono::DateTime<chrono::Utc>> =
             sqlx::query_scalar("SELECT deleted_at FROM memory_files_catalog WHERE file_id=$1")
@@ -1734,10 +1792,15 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
                 .expect("read Memory Files tombstone")
                 .flatten();
         if deleted_at.is_some() {
+            tombstone_observed = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+    assert!(
+        tombstone_observed,
+        "worker replay must persist the Files tombstone"
+    );
     let remaining_chunks: i64 =
         sqlx::query_scalar("SELECT count(*) FROM note_index_chunks WHERE source_file_id=$1")
             .bind(first_file_id)
@@ -1746,6 +1809,11 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
             .expect("check stale keyword projection cleanup");
     assert_eq!(remaining_chunks, 0);
 
+    memory_worker
+        .take()
+        .expect("Memory worker processed the Files tombstone")
+        .stop_gracefully();
+    // Restore has no durable Memory event; the authoritative Files reconciliation rebuilds it.
     let restored = client
         .post(format!(
             "{server}/api/v1/files/{first_file_id}/restore-from-trash"
@@ -1756,6 +1824,7 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .expect("restore imported Files resource");
     assert_eq!(restored.status(), StatusCode::NO_CONTENT);
     schedule_external_memory_reconciliation(&pool, tenant_id).await;
+    memory_worker = Some(spawn_memory_worker(&server, true).await);
     wait_for_memory_projection(
         &pool,
         first_file_id,
@@ -1764,6 +1833,42 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         3,
     )
     .await;
+    let restored_search = keyword_search(
+        &client,
+        &server,
+        &owner_token,
+        "alpha v3 after offline edit",
+    )
+    .await;
+    let restored_result = restored_search["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["provenance"]["file_id"] == first_file_id.to_string())
+        .expect("restored citation is searchable after worker recovery");
+    let restored_citation = url::Url::parse(restored_result["resource_ref"].as_str().unwrap())
+        .expect("parse restored citation");
+    assert_eq!(
+        restored_citation
+            .query_pairs()
+            .find(|(key, _)| key == "version")
+            .map(|(_, value)| value.into_owned())
+            .as_deref(),
+        Some(first_v3_version.as_str()),
+        "recovery must cite the authoritative restored Files version"
+    );
+    let restored_catalog_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2 AND deleted_at IS NULL",
+    )
+    .bind(tenant_id)
+    .bind(first_file_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count restored Memory catalog rows");
+    assert_eq!(
+        restored_catalog_rows, 1,
+        "restoration must not duplicate the catalog entry"
+    );
 
     let current = client
         .get(format!("{server}/api/v1/connectors/{instance_id}"))
