@@ -8,6 +8,7 @@ use rustshare_server::config::ChatProvisioningMode;
 use rustshare_server::middleware;
 use rustshare_server::routes;
 use rustshare_server::state::AppState;
+use serde_json::json;
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use std::path::Path;
@@ -467,12 +468,64 @@ async fn memory_mail_search_reauthorizes_owner_tenant_and_enablement_before_body
     let tenant_id = create_test_tenant(&state.db_pool).await;
     let user = create_test_user(&state, "mail_memory_search", tenant_id).await;
     enable_mail_module(&state, tenant_id, user.id).await;
+    let token = create_auth_token(&state, user.id, tenant_id);
+    // This persisted EML source exercises the authoritative Mail service via
+    // HTTP without creating a Memory index; it does not prove an IMAP session.
     let raw = "From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: memory-search-needle\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nAUTHORIZED-MAIL-BODY".to_string();
     let message = state
         .mail_service
         .import_eml(tenant_id, user.id, user.id, raw.into_bytes())
         .await
         .expect("import Mail search fixture");
+    let app = routes::search_routes().with_state(state.clone());
+    let search_request = Request::builder()
+        .uri("/api/v1/search")
+        .method("POST")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "query": "memory-search-needle",
+                "sources": ["mail"],
+                "limit": 5
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = app.clone().oneshot(search_request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let api_search: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let api_result = api_search["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| {
+            result["resource_ref"] == format!("elembra://io.elembra.mail/message/{}", message.id)
+        })
+        .expect("authenticated Search API returns the authoritative persisted Mail source");
+    assert!(api_result["snippet"]
+        .as_str()
+        .unwrap()
+        .contains("AUTHORIZED-MAIL-BODY"));
+    let mail_ref = api_result["resource_ref"].as_str().unwrap().to_owned();
+    let open_request = Request::builder()
+        .uri("/api/v1/memory/citations/open")
+        .method("POST")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"resource_ref": mail_ref}).to_string()))
+        .unwrap();
+    let opened = app.clone().oneshot(open_request).await.unwrap();
+    assert_eq!(opened.status(), StatusCode::OK);
+    let opened_body = axum::body::to_bytes(opened.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let opened_json: serde_json::Value = serde_json::from_slice(&opened_body).unwrap();
+    assert_eq!(opened_json["available"], true);
+    assert_eq!(opened_json["resource_ref"], mail_ref);
     let context = rustshare_resource_auth::PrincipalContext::user(
         rustshare_core::domain::PrincipalId(user.id),
         rustshare_core::domain::TenantId(tenant_id),
@@ -546,6 +599,7 @@ async fn memory_mail_search_reauthorizes_owner_tenant_and_enablement_before_body
     let other_tenant = create_test_tenant(&state.db_pool).await;
     let other_user = create_test_user(&state, "mail_memory_intruder", other_tenant).await;
     enable_mail_module(&state, other_tenant, other_user.id).await;
+    let other_token = create_auth_token(&state, other_user.id, other_tenant);
     let cross_tenant = rustshare_resource_auth::PrincipalContext::user(
         rustshare_core::domain::PrincipalId(other_user.id),
         rustshare_core::domain::TenantId(other_tenant),
@@ -562,12 +616,77 @@ async fn memory_mail_search_reauthorizes_owner_tenant_and_enablement_before_body
             .await,
         rustshare_resource_auth::Decision::Deny
     );
+    let cross_tenant_search = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/search")
+                .method("POST")
+                .header("Authorization", format!("Bearer {other_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "query": "memory-search-needle",
+                        "sources": ["mail"],
+                        "limit": 5
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cross_tenant_search.status(), StatusCode::OK);
+    let cross_tenant_body = axum::body::to_bytes(cross_tenant_search.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let cross_tenant_json: serde_json::Value = serde_json::from_slice(&cross_tenant_body).unwrap();
+    assert!(cross_tenant_json["results"].as_array().unwrap().is_empty());
 
     state
         .application_service
         .disable_application("io.elembra.mail", user.id, tenant_id)
         .await
         .expect("disable Mail");
+    let disabled_search = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/search")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "query": "memory-search-needle",
+                        "sources": ["mail"],
+                        "limit": 5
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(disabled_search.status(), StatusCode::OK);
+    let disabled_body = axum::body::to_bytes(disabled_search.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let disabled_json: serde_json::Value = serde_json::from_slice(&disabled_body).unwrap();
+    assert!(disabled_json["results"].as_array().unwrap().is_empty());
+    let revoked_citation = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/memory/citations/open")
+                .method("POST")
+                .header("Authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"resource_ref": mail_ref}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revoked_citation.status(), StatusCode::NOT_FOUND);
     assert_eq!(
         state
             .source_authorizer

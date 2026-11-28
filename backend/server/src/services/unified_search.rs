@@ -993,7 +993,11 @@ impl UnifiedSearchService {
                                     location: Some(doc.file_path),
                                     occurred_at: None,
                                     file_id: Some(doc.file_id),
-                                    note_id: None,
+                                    // The index is shared with Connector Markdown. Only the
+                                    // authoritative OKF identity marks a result as a Note.
+                                    note_id: doc.acl.as_ref().and_then(|acl| {
+                                        (acl.note_id != acl.source_file_id).then_some(doc.file_id)
+                                    }),
                                     mime_type: Some(doc.mime_type),
                                     cached_hint: None,
                                     message_id: None,

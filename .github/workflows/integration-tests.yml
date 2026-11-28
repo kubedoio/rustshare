@@ -420,11 +420,15 @@ jobs:
 
   chat-product-acceptance:
     name: Chat Product Acceptance
-    # This job intentionally starts with only the checkout. The wrapper owns
-    # .env/bootstrap creation; the dogfood driver uses the managed observer's
-    # pinned runtime for Buzz operations, so host Node/npm is not required.
+    # The browser acceptance extends the dogfood API journey against the same
+    # disposable stack; its overlay gives the host runner stable loopback ports.
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      COMPOSE_PROJECT_NAME: rustshare-chat-acceptance-${{ github.run_id }}
+      ELEMBRA_COMPOSE_EXTRA_FILE: docker-compose.chat-acceptance.yml
+      ELEMBRA_API: http://127.0.0.1:18080/api/v1
+      ELEMBRA_ORIGIN: http://127.0.0.1:18080
 
     steps:
       - name: Checkout
@@ -442,7 +446,37 @@ jobs:
             ./scripts/elembra.sh up
 
       - name: Run live Chat product acceptance
+        env:
+          BUZZ_RELAY_WS: ws://localhost:17447
         run: ./scripts/run-alpha-dogfood.sh
+
+      - name: Install Playwright browser dependencies
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Run Chat channel browser acceptance
+        env:
+          ACCEPTANCE_BASE_URL: http://127.0.0.1:18080
+          ACCEPTANCE_RELAY_URL: ws://localhost:17447
+          ACCEPTANCE_EVIDENCE: ${{ runner.temp }}/chat-channel-acceptance.json
+          ACCEPTANCE_GIT_SHA: ${{ github.sha }}
+        run: |
+          cd frontend
+          npm ci
+          npx playwright install --with-deps chromium
+          cd ..
+          ./scripts/run-chat-channel-acceptance.sh
+          test -s "${ACCEPTANCE_EVIDENCE}"
+      - name: Preserve Chat browser evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: chat-channel-acceptance
+          path: ${{ runner.temp }}/chat-channel-acceptance.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Verify data-preserving stop/start
         run: |

@@ -1637,9 +1637,13 @@ pub fn ai_routes() -> Router<AppState> {
 }
 
 pub fn search_routes() -> Router<AppState> {
-    use axum::routing::post;
+    use axum::routing::{get, post};
     Router::new()
         .route("/api/v1/search", post(crate::handlers::unified_search))
+        .route(
+            "/api/v1/memory/catalog",
+            get(crate::handlers::search::memory_catalog),
+        )
         .route("/api/v1/memory/ask", post(crate::handlers::ask_workspace))
         .route(
             "/api/v1/memory/citations/open",

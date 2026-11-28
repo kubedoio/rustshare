@@ -1415,7 +1415,7 @@ jobs:
             require_line "${clean_install}" "WORKFLOW_RUN_ATTEMPT=${GITHUB_RUN_ATTEMPT}"
             require_line "${evidence_dir}/ui.env" 'UI_STATUS=passed'
             require_line "${evidence_dir}/ui.env" 'UI_BROWSER_STATUS=passed'
-            require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_EXPECTED=5'
+            require_line "${evidence_dir}/ui.env" 'UI_PLAYWRIGHT_EXPECTED=6'
             require_line "${evidence_dir}/ui.env" 'UI_ADMIN_SCALE_100=passed'
             require_line "${evidence_dir}/ui.env" 'UI_INSTITUTIONAL_JOURNEY=passed'
             require_line "${evidence_dir}/ui.env" 'UI_CALENDAR_IMPORT=passed'

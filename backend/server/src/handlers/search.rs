@@ -398,6 +398,34 @@ pub async fn unified_search(
     }))
 }
 
+/// Return recent Memory catalog entries visible to the authenticated user.
+#[utoipa::path(
+    get,
+    path = "/api/v1/memory/catalog",
+    tag = "Memory",
+    responses(
+        (status = 200, description = "Authorized catalog entries and explicit coverage", body = crate::services::memory_catalog::MemoryCatalogResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Memory catalog unavailable"),
+    ),
+)]
+pub async fn memory_catalog(
+    State(state): State<AppState>,
+    auth: AuthenticatedUser,
+) -> Result<Json<crate::services::memory_catalog::MemoryCatalogResponse>, AppError> {
+    let files_catalog = rustshare_storage::MemoryFilesCatalogStore::new(state.db_pool.clone());
+    crate::services::memory_catalog::list_for_principal(
+        &state.memory_catalog_store,
+        &files_catalog,
+        &state.source_authorizer,
+        auth.user_id,
+        auth.tenant_id,
+    )
+    .await
+    .map(Json)
+    .map_err(|_| AppError::internal("Memory catalog unavailable"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

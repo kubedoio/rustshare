@@ -341,6 +341,7 @@ use utoipa::OpenApi;
         crate::handlers::public_shares::get_shared_folder_contents,
         crate::handlers::public_shares::upload_shared_folder_file,
         crate::handlers::search::unified_search,
+        crate::handlers::search::memory_catalog,
         crate::handlers::shares::create_public_file_share,
         crate::handlers::shares::create_public_folder_share,
         crate::handlers::shares::get_share_access_log,
@@ -652,6 +653,9 @@ use utoipa::OpenApi;
         crate::handlers::search::SearchRequest,
         crate::handlers::search::SearchResponse,
         crate::handlers::search::SearchResultItem,
+        crate::services::memory_catalog::MemoryCatalogEntry,
+        crate::services::memory_catalog::MemoryCatalogCoverage,
+        crate::services::memory_catalog::MemoryCatalogResponse,
         crate::handlers::shares::CreateShareRequest,
         crate::handlers::shares::OwnedShareResponse,
         crate::handlers::shares::ShareAccessLogQuery,
@@ -825,6 +829,7 @@ use utoipa::OpenApi;
         (name = "Folders", description = "Folder operations"),
         (name = "Public Shares", description = "Public share access"),
         (name = "Search", description = "Permission-aware unified search across applications"),
+        (name = "Memory", description = "Authorized Memory catalog status and provenance"),
         (name = "Vault Sync", description = "Vault synchronization and WebUI content endpoints"),
     )
 )]

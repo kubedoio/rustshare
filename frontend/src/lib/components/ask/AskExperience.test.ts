@@ -8,13 +8,15 @@ const mocks = vi.hoisted(() => ({
 	askWorkspace: vi.fn(),
 	openAskCitation: vi.fn(),
 	searchMemory: vi.fn(),
+	getMemoryCatalog: vi.fn(),
 	goto: vi.fn()
 }));
 
 vi.mock('$lib/api/ask', () => ({
 	askWorkspace: mocks.askWorkspace,
 	openAskCitation: mocks.openAskCitation,
-	searchMemory: mocks.searchMemory
+	searchMemory: mocks.searchMemory,
+	getMemoryCatalog: mocks.getMemoryCatalog
 }));
 vi.mock('$lib/stores/auth', () => ({ currentUser: readable({ tenant_id: 'tenant-1' }) }));
 vi.mock('$app/navigation', () => ({ goto: mocks.goto }));
@@ -24,11 +26,52 @@ describe('AskExperience', () => {
 		mocks.askWorkspace.mockReset();
 		mocks.openAskCitation.mockReset();
 		mocks.searchMemory.mockReset();
+		mocks.getMemoryCatalog.mockReset();
 		mocks.goto.mockReset();
 		mocks.openAskCitation.mockResolvedValue({
 			available: true,
 			resource_ref: 'elembra://io.elembra.chat/message/m-1'
 		});
+	});
+
+	it('shows catalog coverage, indexing status, provenance, and a reauthorized source link', async () => {
+		mocks.getMemoryCatalog.mockResolvedValue({
+			coverage: {
+				cataloged: ['chat_messages', 'connector_published_files'],
+				not_tracked: ['ordinary_files_and_notes', 'live_mail_messages']
+			},
+			entries: [
+				{
+					source_application: 'io.elembra.files',
+					source_type: 'connector_publication',
+					resource_ref:
+						'elembra://io.elembra.files/file/f-1?version=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+					title: 'Runbook.md',
+					indexing_status: 'indexed',
+					source_version: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+					provenance: { relative_path: 'ops/Runbook.md' }
+				}
+			]
+		});
+		mocks.openAskCitation.mockResolvedValue({
+			available: true,
+			resource_ref:
+				'elembra://io.elembra.files/file/f-1?version=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+		});
+		render(AskExperience);
+		await fireEvent.click(screen.getByRole('button', { name: 'View catalog status' }));
+		await waitFor(() => expect(screen.getByText('Runbook.md')).toBeTruthy());
+		expect(screen.getByText(/Regular Files\/Notes/)).toBeTruthy();
+		expect(screen.getByText(/live Mail are searchable, but are not tracked/)).toBeTruthy();
+		expect(screen.getByText(/connector_publication · indexed/)).toBeTruthy();
+		expect(screen.getByText('ops/Runbook.md')).toBeTruthy();
+		await fireEvent.click(screen.getByRole('button', { name: /Runbook\.md/ }));
+		expect(mocks.openAskCitation).toHaveBeenCalledWith(
+			'elembra://io.elembra.files/file/f-1?version=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+		);
+		expect(mocks.goto).toHaveBeenCalledWith(
+			'/files?preview=f-1&version=sha256%3Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+		);
 	});
 
 	it('offers keyword search for workspace Memory without an LLM', async () => {

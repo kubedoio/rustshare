@@ -101,6 +101,24 @@ pub struct MemoryCatalogStore {
     chat_observation: Option<ChatObservationStore>,
 }
 
+/// Content-free Chat metadata for the authenticated catalog view.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MemoryCatalogListRecord {
+    pub source_application: String,
+    pub source_type: String,
+    pub source_ref: String,
+    pub message_id: String,
+    pub latest_event_id: String,
+    pub community_id: String,
+    pub channel_id: String,
+    pub channel_kind: String,
+    pub author_pubkey: String,
+    pub occurred_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub provenance: serde_json::Value,
+    pub indexing_status: String,
+}
+
 impl MemoryCatalogStore {
     pub fn new(pool: PgPool) -> Self {
         Self {
@@ -399,6 +417,29 @@ impl MemoryCatalogStore {
         .fetch_optional(&self.pool)
         .await?;
         row.map(|row| row_to_record(&row)).transpose()
+    }
+
+    /// List live Chat catalog candidates for one tenant. Callers must
+    /// reauthorize each source with Buzz before returning it to a user.
+    pub async fn list_live_for_tenant(
+        &self,
+        tenant_id: TenantId,
+        limit: usize,
+    ) -> Result<Vec<MemoryCatalogListRecord>> {
+        sqlx::query_as(
+            "SELECT source_application, source_type, source_ref, message_id,
+                    latest_event_id, community_id, channel_id, channel_kind,
+                    author_pubkey, occurred_at, updated_at, provenance, indexing_status
+             FROM memory_catalog
+             WHERE tenant_id=$1 AND source_application='io.elembra.chat'
+               AND source_type='message' AND tombstoned_at IS NULL
+             ORDER BY observed_at DESC, record_id ASC LIMIT $2",
+        )
+        .bind(tenant_id.0)
+        .bind(limit.clamp(1, 500) as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(Into::into)
     }
 
     /// Memory-owned keyword search over catalog records (candidates only; final

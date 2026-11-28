@@ -24,10 +24,24 @@
 
 services:
   backend:
+    environment:
+      RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL: ws://localhost:17447
+      RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL: ws://localhost:17447
     ports: !override
       - "127.0.0.1:17447:17447"
       - "127.0.0.1:18088:18088"
       - "127.0.0.1:19102:19102"
+
+  chat-observer:
+    environment:
+      BUZZ_RELAY_WS: ws://localhost:17447
+
+  chat-bootstrap:
+    environment:
+      BUZZ_RELAY_WS: ws://localhost:17447
+      BUZZ_RELAY_URL: ws://localhost:17447
+      RUSTSHARE_CHAT_BOOTSTRAP_RELAY_URL: ws://localhost:17447
+      RUSTSHARE_CHAT_DEPLOYMENT_RELAY_URL: ws://localhost:17447
 
   buzz-relay:
     environment:

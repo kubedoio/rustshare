@@ -247,3 +247,258 @@ test('Notes opens an exact historical Memory citation without changing Note iden
 		}
 	}
 });
+
+test('Workspace search opens a Note through real Memory authorization', async ({ page }) => {
+	test.setTimeout(90_000);
+	const suffix = randomUUID().replaceAll('-', '');
+	const title = `Memory search ${suffix}`;
+	const marker = `M1SearchMarker${suffix}`;
+	const fileName = `Memory search file ${suffix}.txt`;
+	const fileMarker = `M1FileSearchMarker${suffix}`;
+	let noteId: string | null = null;
+	let folderId: string | null = null;
+	let fileId: string | null = null;
+
+	await page.goto('/login');
+	await page.getByLabel('Email').fill(adminEmail);
+	await page.getByLabel('Password').fill(adminPassword);
+	await page.getByRole('button', { name: 'Sign in with password' }).click();
+	await page.waitForURL('**/files');
+
+	const api = page.context().request;
+	const csrf = (await page.context().cookies()).find(
+		(cookie) => cookie.name === 'rustshare_csrf_token'
+	)?.value;
+	expect(csrf).toBeTruthy();
+	const headers = { 'X-Rustshare-Csrf': decodeURIComponent(csrf!) };
+
+	try {
+		const folder = await api.post('/api/v1/folders', {
+			headers,
+			data: { name: `Memory scope ${suffix}` }
+		});
+		expect(folder.ok()).toBeTruthy();
+		folderId = (await folder.json()).id;
+
+		const created = await api.post('/api/v1/notes', {
+			headers,
+			data: {
+				title,
+				parent_folder_id: folderId,
+				content: `# ${title}\n\n${marker} authorized search content`
+			}
+		});
+		expect(created.ok()).toBeTruthy();
+		noteId = (await created.json()).id;
+
+		await page.goto('/ask');
+		const catalogResponsePromise = page.waitForResponse(
+			(response) =>
+				response.url().includes('/api/v1/memory/catalog') && response.request().method() === 'GET',
+			{ timeout: 15_000 }
+		);
+		await page.getByRole('button', { name: 'View catalog status' }).click();
+		const catalogResponse = await catalogResponsePromise;
+		expect(catalogResponse.status()).toBe(200);
+		const catalog = await catalogResponse.json();
+		expect(catalog.coverage).toMatchObject({
+			cataloged: ['chat_messages', 'connector_published_files'],
+			not_tracked: ['ordinary_files_and_notes', 'live_mail_messages']
+		});
+		const catalogStatus = page.getByRole('region', { name: 'Memory catalog status' });
+		await expect(catalogStatus).toContainText(
+			'Regular Files/Notes and live Mail are searchable, but are not tracked in this catalog.'
+		);
+		await expect(catalogStatus).toContainText('Revoked or unavailable records are omitted.');
+		await expect(catalogStatus).toContainText('Showing up to 100 recent authorized entries.');
+
+		await page.getByLabel('Your question').fill(marker);
+		const searchResponse = page.waitForResponse(
+			(response) =>
+				response.url().includes('/api/v1/search') && response.request().method() === 'POST',
+			{ timeout: 30_000 }
+		);
+		await page.getByRole('button', { name: 'Search by keyword' }).click();
+		const response = await searchResponse;
+		expect(response.status()).toBe(200);
+		const currentNote = await api.get(`/api/v1/notes/${noteId}`, { headers });
+		expect(currentNote.status()).toBe(200);
+		expect((await currentNote.json()).content).toContain(marker);
+		const result = (await response.json()).results.find(
+			(item: { resource_ref: string; snippet?: string; provenance: { note_id?: string } }) =>
+				item.resource_ref.startsWith(`elembra://io.elembra.files/file/${noteId}`) &&
+				item.snippet?.includes(marker) &&
+				item.provenance.note_id === noteId
+		);
+		expect(result).toBeTruthy();
+		await expect(page.getByRole('button', { name: new RegExp(title) })).toBeVisible();
+
+		const openResponse = page.waitForResponse(
+			(candidate) =>
+				candidate.url().includes('/api/v1/memory/citations/open') &&
+				candidate.request().method() === 'POST',
+			{ timeout: 15_000 }
+		);
+		const noteResponse = page.waitForResponse(
+			(candidate) =>
+				candidate.url().includes(`/api/v1/notes/${noteId}`) &&
+				candidate.request().method() === 'GET',
+			{ timeout: 15_000 }
+		);
+		await page.getByRole('button', { name: new RegExp(title) }).click();
+		const opened = await openResponse;
+		expect(opened.status()).toBe(200);
+		expect(await opened.json()).toMatchObject({ available: true });
+		await page.waitForURL((url) => url.pathname === `/apps/notes/${noteId}`, {
+			timeout: 15_000
+		});
+		expect((await noteResponse).status()).toBe(200);
+		await expect(
+			page
+				.getByRole('region', { name: 'Markdown Editor' })
+				.getByText(`${marker} authorized search content`)
+		).toBeVisible();
+
+		const uploadedFile = await api.post('/api/v1/files/upload', {
+			headers,
+			multipart: {
+				file: {
+					name: fileName,
+					mimeType: 'text/plain',
+					buffer: Buffer.from(`${fileMarker} authorized Files content`)
+				},
+				name: fileName,
+				parent_folder_id: folderId!
+			}
+		});
+		expect(uploadedFile.ok()).toBeTruthy();
+		fileId = (await uploadedFile.json()).id;
+		const fileMetadataResponse = await api.get(`/api/v1/files/${fileId}`, { headers });
+		expect(fileMetadataResponse.status()).toBe(200);
+		const fileMetadata = await fileMetadataResponse.json();
+		const fileVersion = `sha256:${fileMetadata.content_hash}`;
+		const originalFileContent = `${fileMarker} authorized Files content`;
+		const updatedFileContent = `${fileMarker} updated current Files content`;
+		const fileSearch = await api.post('/api/v1/search', {
+			headers,
+			data: { query: fileName, sources: ['files'], limit: 10 }
+		});
+		expect(fileSearch.status()).toBe(200);
+		const fileResult = (await fileSearch.json()).results.find((result: { resource_ref: string }) =>
+			result.resource_ref.startsWith(`elembra://io.elembra.files/file/${fileId}`)
+		);
+		expect(fileResult).toBeTruthy();
+		const searchedFileVersion = new URL(fileResult.resource_ref).searchParams.get('version');
+		if (searchedFileVersion) expect(searchedFileVersion).toBe(fileVersion);
+		const editedFile = await api.post(`/api/v1/files/${fileId}/edit`, {
+			headers,
+			data: {
+				content: Buffer.from(updatedFileContent).toString('base64'),
+				save_mode: 'new_version',
+				change_description: 'M1 exact-version citation acceptance'
+			}
+		});
+		expect(editedFile.status()).toBe(200);
+		expect(await editedFile.json()).toMatchObject({
+			saved_as_new_version: true,
+			current_version: 2
+		});
+		const exactFileCitation = searchedFileVersion
+			? fileResult.resource_ref
+			: `${fileResult.resource_ref}?version=${encodeURIComponent(fileVersion)}`;
+		const openedFileCitation = await api.post('/api/v1/memory/citations/open', {
+			headers,
+			data: { resource_ref: exactFileCitation }
+		});
+		expect(openedFileCitation.status()).toBe(200);
+		expect(await openedFileCitation.json()).toMatchObject({
+			resource_ref: exactFileCitation,
+			available: true
+		});
+		const exactFileContent = await api.get(
+			`/api/v1/files/${fileId}/content?version=${encodeURIComponent(fileVersion)}`,
+			{ headers }
+		);
+		expect(exactFileContent.status()).toBe(200);
+		expect(await exactFileContent.text()).toContain(originalFileContent);
+		const currentFileContent = await api.get(`/api/v1/files/${fileId}/content`, { headers });
+		expect(currentFileContent.status()).toBe(200);
+		expect(await currentFileContent.text()).toContain(updatedFileContent);
+
+		const scopedCases = [
+			{
+				type: 'folder',
+				resourceRef: `elembra://io.elembra.files/folder/${folderId}`,
+				label: 'Folder'
+			},
+			{
+				type: 'note',
+				resourceRef: `elembra://io.elembra.files/file/${noteId}`,
+				label: 'Current note'
+			}
+		] as const;
+		for (const scopedCase of scopedCases) {
+			const scopedSearch = await api.post('/api/v1/search', {
+				headers,
+				data: {
+					query: marker,
+					sources: ['files'],
+					limit: 10,
+					scope: { type: scopedCase.type, resourceRef: scopedCase.resourceRef }
+				}
+			});
+			expect(scopedSearch.status()).toBe(200);
+			const scopedResults = (await scopedSearch.json()).results;
+			expect(
+				scopedResults.some(
+					(result: { resource_ref: string; snippet?: string }) =>
+						result.resource_ref.startsWith(`elembra://io.elembra.files/file/${noteId}`) &&
+						result.snippet?.includes(marker)
+				)
+			).toBe(true);
+
+			await page.goto(
+				`/ask?scope=${scopedCase.type}&resourceRef=${encodeURIComponent(scopedCase.resourceRef)}`
+			);
+			await expect(page.getByText(`Company Memory · ${scopedCase.label}`)).toBeVisible();
+			await expect(page.getByText(`Scope: ${scopedCase.label}`)).toBeVisible();
+			await expect(page.getByRole('region', { name: 'Memory catalog status' })).toContainText(
+				'Revoked or unavailable records are omitted.'
+			);
+		}
+	} finally {
+		if (fileId) {
+			try {
+				const deleted = await api.delete(`/api/v1/files/${fileId}`, { headers, timeout: 5_000 });
+				if (!deleted.ok())
+					console.warn(`Memory search File fixture cleanup returned HTTP ${deleted.status()}`);
+			} catch {
+				console.warn('Memory search File fixture cleanup request failed');
+			}
+		}
+		if (noteId) {
+			try {
+				const deleted = await api.delete(`/api/v1/notes/${noteId}`, {
+					headers,
+					timeout: 5_000
+				});
+				if (!deleted.ok())
+					console.warn(`Memory search fixture cleanup returned HTTP ${deleted.status()}`);
+			} catch {
+				console.warn('Memory search fixture cleanup request failed');
+			}
+		}
+		if (folderId) {
+			try {
+				const deleted = await api.delete(`/api/v1/folders/${folderId}`, {
+					headers,
+					timeout: 5_000
+				});
+				if (!deleted.ok())
+					console.warn(`Memory scope fixture cleanup returned HTTP ${deleted.status()}`);
+			} catch {
+				console.warn('Memory scope fixture cleanup request failed');
+			}
+		}
+	}
+});
