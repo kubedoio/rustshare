@@ -40,10 +40,10 @@ pub use email_service::{EmailError, OutboundEmail, OutboundMailMessage, SmtpAtta
 pub use eml_parser::{EmlParseError, ParsedAddress, ParsedAttachment, ParsedMail};
 pub use errors::{FileError, FolderError, VaultSyncError};
 pub use file_service::{
-    validate_connector_relative_path, ConnectorFileImport, ConnectorFileProvenance,
-    EventStoreOps as FileEventStoreOps, FileService, FileUploadActor, IntegrationEventActor,
-    IntegrationEventFacts, IntegrationEventPublisher, IntegrationPublishError,
-    MetadataStoreOps as FileMetadataStoreOps, ObjectStoreOps,
+    file_lifecycle_event_after, validate_connector_relative_path, ConnectorFileImport,
+    ConnectorFileProvenance, EventStoreOps as FileEventStoreOps, FileDeleteSnapshot, FileService,
+    FileUploadActor, IntegrationEventActor, IntegrationEventFacts, IntegrationEventPublisher,
+    IntegrationPublishError, MetadataStoreOps as FileMetadataStoreOps, ObjectStoreOps,
 };
 pub use folder_service::{
     EventStoreOps as FolderEventStoreOps, FolderMetadataError, FolderService,

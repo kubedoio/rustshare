@@ -5139,6 +5139,50 @@
         ]
       }
     },
+    "/api/v1/connectors/worker/files/forget": {
+      "post": {
+        "tags": [
+          "crate::handlers::connectors"
+        ],
+        "summary": "Forgets one Shell Memory import by its Connector-owned source identity.\nThe worker never supplies a Files target ID; that target is resolved only\nthrough this active Connector instance's existing import mapping.",
+        "operationId": "forget_connector_file",
+        "parameters": [
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "Connector ecw1 credential",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectorFileForgetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Import forgotten or already absent"
+          },
+          "401": {
+            "description": "Invalid Connector credential"
+          },
+          "404": {
+            "description": "Import not owned by this Connector"
+          },
+          "409": {
+            "description": "Imported Files resource has changed since ingestion"
+          }
+        }
+      }
+    },
     "/api/v1/connectors/worker/files/import": {
       "post": {
         "tags": [
@@ -18945,6 +18989,22 @@
           }
         }
       },
+      "ConnectorFileForgetRequest": {
+        "type": "object",
+        "required": [
+          "sourceResourceRef",
+          "sourceRevision"
+        ],
+        "properties": {
+          "sourceResourceRef": {
+            "type": "string"
+          },
+          "sourceRevision": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "ConnectorFileImportMetadata": {
         "type": "object",
         "required": [
@@ -19007,10 +19067,12 @@
         "type": "object",
         "required": [
           "sourceResourceRef",
-          "sourceRevision",
-          "targetResourceRef"
+          "sourceRevision"
         ],
         "properties": {
+          "forgotten": {
+            "type": "boolean"
+          },
           "sourceResourceRef": {
             "type": "string"
           },
@@ -19018,7 +19080,10 @@
             "type": "string"
           },
           "targetResourceRef": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

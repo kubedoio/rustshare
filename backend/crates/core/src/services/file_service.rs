@@ -89,6 +89,38 @@ pub trait EventStoreOps: Send + Sync {
 
     /// Append an event to the event store inside an existing transaction.
     async fn append_in_tx(&self, tx: &mut Self::Tx, event: &Event) -> Result<()>;
+
+    /// Return whether a File delete or restore event committed since `since`.
+    async fn has_file_lifecycle_event_since(
+        &self,
+        file_id: uuid::Uuid,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool> {
+        let _ = (file_id, since);
+        Ok(false)
+    }
+}
+
+/// Whether a File aggregate has a delete or restore event after the supplied
+/// Connector forget request time.
+pub fn file_lifecycle_event_after(events: &[Event], since: chrono::DateTime<chrono::Utc>) -> bool {
+    events.iter().any(|event| {
+        event.timestamp >= since
+            && matches!(
+                event.event_type,
+                EventType::FileDeleted | EventType::FileRestored
+            )
+    })
+}
+
+/// File row state observed before a Connector forget. Storage compares this
+/// snapshot atomically with the soft-delete update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDeleteSnapshot {
+    pub content_hash: String,
+    pub version: i32,
+    pub modified_at: chrono::DateTime<chrono::Utc>,
+    pub tenant_id: uuid::Uuid,
 }
 
 /// Trait for metadata store operations needed by FileService.
@@ -170,6 +202,15 @@ pub trait MetadataStoreOps: Send + Sync {
         id: uuid::Uuid,
         owner_id: uuid::Uuid,
     ) -> Result<()>;
+
+    /// Soft-delete only if the active row still has the observed source state.
+    async fn delete_file_if_unchanged_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+        expected: &FileDeleteSnapshot,
+    ) -> Result<bool>;
 
     /// List all versions of a file, ordered by version number descending.
     async fn list_file_versions(
@@ -1872,6 +1913,101 @@ where
         // The same content hash might be used by other files or versions
 
         Ok(())
+    }
+
+    /// Delete a Connector import only when the File still matches the state
+    /// observed during authorization. The metadata predicate runs in the same
+    /// transaction as the deletion event and lifecycle publication.
+    pub async fn delete_file_if_unchanged(
+        &self,
+        file_id: uuid::Uuid,
+        user_id: UserId,
+        expected_content_hash: &str,
+        expected_version: i32,
+        expected_modified_at: chrono::DateTime<chrono::Utc>,
+        expected_tenant_id: uuid::Uuid,
+    ) -> Result<bool, FileError> {
+        let file = self.get_file(file_id, user_id).await?;
+        if file.content_hash != expected_content_hash
+            || file.current_version != expected_version
+            || file.modified_at != expected_modified_at
+            || file.tenant_id != expected_tenant_id
+        {
+            return Ok(false);
+        }
+        self.require_file_permission(user_id, file.tenant_id, file_id, SharePermissions::Admin)
+            .await?;
+
+        let payload = FileDeletedPayload {
+            file_id,
+            file_name: file.name.clone(),
+            folder_id: file.parent_folder_id,
+        };
+        let event = Event {
+            id: uuid::Uuid::new_v4(),
+            event_type: EventType::FileDeleted,
+            aggregate_id: file_id,
+            aggregate_type: AggregateType::File,
+            payload: serde_json::to_value(&payload).map_err(|error| {
+                FileError::Storage(format!("Failed to serialize event: {error}"))
+            })?,
+            user_id,
+            timestamp: chrono::Utc::now(),
+            version: file.current_version,
+        };
+
+        let mut tx = self
+            .event_store
+            .begin_transaction()
+            .await
+            .map_err(|error| FileError::Storage(error.to_string()))?;
+        if !self
+            .metadata_store
+            .delete_file_if_unchanged_in_tx(
+                &mut tx,
+                file_id,
+                file.owner_id,
+                &FileDeleteSnapshot {
+                    content_hash: expected_content_hash.to_owned(),
+                    version: expected_version,
+                    modified_at: expected_modified_at,
+                    tenant_id: expected_tenant_id,
+                },
+            )
+            .await
+            .map_err(|error| FileError::Database(error.to_string()))?
+        {
+            return Ok(false);
+        }
+        self.event_store
+            .append_in_tx(&mut tx, &event)
+            .await
+            .map_err(|error| FileError::Storage(error.to_string()))?;
+        self.publish_file_deleted_integration_event(
+            &mut tx,
+            &file,
+            IntegrationEventActor::Principal(user_id),
+        )
+        .await?;
+        self.event_store
+            .commit_transaction(tx)
+            .await
+            .map_err(|error| FileError::Storage(error.to_string()))?;
+        self.broadcaster.publish(event);
+        Ok(true)
+    }
+
+    /// Check the durable File lifecycle stream for delete/restore work after
+    /// a Connector forget request was recorded.
+    pub async fn has_file_lifecycle_event_since(
+        &self,
+        file_id: uuid::Uuid,
+        since: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, FileError> {
+        self.event_store
+            .has_file_lifecycle_event_since(file_id, since)
+            .await
+            .map_err(|error| FileError::Storage(error.to_string()))
     }
 
     /// Soft-delete two companion files with their events in one transaction.
@@ -3964,6 +4100,16 @@ mod integration_publish_tests {
             Ok(())
         }
 
+        async fn delete_file_if_unchanged_in_tx(
+            &self,
+            _tx: &mut Self::Tx,
+            _id: uuid::Uuid,
+            _owner_id: uuid::Uuid,
+            _expected: &FileDeleteSnapshot,
+        ) -> Result<bool> {
+            Ok(false)
+        }
+
         async fn list_file_versions(
             &self,
             _file_id: uuid::Uuid,
@@ -4531,5 +4677,47 @@ mod integration_publish_tests {
         // stub stores cannot roll back their vecs; real rollback is enforced
         // by the DB transaction in the storage implementation.)
         assert_eq!(*event_store.commit_count.lock().unwrap(), 0);
+    }
+}
+
+#[cfg(test)]
+mod file_forget_lifecycle_tests {
+    use super::file_lifecycle_event_after;
+    use crate::events::{AggregateType, Event, EventType};
+    use chrono::{Duration, Utc};
+    use uuid::Uuid;
+
+    #[test]
+    fn pending_forget_detects_post_request_delete_or_restore_only() {
+        let request_at = Utc::now();
+        let mut prior_delete = Event::new(
+            EventType::FileDeleted,
+            Uuid::new_v4(),
+            AggregateType::File,
+            serde_json::json!({}),
+            Uuid::new_v4(),
+        );
+        prior_delete.timestamp = request_at - Duration::seconds(1);
+        assert!(!file_lifecycle_event_after(&[prior_delete], request_at));
+
+        let mut delete = Event::new(
+            EventType::FileDeleted,
+            Uuid::new_v4(),
+            AggregateType::File,
+            serde_json::json!({}),
+            Uuid::new_v4(),
+        );
+        delete.timestamp = request_at + Duration::seconds(1);
+        assert!(file_lifecycle_event_after(&[delete], request_at));
+
+        let mut restore = Event::new(
+            EventType::FileRestored,
+            Uuid::new_v4(),
+            AggregateType::File,
+            serde_json::json!({}),
+            Uuid::new_v4(),
+        );
+        restore.timestamp = request_at + Duration::seconds(2);
+        assert!(file_lifecycle_event_after(&[restore], request_at));
     }
 }

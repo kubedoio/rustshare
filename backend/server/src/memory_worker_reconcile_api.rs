@@ -187,12 +187,16 @@ async fn resolve_source_page(
     let observed_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
         .fetch_one(&state.db_pool)
         .await?;
-    let ids: Vec<Uuid> = sqlx::query_scalar(
-        "WITH mapped AS (SELECT CASE WHEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1)::uuid END AS file_id FROM connector_external_mappings WHERE tenant_id=$1) SELECT DISTINCT file_id FROM mapped WHERE file_id IS NOT NULL AND ($2::uuid IS NULL OR file_id > $2) ORDER BY file_id LIMIT $3")
-        .bind(request.tenant_id).bind(request.after_file_id).bind(i64::from(request.limit) + 1).fetch_all(&state.db_pool).await?;
+    let catalog = MemoryFilesCatalogStore::new(state.db_pool.clone());
+    let ids = catalog
+        .mapped_file_ids_for_reconcile(
+            request.tenant_id,
+            request.after_file_id,
+            i64::from(request.limit) + 1,
+        )
+        .await?;
     let more = ids.len() > request.limit as usize;
     let page_ids: Vec<_> = ids.into_iter().take(request.limit as usize).collect();
-    let catalog = MemoryFilesCatalogStore::new(state.db_pool.clone());
     let mut snapshots = Vec::with_capacity(page_ids.len());
     for file_id in &page_ids {
         snapshots.push(

@@ -35,7 +35,16 @@ pub struct ConnectorFileImportMetadata {
 pub struct ConnectorFileImportResponse {
     pub source_resource_ref: String,
     pub source_revision: String,
-    pub target_resource_ref: String,
+    pub target_resource_ref: Option<String>,
+    #[serde(default)]
+    pub forgotten: bool,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConnectorFileForgetRequest {
+    pub source_resource_ref: String,
+    pub source_revision: String,
 }
 
 #[derive(Debug, utoipa::ToSchema)]
@@ -172,6 +181,31 @@ pub async fn import_connector_file(
         );
     }
     let source_resource_ref = source_ref.to_uri();
+    let authority = worker
+        .context
+        .effective_user_authority(
+            &rustshare_core::domain::ActionCapability::new(rustshare_resource_auth::FILES_WRITE),
+            None,
+        )
+        .map_err(|_| worker_auth_rejection())?;
+    let _mapping_lock = state
+        .connector_service
+        .lock_mapping_scope(&worker, &source_resource_ref, &metadata.source_revision)
+        .await
+        .map_err(|error| map_error(error).into_response())?;
+    if state
+        .connector_service
+        .mapping_forgotten(&worker, &source_resource_ref, &metadata.source_revision)
+        .await
+        .map_err(|error| map_error(error).into_response())?
+    {
+        return Ok(Json(ConnectorFileImportResponse {
+            source_resource_ref,
+            source_revision: metadata.source_revision,
+            target_resource_ref: None,
+            forgotten: true,
+        }));
+    }
     if let Some(target) = state
         .connector_service
         .mapped_target(&worker, &source_resource_ref, &metadata.source_revision)
@@ -199,6 +233,15 @@ pub async fn import_connector_file(
                 None,
             )
             .map_err(|_| worker_auth_rejection())?;
+        if state
+            .connector_service
+            .mapping_forget_requested_at(&worker, &source_resource_ref, &metadata.source_revision)
+            .await
+            .map_err(|error| map_error(error).into_response())?
+            .is_some()
+        {
+            return Err(AppError::conflict("Shell Memory forget is pending").into_response());
+        }
         services
             .file_service
             .get_file(target_id, authority.user_authority_id.0)
@@ -207,17 +250,11 @@ pub async fn import_connector_file(
         return Ok(Json(ConnectorFileImportResponse {
             source_resource_ref,
             source_revision: metadata.source_revision,
-            target_resource_ref: target,
+            target_resource_ref: Some(target),
+            forgotten: false,
         }));
     }
 
-    let authority = worker
-        .context
-        .effective_user_authority(
-            &rustshare_core::domain::ActionCapability::new(rustshare_resource_auth::FILES_WRITE),
-            None,
-        )
-        .map_err(|_| worker_auth_rejection())?;
     let file_name = std::path::Path::new(&metadata.relative_path)
         .file_name()
         .and_then(|name| name.to_str())
@@ -276,7 +313,7 @@ pub async fn import_connector_file(
     )
     .with_version(metadata.source_revision.clone())
     .to_uri();
-    state
+    let mapping_result = state
         .connector_service
         .record_mapping(
             &worker,
@@ -286,13 +323,259 @@ pub async fn import_connector_file(
             &relative_path,
             observed_modified_at,
         )
-        .await
-        .map_err(|error| map_error(error).into_response())?;
+        .await;
+    if let Err(error) = mapping_result {
+        let forgotten = state
+            .connector_service
+            .mapping_forgotten(&worker, &source_resource_ref, &metadata.source_revision)
+            .await
+            .map_err(|error| map_error(error).into_response())?;
+        if !forgotten {
+            return Err(map_error(error).into_response());
+        }
+        let deleted = services
+            .file_service
+            .delete_file_if_unchanged(
+                file.id,
+                authority.user_authority_id.0,
+                &file.content_hash,
+                file.current_version,
+                file.modified_at,
+                worker.context.tenant_id.0,
+            )
+            .await
+            .map_err(|error| AppError::from(error).into_response())?;
+        if !deleted {
+            return Err(
+                AppError::conflict("Forgotten import changed during cleanup").into_response(),
+            );
+        }
+        if let Err(error) = services
+            .note_service
+            .remove_source_file_from_index(file.id, worker.context.tenant_id.0)
+            .await
+        {
+            tracing::warn!(file_id = %file.id, tenant_id = %worker.context.tenant_id.0, error = %error, "Failed to remove tombstoned Connector import from content index");
+        }
+        return Ok(Json(ConnectorFileImportResponse {
+            source_resource_ref,
+            source_revision: metadata.source_revision,
+            target_resource_ref: None,
+            forgotten: true,
+        }));
+    }
     Ok(Json(ConnectorFileImportResponse {
         source_resource_ref,
         source_revision: metadata.source_revision,
-        target_resource_ref: target_ref,
+        target_resource_ref: Some(target_ref),
+        forgotten: false,
     }))
+}
+
+/// Forgets one Shell Memory import by its Connector-owned source identity.
+/// The worker never supplies a Files target ID; that target is resolved only
+/// through this active Connector instance's existing import mapping.
+#[utoipa::path(post, path = "/api/v1/connectors/worker/files/forget", request_body = ConnectorFileForgetRequest, params(("Authorization" = String, Header, description = "Connector ecw1 credential")), responses((status = 204, description = "Import forgotten or already absent"), (status = 401, description = "Invalid Connector credential"), (status = 404, description = "Import not owned by this Connector"), (status = 409, description = "Imported Files resource has changed since ingestion")))]
+pub async fn forget_connector_file(
+    State(state): State<DatabaseState>,
+    State(services): State<ServiceState>,
+    headers: HeaderMap,
+    Json(request): Json<ConnectorFileForgetRequest>,
+) -> Result<StatusCode, Response> {
+    const SHELL_MEMORY_CONNECTOR_ID: &str = "io.elembra.connector.shell-memory";
+
+    let worker = authenticate_worker(&state, &headers).await?;
+    if worker.instance.connector_id != SHELL_MEMORY_CONNECTOR_ID
+        || !valid_source_revision(&request.source_revision)
+    {
+        return Err(AppError::not_found("Import not found").into_response());
+    }
+    let source_ref =
+        rustshare_resource_auth::ResourceRef::from_uri(&request.source_resource_ref)
+            .map_err(|_| AppError::bad_request("Invalid source ResourceRef").into_response())?;
+    if source_ref.application.0 != SHELL_MEMORY_CONNECTOR_ID
+        || source_ref.resource_type != "file"
+        || source_ref.version.is_some()
+        || Uuid::parse_str(&source_ref.resource_id).is_err()
+    {
+        return Err(AppError::not_found("Import not found").into_response());
+    }
+    let source_resource_ref = source_ref.to_uri();
+    // A targetless tombstone still mutates this owner's Files-backed source
+    // namespace. Require the same current Files write authority before either
+    // creating a tombstone or deleting a mapped target.
+    let authority = worker
+        .context
+        .effective_user_authority(
+            &rustshare_core::domain::ActionCapability::new(rustshare_resource_auth::FILES_WRITE),
+            None,
+        )
+        .map_err(|_| worker_auth_rejection())?;
+    let _mapping_lock = state
+        .connector_service
+        .lock_mapping_scope(&worker, &source_resource_ref, &request.source_revision)
+        .await
+        .map_err(|error| map_error(error).into_response())?;
+    let Some(target) = state
+        .connector_service
+        .mapped_target(&worker, &source_resource_ref, &request.source_revision)
+        .await
+        .map_err(|error| map_error(error).into_response())?
+    else {
+        state
+            .connector_service
+            .request_mapping_forget(&worker, &source_resource_ref, &request.source_revision)
+            .await
+            .map_err(|error| map_error(error).into_response())?;
+        return Ok(StatusCode::NO_CONTENT);
+    };
+    if state
+        .connector_service
+        .mapping_forgotten(&worker, &source_resource_ref, &request.source_revision)
+        .await
+        .map_err(|error| map_error(error).into_response())?
+    {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    let target_ref = rustshare_resource_auth::ResourceRef::from_uri(&target)
+        .map_err(|_| AppError::internal("Stored Connector mapping is invalid").into_response())?;
+    if target_ref.application.0 != "io.elembra.files"
+        || target_ref.resource_type != "file"
+        || target_ref.version.as_deref() != Some(request.source_revision.as_str())
+    {
+        return Err(AppError::internal("Stored Connector mapping is invalid").into_response());
+    }
+    let target_id = Uuid::parse_str(&target_ref.resource_id)
+        .map_err(|_| AppError::internal("Stored Connector mapping is invalid").into_response())?;
+    let file = match services
+        .file_service
+        .get_file(target_id, authority.user_authority_id.0)
+        .await
+    {
+        Ok(file) => file,
+        Err(rustshare_core::services::FileError::NotFound(_)) => {
+            state
+                .connector_service
+                .request_mapping_forget(&worker, &source_resource_ref, &request.source_revision)
+                .await
+                .map_err(|error| map_error(error).into_response())?;
+            state
+                .connector_service
+                .mark_mapping_forgotten(&worker, &source_resource_ref, &request.source_revision)
+                .await
+                .map_err(|error| map_error(error).into_response())?;
+            return Ok(StatusCode::NO_CONTENT);
+        }
+        Err(rustshare_core::services::FileError::PermissionDenied { .. }) => {
+            // Keep the mapping retryable: this response must not acknowledge
+            // forget while the target may still be active. Do not expose why
+            // the Files resource is inaccessible.
+            return Err(AppError::not_found("Import not found").into_response());
+        }
+        Err(error) => return Err(AppError::from(error).into_response()),
+    };
+    if file.owner_id != authority.user_authority_id.0
+        || file.tenant_id != worker.context.tenant_id.0
+    {
+        return Err(AppError::not_found("Import not found").into_response());
+    }
+    if file.deleted_at.is_some() {
+        state
+            .connector_service
+            .request_mapping_forget(&worker, &source_resource_ref, &request.source_revision)
+            .await
+            .map_err(|error| map_error(error).into_response())?;
+        state
+            .connector_service
+            .mark_mapping_forgotten(&worker, &source_resource_ref, &request.source_revision)
+            .await
+            .map_err(|error| map_error(error).into_response())?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    if format!("sha256:{}", file.content_hash) != request.source_revision {
+        return Err(AppError::conflict("Imported Files resource has changed").into_response());
+    }
+
+    let forget_requested_at = state
+        .connector_service
+        .mapping_forget_requested_at(&worker, &source_resource_ref, &request.source_revision)
+        .await
+        .map_err(|error| map_error(error).into_response())?;
+    if let Some(requested_at) = forget_requested_at {
+        // If the Files transaction committed but the mapping completion write
+        // did not, its durable lifecycle event makes this retry idempotent.
+        // A later restore is also terminal: do not delete that restored file.
+        let lifecycle_completed = services
+            .file_service
+            .has_file_lifecycle_event_since(target_id, requested_at)
+            .await
+            .map_err(|error| AppError::from(error).into_response())?;
+        if lifecycle_completed {
+            state
+                .connector_service
+                .mark_mapping_forgotten(&worker, &source_resource_ref, &request.source_revision)
+                .await
+                .map_err(|error| map_error(error).into_response())?;
+            return Ok(StatusCode::NO_CONTENT);
+        }
+    } else {
+        // Block import replay while Files performs its transactional delete
+        // and durable lifecycle publication.
+        state
+            .connector_service
+            .request_mapping_forget(&worker, &source_resource_ref, &request.source_revision)
+            .await
+            .map_err(|error| map_error(error).into_response())?;
+    }
+
+    let deleted = services
+        .file_service
+        .delete_file_if_unchanged(
+            target_id,
+            authority.user_authority_id.0,
+            &file.content_hash,
+            file.current_version,
+            file.modified_at,
+            worker.context.tenant_id.0,
+        )
+        .await
+        .map_err(|error| AppError::from(error).into_response())?;
+    if !deleted {
+        if let Some(requested_at) = state
+            .connector_service
+            .mapping_forget_requested_at(&worker, &source_resource_ref, &request.source_revision)
+            .await
+            .map_err(|error| map_error(error).into_response())?
+        {
+            let lifecycle_completed = services
+                .file_service
+                .has_file_lifecycle_event_since(target_id, requested_at)
+                .await
+                .map_err(|error| AppError::from(error).into_response())?;
+            if lifecycle_completed {
+                state
+                    .connector_service
+                    .mark_mapping_forgotten(&worker, &source_resource_ref, &request.source_revision)
+                    .await
+                    .map_err(|error| map_error(error).into_response())?;
+                return Ok(StatusCode::NO_CONTENT);
+            }
+        }
+        return Err(AppError::conflict("Imported Files resource has changed").into_response());
+    }
+    if let Err(error) = services
+        .note_service
+        .remove_source_file_from_index(target_id, worker.context.tenant_id.0)
+        .await
+    {
+        tracing::warn!(file_id = %target_id, tenant_id = %worker.context.tenant_id.0, error = %error, "Failed to remove forgotten Connector file from content index after trash");
+    }
+    state
+        .connector_service
+        .mark_mapping_forgotten(&worker, &source_resource_ref, &request.source_revision)
+        .await
+        .map_err(|error| map_error(error).into_response())?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(post, path = "/api/v1/connectors/worker/lease", params(("Authorization" = String, Header, description = "Connector ecw1 credential")), responses((status = 200, body = Option<ConnectorExecutionLeaseView>)))]
@@ -563,7 +846,9 @@ pub async fn update_connector(
 
 #[cfg(test)]
 mod connector_import_tests {
-    use super::approved_destination_matches;
+    use super::{
+        approved_destination_matches, ConnectorFileForgetRequest, ConnectorFileImportResponse,
+    };
     use serde_json::json;
     use uuid::Uuid;
 
@@ -580,5 +865,34 @@ mod connector_import_tests {
             &json!({"destinationFolderId": Uuid::new_v4().to_string()}),
             Some(folder_id)
         ));
+    }
+
+    #[test]
+    fn forgotten_import_replay_is_an_explicit_terminal_ack() {
+        let response = ConnectorFileImportResponse {
+            source_resource_ref: "io.elembra.connector.shell-memory://file/123".into(),
+            source_revision:
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            target_resource_ref: None,
+            forgotten: true,
+        };
+        let wire = serde_json::to_value(response).unwrap();
+        assert_eq!(wire["forgotten"], true);
+        assert!(wire["targetResourceRef"].is_null());
+    }
+
+    #[test]
+    fn forget_request_cannot_name_a_target_file() {
+        let valid = serde_json::json!({
+            "sourceResourceRef": "io.elembra.connector.shell-memory://file/123",
+            "sourceRevision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        });
+        assert!(serde_json::from_value::<ConnectorFileForgetRequest>(valid).is_ok());
+        let with_target = serde_json::json!({
+            "sourceResourceRef": "io.elembra.connector.shell-memory://file/123",
+            "sourceRevision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "targetResourceRef": "io.elembra.files://file/456"
+        });
+        assert!(serde_json::from_value::<ConnectorFileForgetRequest>(with_target).is_err());
     }
 }

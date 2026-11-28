@@ -463,6 +463,82 @@ impl ConnectorService {
             .map_err(Into::into)
     }
 
+    pub async fn lock_mapping_scope(
+        &self,
+        worker: &AuthenticatedConnectorWorker,
+        source_resource_ref: &str,
+        source_revision: &str,
+    ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, ConnectorError> {
+        let (tenant_id, _, instance_id) = worker_scope(worker)?;
+        self.store
+            .lock_mapping_scope(tenant_id, instance_id, source_resource_ref, source_revision)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn mapping_forgotten(
+        &self,
+        worker: &AuthenticatedConnectorWorker,
+        source_resource_ref: &str,
+        source_revision: &str,
+    ) -> Result<bool, ConnectorError> {
+        let (tenant_id, _, instance_id) = worker_scope(worker)?;
+        self.store
+            .mapping_forgotten(tenant_id, instance_id, source_resource_ref, source_revision)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn mapping_forget_requested_at(
+        &self,
+        worker: &AuthenticatedConnectorWorker,
+        source_resource_ref: &str,
+        source_revision: &str,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, ConnectorError> {
+        let (tenant_id, _, instance_id) = worker_scope(worker)?;
+        self.store
+            .mapping_forget_requested_at(
+                tenant_id,
+                instance_id,
+                source_resource_ref,
+                source_revision,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn mark_mapping_forgotten(
+        &self,
+        worker: &AuthenticatedConnectorWorker,
+        source_resource_ref: &str,
+        source_revision: &str,
+    ) -> Result<bool, ConnectorError> {
+        let (tenant_id, _, instance_id) = worker_scope(worker)?;
+        self.store
+            .mark_mapping_forgotten(tenant_id, instance_id, source_resource_ref, source_revision)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn request_mapping_forget(
+        &self,
+        worker: &AuthenticatedConnectorWorker,
+        source_resource_ref: &str,
+        source_revision: &str,
+    ) -> Result<bool, ConnectorError> {
+        let (tenant_id, _, instance_id) = worker_scope(worker)?;
+        self.store
+            .request_mapping_forget(
+                tenant_id,
+                instance_id,
+                source_resource_ref,
+                source_revision,
+                chrono::Utc::now(),
+            )
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn record_mapping(
         &self,
         worker: &AuthenticatedConnectorWorker,

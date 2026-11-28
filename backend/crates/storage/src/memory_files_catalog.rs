@@ -85,6 +85,26 @@ impl MemoryFilesCatalogStore {
         .map_err(Into::into)
     }
 
+    /// File IDs remain reconciliation candidates when their Connector mapping
+    /// is forgotten, so reconciliation can tombstone an older catalog/index
+    /// projection. The current-source lookup below excludes forgotten maps.
+    pub async fn mapped_file_ids_for_reconcile(
+        &self,
+        tenant_id: Uuid,
+        after_file_id: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        sqlx::query_scalar(
+            "WITH mapped AS (SELECT CASE WHEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN split_part(split_part(target_resource_ref, '/file/', 2), '?', 1)::uuid END AS file_id FROM connector_external_mappings WHERE tenant_id=$1 AND target_resource_ref IS NOT NULL) SELECT DISTINCT file_id FROM mapped WHERE file_id IS NOT NULL AND ($2::uuid IS NULL OR file_id > $2) ORDER BY file_id LIMIT $3",
+        )
+        .bind(tenant_id)
+        .bind(after_file_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(Into::into)
+    }
+
     /// Append an idempotent, content-free audit record for a Memory source
     /// fetch attempt.
     pub async fn record_source_access(
@@ -292,6 +312,9 @@ impl MemoryFilesCatalogStore {
             "SELECT instance_id, external_resource_ref, external_revision, relative_path, source_observed_modified_at, clock_timestamp() \
              FROM connector_external_mappings \
              WHERE tenant_id=$1 \
+               AND target_resource_ref IS NOT NULL \
+               AND forget_requested_at IS NULL \
+               AND forgotten_at IS NULL \
                AND split_part(split_part(target_resource_ref, '/file/', 2), '?', 1)=$2 \
              ORDER BY observed_at DESC LIMIT 1",
         )
@@ -379,6 +402,126 @@ impl MemoryFilesCatalogStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires migrated PostgreSQL"]
+    async fn forgotten_mapping_is_not_live_but_remains_a_reconcile_cleanup_candidate() {
+        let pool =
+            PgPool::connect(&std::env::var("DATABASE_URL").expect("set disposable DATABASE_URL"))
+                .await
+                .expect("connect to disposable PostgreSQL");
+        let store = MemoryFilesCatalogStore::new(pool.clone());
+        let fixture = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let instance_id = Uuid::new_v4();
+        let file_id = Uuid::new_v4();
+        let source_ref = format!("elembra://io.elembra.connector.shell-memory/file/{fixture}");
+        let target_ref =
+            format!("elembra://io.elembra.files/file/{file_id}?version=sha256:forgotten");
+        sqlx::query("INSERT INTO tenants (id,name) VALUES ($1,$2)")
+            .bind(tenant_id)
+            .bind(format!("memory-forget-{fixture}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO users (id,username,email,password_hash,tenant_id,display_name,storage_quota) VALUES ($1,$2,$3,'hash',$4,'owner',10737418240)")
+            .bind(owner_id)
+            .bind(format!("memory-forget-{fixture}"))
+            .bind(format!("memory-forget-{fixture}@example.test"))
+            .bind(tenant_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO connector_instances (id,tenant_id,workspace_id,principal_id,connector_id,descriptor,source_config,mode,idempotency_key,request_digest) VALUES ($1,$2,$2,$3,'io.elembra.connector.shell-memory',$4,'{}','import',$5,$6)")
+            .bind(instance_id)
+            .bind(tenant_id)
+            .bind(owner_id)
+            .bind(serde_json::json!({"metadata":{"id":"io.elembra.connector.shell-memory"}}))
+            .bind(format!("memory-forget-{fixture}"))
+            .bind([0_u8; 32].as_slice())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO files (id,name,path,size,mime_type,content_hash,storage_key,owner_id,tenant_id,current_version) VALUES ($1,'restored.md',$2,1,'text/markdown','forgotten','key',$3,$4,1)")
+            .bind(file_id)
+            .bind(format!("/memory-forget-{fixture}.md"))
+            .bind(owner_id)
+            .bind(tenant_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO connector_external_mappings (tenant_id,instance_id,external_resource_ref,external_revision,target_resource_ref,forgotten_at) VALUES ($1,$2,$3,'sha256:forgotten',$4,now())")
+            .bind(tenant_id)
+            .bind(instance_id)
+            .bind(&source_ref)
+            .bind(&target_ref)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO connector_external_mappings (tenant_id,instance_id,external_resource_ref,external_revision,target_resource_ref,forget_requested_at,forgotten_at) VALUES ($1,$2,$3,'sha256:never-imported',NULL,now(),now())")
+            .bind(tenant_id)
+            .bind(instance_id)
+            .bind(format!("elembra://io.elembra.connector.shell-memory/file/{}", Uuid::new_v4()))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO memory_files_catalog (tenant_id,file_id,current_version,current_version_number,connector_instance_id,source_resource_ref,source_revision,relative_path) VALUES ($1,$2,'sha256:forgotten',1,$3,$4,'sha256:forgotten','restored.md')")
+            .bind(tenant_id)
+            .bind(file_id)
+            .bind(instance_id)
+            .bind(&source_ref)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let candidate_ids = store
+            .mapped_file_ids_for_reconcile(tenant_id, None, 10)
+            .await
+            .unwrap();
+        assert_eq!(candidate_ids, vec![file_id]);
+        assert!(store
+            .connector_record_for_current_file(tenant_id, file_id, "sha256:forgotten".into(), 1,)
+            .await
+            .unwrap()
+            .is_none());
+        let observed_at = store.projection_timestamp().await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        assert!(store
+            .tombstone_snapshot_in_tx(&mut tx, tenant_id, file_id, observed_at)
+            .await
+            .unwrap());
+        tx.commit().await.unwrap();
+        let tombstoned: bool = sqlx::query_scalar(
+            "SELECT deleted_at IS NOT NULL FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            tombstoned,
+            "reconciliation removes the stale catalog projection"
+        );
+
+        sqlx::query("DELETE FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2")
+            .bind(tenant_id)
+            .bind(file_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM files WHERE id=$1")
+            .bind(file_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM tenants WHERE id=$1")
+            .bind(tenant_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 
     #[tokio::test]
     #[ignore = "requires migrated PostgreSQL"]

@@ -3000,6 +3000,31 @@ impl MetadataStore {
         Ok(())
     }
 
+    pub async fn delete_file_if_unchanged_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+        id: Uuid,
+        owner_id: Uuid,
+        expected: &rustshare_core::services::FileDeleteSnapshot,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"UPDATE files
+               SET deleted_at = NOW(), starred_at = NULL
+               WHERE id = $1 AND owner_id = $2 AND content_hash = $3
+                 AND current_version = $4 AND modified_at = $5 AND tenant_id = $6
+                 AND deleted_at IS NULL"#,
+        )
+        .bind(id)
+        .bind(owner_id)
+        .bind(&expected.content_hash)
+        .bind(expected.version)
+        .bind(expected.modified_at)
+        .bind(expected.tenant_id)
+        .execute(&mut **tx)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     /// Delete a file from the projection table
     pub async fn delete_file(&self, id: Uuid, owner_id: Uuid) -> Result<()> {
         let mut tx = self.pool.begin().await?;
@@ -3245,18 +3270,19 @@ impl MetadataStore {
             format!("/{}", name)
         };
 
-        let result = sqlx::query!(
+        let result = sqlx::query(
             r#"
             UPDATE files
-            SET deleted_at = NULL, parent_folder_id = $2, path = $3
+            SET deleted_at = NULL, parent_folder_id = $2, path = $3,
+                modified_at = GREATEST(NOW(), modified_at + INTERVAL '1 microsecond')
             WHERE id = $1 AND owner_id = $4 AND tenant_id = $5 AND deleted_at IS NOT NULL
             "#,
-            id,
-            restored_parent_id,
-            restored_path,
-            owner_id,
-            tenant_id
         )
+        .bind(id)
+        .bind(restored_parent_id)
+        .bind(restored_path)
+        .bind(owner_id)
+        .bind(tenant_id)
         .execute(&self.pool)
         .await?;
 
@@ -4395,25 +4421,25 @@ impl MetadataStore {
             );
         }
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE folders
             SET deleted_at = NULL, parent_folder_id = $2, path = $3
             WHERE id = $1 AND owner_id = $4 AND tenant_id = $5 AND deleted_at IS NOT NULL
             "#,
-            id,
-            restored_parent_id,
-            &restored_path,
-            owner_id,
-            tenant_id,
         )
+        .bind(id)
+        .bind(restored_parent_id)
+        .bind(&restored_path)
+        .bind(owner_id)
+        .bind(tenant_id)
         .execute(&self.pool)
         .await?;
 
         let old_prefix = format!("{}/%", old_path.trim_end_matches('/'));
         let new_prefix = format!("{}/", restored_path.trim_end_matches('/'));
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE folders
             SET deleted_at = NULL,
@@ -4422,30 +4448,31 @@ impl MetadataStore {
               AND tenant_id = $4
               AND path LIKE $5
             "#,
-            owner_id,
-            &new_prefix,
-            &old_path,
-            tenant_id,
-            &old_prefix,
         )
+        .bind(owner_id)
+        .bind(&new_prefix)
+        .bind(&old_path)
+        .bind(tenant_id)
+        .bind(&old_prefix)
         .execute(&self.pool)
         .await?;
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE files
             SET deleted_at = NULL,
-                path = $2 || substr(path, length($3) + 1)
+                path = $2 || substr(path, length($3) + 1),
+                modified_at = GREATEST(NOW(), modified_at + INTERVAL '1 microsecond')
             WHERE owner_id = $1
               AND tenant_id = $4
               AND path LIKE $5
             "#,
-            owner_id,
-            &new_prefix,
-            &old_path,
-            tenant_id,
-            &old_prefix,
         )
+        .bind(owner_id)
+        .bind(&new_prefix)
+        .bind(&old_path)
+        .bind(tenant_id)
+        .bind(&old_prefix)
         .execute(&self.pool)
         .await?;
 
@@ -8495,6 +8522,17 @@ impl rustshare_core::services::FileMetadataStoreOps for MetadataStore {
         owner_id: uuid::Uuid,
     ) -> anyhow::Result<()> {
         self.delete_file_in_tx(tx, id, owner_id).await
+    }
+
+    async fn delete_file_if_unchanged_in_tx(
+        &self,
+        tx: &mut Self::Tx,
+        id: uuid::Uuid,
+        owner_id: uuid::Uuid,
+        expected: &rustshare_core::services::FileDeleteSnapshot,
+    ) -> anyhow::Result<bool> {
+        self.delete_file_if_unchanged_in_tx(tx, id, owner_id, expected)
+            .await
     }
 
     async fn list_file_versions(

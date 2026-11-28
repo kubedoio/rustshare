@@ -169,6 +169,16 @@ impl FileMetadataStoreOps for MockMetadataStore {
         unreachable!()
     }
 
+    async fn delete_file_if_unchanged_in_tx(
+        &self,
+        _tx: &mut Self::Tx,
+        _id: Uuid,
+        _owner_id: Uuid,
+        _expected: &rustshare_core::services::FileDeleteSnapshot,
+    ) -> Result<bool> {
+        unreachable!()
+    }
+
     async fn list_file_versions(
         &self,
         _file_id: Uuid,

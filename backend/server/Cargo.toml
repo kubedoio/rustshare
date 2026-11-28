@@ -303,6 +303,10 @@ name = "connector_persistence_test"
 path = "../tests/connector_persistence_test.rs"
 
 [[test]]
+name = "connector_forget_authorization"
+path = "tests/connector_forget_authorization.rs"
+
+[[test]]
 name = "chat_webhook_signature_test"
 path = "../tests/chat_webhook_signature_test.rs"
 

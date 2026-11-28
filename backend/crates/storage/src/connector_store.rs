@@ -97,6 +97,24 @@ impl ConnectorStore {
         Self { pool }
     }
 
+    /// Serialize import and forget for one Connector source revision.
+    pub async fn lock_mapping_scope(
+        &self,
+        tenant_id: Uuid,
+        instance_id: Uuid,
+        external_resource_ref: &str,
+        external_revision: &str,
+    ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
+        let lock_key =
+            format!("{tenant_id}:{instance_id}:{external_resource_ref}:{external_revision}");
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(lock_key)
+            .execute(&mut *transaction)
+            .await?;
+        Ok(transaction)
+    }
+
     pub async fn register(
         &self,
         request: ConnectorRegistration<'_>,
@@ -466,7 +484,7 @@ impl ConnectorStore {
         if result.rows_affected() == 1 {
             return Ok(true);
         }
-        let existing: Option<String> = sqlx::query_scalar(
+        let existing: Option<Option<String>> = sqlx::query_scalar(
             r#"SELECT target_resource_ref FROM connector_external_mappings
                WHERE tenant_id = $1 AND instance_id = $2 AND external_resource_ref = $3 AND external_revision = $4"#,
         )
@@ -476,7 +494,7 @@ impl ConnectorStore {
         .bind(external_revision)
         .fetch_optional(&self.pool)
         .await?;
-        if existing.as_deref() == Some(target_resource_ref) {
+        if existing.as_ref().and_then(Option::as_deref) == Some(target_resource_ref) {
             Ok(false)
         } else {
             Err(sqlx::Error::RowNotFound)
@@ -492,7 +510,8 @@ impl ConnectorStore {
     ) -> Result<Option<String>, sqlx::Error> {
         sqlx::query_scalar(
             r#"SELECT target_resource_ref FROM connector_external_mappings
-               WHERE tenant_id = $1 AND instance_id = $2 AND external_resource_ref = $3 AND external_revision = $4"#,
+               WHERE tenant_id = $1 AND instance_id = $2 AND external_resource_ref = $3
+                 AND external_revision = $4 AND target_resource_ref IS NOT NULL"#,
         )
         .bind(tenant_id)
         .bind(instance_id)
@@ -500,5 +519,96 @@ impl ConnectorStore {
         .bind(external_revision)
         .fetch_optional(&self.pool)
         .await
+    }
+
+    pub async fn mapping_forgotten(
+        &self,
+        tenant_id: Uuid,
+        instance_id: Uuid,
+        external_resource_ref: &str,
+        external_revision: &str,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar(
+            r#"SELECT forgotten_at IS NOT NULL FROM connector_external_mappings
+               WHERE tenant_id = $1 AND instance_id = $2
+                 AND external_resource_ref = $3 AND external_revision = $4"#,
+        )
+        .bind(tenant_id)
+        .bind(instance_id)
+        .bind(external_resource_ref)
+        .bind(external_revision)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|forgotten| forgotten.unwrap_or(false))
+    }
+
+    pub async fn mapping_forget_requested_at(
+        &self,
+        tenant_id: Uuid,
+        instance_id: Uuid,
+        external_resource_ref: &str,
+        external_revision: &str,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, sqlx::Error> {
+        sqlx::query_scalar(
+            r#"SELECT forget_requested_at FROM connector_external_mappings
+               WHERE tenant_id = $1 AND instance_id = $2
+                 AND external_resource_ref = $3 AND external_revision = $4"#,
+        )
+        .bind(tenant_id)
+        .bind(instance_id)
+        .bind(external_resource_ref)
+        .bind(external_revision)
+        .fetch_optional(&self.pool)
+        .await
+        .map(Option::flatten)
+    }
+
+    pub async fn mark_mapping_forgotten(
+        &self,
+        tenant_id: Uuid,
+        instance_id: Uuid,
+        external_resource_ref: &str,
+        external_revision: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"UPDATE connector_external_mappings SET forgotten_at = COALESCE(forgotten_at, now())
+               WHERE tenant_id = $1 AND instance_id = $2
+                 AND external_resource_ref = $3 AND external_revision = $4"#,
+        )
+        .bind(tenant_id)
+        .bind(instance_id)
+        .bind(external_resource_ref)
+        .bind(external_revision)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn request_mapping_forget(
+        &self,
+        tenant_id: Uuid,
+        instance_id: Uuid,
+        external_resource_ref: &str,
+        external_revision: &str,
+        requested_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"INSERT INTO connector_external_mappings
+                 (tenant_id, instance_id, external_resource_ref, external_revision,
+                  target_resource_ref, forget_requested_at, forgotten_at)
+               VALUES ($1, $2, $3, $4, NULL, $5, $5)
+               ON CONFLICT (tenant_id, instance_id, external_resource_ref, external_revision)
+               DO UPDATE SET forget_requested_at = COALESCE(connector_external_mappings.forget_requested_at, EXCLUDED.forget_requested_at)
+               WHERE connector_external_mappings.target_resource_ref IS NOT NULL
+                 AND connector_external_mappings.forgotten_at IS NULL"#,
+        )
+        .bind(tenant_id)
+        .bind(instance_id)
+        .bind(external_resource_ref)
+        .bind(external_revision)
+        .bind(requested_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
     }
 }
