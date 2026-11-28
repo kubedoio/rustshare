@@ -756,6 +756,7 @@ mod tests {
     use shell_memory_collector::{
         record_if_enabled, Config, Queue, QueueLock, RecordInput, UploadLock,
     };
+    use std::process::Command;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::{
@@ -1213,6 +1214,48 @@ mod tests {
             "http://127.0.0.1:18333"
         );
         assert!(normalize_server("http://example.test").is_err());
+    }
+
+    #[test]
+    fn zsh_hook_does_not_capture_forget_control_commands() {
+        let directory = tempfile::tempdir().unwrap();
+        let log_path = directory.path().join("captured-command");
+        let script = r#"
+function elembra-shell-memory() {
+  case "$1" in
+    session-id) print -r -- synthetic-session ;;
+    record) cat > "$ELEMBRA_HOOK_CAPTURE_LOG" ;;
+  esac
+}
+source "$ELEMBRA_HOOK_PATH"
+_elembra_shell_memory_preexec 'elembra-shell-memory forget-session'
+_elembra_shell_memory_precmd
+[[ ! -e "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 11
+_elembra_shell_memory_preexec 'elembra-shell-memory forget-last'
+_elembra_shell_memory_precmd
+[[ ! -e "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 12
+_elembra_shell_memory_preexec 'echo keep-this-command'
+_elembra_shell_memory_precmd
+[[ -f "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 13
+grep -F 'echo keep-this-command' "$ELEMBRA_HOOK_CAPTURE_LOG" >/dev/null || exit 14
+"#;
+        let output = Command::new("zsh")
+            .args(["-f", "-c", script])
+            .env(
+                "ELEMBRA_HOOK_PATH",
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/shell/elembra-shell-memory.zsh"
+                ),
+            )
+            .env("ELEMBRA_HOOK_CAPTURE_LOG", &log_path)
+            .output()
+            .expect("zsh is required to validate the supported zsh hook");
+        assert!(
+            output.status.success(),
+            "zsh hook check failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
@@ -1988,7 +2031,7 @@ mod tests {
         assert!(catalog_deleted, "Memory catalog retains a tombstone");
 
         assert_eq!(
-            upload_pending(&client, &config, &worker.credential, vec![event]).await?,
+            upload_pending(&client, &config, &worker.credential, vec![event.clone()],).await?,
             UploadResult::Completed
         );
         let file_count: i64 =
@@ -2012,9 +2055,54 @@ mod tests {
         .fetch_one(&pool)
         .await?;
         assert!(replay_tombstone, "replay leaves Memory's tombstone intact");
+        let mapping_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
+        )
+        .bind(tenant_id)
+        .bind(worker.instance_id)
+        .bind(&source_ref)
+        .bind(&event.revision)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(mapping_count, 1, "replay preserves one source mapping");
+        let catalog_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM memory_files_catalog WHERE tenant_id=$1 AND connector_instance_id=$2 AND source_resource_ref=$3 AND source_revision=$4 AND deleted_at IS NOT NULL",
+        )
+        .bind(tenant_id)
+        .bind(worker.instance_id)
+        .bind(&source_ref)
+        .bind(&event.revision)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(
+            catalog_count, 1,
+            "replay preserves one tombstoned catalog row"
+        );
+        let owner_files: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM files WHERE tenant_id=$1 AND owner_id=$2")
+                .bind(tenant_id)
+                .bind(owner_id)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(
+            owner_files, 1,
+            "replay must not create a second Files target"
+        );
 
         server.abort();
         let _ = state.object_store.delete(&storage_key).await;
+        sqlx::query("DELETE FROM connector_instances WHERE tenant_id=$1 AND id=$2")
+            .bind(tenant_id)
+            .bind(worker.instance_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            "DELETE FROM memory_files_source_access_audit WHERE tenant_id=$1 AND file_id=$2",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .execute(&pool)
+        .await?;
         sqlx::query("DELETE FROM note_index_chunks WHERE tenant_id=$1 AND source_file_id=$2")
             .bind(tenant_id)
             .bind(file_id)

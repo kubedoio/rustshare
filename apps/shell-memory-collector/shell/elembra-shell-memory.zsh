@@ -11,6 +11,16 @@ _elembra_shell_memory_preexec() {
 _elembra_shell_memory_precmd() {
   local command_status=$?
   if [[ -n "${_ELEMBRA_SHELL_MEMORY_COMMAND-}" ]]; then
+    local -a command_words
+    command_words=( ${(z)_ELEMBRA_SHELL_MEMORY_COMMAND} )
+    if [[ "${command_words[1]:t}" == "elembra-shell-memory" ]]; then
+      case "${command_words[2]-}" in
+        hook|session-id|store-credential|record|run|pause|resume|disable|enable|forget|forget-last|forget-selected|forget-session|list|init-config)
+          _ELEMBRA_SHELL_MEMORY_COMMAND=
+          return 0
+          ;;
+      esac
+    fi
     local -i duration_ms
     (( duration_ms = (EPOCHREALTIME - _ELEMBRA_SHELL_MEMORY_STARTED) * 1000 ))
     printf '%s\0' "$_ELEMBRA_SHELL_MEMORY_COMMAND" "$PWD" "$HOST" "$command_status" "$duration_ms" "$ELEMBRA_SHELL_MEMORY_SESSION_ID" |
