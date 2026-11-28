@@ -427,7 +427,6 @@ jobs:
     env:
       COMPOSE_PROJECT_NAME: rustshare-chat-acceptance-${{ github.run_id }}
       ELEMBRA_COMPOSE_EXTRA_FILE: docker-compose.chat-acceptance.yml
-      BUZZ_RELAY_WS: ws://localhost:17447
       ELEMBRA_API: http://127.0.0.1:18080/api/v1
       ELEMBRA_ORIGIN: http://127.0.0.1:18080
 
