@@ -1234,10 +1234,16 @@ _elembra_shell_memory_precmd
 _elembra_shell_memory_preexec 'elembra-shell-memory forget-last'
 _elembra_shell_memory_precmd
 [[ ! -e "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 12
+_elembra_shell_memory_preexec 'elembra-shell-memory --config /tmp/synthetic-config.json forget-session'
+_elembra_shell_memory_precmd
+[[ ! -e "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 13
+_elembra_shell_memory_preexec 'elembra-shell-memory --config=/tmp/synthetic-config.json forget-last'
+_elembra_shell_memory_precmd
+[[ ! -e "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 14
 _elembra_shell_memory_preexec 'echo keep-this-command'
 _elembra_shell_memory_precmd
-[[ -f "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 13
-grep -F 'echo keep-this-command' "$ELEMBRA_HOOK_CAPTURE_LOG" >/dev/null || exit 14
+[[ -f "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 15
+grep -F 'echo keep-this-command' "$ELEMBRA_HOOK_CAPTURE_LOG" >/dev/null || exit 16
 "#;
         let output = Command::new("zsh")
             .args(["-f", "-c", script])

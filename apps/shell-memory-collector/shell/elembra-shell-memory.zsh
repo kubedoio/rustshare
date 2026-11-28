@@ -14,7 +14,15 @@ _elembra_shell_memory_precmd() {
     local -a command_words
     command_words=( ${(z)_ELEMBRA_SHELL_MEMORY_COMMAND} )
     if [[ "${command_words[1]:t}" == "elembra-shell-memory" ]]; then
-      case "${command_words[2]-}" in
+      local -i command_index=2
+      while (( command_index <= ${#command_words} )); do
+        case "${command_words[command_index]}" in
+          --config) (( command_index += 2 )) ;;
+          --config=*) (( command_index += 1 )) ;;
+          *) break ;;
+        esac
+      done
+      case "${command_words[command_index]-}" in
         hook|session-id|store-credential|record|run|pause|resume|disable|enable|forget|forget-last|forget-selected|forget-session|list|init-config)
           _ELEMBRA_SHELL_MEMORY_COMMAND=
           return 0
