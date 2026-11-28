@@ -446,6 +446,8 @@ jobs:
             ./scripts/elembra.sh up
 
       - name: Run live Chat product acceptance
+        env:
+          BUZZ_RELAY_WS: ws://localhost:17447
         run: ./scripts/run-alpha-dogfood.sh
 
       - name: Install Playwright browser dependencies
