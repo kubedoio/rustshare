@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use chrono::{DateTime, Utc};
 use glob::Pattern;
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -30,6 +30,8 @@ pub struct RecordInput {
     pub host: String,
     pub exit_code: i32,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub session_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +45,22 @@ pub struct Event {
     pub duration_ms: u64,
     pub revision: String,
     pub content: Vec<u8>,
+    pub session_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceMapping {
+    pub id: Uuid,
+    pub revision: String,
+    pub created_at: DateTime<Utc>,
+    pub session_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalRecord {
+    pub id: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub uploaded: bool,
 }
 
 pub struct Queue {
@@ -148,7 +166,25 @@ impl Queue {
                 exit_code INTEGER NOT NULL,
                 duration_ms INTEGER NOT NULL,
                 revision TEXT NOT NULL,
-                content BLOB NOT NULL
+                content BLOB NOT NULL,
+                session_id TEXT
+            );",
+        )?;
+        let has_session_id: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('shell_events') WHERE name = 'session_id')",
+            [], |row| row.get(0),
+        )?;
+        if !has_session_id {
+            connection.execute("ALTER TABLE shell_events ADD COLUMN session_id TEXT", [])?;
+        }
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS shell_imports (
+                id TEXT PRIMARY KEY,
+                instance_id TEXT NOT NULL,
+                revision TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                session_id TEXT,
+                forget_requested INTEGER NOT NULL DEFAULT 0
             );",
         )?;
         Ok(Self {
@@ -182,11 +218,11 @@ impl Queue {
         let content = render_markdown(id, created_at, &command, &input)?;
         let revision = format!("sha256:{}", hex::encode(Sha256::digest(&content)));
         self.connection.execute(
-            "INSERT INTO shell_events (id, instance_id, created_at, command, cwd, host, exit_code, duration_ms, revision, content)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO shell_events (id, instance_id, created_at, command, cwd, host, exit_code, duration_ms, revision, content, session_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![id.to_string(), instance_id.to_string(), created_at.to_rfc3339(), command,
                 input.cwd, input.host, input.exit_code, input.duration_ms.min(i64::MAX as u64) as i64,
-                revision, content],
+                revision, content, input.session_id.map(|id| id.to_string())],
         )?;
         let queued_bytes: i64 = self.connection.query_row(
             "SELECT COALESCE(SUM(length(content)), 0) FROM shell_events",
@@ -203,7 +239,7 @@ impl Queue {
 
     pub fn pending(&self, instance_id: Uuid, limit: usize) -> Result<Vec<Event>> {
         let mut statement = self.connection.prepare(
-            "SELECT id, created_at, command, cwd, host, exit_code, duration_ms, revision, content
+            "SELECT id, created_at, command, cwd, host, exit_code, duration_ms, revision, content, session_id
              FROM shell_events WHERE instance_id = ?1 ORDER BY rowid LIMIT ?2",
         )?;
         let rows = statement.query_map(
@@ -219,12 +255,23 @@ impl Queue {
                     row.get::<_, i64>(6)?,
                     row.get::<_, String>(7)?,
                     row.get::<_, Vec<u8>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
                 ))
             },
         )?;
         rows.map(|row| {
-            let (id, created_at, command, cwd, host, exit_code, duration_ms, revision, content) =
-                row?;
+            let (
+                id,
+                created_at,
+                command,
+                cwd,
+                host,
+                exit_code,
+                duration_ms,
+                revision,
+                content,
+                session_id,
+            ) = row?;
             Ok(Event {
                 id: Uuid::parse_str(&id)?,
                 created_at: DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&Utc),
@@ -235,6 +282,7 @@ impl Queue {
                 duration_ms: duration_ms.max(0) as u64,
                 revision,
                 content,
+                session_id: session_id.map(|id| Uuid::parse_str(&id)).transpose()?,
             })
         })
         .collect()
@@ -245,6 +293,172 @@ impl Queue {
             .connection
             .execute("DELETE FROM shell_events WHERE id = ?1", [id.to_string()])?
             == 1)
+    }
+
+    /// Persist only source identity and revision after successful import. Never stores the Files target.
+    pub fn remember_import(&self, instance_id: Uuid, event: &Event) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO shell_imports (id, instance_id, revision, created_at, session_id)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET instance_id=excluded.instance_id,
+               revision=excluded.revision, created_at=excluded.created_at, session_id=excluded.session_id
+             WHERE shell_imports.instance_id=excluded.instance_id AND shell_imports.revision=excluded.revision",
+            params![event.id.to_string(), instance_id.to_string(), event.revision,
+                event.created_at.to_rfc3339(), event.session_id.map(|id| id.to_string())],
+        )?;
+        let stored: (String, String) = self.connection.query_row(
+            "SELECT instance_id, revision FROM shell_imports WHERE id=?1",
+            [event.id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if stored != (instance_id.to_string(), event.revision.clone()) {
+            bail!("local Shell Memory source mapping conflicts with an existing revision");
+        }
+        Ok(())
+    }
+
+    pub fn list(&self, instance_id: Uuid, limit: usize) -> Result<Vec<LocalRecord>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, MAX(created_at), MAX(uploaded) FROM (
+               SELECT id, created_at, 0 AS uploaded FROM shell_events WHERE instance_id=?1
+               UNION ALL
+               SELECT id, created_at, 1 AS uploaded FROM shell_imports WHERE instance_id=?1
+             ) GROUP BY id ORDER BY MAX(created_at) DESC, id LIMIT ?2",
+        )?;
+        let rows = statement.query_map(
+            params![instance_id.to_string(), limit.min(100) as i64],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, bool>(2)?,
+                ))
+            },
+        )?;
+        rows.map(|row| {
+            let (id, created_at, uploaded) = row?;
+            Ok(LocalRecord {
+                id: Uuid::parse_str(&id)?,
+                created_at: DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&Utc),
+                uploaded,
+            })
+        })
+        .collect()
+    }
+
+    pub fn last_id(&self, instance_id: Uuid) -> Result<Option<Uuid>> {
+        self.connection
+            .query_row(
+                "SELECT id FROM (
+               SELECT id, created_at FROM shell_events WHERE instance_id=?1
+               UNION ALL SELECT id, created_at FROM shell_imports WHERE instance_id=?1
+             ) ORDER BY created_at DESC LIMIT 1",
+                [instance_id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|id| Uuid::parse_str(&id).map_err(Into::into))
+            .transpose()
+    }
+
+    /// Marks a forget durably and erases queued command content before any network operation.
+    pub fn request_forget(&self, instance_id: Uuid, id: Uuid) -> Result<Option<SourceMapping>> {
+        let tx = self.connection.unchecked_transaction()?;
+        let queued: Option<(String, String, Option<String>)> = tx.query_row(
+            "SELECT revision, created_at, session_id FROM shell_events WHERE id=?1 AND instance_id=?2",
+            params![id.to_string(), instance_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).optional()?;
+        let mapped: Option<(String, String, Option<String>, bool)> = tx.query_row(
+            "SELECT revision, created_at, session_id, forget_requested FROM shell_imports WHERE id=?1 AND instance_id=?2",
+            params![id.to_string(), instance_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).optional()?;
+        let values = match (queued, mapped) {
+            (Some((revision, _created_at, _session_id)), Some((mapped_revision, _, _, _)))
+                if revision != mapped_revision =>
+            {
+                bail!("queued source revision conflicts with imported mapping")
+            }
+            // The server may have committed an import before its local mapping write failed.
+            (Some(values), None) => values,
+            (Some(values), _) => values,
+            (None, Some((revision, created_at, session_id, _))) => {
+                (revision, created_at, session_id)
+            }
+            (None, None) => {
+                tx.commit()?;
+                return Ok(None);
+            }
+        };
+        tx.execute(
+            "INSERT INTO shell_imports (id, instance_id, revision, created_at, session_id, forget_requested)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1)
+             ON CONFLICT(id) DO UPDATE SET forget_requested=1
+             WHERE shell_imports.instance_id=excluded.instance_id AND shell_imports.revision=excluded.revision",
+            params![id.to_string(), instance_id.to_string(), values.0, values.1, values.2],
+        )?;
+        tx.execute(
+            "DELETE FROM shell_events WHERE id=?1 AND instance_id=?2",
+            params![id.to_string(), instance_id.to_string()],
+        )?;
+        tx.commit()?;
+        let created_at = DateTime::parse_from_rfc3339(&values.1)?.with_timezone(&Utc);
+        Ok(Some(SourceMapping {
+            id,
+            revision: values.0,
+            created_at,
+            session_id: values.2.map(|id| Uuid::parse_str(&id)).transpose()?,
+        }))
+    }
+
+    pub fn pending_forgets(&self, instance_id: Uuid, limit: usize) -> Result<Vec<SourceMapping>> {
+        let mut statement = self.connection.prepare("SELECT id, revision, created_at, session_id FROM shell_imports WHERE instance_id=?1 AND forget_requested=1 ORDER BY created_at LIMIT ?2")?;
+        let rows = statement.query_map(
+            params![instance_id.to_string(), limit.min(100) as i64],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )?;
+        rows.map(|row| {
+            let (id, revision, created_at, session_id) = row?;
+            Ok(SourceMapping {
+                id: Uuid::parse_str(&id)?,
+                revision,
+                created_at: DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&Utc),
+                session_id: session_id.map(|id| Uuid::parse_str(&id)).transpose()?,
+            })
+        })
+        .collect()
+    }
+
+    pub fn acknowledge_forget(&self, instance_id: Uuid, id: Uuid) -> Result<()> {
+        self.connection.execute(
+            "DELETE FROM shell_imports WHERE id=?1 AND instance_id=?2 AND forget_requested=1",
+            params![id.to_string(), instance_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn request_forget_session(&self, instance_id: Uuid, session_id: Uuid) -> Result<usize> {
+        let ids = {
+            let mut stmt = self.connection.prepare("SELECT id FROM shell_events WHERE instance_id=?1 AND session_id=?2 UNION SELECT id FROM shell_imports WHERE instance_id=?1 AND session_id=?2")?;
+            let rows = stmt.query_map(
+                params![instance_id.to_string(), session_id.to_string()],
+                |row| row.get::<_, String>(0),
+            )?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        let mut count = 0;
+        for id in ids {
+            let id = Uuid::parse_str(&id)?;
+            self.request_forget(instance_id, id)?;
+            count += 1;
+        }
+        Ok(count)
     }
 
     pub fn forget(self) -> Result<()> {
@@ -536,6 +750,7 @@ mod tests {
             host: "test-host".into(),
             exit_code: 0,
             duration_ms: 12,
+            session_id: None,
         }
     }
 
@@ -691,6 +906,81 @@ mod tests {
         assert!(queue.disabled());
         assert!(!queue.record(instance_id, input("echo after forget"), &[])?);
         assert!(queue.pending(instance_id, 10)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn forget_erases_queued_content_and_retains_only_minimal_retry_identity() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("queue.sqlite3");
+        let instance_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+        let mut queue = Queue::open(&path)?;
+        let mut input = input("echo synthetic-forget-content");
+        input.session_id = Some(session_id);
+        queue.record(instance_id, input, &[])?;
+        let event = queue.pending(instance_id, 1)?.remove(0);
+        queue.remember_import(instance_id, &event)?;
+        queue.acknowledge(event.id)?;
+
+        let requested = queue.request_forget(instance_id, event.id)?.unwrap();
+        assert_eq!(requested.revision, event.revision);
+        assert_eq!(requested.session_id, Some(session_id));
+        assert!(queue.pending(instance_id, 1)?.is_empty());
+        assert_eq!(queue.pending_forgets(instance_id, 1)?.len(), 1);
+        assert_eq!(queue.last_id(instance_id)?, Some(event.id));
+        assert_eq!(
+            queue.request_forget(instance_id, event.id)?.unwrap(),
+            requested
+        );
+
+        let columns = {
+            let mut statement = queue
+                .connection
+                .prepare("SELECT name FROM pragma_table_info('shell_imports')")?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        assert_eq!(
+            columns.join(","),
+            "id,instance_id,revision,created_at,session_id,forget_requested"
+        );
+        let bytes = fs::read(&path)?;
+        assert!(!bytes
+            .windows(b"synthetic-forget-content".len())
+            .any(|window| window == b"synthetic-forget-content"));
+
+        queue.acknowledge_forget(instance_id, event.id)?;
+        assert!(queue.pending_forgets(instance_id, 1)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn forget_session_tombstones_queued_records_without_local_mappings() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("queue.sqlite3");
+        let instance_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+        let mut queue = Queue::open(&path)?;
+        let mut first = input("echo synthetic-session-one");
+        first.session_id = Some(session_id);
+        let mut second = input("echo synthetic-session-two");
+        second.session_id = Some(session_id);
+        let mut other = input("echo synthetic-other-session");
+        other.session_id = Some(Uuid::new_v4());
+        queue.record(instance_id, first, &[])?;
+        queue.record(instance_id, second, &[])?;
+        queue.record(instance_id, other, &[])?;
+        assert_eq!(queue.request_forget_session(instance_id, session_id)?, 2);
+        assert_eq!(queue.pending(instance_id, 10)?.len(), 1);
+        assert_eq!(queue.pending_forgets(instance_id, 10)?.len(), 2);
+        let bytes = fs::read(&path)?;
+        assert!(!bytes
+            .windows(b"synthetic-session-one".len())
+            .any(|window| window == b"synthetic-session-one"));
+        assert!(!bytes
+            .windows(b"synthetic-session-two".len())
+            .any(|window| window == b"synthetic-session-two"));
         Ok(())
     }
 

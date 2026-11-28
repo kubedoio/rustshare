@@ -27,4 +27,14 @@ url = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+axum = { workspace = true }
+dotenvy = "0.15"
+rustshare-auth = { path = "../../backend/crates/auth" }
+rustshare-core = { path = "../../backend/crates/core" }
+rustshare-crypto = { path = "../../backend/crates/crypto" }
+rustshare-infrastructure = { path = "../../backend/crates/infrastructure" }
+rustshare-resource-auth = { path = "../../backend/crates/resource-auth" }
+rustshare-server = { path = "../../backend/server" }
+rustshare-storage = { path = "../../backend/crates/storage" }
+sqlx = { workspace = true }
 tempfile = { workspace = true }

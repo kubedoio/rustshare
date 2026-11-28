@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - Add an opt-in zsh Shell Memory collector with local redaction, exclusions, a private SQLite queue, and leased Files publication through Connectors.
+- Add local-ID-only listing and last, selected, and per-shell-session forget requests for Shell Memory; offline forget retries retain no queued command content.
 - Search authorized workspace Memory sources by keyword without an LLM from Ask.
 - View current-authorized Chat and Files-backed Connector catalog records, indexing status, provenance, and source links from Ask; ordinary Files/Notes and live Mail remain explicitly outside the catalog view.
 - Add an independent Local Text worker with bounded Markdown scanning, a private durable offline queue, and leased Files import.

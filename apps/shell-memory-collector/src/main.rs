@@ -39,6 +39,7 @@ enum Command {
     Hook {
         shell: String,
     },
+    SessionId,
     StoreCredential,
     Record,
     Run,
@@ -47,6 +48,12 @@ enum Command {
     Disable,
     Enable,
     Forget,
+    List,
+    ForgetLast,
+    ForgetSelected {
+        ids: Vec<Uuid>,
+    },
+    ForgetSession,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +81,13 @@ struct ImportResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ForgetRequest<'a> {
+    source_resource_ref: String,
+    source_revision: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ImportMetadata<'a> {
     lease_id: Uuid,
     fence: i64,
@@ -94,6 +108,10 @@ struct Checkpoint {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if matches!(&args.command, Command::SessionId) {
+        println!("{}", Uuid::new_v4());
+        return Ok(());
+    }
     let config_path = config_path(args.config)?;
     match args.command {
         Command::InitConfig {
@@ -107,6 +125,7 @@ async fn main() -> Result<()> {
             print!("{}", include_str!("../shell/elembra-shell-memory.zsh"));
             Ok(())
         }
+        Command::SessionId => unreachable!("handled before configuration loading"),
         Command::StoreCredential => store_credential(&config_path),
         Command::Record => record(&config_path),
         Command::Run => run(&config_path).await,
@@ -115,6 +134,10 @@ async fn main() -> Result<()> {
         Command::Disable => set_control(&config_path, Control::Disable, true),
         Command::Enable => set_control(&config_path, Control::Disable, false),
         Command::Forget => forget(&config_path),
+        Command::List => list(&config_path),
+        Command::ForgetLast => forget_last(&config_path).await,
+        Command::ForgetSelected { ids } => forget_selected(&config_path, ids).await,
+        Command::ForgetSession => forget_session(&config_path).await,
     }
 }
 
@@ -166,8 +189,8 @@ fn record(config_path: &PathBuf) -> Result<()> {
         .split(|byte| *byte == 0)
         .filter(|field| !field.is_empty())
         .collect::<Vec<_>>();
-    if fields.len() != 5 {
-        bail!("record input must contain five NUL-delimited fields");
+    if !matches!(fields.len(), 5 | 6) {
+        bail!("record input must contain five metadata fields and an optional session ID");
     }
     let input = RecordInput {
         command: std::str::from_utf8(fields[0])?.to_owned(),
@@ -179,6 +202,10 @@ fn record(config_path: &PathBuf) -> Result<()> {
         duration_ms: std::str::from_utf8(fields[4])?
             .parse()
             .context("invalid command duration")?,
+        session_id: fields
+            .get(5)
+            .and_then(|field| std::str::from_utf8(field).ok())
+            .and_then(|id| Uuid::parse_str(id).ok()),
     };
     record_if_enabled(
         &config.queue,
@@ -260,18 +287,26 @@ where
     F: FnOnce() -> Result<String>,
 {
     let _upload_lock = UploadLock::acquire(&config.queue)?;
-    let events = {
+    let (events, pending_forgets, disabled) = {
         let _queue_lock = QueueLock::acquire(&config.queue)?;
-        if Queue::is_disabled(&config.queue)? {
-            return Ok(UploadRound::Disabled);
-        }
+        let disabled = Queue::is_disabled(&config.queue)?;
         let queue = Queue::open(&config.queue)?;
-        if queue.paused() {
+        let forgets = queue.pending_forgets(config.instance_id, EVENTS_PER_UPLOAD_ROUND)?;
+        let events = if !forgets.is_empty() || queue.paused() || disabled {
             Vec::new()
         } else {
             queue.pending(config.instance_id, EVENTS_PER_UPLOAD_ROUND)?
-        }
+        };
+        (events, forgets, disabled)
     };
+    if !pending_forgets.is_empty() {
+        let credential = credential()?;
+        sync_forgets(client, config, &credential, &pending_forgets).await?;
+        return Ok(UploadRound::Completed);
+    }
+    if disabled {
+        return Ok(UploadRound::Disabled);
+    }
     if events.is_empty() {
         return Ok(UploadRound::Idle);
     }
@@ -336,7 +371,7 @@ async fn upload_pending(
         })?;
         let form = multipart::Form::new().text("metadata", metadata).part(
             "file",
-            multipart::Part::bytes(event.content)
+            multipart::Part::bytes(event.content.clone())
                 .file_name(format!("{}.md", event.id))
                 .mime_str("text/markdown; charset=utf-8")?,
         );
@@ -367,7 +402,12 @@ async fn upload_pending(
         }
         let imported: ImportResponse = response.json().await?;
         match (imported.forgotten, imported.target_resource_ref) {
-            (true, None) | (false, Some(_)) => completed.push(event.id),
+            (true, None) => completed.push(event.id),
+            (false, Some(_)) => {
+                let _lock = QueueLock::acquire(&config.queue)?;
+                Queue::open(&config.queue)?.remember_import(config.instance_id, &event)?;
+                completed.push(event.id);
+            }
             _ => bail!("Files import response had an invalid forgotten state"),
         }
     }
@@ -400,6 +440,159 @@ async fn upload_pending(
         queue.acknowledge(id)?;
     }
     Ok(stopped.unwrap_or(UploadResult::Completed))
+}
+
+async fn validate_worker_session(
+    client: &reqwest::Client,
+    config: &Config,
+    credential: &str,
+) -> Result<()> {
+    let session: WorkerSession = client
+        .get(format!(
+            "{}/api/v1/connectors/worker/session",
+            config.server
+        ))
+        .header("Authorization", format!("Connector {credential}"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    if session.id != config.instance_id || session.connector_id != CONNECTOR_ID {
+        bail!("credential is not bound to the configured Shell Memory Connector instance");
+    }
+    Ok(())
+}
+
+async fn sync_forgets(
+    client: &reqwest::Client,
+    config: &Config,
+    credential: &str,
+    forgets: &[shell_memory_collector::SourceMapping],
+) -> Result<()> {
+    validate_worker_session(client, config, credential).await?;
+    for mapping in forgets {
+        let source_resource_ref = format!("elembra://{CONNECTOR_ID}/file/{}", mapping.id);
+        let response = client
+            .post(format!(
+                "{}/api/v1/connectors/worker/files/forget",
+                config.server
+            ))
+            .header("Authorization", format!("Connector {credential}"))
+            .json(&ForgetRequest {
+                source_resource_ref,
+                source_revision: &mapping.revision,
+            })
+            .send()
+            .await?;
+        if response.status() != StatusCode::NO_CONTENT {
+            bail!("Connector forget deferred with HTTP {}", response.status());
+        }
+        let _lock = QueueLock::acquire(&config.queue)?;
+        Queue::open(&config.queue)?.acknowledge_forget(config.instance_id, mapping.id)?;
+    }
+    Ok(())
+}
+
+fn list(config_path: &PathBuf) -> Result<()> {
+    let config = load_config(config_path)?;
+    let _lock = QueueLock::acquire(&config.queue)?;
+    let queue = Queue::open(&config.queue)?;
+    for record in queue.list(config.instance_id, 100)? {
+        println!(
+            "{}\t{}\t{}",
+            record.id,
+            record.created_at.to_rfc3339(),
+            if record.uploaded {
+                "uploaded"
+            } else {
+                "queued"
+            }
+        );
+    }
+    Ok(())
+}
+
+async fn forget_last(config_path: &PathBuf) -> Result<()> {
+    let config = load_config(config_path)?;
+    let id = {
+        let _lock = QueueLock::acquire(&config.queue)?;
+        Queue::open(&config.queue)?.last_id(config.instance_id)?
+    };
+    let Some(id) = id else {
+        println!("No local Shell Memory records.");
+        return Ok(());
+    };
+    forget_selected(config_path, vec![id]).await
+}
+
+async fn forget_session(config_path: &PathBuf) -> Result<()> {
+    let session_id = std::env::var("ELEMBRA_SHELL_MEMORY_SESSION_ID")
+        .context("current shell session ID is unavailable; source the zsh hook again")?;
+    let session_id = Uuid::parse_str(&session_id).context("current shell session ID is invalid")?;
+    let config = load_config(config_path)?;
+    let _upload_lock = UploadLock::acquire(&config.queue)?;
+    {
+        let _lock = QueueLock::acquire(&config.queue)?;
+        Queue::open(&config.queue)?.request_forget_session(config.instance_id, session_id)?;
+    }
+    sync_pending_forgets(config_path).await
+}
+
+async fn forget_selected(config_path: &PathBuf, ids: Vec<Uuid>) -> Result<()> {
+    if ids.is_empty() {
+        bail!("provide at least one local record ID");
+    }
+    let config = load_config(config_path)?;
+    let _upload_lock = UploadLock::acquire(&config.queue)?;
+    {
+        let _lock = QueueLock::acquire(&config.queue)?;
+        let queue = Queue::open(&config.queue)?;
+        for id in ids {
+            queue.request_forget(config.instance_id, id)?;
+        }
+    }
+    sync_pending_forgets(config_path).await
+}
+
+async fn sync_pending_forgets(config_path: &PathBuf) -> Result<()> {
+    let config = load_config(config_path)?;
+    let client = reqwest::Client::builder()
+        .redirect(Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    let pending = {
+        let _lock = QueueLock::acquire(&config.queue)?;
+        Queue::open(&config.queue)?.pending_forgets(config.instance_id, 100)?
+    };
+    if pending.is_empty() {
+        println!("No remote Shell Memory forgets are pending.");
+        return Ok(());
+    }
+    let credential = read_keyring_credential(config.instance_id)?;
+    let forgotten = sync_all_pending_forgets(&client, &config, &credential).await?;
+    println!("Forgot {forgotten} Shell Memory record(s).");
+    Ok(())
+}
+
+async fn sync_all_pending_forgets(
+    client: &reqwest::Client,
+    config: &Config,
+    credential: &str,
+) -> Result<usize> {
+    let mut total = 0;
+    loop {
+        let pending = {
+            let _lock = QueueLock::acquire(&config.queue)?;
+            Queue::open(&config.queue)?.pending_forgets(config.instance_id, 100)?
+        };
+        if pending.is_empty() {
+            return Ok(total);
+        }
+        let count = pending.len();
+        sync_forgets(client, config, credential, &pending).await?;
+        total += count;
+    }
 }
 
 async fn report_failure(
@@ -528,16 +721,43 @@ fn normalize_server(server: &str) -> Result<String> {
 }
 
 #[cfg(test)]
+#[path = "../../../backend/server/tests/common/mod.rs"]
+mod server_test_common;
+
+#[cfg(test)]
 mod tests {
+    use super::server_test_common as server_common;
+
     use super::{
-        failure_category, forget_queue, normalize_server, set_control, upload_pending,
-        upload_round, Control, UploadResult, UploadRound,
+        failure_category, forget_queue, normalize_server, set_control, sync_all_pending_forgets,
+        sync_forgets, upload_pending, upload_round, Control, UploadResult, UploadRound,
     };
-    use anyhow::Result;
+    use anyhow::{Context, Result};
+    use axum::extract::FromRef;
     use reqwest::StatusCode;
+    use rustshare_core::{
+        domain::{
+            ApplicationRegistry, ConnectorAuthority, ConnectorCapabilities, ConnectorDescriptor,
+            ConnectorMetadata, ConnectorModes, ConnectorOperations, ConnectorPublications,
+            ConnectorSource, CONNECTOR_API_VERSION,
+        },
+        services::{KeywordIndexer, VectorStore},
+    };
+    use rustshare_infrastructure::{repositories::PermissionResolverRepository, PgVectorStore};
+    use rustshare_resource_auth::{ResourceOwnerRegistry, SourceAuthorizer};
+    use rustshare_server::{
+        authz::FilesResourceOwner,
+        handlers::memory_reconcile::reconcile_files_memory_page,
+        routes,
+        services::{note_index_sink::KeywordIndexerNoteSink, unified_search::UnifiedSearchService},
+        state::DatabaseState,
+    };
+    use rustshare_storage::MemoryFilesCatalogStore;
     use shell_memory_collector::{
         record_if_enabled, Config, Queue, QueueLock, RecordInput, UploadLock,
     };
+    use std::process::Command;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -545,6 +765,100 @@ mod tests {
         sync::{mpsc, oneshot},
     };
     use uuid::Uuid;
+
+    struct RegisteredWorker {
+        instance_id: Uuid,
+        credential: String,
+    }
+
+    async fn register_worker(
+        state: &rustshare_server::AppState,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<RegisteredWorker> {
+        let descriptor = ConnectorDescriptor {
+            api_version: CONNECTOR_API_VERSION.into(),
+            kind: "Connector".into(),
+            metadata: ConnectorMetadata {
+                id: "io.elembra.connector.shell-memory".into(),
+                name: "Shell Memory connected acceptance".into(),
+                version: "test".into(),
+            },
+            source: ConnectorSource {
+                system: "shell-history".into(),
+                authority: ConnectorAuthority::Local,
+            },
+            supports: ConnectorCapabilities {
+                operations: ConnectorOperations {
+                    read: true,
+                    ..Default::default()
+                },
+                modes: ConnectorModes {
+                    import: true,
+                    ..Default::default()
+                },
+            },
+            publishes: ConnectorPublications::default(),
+        };
+        let database = DatabaseState::from_ref(state);
+        let (instance, _) = database
+            .connector_service
+            .register(
+                tenant_id,
+                owner_id,
+                &format!("shell-memory-e2e-{}", Uuid::new_v4()),
+                rustshare_server::services::connector_service::RegisterConnector {
+                    descriptor,
+                    source_config: serde_json::json!({}),
+                    credential_ref: None,
+                    mode: "import".into(),
+                },
+            )
+            .await?;
+        let issued = database
+            .connector_service
+            .rotate_worker_credential(tenant_id, owner_id, Uuid::from(instance.id))
+            .await?;
+        Ok(RegisteredWorker {
+            instance_id: Uuid::from(instance.id),
+            credential: issued.credential,
+        })
+    }
+
+    async fn search(
+        client: &reqwest::Client,
+        server: &str,
+        token: &str,
+        query: &str,
+    ) -> Result<serde_json::Value> {
+        let response = client
+            .post(format!("{server}/api/v1/search"))
+            .bearer_auth(token)
+            .json(&serde_json::json!({ "query": query, "sources": ["files"] }))
+            .send()
+            .await?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "search failed: {}",
+            response.status()
+        );
+        Ok(response.json().await?)
+    }
+
+    async fn reconcile(state: &rustshare_server::AppState, tenant_id: Uuid) -> Result<()> {
+        reconcile_files_memory_page(
+            &state.metadata_store,
+            &state.note_service,
+            &MemoryFilesCatalogStore::new(state.db_pool.clone()),
+            &state.source_authorizer,
+            tenant_id,
+            None,
+            100,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|(_, error)| anyhow::anyhow!("Files Memory reconcile failed: {error:?}"))
+    }
 
     async fn read_request(stream: &mut TcpStream) -> std::io::Result<(String, String, Vec<u8>)> {
         let mut header = Vec::new();
@@ -711,6 +1025,171 @@ mod tests {
         }
     }
 
+    async fn fake_forget_server(
+        listener: TcpListener,
+        instance_id: Uuid,
+        source_ref: String,
+        revision: String,
+    ) -> std::io::Result<()> {
+        for attempt in 0..2 {
+            let (mut stream, _) = listener.accept().await?;
+            let (request, _headers, _body) = read_request(&mut stream).await?;
+            let path = request.split_whitespace().nth(1).unwrap_or_default();
+            if path == "/api/v1/connectors/worker/session" {
+                let response = serde_json::json!({ "id": instance_id, "connectorId": "io.elembra.connector.shell-memory" });
+                respond(
+                    &mut stream,
+                    "200 OK",
+                    response.to_string().as_bytes(),
+                    "application/json",
+                )
+                .await;
+                let (mut stream, _) = listener.accept().await?;
+                let (request, headers, body) = read_request(&mut stream).await?;
+                assert!(request.starts_with("POST /api/v1/connectors/worker/files/forget "));
+                assert!(headers
+                    .to_ascii_lowercase()
+                    .contains("authorization: connector ecw1_synthetic"));
+                let payload: serde_json::Value =
+                    serde_json::from_slice(&body).map_err(std::io::Error::other)?;
+                assert_eq!(payload["sourceRevision"].as_str(), Some(revision.as_str()));
+                assert_eq!(
+                    payload["sourceResourceRef"].as_str(),
+                    Some(source_ref.as_str())
+                );
+                assert!(payload.get("targetResourceRef").is_none());
+                let (status, response) = if attempt == 0 {
+                    ("503 Service Unavailable", b"{}".as_slice())
+                } else {
+                    ("204 No Content", b"".as_slice())
+                };
+                respond(&mut stream, status, response, "application/json").await;
+            } else {
+                return Err(std::io::Error::other(format!("unexpected request: {path}")));
+            }
+        }
+        Ok(())
+    }
+
+    async fn fake_forget_batch_server(
+        listener: TcpListener,
+        instance_id: Uuid,
+        expected_forgets: usize,
+    ) -> std::io::Result<()> {
+        let source_prefix = "elembra://io.elembra.connector.shell-memory/file/";
+        let mut session_requests = 0;
+        let mut forget_requests = 0;
+        while forget_requests < expected_forgets {
+            let (mut stream, _) = listener.accept().await?;
+            let (request, headers, body) = read_request(&mut stream).await?;
+            let path = request.split_whitespace().nth(1).unwrap_or_default();
+            match path {
+                "/api/v1/connectors/worker/session" => {
+                    session_requests += 1;
+                    let response = serde_json::json!({
+                        "id": instance_id,
+                        "connectorId": "io.elembra.connector.shell-memory"
+                    });
+                    respond(
+                        &mut stream,
+                        "200 OK",
+                        response.to_string().as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+                "/api/v1/connectors/worker/files/forget" => {
+                    assert!(headers
+                        .to_ascii_lowercase()
+                        .contains("authorization: connector ecw1_synthetic-forget-batch"));
+                    let payload: serde_json::Value =
+                        serde_json::from_slice(&body).map_err(std::io::Error::other)?;
+                    assert!(payload["sourceResourceRef"]
+                        .as_str()
+                        .is_some_and(|value| value.starts_with(source_prefix)));
+                    assert!(payload["sourceRevision"]
+                        .as_str()
+                        .is_some_and(|value| value.starts_with("sha256:")));
+                    assert!(payload.get("targetResourceRef").is_none());
+                    forget_requests += 1;
+                    respond(&mut stream, "204 No Content", b"", "application/json").await;
+                }
+                _ => {
+                    return Err(std::io::Error::other(format!("unexpected request: {path}")));
+                }
+            }
+        }
+        if session_requests != 2 {
+            return Err(std::io::Error::other(format!(
+                "expected two bounded pages, got {session_requests} session checks"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn fake_forgotten_import_server(
+        listener: TcpListener,
+        instance_id: Uuid,
+    ) -> std::io::Result<()> {
+        let lease_id = Uuid::new_v4();
+        for expected_path in [
+            "/api/v1/connectors/worker/session",
+            "/api/v1/connectors/worker/lease",
+            "/api/v1/connectors/worker/files/import",
+        ] {
+            let (mut stream, _) = listener.accept().await?;
+            let (request, _, body) = read_request(&mut stream).await?;
+            assert!(
+                request.starts_with(&format!("POST {expected_path} "))
+                    || request.starts_with(&format!("GET {expected_path} "))
+            );
+            match expected_path {
+                "/api/v1/connectors/worker/session" => {
+                    let response = serde_json::json!({ "id": instance_id, "connectorId": "io.elembra.connector.shell-memory" });
+                    respond(
+                        &mut stream,
+                        "200 OK",
+                        response.to_string().as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+                "/api/v1/connectors/worker/lease" => {
+                    let response = serde_json::json!({ "leaseId": lease_id, "fence": 3, "checkpointVersion": 0, "expiresAt": chrono::Utc::now() + chrono::Duration::minutes(1), "cursor": null });
+                    respond(
+                        &mut stream,
+                        "200 OK",
+                        response.to_string().as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+                "/api/v1/connectors/worker/files/import" => {
+                    assert!(
+                        String::from_utf8_lossy(&body).contains("echo synthetic-already-forgotten")
+                    );
+                    let response =
+                        serde_json::json!({ "targetResourceRef": null, "forgotten": true });
+                    respond(
+                        &mut stream,
+                        "200 OK",
+                        response.to_string().as_bytes(),
+                        "application/json",
+                    )
+                    .await;
+                }
+                _ => unreachable!(),
+            }
+        }
+        let (mut stream, _) = listener.accept().await?;
+        let (request, _, _) = read_request(&mut stream).await?;
+        assert!(request.starts_with(&format!(
+            "POST /api/v1/connectors/worker/lease/{lease_id}/ack "
+        )));
+        respond(&mut stream, "204 No Content", b"", "application/json").await;
+        Ok(())
+    }
+
     #[test]
     fn server_url_rejects_credentials_query_fragment_and_path() {
         for server in [
@@ -738,6 +1217,54 @@ mod tests {
     }
 
     #[test]
+    fn zsh_hook_does_not_capture_forget_control_commands() {
+        let directory = tempfile::tempdir().unwrap();
+        let log_path = directory.path().join("captured-command");
+        let script = r#"
+function elembra-shell-memory() {
+  case "$1" in
+    session-id) print -r -- synthetic-session ;;
+    record) cat > "$ELEMBRA_HOOK_CAPTURE_LOG" ;;
+  esac
+}
+source "$ELEMBRA_HOOK_PATH"
+_elembra_shell_memory_preexec 'elembra-shell-memory forget-session'
+_elembra_shell_memory_precmd
+[[ ! -e "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 11
+_elembra_shell_memory_preexec 'elembra-shell-memory forget-last'
+_elembra_shell_memory_precmd
+[[ ! -e "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 12
+_elembra_shell_memory_preexec 'elembra-shell-memory --config /tmp/synthetic-config.json forget-session'
+_elembra_shell_memory_precmd
+[[ ! -e "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 13
+_elembra_shell_memory_preexec 'elembra-shell-memory --config=/tmp/synthetic-config.json forget-last'
+_elembra_shell_memory_precmd
+[[ ! -e "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 14
+_elembra_shell_memory_preexec 'echo keep-this-command'
+_elembra_shell_memory_precmd
+[[ -f "$ELEMBRA_HOOK_CAPTURE_LOG" ]] || exit 15
+grep -F 'echo keep-this-command' "$ELEMBRA_HOOK_CAPTURE_LOG" >/dev/null || exit 16
+"#;
+        let output = Command::new("zsh")
+            .args(["-f", "-c", script])
+            .env(
+                "ELEMBRA_HOOK_PATH",
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/shell/elembra-shell-memory.zsh"
+                ),
+            )
+            .env("ELEMBRA_HOOK_CAPTURE_LOG", &log_path)
+            .output()
+            .expect("zsh is required to validate the supported zsh hook");
+        assert!(
+            output.status.success(),
+            "zsh hook check failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn failure_categories_match_connector_status_error_values() {
         assert_eq!(failure_category(StatusCode::UNAUTHORIZED), "authentication");
         assert_eq!(failure_category(StatusCode::FORBIDDEN), "policy_denied");
@@ -750,6 +1277,183 @@ mod tests {
             failure_category(StatusCode::SERVICE_UNAVAILABLE),
             "source_unavailable"
         );
+    }
+
+    #[tokio::test]
+    async fn remote_forget_retries_after_local_mapping_write_failure() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let queue_path = directory.path().join("queue.sqlite3");
+        let instance_id = Uuid::new_v4();
+        let mut queue = Queue::open(&queue_path)?;
+        let input = RecordInput {
+            command: "echo synthetic-forget-retry".into(),
+            cwd: "/tmp/synthetic".into(),
+            host: "synthetic-host".into(),
+            exit_code: 0,
+            duration_ms: 1,
+            session_id: None,
+        };
+        assert!(queue.record(instance_id, input, &[])?);
+        let event = queue.pending(instance_id, 1)?.remove(0);
+        drop(queue);
+        rusqlite::Connection::open(&queue_path)?.execute_batch(
+            "CREATE TRIGGER fail_shell_import_mapping BEFORE INSERT ON shell_imports
+             BEGIN SELECT RAISE(ABORT, 'simulated local mapping write failure'); END;",
+        )?;
+        assert!(Queue::open(&queue_path)?
+            .remember_import(instance_id, &event)
+            .is_err());
+        rusqlite::Connection::open(&queue_path)?
+            .execute_batch("DROP TRIGGER fail_shell_import_mapping")?;
+        let queue = Queue::open(&queue_path)?;
+        queue.request_forget(instance_id, event.id)?;
+        let source_ref = format!(
+            "elembra://io.elembra.connector.shell-memory/file/{}",
+            event.id
+        );
+        let revision = event.revision;
+        drop(queue);
+        assert!(Queue::open(&queue_path)?
+            .pending(instance_id, 1)?
+            .is_empty());
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let config = Config {
+            server: format!("http://{}", listener.local_addr()?),
+            instance_id,
+            queue: queue_path.clone(),
+            exclude_commands: vec![],
+        };
+        let server = tokio::spawn(fake_forget_server(
+            listener,
+            instance_id,
+            source_ref,
+            revision,
+        ));
+        let client = reqwest::Client::new();
+        let credential = "ecw1_synthetic";
+        let pending = Queue::open(&queue_path)?.pending_forgets(instance_id, 10)?;
+        assert!(sync_forgets(&client, &config, credential, &pending)
+            .await
+            .is_err());
+        assert_eq!(
+            Queue::open(&queue_path)?
+                .pending_forgets(instance_id, 10)?
+                .len(),
+            1
+        );
+        let pending = Queue::open(&queue_path)?.pending_forgets(instance_id, 10)?;
+        sync_forgets(&client, &config, credential, &pending).await?;
+        assert!(Queue::open(&queue_path)?
+            .pending_forgets(instance_id, 10)?
+            .is_empty());
+        server.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remote_forget_drains_more_than_one_bounded_page_while_paused_and_disabled(
+    ) -> Result<()> {
+        const RECORD_COUNT: usize = 101;
+        let directory = tempfile::tempdir()?;
+        let queue_path = directory.path().join("queue.sqlite3");
+        let instance_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+        let mut queue = Queue::open(&queue_path)?;
+        for index in 0..RECORD_COUNT {
+            assert!(queue.record(
+                instance_id,
+                RecordInput {
+                    command: format!("echo synthetic-forget-batch-{index}"),
+                    cwd: "/tmp/synthetic".into(),
+                    host: "synthetic-host".into(),
+                    exit_code: 0,
+                    duration_ms: 1,
+                    session_id: Some(session_id),
+                },
+                &[],
+            )?);
+            let event = queue.pending(instance_id, 1)?.remove(0);
+            queue.remember_import(instance_id, &event)?;
+            queue.acknowledge(event.id)?;
+        }
+        assert_eq!(
+            queue.request_forget_session(instance_id, session_id)?,
+            RECORD_COUNT
+        );
+        assert!(queue.pending(instance_id, RECORD_COUNT)?.is_empty());
+        queue.set_paused(true)?;
+        queue.set_disabled(true)?;
+        drop(queue);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let config = Config {
+            server: format!("http://{}", listener.local_addr()?),
+            instance_id,
+            queue: queue_path.clone(),
+            exclude_commands: vec![],
+        };
+        let server = tokio::spawn(fake_forget_batch_server(
+            listener,
+            instance_id,
+            RECORD_COUNT,
+        ));
+        let forgotten = sync_all_pending_forgets(
+            &reqwest::Client::new(),
+            &config,
+            "ecw1_synthetic-forget-batch",
+        )
+        .await?;
+        assert_eq!(forgotten, RECORD_COUNT);
+        server.await??;
+
+        let queue = Queue::open(&queue_path)?;
+        assert!(queue.pending_forgets(instance_id, RECORD_COUNT)?.is_empty());
+        assert!(queue.list(instance_id, RECORD_COUNT)?.is_empty());
+        assert!(queue.paused());
+        assert!(queue.disabled());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forgotten_import_replay_is_acknowledged_without_retaining_a_mapping() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let queue_path = directory.path().join("queue.sqlite3");
+        let instance_id = Uuid::new_v4();
+        assert!(record_if_enabled(
+            &queue_path,
+            instance_id,
+            RecordInput {
+                command: "echo synthetic-already-forgotten".into(),
+                cwd: "/tmp/synthetic".into(),
+                host: "synthetic-host".into(),
+                exit_code: 0,
+                duration_ms: 1,
+                session_id: None,
+            },
+            &[],
+        )?);
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let config = Config {
+            server: format!("http://{}", listener.local_addr()?),
+            instance_id,
+            queue: queue_path.clone(),
+            exclude_commands: vec![],
+        };
+        let server = tokio::spawn(fake_forgotten_import_server(listener, instance_id));
+        assert_eq!(
+            upload_round(&reqwest::Client::new(), &config, || {
+                Ok("ecw1_synthetic".into())
+            })
+            .await?,
+            UploadRound::Completed
+        );
+        server.await??;
+        let queue = Queue::open(&queue_path)?;
+        assert!(queue.pending(instance_id, 10)?.is_empty());
+        assert!(queue.list(instance_id, 10)?.is_empty());
+        assert!(queue.pending_forgets(instance_id, 10)?.is_empty());
+        Ok(())
     }
 
     #[test]
@@ -781,6 +1485,7 @@ mod tests {
                 host: "synthetic-host".into(),
                 exit_code: 0,
                 duration_ms: 1,
+                session_id: None,
             },
             &[]
         )?);
@@ -835,6 +1540,7 @@ mod tests {
                 host: "synthetic-host".into(),
                 exit_code: 0,
                 duration_ms: 1,
+                session_id: None,
             },
             &[]
         )?);
@@ -910,6 +1616,7 @@ mod tests {
                 host: "synthetic-host".into(),
                 exit_code: 0,
                 duration_ms: 1,
+                session_id: None,
             },
             &[]
         )?);
@@ -922,6 +1629,7 @@ mod tests {
                 host: "synthetic-host".into(),
                 exit_code: 0,
                 duration_ms: 1,
+                session_id: None,
             },
             &[]
         )?);
@@ -968,6 +1676,7 @@ mod tests {
                     host: "synthetic-host".into(),
                     exit_code: 0,
                     duration_ms: 2,
+                    session_id: None,
                 },
                 &[],
             )
@@ -1018,6 +1727,7 @@ mod tests {
                 host: "synthetic-host".into(),
                 exit_code: 0,
                 duration_ms: 3,
+                session_id: None,
             },
             &[]
         )?);
@@ -1058,6 +1768,7 @@ mod tests {
                         host: "synthetic-host".into(),
                         exit_code: 0,
                         duration_ms: 1,
+                        session_id: None,
                     },
                     &[]
                 )?);
@@ -1135,6 +1846,291 @@ mod tests {
                 assert_eq!(Queue::open(&queue_path)?.pending(instance_id, 2)?.len(), 1);
             }
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL and RustFS"]
+    async fn connected_upload_forget_reconcile_and_replay_stays_absent() -> Result<()> {
+        let (mut state, _) = server_common::setup_test_server().await;
+        let pool = state.db_pool.clone();
+        let fixture = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let username = format!("shell-memory-{fixture}");
+        let email = format!("shell-memory-{fixture}@example.test");
+        sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+            .bind(tenant_id)
+            .bind(format!("shell-memory-{fixture}"))
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO users (id, username, email, password_hash, tenant_id, display_name, storage_quota) VALUES ($1,$2,$3,'test-hash',$4,'Shell Memory owner',10737418240)")
+            .bind(owner_id)
+            .bind(&username)
+            .bind(&email)
+            .bind(tenant_id)
+            .execute(&pool)
+            .await?;
+
+        let registry = ApplicationRegistry::first_party()?;
+        let mut owners = ResourceOwnerRegistry::new();
+        owners.register(
+            Arc::new(FilesResourceOwner::new(
+                Arc::clone(&state.permission_resolver),
+                Arc::new(PermissionResolverRepository::new(pool.clone())),
+                Arc::clone(&state.metadata_store),
+                Arc::clone(&state.object_store),
+            )),
+            &registry,
+        )?;
+        state.source_authorizer = Arc::new(SourceAuthorizer::new(owners));
+
+        let store: Arc<dyn VectorStore> = Arc::new(PgVectorStore::new(pool.clone()));
+        let keyword_indexer = Arc::new(KeywordIndexer::new(store));
+        let note_sink = Arc::new(KeywordIndexerNoteSink::new(Arc::clone(&keyword_indexer)));
+        state.note_service = Arc::new(
+            (*state.note_service)
+                .clone()
+                .with_index_sink(Some(note_sink)),
+        );
+        state.unified_search_service = Arc::new(
+            UnifiedSearchService::new(
+                Arc::clone(&state.source_authorizer),
+                Arc::clone(&state.metadata_store),
+                None,
+                Arc::clone(&state.memory_catalog_store),
+            )
+            .with_keyword_indexer(keyword_indexer, Arc::clone(&state.permission_resolver))
+            .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+        );
+
+        let worker = register_worker(&state, tenant_id, owner_id).await?;
+        let token = state.jwt_manager.generate(owner_id, &email, tenant_id)?;
+        let app = routes::connector_routes()
+            .merge(routes::search_routes())
+            .with_state(state.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let server_url = format!("http://{address}");
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let client = reqwest::Client::new();
+        let directory = tempfile::tempdir()?;
+        let queue_path = directory.path().join("shell-memory.sqlite3");
+        let config = Config {
+            server: server_url.clone(),
+            instance_id: worker.instance_id,
+            queue: queue_path.clone(),
+            exclude_commands: vec![],
+        };
+        let marker = format!("shellmemorymarker{}", Uuid::new_v4().simple());
+        let mut queue = Queue::open(&queue_path)?;
+        assert!(queue.record(
+            worker.instance_id,
+            RecordInput {
+                command: format!("printf {marker}"),
+                cwd: "/tmp/synthetic-shell-memory".into(),
+                host: "synthetic-host".into(),
+                exit_code: 0,
+                duration_ms: 1,
+                session_id: None,
+            },
+            &[],
+        )?);
+        let event = queue.pending(worker.instance_id, 1)?.remove(0);
+        drop(queue);
+
+        assert_eq!(
+            upload_round(&client, &config, || Ok(worker.credential.clone())).await?,
+            UploadRound::Completed
+        );
+        let source_ref = format!(
+            "elembra://io.elembra.connector.shell-memory/file/{}",
+            event.id
+        );
+        let target_uri: String = sqlx::query_scalar(
+            "SELECT target_resource_ref FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
+        )
+        .bind(tenant_id)
+        .bind(worker.instance_id)
+        .bind(&source_ref)
+        .bind(&event.revision)
+        .fetch_one(&pool)
+        .await?;
+        let target = rustshare_resource_auth::ResourceRef::from_uri(&target_uri)?;
+        let file_id = Uuid::parse_str(&target.resource_id)?;
+        let storage_key: String = sqlx::query_scalar("SELECT storage_key FROM files WHERE id=$1")
+            .bind(file_id)
+            .fetch_one(&pool)
+            .await?;
+
+        reconcile(&state, tenant_id).await?;
+        let before = search(&client, &server_url, &token, &marker).await?;
+        let results = before["results"]
+            .as_array()
+            .context("search response has no results")?;
+        let citation = results
+            .iter()
+            .find(|result| {
+                result["snippet"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains(&marker)
+            })
+            .and_then(|result| result["resource_ref"].as_str())
+            .context("published shell command is not searchable with a source citation")?
+            .to_owned();
+        let opened = client
+            .post(format!("{server_url}/api/v1/memory/citations/open"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "resource_ref": citation }))
+            .send()
+            .await?;
+        anyhow::ensure!(
+            opened.status().is_success(),
+            "authorized citation did not open: {}",
+            opened.status()
+        );
+
+        Queue::open(&queue_path)?.request_forget(worker.instance_id, event.id)?;
+        assert_eq!(
+            sync_all_pending_forgets(&client, &config, &worker.credential).await?,
+            1
+        );
+        let deleted_at: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT deleted_at FROM files WHERE id=$1")
+                .bind(file_id)
+                .fetch_one(&pool)
+                .await?;
+        assert!(
+            deleted_at.is_some(),
+            "remote forget soft-deletes its Files target"
+        );
+
+        reconcile(&state, tenant_id).await?;
+        let after = search(&client, &server_url, &token, &marker).await?;
+        assert!(after["results"].as_array().is_some_and(Vec::is_empty));
+        let citation_after = client
+            .post(format!("{server_url}/api/v1/memory/citations/open"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "resource_ref": citation }))
+            .send()
+            .await?;
+        assert_eq!(citation_after.status(), StatusCode::NOT_FOUND);
+        let index_rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM note_index_chunks WHERE tenant_id=$1 AND source_file_id=$2",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(
+            index_rows, 0,
+            "reconcile removes the forgotten search projection"
+        );
+        let catalog_deleted: bool = sqlx::query_scalar(
+            "SELECT deleted_at IS NOT NULL FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .fetch_one(&pool)
+        .await?;
+        assert!(catalog_deleted, "Memory catalog retains a tombstone");
+
+        assert_eq!(
+            upload_pending(&client, &config, &worker.credential, vec![event.clone()],).await?,
+            UploadResult::Completed
+        );
+        let file_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM files WHERE tenant_id=$1 AND id=$2")
+                .bind(tenant_id)
+                .bind(file_id)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(
+            file_count, 1,
+            "forgotten event replay does not create another Files target"
+        );
+        reconcile(&state, tenant_id).await?;
+        let replayed = search(&client, &server_url, &token, &marker).await?;
+        assert!(replayed["results"].as_array().is_some_and(Vec::is_empty));
+        let replay_tombstone: bool = sqlx::query_scalar(
+            "SELECT deleted_at IS NOT NULL FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .fetch_one(&pool)
+        .await?;
+        assert!(replay_tombstone, "replay leaves Memory's tombstone intact");
+        let mapping_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
+        )
+        .bind(tenant_id)
+        .bind(worker.instance_id)
+        .bind(&source_ref)
+        .bind(&event.revision)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(mapping_count, 1, "replay preserves one source mapping");
+        let catalog_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM memory_files_catalog WHERE tenant_id=$1 AND connector_instance_id=$2 AND source_resource_ref=$3 AND source_revision=$4 AND deleted_at IS NOT NULL",
+        )
+        .bind(tenant_id)
+        .bind(worker.instance_id)
+        .bind(&source_ref)
+        .bind(&event.revision)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(
+            catalog_count, 1,
+            "replay preserves one tombstoned catalog row"
+        );
+        let owner_files: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM files WHERE tenant_id=$1 AND owner_id=$2")
+                .bind(tenant_id)
+                .bind(owner_id)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(
+            owner_files, 1,
+            "replay must not create a second Files target"
+        );
+
+        server.abort();
+        let _ = state.object_store.delete(&storage_key).await;
+        sqlx::query("DELETE FROM connector_instances WHERE tenant_id=$1 AND id=$2")
+            .bind(tenant_id)
+            .bind(worker.instance_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            "DELETE FROM memory_files_source_access_audit WHERE tenant_id=$1 AND file_id=$2",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .execute(&pool)
+        .await?;
+        sqlx::query("DELETE FROM note_index_chunks WHERE tenant_id=$1 AND source_file_id=$2")
+            .bind(tenant_id)
+            .bind(file_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2")
+            .bind(tenant_id)
+            .bind(file_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM files WHERE id=$1")
+            .bind(file_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM users WHERE id=$1")
+            .bind(owner_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM tenants WHERE id=$1")
+            .bind(tenant_id)
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 }
