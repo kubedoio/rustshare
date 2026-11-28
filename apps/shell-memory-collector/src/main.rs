@@ -721,16 +721,42 @@ fn normalize_server(server: &str) -> Result<String> {
 }
 
 #[cfg(test)]
+#[path = "../../../backend/server/tests/common/mod.rs"]
+mod server_test_common;
+
+#[cfg(test)]
 mod tests {
+    use super::server_test_common as server_common;
+
     use super::{
         failure_category, forget_queue, normalize_server, set_control, sync_all_pending_forgets,
         sync_forgets, upload_pending, upload_round, Control, UploadResult, UploadRound,
     };
-    use anyhow::Result;
+    use anyhow::{Context, Result};
+    use axum::extract::FromRef;
     use reqwest::StatusCode;
+    use rustshare_core::{
+        domain::{
+            ApplicationRegistry, ConnectorAuthority, ConnectorCapabilities, ConnectorDescriptor,
+            ConnectorMetadata, ConnectorModes, ConnectorOperations, ConnectorPublications,
+            ConnectorSource, CONNECTOR_API_VERSION,
+        },
+        services::{KeywordIndexer, VectorStore},
+    };
+    use rustshare_infrastructure::{repositories::PermissionResolverRepository, PgVectorStore};
+    use rustshare_resource_auth::{ResourceOwnerRegistry, SourceAuthorizer};
+    use rustshare_server::{
+        authz::FilesResourceOwner,
+        handlers::memory_reconcile::reconcile_files_memory_page,
+        routes,
+        services::{note_index_sink::KeywordIndexerNoteSink, unified_search::UnifiedSearchService},
+        state::DatabaseState,
+    };
+    use rustshare_storage::MemoryFilesCatalogStore;
     use shell_memory_collector::{
         record_if_enabled, Config, Queue, QueueLock, RecordInput, UploadLock,
     };
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -738,6 +764,100 @@ mod tests {
         sync::{mpsc, oneshot},
     };
     use uuid::Uuid;
+
+    struct RegisteredWorker {
+        instance_id: Uuid,
+        credential: String,
+    }
+
+    async fn register_worker(
+        state: &rustshare_server::AppState,
+        tenant_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<RegisteredWorker> {
+        let descriptor = ConnectorDescriptor {
+            api_version: CONNECTOR_API_VERSION.into(),
+            kind: "Connector".into(),
+            metadata: ConnectorMetadata {
+                id: "io.elembra.connector.shell-memory".into(),
+                name: "Shell Memory connected acceptance".into(),
+                version: "test".into(),
+            },
+            source: ConnectorSource {
+                system: "shell-history".into(),
+                authority: ConnectorAuthority::Local,
+            },
+            supports: ConnectorCapabilities {
+                operations: ConnectorOperations {
+                    read: true,
+                    ..Default::default()
+                },
+                modes: ConnectorModes {
+                    import: true,
+                    ..Default::default()
+                },
+            },
+            publishes: ConnectorPublications::default(),
+        };
+        let database = DatabaseState::from_ref(state);
+        let (instance, _) = database
+            .connector_service
+            .register(
+                tenant_id,
+                owner_id,
+                &format!("shell-memory-e2e-{}", Uuid::new_v4()),
+                rustshare_server::services::connector_service::RegisterConnector {
+                    descriptor,
+                    source_config: serde_json::json!({}),
+                    credential_ref: None,
+                    mode: "import".into(),
+                },
+            )
+            .await?;
+        let issued = database
+            .connector_service
+            .rotate_worker_credential(tenant_id, owner_id, Uuid::from(instance.id))
+            .await?;
+        Ok(RegisteredWorker {
+            instance_id: Uuid::from(instance.id),
+            credential: issued.credential,
+        })
+    }
+
+    async fn search(
+        client: &reqwest::Client,
+        server: &str,
+        token: &str,
+        query: &str,
+    ) -> Result<serde_json::Value> {
+        let response = client
+            .post(format!("{server}/api/v1/search"))
+            .bearer_auth(token)
+            .json(&serde_json::json!({ "query": query, "sources": ["files"] }))
+            .send()
+            .await?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "search failed: {}",
+            response.status()
+        );
+        Ok(response.json().await?)
+    }
+
+    async fn reconcile(state: &rustshare_server::AppState, tenant_id: Uuid) -> Result<()> {
+        reconcile_files_memory_page(
+            &state.metadata_store,
+            &state.note_service,
+            &MemoryFilesCatalogStore::new(state.db_pool.clone()),
+            &state.source_authorizer,
+            tenant_id,
+            None,
+            100,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|(_, error)| anyhow::anyhow!("Files Memory reconcile failed: {error:?}"))
+    }
 
     async fn read_request(stream: &mut TcpStream) -> std::io::Result<(String, String, Vec<u8>)> {
         let mut header = Vec::new();
@@ -1677,6 +1797,246 @@ mod tests {
                 assert_eq!(Queue::open(&queue_path)?.pending(instance_id, 2)?.len(), 1);
             }
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable PostgreSQL and RustFS"]
+    async fn connected_upload_forget_reconcile_and_replay_stays_absent() -> Result<()> {
+        let (mut state, _) = server_common::setup_test_server().await;
+        let pool = state.db_pool.clone();
+        let fixture = Uuid::new_v4();
+        let tenant_id = Uuid::new_v4();
+        let owner_id = Uuid::new_v4();
+        let username = format!("shell-memory-{fixture}");
+        let email = format!("shell-memory-{fixture}@example.test");
+        sqlx::query("INSERT INTO tenants (id, name) VALUES ($1, $2)")
+            .bind(tenant_id)
+            .bind(format!("shell-memory-{fixture}"))
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO users (id, username, email, password_hash, tenant_id, display_name, storage_quota) VALUES ($1,$2,$3,'test-hash',$4,'Shell Memory owner',10737418240)")
+            .bind(owner_id)
+            .bind(&username)
+            .bind(&email)
+            .bind(tenant_id)
+            .execute(&pool)
+            .await?;
+
+        let registry = ApplicationRegistry::first_party()?;
+        let mut owners = ResourceOwnerRegistry::new();
+        owners.register(
+            Arc::new(FilesResourceOwner::new(
+                Arc::clone(&state.permission_resolver),
+                Arc::new(PermissionResolverRepository::new(pool.clone())),
+                Arc::clone(&state.metadata_store),
+                Arc::clone(&state.object_store),
+            )),
+            &registry,
+        )?;
+        state.source_authorizer = Arc::new(SourceAuthorizer::new(owners));
+
+        let store: Arc<dyn VectorStore> = Arc::new(PgVectorStore::new(pool.clone()));
+        let keyword_indexer = Arc::new(KeywordIndexer::new(store));
+        let note_sink = Arc::new(KeywordIndexerNoteSink::new(Arc::clone(&keyword_indexer)));
+        state.note_service = Arc::new(
+            (*state.note_service)
+                .clone()
+                .with_index_sink(Some(note_sink)),
+        );
+        state.unified_search_service = Arc::new(
+            UnifiedSearchService::new(
+                Arc::clone(&state.source_authorizer),
+                Arc::clone(&state.metadata_store),
+                None,
+                Arc::clone(&state.memory_catalog_store),
+            )
+            .with_keyword_indexer(keyword_indexer, Arc::clone(&state.permission_resolver))
+            .with_memory_files_catalog(Arc::new(MemoryFilesCatalogStore::new(pool.clone()))),
+        );
+
+        let worker = register_worker(&state, tenant_id, owner_id).await?;
+        let token = state.jwt_manager.generate(owner_id, &email, tenant_id)?;
+        let app = routes::connector_routes()
+            .merge(routes::search_routes())
+            .with_state(state.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let server_url = format!("http://{address}");
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let client = reqwest::Client::new();
+        let directory = tempfile::tempdir()?;
+        let queue_path = directory.path().join("shell-memory.sqlite3");
+        let config = Config {
+            server: server_url.clone(),
+            instance_id: worker.instance_id,
+            queue: queue_path.clone(),
+            exclude_commands: vec![],
+        };
+        let marker = format!("shellmemorymarker{}", Uuid::new_v4().simple());
+        let mut queue = Queue::open(&queue_path)?;
+        assert!(queue.record(
+            worker.instance_id,
+            RecordInput {
+                command: format!("printf {marker}"),
+                cwd: "/tmp/synthetic-shell-memory".into(),
+                host: "synthetic-host".into(),
+                exit_code: 0,
+                duration_ms: 1,
+                session_id: None,
+            },
+            &[],
+        )?);
+        let event = queue.pending(worker.instance_id, 1)?.remove(0);
+        drop(queue);
+
+        assert_eq!(
+            upload_round(&client, &config, || Ok(worker.credential.clone())).await?,
+            UploadRound::Completed
+        );
+        let source_ref = format!(
+            "elembra://io.elembra.connector.shell-memory/file/{}",
+            event.id
+        );
+        let target_uri: String = sqlx::query_scalar(
+            "SELECT target_resource_ref FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
+        )
+        .bind(tenant_id)
+        .bind(worker.instance_id)
+        .bind(&source_ref)
+        .bind(&event.revision)
+        .fetch_one(&pool)
+        .await?;
+        let target = rustshare_resource_auth::ResourceRef::from_uri(&target_uri)?;
+        let file_id = Uuid::parse_str(&target.resource_id)?;
+        let storage_key: String = sqlx::query_scalar("SELECT storage_key FROM files WHERE id=$1")
+            .bind(file_id)
+            .fetch_one(&pool)
+            .await?;
+
+        reconcile(&state, tenant_id).await?;
+        let before = search(&client, &server_url, &token, &marker).await?;
+        let results = before["results"]
+            .as_array()
+            .context("search response has no results")?;
+        let citation = results
+            .iter()
+            .find(|result| {
+                result["snippet"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains(&marker)
+            })
+            .and_then(|result| result["resource_ref"].as_str())
+            .context("published shell command is not searchable with a source citation")?
+            .to_owned();
+        let opened = client
+            .post(format!("{server_url}/api/v1/memory/citations/open"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "resource_ref": citation }))
+            .send()
+            .await?;
+        anyhow::ensure!(
+            opened.status().is_success(),
+            "authorized citation did not open: {}",
+            opened.status()
+        );
+
+        Queue::open(&queue_path)?.request_forget(worker.instance_id, event.id)?;
+        assert_eq!(
+            sync_all_pending_forgets(&client, &config, &worker.credential).await?,
+            1
+        );
+        let deleted_at: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT deleted_at FROM files WHERE id=$1")
+                .bind(file_id)
+                .fetch_one(&pool)
+                .await?;
+        assert!(
+            deleted_at.is_some(),
+            "remote forget soft-deletes its Files target"
+        );
+
+        reconcile(&state, tenant_id).await?;
+        let after = search(&client, &server_url, &token, &marker).await?;
+        assert!(after["results"].as_array().is_some_and(Vec::is_empty));
+        let citation_after = client
+            .post(format!("{server_url}/api/v1/memory/citations/open"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "resource_ref": citation }))
+            .send()
+            .await?;
+        assert_eq!(citation_after.status(), StatusCode::NOT_FOUND);
+        let index_rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM note_index_chunks WHERE tenant_id=$1 AND source_file_id=$2",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(
+            index_rows, 0,
+            "reconcile removes the forgotten search projection"
+        );
+        let catalog_deleted: bool = sqlx::query_scalar(
+            "SELECT deleted_at IS NOT NULL FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .fetch_one(&pool)
+        .await?;
+        assert!(catalog_deleted, "Memory catalog retains a tombstone");
+
+        assert_eq!(
+            upload_pending(&client, &config, &worker.credential, vec![event]).await?,
+            UploadResult::Completed
+        );
+        let file_count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM files WHERE tenant_id=$1 AND id=$2")
+                .bind(tenant_id)
+                .bind(file_id)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(
+            file_count, 1,
+            "forgotten event replay does not create another Files target"
+        );
+        reconcile(&state, tenant_id).await?;
+        let replayed = search(&client, &server_url, &token, &marker).await?;
+        assert!(replayed["results"].as_array().is_some_and(Vec::is_empty));
+        let replay_tombstone: bool = sqlx::query_scalar(
+            "SELECT deleted_at IS NOT NULL FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2",
+        )
+        .bind(tenant_id)
+        .bind(file_id)
+        .fetch_one(&pool)
+        .await?;
+        assert!(replay_tombstone, "replay leaves Memory's tombstone intact");
+
+        server.abort();
+        let _ = state.object_store.delete(&storage_key).await;
+        sqlx::query("DELETE FROM note_index_chunks WHERE tenant_id=$1 AND source_file_id=$2")
+            .bind(tenant_id)
+            .bind(file_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM memory_files_catalog WHERE tenant_id=$1 AND file_id=$2")
+            .bind(tenant_id)
+            .bind(file_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM files WHERE id=$1")
+            .bind(file_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM users WHERE id=$1")
+            .bind(owner_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("DELETE FROM tenants WHERE id=$1")
+            .bind(tenant_id)
+            .execute(&pool)
+            .await?;
         Ok(())
     }
 }
