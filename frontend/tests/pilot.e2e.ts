@@ -377,6 +377,8 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 		expect(fileMetadataResponse.status()).toBe(200);
 		const fileMetadata = await fileMetadataResponse.json();
 		const fileVersion = `sha256:${fileMetadata.content_hash}`;
+		const originalFileContent = `${fileMarker} authorized Files content`;
+		const updatedFileContent = `${fileMarker} updated current Files content`;
 		const fileSearch = await api.post('/api/v1/search', {
 			headers,
 			data: { query: fileName, sources: ['files'], limit: 10 }
@@ -388,6 +390,19 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 		expect(fileResult).toBeTruthy();
 		const searchedFileVersion = new URL(fileResult.resource_ref).searchParams.get('version');
 		if (searchedFileVersion) expect(searchedFileVersion).toBe(fileVersion);
+		const editedFile = await api.post(`/api/v1/files/${fileId}/edit`, {
+			headers,
+			data: {
+				content: Buffer.from(updatedFileContent).toString('base64'),
+				save_mode: 'new_version',
+				change_description: 'M1 exact-version citation acceptance'
+			}
+		});
+		expect(editedFile.status()).toBe(200);
+		expect(await editedFile.json()).toMatchObject({
+			saved_as_new_version: true,
+			current_version: 2
+		});
 		const exactFileCitation = searchedFileVersion
 			? fileResult.resource_ref
 			: `${fileResult.resource_ref}?version=${encodeURIComponent(fileVersion)}`;
@@ -405,7 +420,10 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 			{ headers }
 		);
 		expect(exactFileContent.status()).toBe(200);
-		expect(await exactFileContent.text()).toContain(`${fileMarker} authorized Files content`);
+		expect(await exactFileContent.text()).toContain(originalFileContent);
+		const currentFileContent = await api.get(`/api/v1/files/${fileId}/content`, { headers });
+		expect(currentFileContent.status()).toBe(200);
+		expect(await currentFileContent.text()).toContain(updatedFileContent);
 
 		const scopedCases = [
 			{
