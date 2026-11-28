@@ -60,10 +60,13 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
     .await;
     let owned_file_id = insert_file(&pool, owner_id, tenant_id, Uuid::new_v4()).await;
     let unrelated_owned_file_id = insert_file(&pool, owner_id, tenant_id, Uuid::new_v4()).await;
+    let modified_file_id = insert_file(&pool, owner_id, tenant_id, Uuid::new_v4()).await;
     let owned_source = source_ref(Uuid::new_v4());
     let owned_target = target_ref(owned_file_id);
     let unrelated_source = source_ref(Uuid::new_v4());
     let unrelated_target = target_ref(unrelated_owned_file_id);
+    let modified_source = source_ref(Uuid::new_v4());
+    let modified_target = target_ref(modified_file_id);
     let store = ConnectorStore::new(pool.clone());
     store
         .record_mapping(
@@ -72,6 +75,17 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
             &owned_source,
             REVISION,
             &owned_target,
+            ConnectorMappingProvenance::default(),
+        )
+        .await
+        .unwrap();
+    store
+        .record_mapping(
+            tenant_id,
+            primary.instance_id,
+            &modified_source,
+            REVISION,
+            &modified_target,
             ConnectorMappingProvenance::default(),
         )
         .await
@@ -137,6 +151,31 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         "a stale chunk cannot be materialized without current Files authorization"
     );
     assert!(file_is_active(&pool, unrelated_owned_file_id).await);
+    let independently_modified_hash = "b".repeat(64);
+    sqlx::query("UPDATE files SET content_hash=$1, current_version=current_version+1 WHERE id=$2")
+        .bind(&independently_modified_hash)
+        .bind(modified_file_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        forget(&state, &primary.credential, &modified_source).await,
+        StatusCode::CONFLICT,
+        "forget must not delete a Files target changed independently"
+    );
+    assert!(file_is_active(&pool, modified_file_id).await);
+    let modified_mapping_active: bool = sqlx::query_scalar(
+        "SELECT forgotten_at IS NULL AND forget_requested_at IS NULL FROM connector_external_mappings WHERE tenant_id=$1 AND instance_id=$2 AND external_resource_ref=$3 AND external_revision=$4",
+    )
+    .bind(tenant_id)
+    .bind(primary.instance_id)
+    .bind(&modified_source)
+    .bind(REVISION)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(modified_mapping_active);
+
     let mismatched_revision = format!("sha256:{}", "b".repeat(64));
     assert_eq!(
         forget_with_revision(
@@ -448,6 +487,11 @@ async fn forget_denies_foreign_tenant_instance_and_connector_targets() {
         .unwrap();
     sqlx::query("DELETE FROM files WHERE id=$1")
         .bind(unrelated_owned_file_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM files WHERE id=$1")
+        .bind(modified_file_id)
         .execute(&pool)
         .await
         .unwrap();
