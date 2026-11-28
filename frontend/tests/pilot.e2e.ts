@@ -350,7 +350,11 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 			timeout: 15_000
 		});
 		expect((await noteResponse).status()).toBe(200);
-		await expect(page.getByText(marker)).toBeVisible();
+		await expect(
+			page
+				.getByRole('region', { name: 'Markdown Editor' })
+				.getByText(`${marker} authorized search content`)
+		).toBeVisible();
 
 		const scopedCases = [
 			{
