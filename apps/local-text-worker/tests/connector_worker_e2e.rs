@@ -1056,6 +1056,24 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
             .as_deref(),
         Some(first_v2_version.as_str())
     );
+    let first_file_citation = result["resource_ref"]
+        .as_str()
+        .expect("versioned Files citation")
+        .to_owned();
+    let citation_open = client
+        .post(format!("{server}/api/v1/memory/citations/open"))
+        .bearer_auth(&owner_token)
+        .json(&json!({ "resource_ref": first_file_citation }))
+        .send()
+        .await
+        .expect("open the authorized Local Text Files citation");
+    assert_eq!(citation_open.status(), StatusCode::OK);
+    let citation_opened: Value = citation_open
+        .json()
+        .await
+        .expect("decode citation authorization response");
+    assert_eq!(citation_opened["available"], true);
+    assert_eq!(citation_opened["resource_ref"], first_file_citation);
 
     let content_hash = first_v2_revision.trim_start_matches("sha256:");
     let object_store = rustshare_storage::ObjectStore::new(
@@ -1149,6 +1167,24 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
         .as_str()
         .unwrap()
         .contains("alpha v2"));
+    let recipient_citation = recipient_result["resource_ref"]
+        .as_str()
+        .expect("shared Files citation")
+        .to_owned();
+    let recipient_citation_open = client
+        .post(format!("{server}/api/v1/memory/citations/open"))
+        .bearer_auth(&recipient_token)
+        .json(&json!({ "resource_ref": recipient_citation }))
+        .send()
+        .await
+        .expect("open the shared Files citation while authorized");
+    assert_eq!(recipient_citation_open.status(), StatusCode::OK);
+    let recipient_opened: Value = recipient_citation_open
+        .json()
+        .await
+        .expect("decode shared citation authorization response");
+    assert_eq!(recipient_opened["available"], true);
+    assert_eq!(recipient_opened["resource_ref"], recipient_citation);
     let stale_acl_user = sqlx::query_scalar::<_, String>("SELECT 'user:' || $1::text")
         .bind(
             sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE email=$1")
@@ -1192,6 +1228,14 @@ async fn independent_worker_imports_retries_recovers_and_stops_after_revocation(
             }),
         "revoked source cannot return a result or citation through a stale index ACL"
     );
+    let revoked_citation_open = client
+        .post(format!("{server}/api/v1/memory/citations/open"))
+        .bearer_auth(&recipient_token)
+        .json(&json!({ "resource_ref": recipient_citation }))
+        .send()
+        .await
+        .expect("reopen the citation after Files share revocation");
+    assert_eq!(revoked_citation_open.status(), StatusCode::NOT_FOUND);
 
     let (foreign_email, foreign_password) = create_user(&client, &server, &owner_token).await;
     let foreign_user_id: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email=$1")

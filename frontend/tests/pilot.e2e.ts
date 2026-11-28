@@ -253,8 +253,11 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 	const suffix = randomUUID().replaceAll('-', '');
 	const title = `Memory search ${suffix}`;
 	const marker = `M1SearchMarker${suffix}`;
+	const fileName = `Memory search file ${suffix}.txt`;
+	const fileMarker = `M1FileSearchMarker${suffix}`;
 	let noteId: string | null = null;
 	let folderId: string | null = null;
+	let fileId: string | null = null;
 
 	await page.goto('/login');
 	await page.getByLabel('Email').fill(adminEmail);
@@ -356,6 +359,54 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 				.getByText(`${marker} authorized search content`)
 		).toBeVisible();
 
+		const uploadedFile = await api.post('/api/v1/files/upload', {
+			headers,
+			multipart: {
+				file: {
+					name: fileName,
+					mimeType: 'text/plain',
+					buffer: Buffer.from(`${fileMarker} authorized Files content`)
+				},
+				name: fileName,
+				parent_folder_id: folderId!
+			}
+		});
+		expect(uploadedFile.ok()).toBeTruthy();
+		fileId = (await uploadedFile.json()).id;
+		const fileMetadataResponse = await api.get(`/api/v1/files/${fileId}`, { headers });
+		expect(fileMetadataResponse.status()).toBe(200);
+		const fileMetadata = await fileMetadataResponse.json();
+		const fileVersion = `sha256:${fileMetadata.content_hash}`;
+		const fileSearch = await api.post('/api/v1/search', {
+			headers,
+			data: { query: fileName, sources: ['files'], limit: 10 }
+		});
+		expect(fileSearch.status()).toBe(200);
+		const fileResult = (await fileSearch.json()).results.find((result: { resource_ref: string }) =>
+			result.resource_ref.startsWith(`elembra://io.elembra.files/file/${fileId}`)
+		);
+		expect(fileResult).toBeTruthy();
+		const searchedFileVersion = new URL(fileResult.resource_ref).searchParams.get('version');
+		if (searchedFileVersion) expect(searchedFileVersion).toBe(fileVersion);
+		const exactFileCitation = searchedFileVersion
+			? fileResult.resource_ref
+			: `${fileResult.resource_ref}?version=${encodeURIComponent(fileVersion)}`;
+		const openedFileCitation = await api.post('/api/v1/memory/citations/open', {
+			headers,
+			data: { resource_ref: exactFileCitation }
+		});
+		expect(openedFileCitation.status()).toBe(200);
+		expect(await openedFileCitation.json()).toMatchObject({
+			resource_ref: exactFileCitation,
+			available: true
+		});
+		const exactFileContent = await api.get(
+			`/api/v1/files/${fileId}/content?version=${encodeURIComponent(fileVersion)}`,
+			{ headers }
+		);
+		expect(exactFileContent.status()).toBe(200);
+		expect(await exactFileContent.text()).toContain(`${fileMarker} authorized Files content`);
+
 		const scopedCases = [
 			{
 				type: 'folder',
@@ -398,6 +449,15 @@ test('Workspace search opens a Note through real Memory authorization', async ({
 			);
 		}
 	} finally {
+		if (fileId) {
+			try {
+				const deleted = await api.delete(`/api/v1/files/${fileId}`, { headers, timeout: 5_000 });
+				if (!deleted.ok())
+					console.warn(`Memory search File fixture cleanup returned HTTP ${deleted.status()}`);
+			} catch {
+				console.warn('Memory search File fixture cleanup request failed');
+			}
+		}
 		if (noteId) {
 			try {
 				const deleted = await api.delete(`/api/v1/notes/${noteId}`, {
